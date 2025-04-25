@@ -9,9 +9,17 @@ async fn main() {
         .with_writer(std::io::stderr)
         .init();
 
-    if let Err(error) = imp::run(imp::Options::parse()).await {
-        eprintln!("Error: {error}");
-        tracing::error!("Error: {}", error);
-        std::process::exit(1);
+    match imp::Options::try_parse() {
+        Ok(options) => {
+            if let Err(error) = imp::run(options).await {
+                eprintln!("Error: {error}");
+                tracing::error!("Error: {}", error);
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("failed to parse command line arguments");
+            e.exit()
+        }
     }
 }

@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use bytes::{Buf, BytesMut};
 use gateway::{Resolver, dns::UdpResolver, localhost::TraversalFactory};
@@ -8,7 +8,7 @@ use http::{Method, Request, Uri};
 use clap::Parser;
 use tokio::{
     fs,
-    io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{self, AsyncReadExt, AsyncWrite, AsyncWriteExt},
 };
 
 #[derive(Parser, Debug)]
@@ -32,7 +32,7 @@ pub struct Options {
 
     /// Output file
     #[arg(short, long, help = "Write to file instead of stdout")]
-    output: Option<String>,
+    output: Option<PathBuf>,
 
     /// HTTP Method
     #[arg(short = 'X', long, help = "Specify request method to use")]
@@ -69,9 +69,9 @@ pub struct Options {
     // #[arg(long, help = "Maximum time allowed for the transfer in seconds")]
     // max_time: Option<u64>,
     //
-    // /// Verbose output
-    // #[arg(short, long, help = "Make the operation more talkative")]
-    // verbose: bool,
+    /// Verbose output
+    #[arg(short, long, help = "Make the operation more talkative")]
+    verbose: bool,
     //
     // /// Silent mode
     // #[arg(
@@ -98,9 +98,15 @@ type Error = Box<dyn core::error::Error + Send + Sync>;
 pub async fn run(options: Options) -> Result<(), Error> {
     let resolver = UdpResolver::new("1.12.74.4:5300".parse().unwrap());
     let server_name = options.uri.host().ok_or("missing host in uri")?;
-    let addrs = resolver.look_up(server_name).await?;
+    let addrs = resolver
+        .look_up(server_name)
+        .await
+        .map_err(|e| format!("failed to resolve host {server_name}: {e:?}"))?;
 
     tracing::info!("resolved {server_name} to address: {addrs:?}");
+    if options.verbose {
+        eprintln!("* resolved {server_name} to address: {addrs:?}");
+    }
 
     let mut roots = rustls::RootCertStore::empty();
     roots.add_parsable_certificates(include_bytes!("../../root.crt").to_certificate());
@@ -134,7 +140,9 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .without_cert()
         .with_alpns(["h3"])
         .with_iface_factory(factory)
-        .with_parameters(client_parameters())
+        .with_parameters(client_parameters(Duration::from_secs(
+            options.connect_timeout.unwrap_or_default(),
+        )))
         .enable_sslkeylog()
         .bind(&binds[..])
         .inspect_err(|e| {
@@ -145,11 +153,13 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let quic_connection = quic_client
         .connect(server_name, addrs[0])
         .map_err(|e| format!("failed to create quic connection: {e:?}"))?;
-    tracing::warn!("aaa");
     let (mut h3_connection, mut send_request) =
         h3::client::new(h3_shim::QuicConnection::new(quic_connection).await)
             .await
             .map_err(|e| format!("failed to failed to establish http3 connection: {e:?}"))?;
+    if options.verbose {
+        eprintln!("* establish http3 connection to {server_name}");
+    }
     tracing::info!("http3 connection established");
     tokio::spawn(async move { h3_connection.wait_idle().await });
 
@@ -170,6 +180,14 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let request = request_builder
         .body(())
         .map_err(|e| format!("failed to build request: {e:?}"))?;
+
+    if options.verbose {
+        let output = format!("> send request: {request:#?}")
+            .lines()
+            .collect::<Vec<_>>()
+            .join("\n> ");
+        println!("{output}",)
+    }
 
     tracing::info!("build request: {request:?}");
 
@@ -212,12 +230,28 @@ pub async fn run(options: Options) -> Result<(), Error> {
         Result::<_, Error>::Ok(())
     };
     let receive_response = async {
+        let response = recv_stream
+            .recv_response()
+            .await
+            .map_err(|e| format!("failed to receive response: {e:?}"))?;
+
+        tracing::info!("response: {response:#?}");
+        if options.verbose {
+            let output = format!("< received response: {response:#?}")
+                .lines()
+                .collect::<Vec<_>>()
+                .join("\n< ");
+            println!("{output}")
+        }
+
         let dst: &mut (dyn AsyncWrite + Unpin) = if let Some(output) = options.output {
+            tracing::debug!("dump output to {}", output.display());
             &mut fs::File::create(output)
                 .await
                 .map_err(|e| format!("failed to create output file: {e:?}"))?
         } else {
-            &mut tokio::io::stdout()
+            tracing::debug!("dump output to stdio");
+            &mut io::stdout()
         };
 
         while let Some(mut data) = recv_stream.recv_data().await? {
@@ -227,6 +261,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
                 data.advance(chunk.len());
             }
         }
+        dst.flush().await?;
 
         Result::<_, Error>::Ok(())
     };
@@ -236,7 +271,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     Ok(())
 }
 
-fn client_parameters() -> gm_quic::ClientParameters {
+fn client_parameters(timeout: Duration) -> gm_quic::ClientParameters {
     let mut params = gm_quic::ClientParameters::default();
 
     params.set_initial_max_streams_bidi(100u32);
@@ -245,6 +280,7 @@ fn client_parameters() -> gm_quic::ClientParameters {
     params.set_initial_max_stream_data_uni(1u32 << 20);
     params.set_initial_max_stream_data_bidi_local(1u32 << 20);
     params.set_initial_max_stream_data_bidi_remote(1u32 << 20);
+    params.set_max_idle_timeout(timeout);
 
     params
 }
