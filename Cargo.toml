@@ -75,3 +75,10 @@ qinterface = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branc
 qconnection = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
 qtraversal = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
 qevent = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

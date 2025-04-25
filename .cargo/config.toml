@@ -1,0 +1,11 @@
+[target.x86_64-unknown-linux-gnu]
+strip = { path = "llvm-strip" }
+
+[target.aarch64-unknown-linux-musl]
+strip = { path = "llvm-strip" }
+
+[target.i686-unknown-linux-musl]
+strip = { path = "llvm-strip" }
+
+[target.armv7-unknown-linux-musleabihf]
+strip = { path = "llvm-strip" }
