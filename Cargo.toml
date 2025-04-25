@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["genmeta", "genmeta-ssh"]
+members = ["genmeta", "genmeta-request", "genmeta-ssh"]
 
 
 [workspace.dependencies]
@@ -58,6 +58,7 @@ crossterm = { version = "0.29", features = ["events", "event-stream"] }
 
 # workspace
 genmeta-ssh = { path = "genmeta-ssh" }
+genmeta-request = { path = "genmeta-request" }
 
 [patch.crates-io]
 h3-shim = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }

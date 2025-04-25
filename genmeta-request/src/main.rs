@@ -1,6 +1,6 @@
 use clap::Parser;
 
-pub mod imp;
+mod imp;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {

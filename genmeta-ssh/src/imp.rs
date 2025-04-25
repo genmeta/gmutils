@@ -1,4 +1,4 @@
-use std::{io::Write, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{io::Write, net::SocketAddr, time::Duration};
 
 use bytes::Buf;
 use clap::Parser;
@@ -14,8 +14,6 @@ use http::uri::Authority;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 
-static ALPN: &[u8] = b"h3";
-
 // 定义客户端与服务器通信的消息结构
 #[derive(Serialize, Deserialize, Debug)]
 enum TerminalMessage {
@@ -29,18 +27,13 @@ enum TerminalMessage {
 #[derive(Parser, Debug)]
 #[command(version, about)]
 pub struct Options {
-    #[arg(
-        long,
-        short,
-        help = "Certificate of CA who issues the server certificate"
-    )]
-    ca: PathBuf,
-
     #[arg(help = "user:password@host:port. password is optional, if not present, prompt for it")]
     auth: Authority,
 }
 
-pub async fn run(options: Options) -> Result<(), Box<dyn core::error::Error + Send + Sync>> {
+type Error = Box<dyn core::error::Error + Send + Sync>;
+
+pub async fn run(options: Options) -> Result<(), Error> {
     let mut username_password = options
         .auth
         .as_str()
@@ -52,7 +45,7 @@ pub async fn run(options: Options) -> Result<(), Box<dyn core::error::Error + Se
     let password = match username_password.next() {
         Some(password) => password.to_string(),
         None => rpassword::prompt_password(format!("Please input password for {username}: "))
-            .map_err(|e| format!("failed to read password: {}", e))?,
+            .map_err(|e| format!("failed to read password: {e}"))?,
     };
 
     debug!(
@@ -212,14 +205,14 @@ pub async fn run(options: Options) -> Result<(), Box<dyn core::error::Error + Se
         .authority(options.auth.clone())
         .path_and_query("/ssh")
         .build()
-        .map_err(|e| format!("failed to build uri: {}", e))?;
+        .map_err(|e| format!("failed to build uri: {e}"))?;
 
     // 构建 Basic Auth 头
     use base64::Engine;
 
-    let credentials = format!("{}:{}", username, password);
+    let credentials = format!("{username}:{password}");
     let b64_encoded = base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes());
-    let auth_header = format!("Basic {}", b64_encoded);
+    let auth_header = format!("Basic {b64_encoded}");
 
     let resolver = UdpResolver::new("1.12.74.4:5300".parse().unwrap());
     let addr = resolver.look_up(options.auth.host()).await?;
@@ -227,7 +220,7 @@ pub async fn run(options: Options) -> Result<(), Box<dyn core::error::Error + Se
     info!("resolved {:?} to address: {:?}", uri, addr);
 
     let mut roots = rustls::RootCertStore::empty();
-    roots.add_parsable_certificates(options.ca.to_certificate());
+    roots.add_parsable_certificates(include_bytes!("../../root.crt").to_certificate());
 
     // NAT Traversal
     let agents = [
@@ -256,7 +249,7 @@ pub async fn run(options: Options) -> Result<(), Box<dyn core::error::Error + Se
     let quic_client = ::gm_quic::QuicClient::builder()
         .with_root_certificates(roots)
         .without_cert()
-        .with_alpns([ALPN])
+        .with_alpns(["h3"])
         .with_iface_factory(factory)
         .with_parameters(client_parameters())
         .enable_sslkeylog()
@@ -306,12 +299,12 @@ pub async fn run(options: Options) -> Result<(), Box<dyn core::error::Error + Se
                     if let Some(msg) = msg {
                         let serialized = serde_json::to_vec(&msg).unwrap();
                         if let Err(e) = sender.send_data(serialized.into()).await {
-                            eprintln!("Write error: {}", e);
+                            eprintln!("Write error: {e}");
                             break;
                         }
                     } else {
                         if let Err(e) = sender.finish().await {
-                            eprintln!("Finish error: {}", e);
+                            eprintln!("Finish error: {e}");
                         }
                         break;
                     }
@@ -319,7 +312,7 @@ pub async fn run(options: Options) -> Result<(), Box<dyn core::error::Error + Se
                 _ = interval.tick() => {
                     let serialized = serde_json::to_vec(&TerminalMessage::Heartbeat).unwrap();
                     if let Err(e) = sender.send_data(serialized.into()).await {
-                        eprintln!("Heartbeat channel error: {}", e);
+                        eprintln!("Heartbeat channel error: {e}");
                         break;
                     }
                 }
@@ -342,7 +335,7 @@ pub async fn run(options: Options) -> Result<(), Box<dyn core::error::Error + Se
                         break;
                     }
                     Err(e) => {
-                        eprintln!("Read error: {}", e);
+                        eprintln!("Read error: {e}");
                         receiver.stop_sending(h3::error::Code::H3_NO_ERROR);
                         break;
                     }
@@ -361,7 +354,7 @@ pub async fn run(options: Options) -> Result<(), Box<dyn core::error::Error + Se
     }
 
     if let Err(e) = tokio::try_join!(send_task, recv_task) {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
     }
 
     // 清理

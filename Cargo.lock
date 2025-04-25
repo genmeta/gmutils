@@ -642,7 +642,26 @@ name = "genmeta"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "genmeta-request",
  "genmeta-ssh",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "genmeta-request"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "clap",
+ "gateway",
+ "gm-quic",
+ "h3",
+ "h3-shim",
+ "http",
+ "qconnection",
+ "rustls",
  "tokio",
  "tracing",
  "tracing-subscriber",

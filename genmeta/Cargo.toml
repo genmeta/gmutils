@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 clap = { workspace = true }
 genmeta-ssh = { workspace = true }
+genmeta-request = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
