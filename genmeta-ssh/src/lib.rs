@@ -12,6 +12,7 @@ use gateway::{Resolver, dns::UdpResolver, localhost::TraversalFactory};
 use gm_quic::ToCertificate;
 use http::Uri;
 use serde::{Deserialize, Serialize};
+use tokio::time;
 use tracing::{error, info};
 
 // 定义客户端与服务器通信的消息结构
@@ -19,7 +20,6 @@ use tracing::{error, info};
 enum TerminalMessage {
     Text(String),
     WindowSize { rows: u16, cols: u16 },
-    Signal(i32),
     ControlSequence(String),
     Heartbeat,
 }
@@ -96,11 +96,25 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
     info!(server_name, ?addrs, "connect to server");
 
-    let quic_conn = quic_client.connect(server_name, addrs[0])?;
+    let mut connect_result = Result::Err(Error::from("Dns not found"));
+    for addr in addrs {
+        let connect = async {
+            let quic_conn = quic_client.connect(server_name, addr)?;
+            let (h3_conn, h3_client) =
+                h3::client::new(h3_shim::QuicConnection::new(quic_conn.clone()).await).await?;
+            Result::<_, Error>::Ok((quic_conn, h3_conn, h3_client))
+        };
+        match time::timeout(Duration::from_secs(3), connect).await {
+            Ok(Ok(connect)) => {
+                connect_result = Ok(connect);
+                break;
+            }
+            Ok(Err(error)) => connect_result = Err(error),
+            Err(_timeout) => connect_result = Err("Connect timeout".into()),
+        }
+    }
 
-    // create h3 client
-    let (mut h3_conn, mut h3_client) =
-        h3::client::new(h3_shim::QuicConnection::new(quic_conn.clone()).await).await?;
+    let (quic_conn, mut h3_conn, mut h3_client) = connect_result?;
     let conn_close_monitor = h3_conn.wait_idle();
 
     // 构建 Basic Auth 头
@@ -227,192 +241,189 @@ fn parse_username_password(options: &Options) -> Result<(String, String), Error>
 }
 
 async fn handle_event(mut tx: mpsc::Sender<TerminalMessage>) {
+    // 初始化发送窗口大小
     let (cols, rows) = terminal::size().unwrap();
     _ = tx.send(TerminalMessage::WindowSize { rows, cols }).await;
+
     while let Some(Ok(event)) = EventStream::new().next().await {
         match event {
+            // 处理窗口大小变化
             Event::Resize(cols, rows) => {
                 _ = tx.send(TerminalMessage::WindowSize { rows, cols }).await;
             }
+
+            // 处理键盘事件
             Event::Key(KeyEvent {
                 code, modifiers, ..
             }) => {
-                let send_result = match (code, modifiers) {
-                    // Control 组合键
-                    (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x01".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x02".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::Signal(2)).await
-                    }
-                    (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x04".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x05".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x06".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('g'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x07".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x08".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('i'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x09".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('j'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x0a".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('k'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x0b".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x0c".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('m'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x0d".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x0e".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x0f".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x10".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('q'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x11".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x12".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('s'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x13".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('t'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x14".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x15".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('v'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x16".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('w'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x17".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('x'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x18".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('y'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x19".to_string()))
-                            .await
-                    }
-                    (KeyCode::Char('z'), KeyModifiers::CONTROL) => {
-                        tx.send(TerminalMessage::ControlSequence("\x1a".to_string()))
-                            .await
-                    }
-                    // 普通字符输入
-                    (KeyCode::Char(c), _) => {
-                        while let Ok(true) = event::poll(Duration::from_millis(0)) {
-                            let _ = event::read();
-                        }
-                        tx.send(TerminalMessage::Text(c.to_string())).await
-                    }
-                    // 特殊键
-                    (KeyCode::Enter, _) => {
-                        while let Ok(true) = event::poll(Duration::from_millis(0)) {
-                            let _ = event::read();
-                        }
-                        tx.send(TerminalMessage::Text("\n".to_string())).await
-                    }
-                    (KeyCode::Tab, _) => tx.send(TerminalMessage::Text("\t".to_string())).await,
-                    (KeyCode::Backspace, _) => {
-                        tx.send(TerminalMessage::ControlSequence("\x7f".to_string()))
-                            .await
-                    }
-                    (KeyCode::Delete, _) => {
-                        tx.send(TerminalMessage::ControlSequence("\x1b[3~".to_string()))
-                            .await
-                    }
-                    (KeyCode::Esc, _) => {
-                        tx.send(TerminalMessage::ControlSequence("\x1b".to_string()))
-                            .await
-                    }
-                    // 方向键
-                    (KeyCode::Up, _) => {
-                        tx.send(TerminalMessage::ControlSequence("\x1b[A".to_string()))
-                            .await
-                    }
-                    (KeyCode::Down, _) => {
-                        tx.send(TerminalMessage::ControlSequence("\x1b[B".to_string()))
-                            .await
-                    }
-                    (KeyCode::Right, _) => {
-                        tx.send(TerminalMessage::ControlSequence("\x1b[C".to_string()))
-                            .await
-                    }
-                    (KeyCode::Left, _) => {
-                        tx.send(TerminalMessage::ControlSequence("\x1b[D".to_string()))
-                            .await
-                    }
-                    // Home/End 键
-                    (KeyCode::Home, _) => {
-                        tx.send(TerminalMessage::ControlSequence("\x1b[H".to_string()))
-                            .await
-                    }
-                    (KeyCode::End, _) => {
-                        tx.send(TerminalMessage::ControlSequence("\x1b[F".to_string()))
-                            .await
-                    }
-                    // Page Up/Down
-                    (KeyCode::PageUp, _) => {
-                        tx.send(TerminalMessage::ControlSequence("\x1b[5~".to_string()))
-                            .await
-                    }
-                    (KeyCode::PageDown, _) => {
-                        tx.send(TerminalMessage::ControlSequence("\x1b[6~".to_string()))
-                            .await
-                    }
-                    _ => Ok(()),
+                // 处理键盘事件并转换为相应的终端消息
+                let message = match key_event_to_terminal_message(code, modifiers) {
+                    Some(msg) => msg,
+                    None => continue, // 不处理不支持的按键
                 };
-                // rx disconnected
+
+                // 发送终端消息
+                let send_result = tx.send(message).await;
+
+                // 检查连接是否断开
                 if send_result.is_err() {
                     break;
                 }
             }
+
+            // 忽略其他类型的事件
             _ => {}
         }
+    }
+}
+
+/// 将键盘事件转换为终端消息
+fn key_event_to_terminal_message(
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> Option<TerminalMessage> {
+    match (code, modifiers) {
+        // 普通字符直接发送为文本
+        (KeyCode::Char(c), KeyModifiers::NONE) => {
+            // 清空输入缓冲区，避免输入延迟
+            while let Ok(true) = event::poll(Duration::from_millis(0)) {
+                let _ = event::read();
+            }
+            Some(TerminalMessage::Text(c.to_string()))
+        }
+
+        // 回车和Tab特殊处理
+        (KeyCode::Enter, _) => {
+            // 清空输入缓冲区，避免输入延迟
+            while let Ok(true) = event::poll(Duration::from_millis(0)) {
+                let _ = event::read();
+            }
+            Some(TerminalMessage::Text("\n".to_string()))
+        }
+        (KeyCode::Tab, _) => Some(TerminalMessage::Text("\t".to_string())),
+
+        // Ctrl+C 特殊处理 - 发送 SIGINT 字符
+        (KeyCode::Char('c'), m) if m == KeyModifiers::CONTROL => {
+            Some(TerminalMessage::ControlSequence("\x03".to_string()))
+        }
+
+        // 其他所有键使用控制序列函数处理
+        (code, modifiers) => {
+            key_event_to_control_sequence(code, modifiers).map(TerminalMessage::ControlSequence)
+        }
+    }
+}
+
+/// 将键盘事件转换为控制序列
+fn key_event_to_control_sequence(code: KeyCode, modifiers: KeyModifiers) -> Option<String> {
+    // 计算修饰键的数值
+    fn calculate_modifier_value(modifiers: KeyModifiers) -> u8 {
+        let mut value = 0;
+        if modifiers.contains(KeyModifiers::SHIFT) {
+            value |= 1;
+        }
+        if modifiers.contains(KeyModifiers::ALT) {
+            value |= 2;
+        }
+        if modifiers.contains(KeyModifiers::CONTROL) {
+            value |= 4;
+        }
+        value
+    }
+
+    // 根据基础序列和修饰键生成完整的控制序列
+    fn with_modifiers(base_sequence: &str, modifiers: KeyModifiers) -> String {
+        let mod_value = calculate_modifier_value(modifiers);
+
+        // 无修饰键时直接返回基础序列
+        if mod_value == 0 {
+            return base_sequence.to_string();
+        }
+
+        // 处理特殊格式的序列（F1-F4使用O前缀）
+        if base_sequence.starts_with("\x1bO") && base_sequence.len() == 3 {
+            let key_char = base_sequence.chars().last().unwrap();
+            return format!("\x1b[1;{}{}", mod_value + 1, key_char);
+        }
+
+        // 处理标准CSI序列
+        if base_sequence.starts_with("\x1b[") {
+            if let Some(pos) = base_sequence.find(|c: char| {
+                c == '~' || c == 'A' || c == 'B' || c == 'C' || c == 'D' || c == 'H' || c == 'F'
+            }) {
+                let prefix = &base_sequence[2..pos];
+                let suffix = &base_sequence[pos..];
+
+                // 处理含数字的序列（如F5-F12, PageUp等）
+                if prefix.chars().all(|c| c.is_ascii_digit()) {
+                    return format!("\x1b[{};{}{}", prefix, mod_value + 1, suffix);
+                } else {
+                    // 处理不含数字的序列（如方向键）
+                    return format!("\x1b[1;{}{}", mod_value + 1, suffix);
+                }
+            }
+        }
+
+        // 未识别的格式，返回原序列
+        base_sequence.to_string()
+    }
+
+    match code {
+        // Ctrl+字母键：特殊处理，生成ASCII控制字符
+        KeyCode::Char(c)
+            if modifiers.contains(KeyModifiers::CONTROL) && c.is_ascii_alphabetic() =>
+        {
+            let ctrl_code = (c.to_ascii_lowercase() as u8 & 0x1f) as char;
+            Some(ctrl_code.to_string())
+        }
+
+        // Alt+字符键：特殊处理，前缀为ESC
+        KeyCode::Char(c) if modifiers.contains(KeyModifiers::ALT) => Some(format!("\x1b{c}")),
+
+        // 普通字符键带其他修饰键：不处理，返回None
+        KeyCode::Char(_) if modifiers != KeyModifiers::NONE => None,
+
+        // 基本控制键
+        KeyCode::Backspace => Some("\x7f".to_string()),
+        KeyCode::Delete => Some(with_modifiers("\x1b[3~", modifiers)),
+        KeyCode::Esc => Some("\x1b".to_string()),
+        // Enter和Tab由上层代码特殊处理
+
+        // 方向键
+        KeyCode::Up => Some(with_modifiers("\x1b[A", modifiers)),
+        KeyCode::Down => Some(with_modifiers("\x1b[B", modifiers)),
+        KeyCode::Right => Some(with_modifiers("\x1b[C", modifiers)),
+        KeyCode::Left => Some(with_modifiers("\x1b[D", modifiers)),
+
+        // 其他控制键
+        KeyCode::Home => Some(with_modifiers("\x1b[H", modifiers)),
+        KeyCode::End => Some(with_modifiers("\x1b[F", modifiers)),
+        KeyCode::PageUp => Some(with_modifiers("\x1b[5~", modifiers)),
+        KeyCode::PageDown => Some(with_modifiers("\x1b[6~", modifiers)),
+        KeyCode::Insert => Some(with_modifiers("\x1b[2~", modifiers)),
+
+        // 功能键 F1-F12
+        KeyCode::F(n) => {
+            let base = match n {
+                1 => "\x1bOP",
+                2 => "\x1bOQ",
+                3 => "\x1bOR",
+                4 => "\x1bOS",
+                5 => "\x1b[15~",
+                6 => "\x1b[17~",
+                7 => "\x1b[18~",
+                8 => "\x1b[19~",
+                9 => "\x1b[20~",
+                10 => "\x1b[21~",
+                11 => "\x1b[23~",
+                12 => "\x1b[24~",
+                _ => return None, // 不支持的功能键
+            };
+            Some(with_modifiers(base, modifiers))
+        }
+
+        // 不支持的按键
+        _ => None,
     }
 }
 
