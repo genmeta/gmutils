@@ -13,13 +13,11 @@ tracing-subscriber = { workspace = true }
 
 # --- Package Metadata (Debian) ---
 [package.metadata.deb]
-name = "genmeta"
+name = "gmutils"
 maintainer = "Genmeta QUIC Team <quic_team@genmeta.net>"
 copyright = "Copyright © 2025 Genmeta QUIC Team"
-extended-description = """
-todo
-"""
-depends = "pishoo-common (>= 0.1.0), $auto"
+extended-description = """Genmeta Binary Utilities"""
+depends = "$auto"
 section = "utilities"
 priority = "optional"
 assets = [["target/release/genmeta", "usr/bin/", "755"]]

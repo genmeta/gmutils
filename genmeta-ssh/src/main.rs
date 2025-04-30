@@ -1,7 +1,5 @@
 use clap::Parser;
 
-pub mod imp;
-
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     tracing_subscriber::fmt()
@@ -9,16 +7,16 @@ async fn main() {
         .with_writer(std::io::stderr)
         .init();
 
-    match imp::Options::try_parse() {
+    match genmeta_ssh::Options::try_parse() {
         Ok(options) => {
-            if let Err(error) = imp::run(options).await {
+            if let Err(error) = genmeta_ssh::run(options).await {
                 eprintln!("Error: {error}");
                 tracing::error!("Error: {}", error);
                 std::process::exit(1);
             }
         }
         Err(e) => {
-            eprintln!("failed to parse command line arguments");
+            eprintln!("Failed to parse command line arguments");
             e.exit()
         }
     }

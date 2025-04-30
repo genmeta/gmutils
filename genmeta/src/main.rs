@@ -22,7 +22,7 @@ async fn main() {
             }
         }
         Err(e) => {
-            eprintln!("failed to parse command line arguments");
+            eprintln!("Failed to parse command line arguments");
             e.exit()
         }
     }

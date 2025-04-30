@@ -12,6 +12,7 @@ futures = "0.3"
 # cli
 clap = { version = "4", features = ["derive"] }
 rpassword = "7.3"
+whoami = "1.4"
 
 # genmeta
 gm-quic = "0.2.0"
