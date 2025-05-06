@@ -266,35 +266,31 @@ async fn handle_event(mut tx: mpsc::Sender<TerminalMessage>) {
 
     let mut event_stream = EventStream::new();
     while let Some(Ok(event)) = event_stream.next().await {
-        match event {
+        let message = match event {
             // 处理窗口大小变化
-            Event::Resize(cols, rows) => {
-                _ = tx.send(TerminalMessage::WindowSize { rows, cols }).await;
-            }
-
+            Event::Resize(cols, rows) => TerminalMessage::WindowSize { rows, cols },
+            // 发送剪切板内容
+            Event::Paste(text) => TerminalMessage::ControlSequence(text),
             // 处理键盘事件
             Event::Key(KeyEvent {
                 code, modifiers, ..
             }) => {
                 tracing::trace!("key event: {code:?} {modifiers:?}");
-                // 处理键盘事件并转换为相应的终端消息
-                let message = match (code, modifiers).try_into() {
-                    Ok(msg) => msg,
+                match (code, modifiers).try_into() {
+                    Ok(message) => message,
                     Err(()) => continue, // 不处理不支持的按键
-                };
-
-                // 发送终端消息
-                let send_result = tx.send(message).await;
-
-                // 检查连接是否断开
-                if send_result.is_err() {
-                    eprintln!("Connection closed, exiting...");
-                    break;
                 }
             }
-
             // 忽略其他类型的事件
-            _ => {}
+            _ => continue,
+        };
+        // 发送终端消息
+        let send_result = tx.send(message).await;
+
+        // 检查连接是否断开
+        if send_result.is_err() {
+            eprintln!("Connection closed, exiting...");
+            break;
         }
     }
 }
