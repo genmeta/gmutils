@@ -10,7 +10,7 @@ async fn main() {
     match genmeta_request::Options::try_parse() {
         Ok(options) => {
             if let Err(error) = genmeta_request::run(options).await {
-                eprintln!("Error: {error}");
+                eprintln!("ERROR: {error}");
                 tracing::error!("Error: {}", error);
                 std::process::exit(1);
             }

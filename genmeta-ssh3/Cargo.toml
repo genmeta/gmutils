@@ -1,5 +1,5 @@
 [package]
-name = "genmeta-ssh"
+name = "genmeta-ssh3"
 description = "ssh client"
 version = "0.0.1"
 edition = "2024"

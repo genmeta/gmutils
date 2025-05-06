@@ -1,8 +1,9 @@
 use clap::Parser;
 
-#[derive(Parser)]
+#[derive(Parser, Debug, Clone)]
+#[command(version)]
 enum Options {
-    Ssh(genmeta_ssh::Options),
+    Ssh3(genmeta_ssh3::Options),
     Request(genmeta_request::Options),
 }
 
@@ -16,8 +17,8 @@ async fn main() {
     match Options::try_parse() {
         Ok(options) => {
             if let Err(error) = run(options).await {
-                eprintln!("Error: {error}");
-                tracing::error!("Error: {}", error);
+                eprintln!("ERROR: {error}");
+                tracing::error!("Error: {error}");
                 std::process::exit(1);
             }
         }
@@ -25,12 +26,12 @@ async fn main() {
             eprintln!("Failed to parse command line arguments");
             e.exit()
         }
-    }
+    };
 }
 
 async fn run(options: Options) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match options {
-        Options::Ssh(options) => genmeta_ssh::run(options).await,
+        Options::Ssh3(options) => genmeta_ssh3::run(options).await,
         Options::Request(options) => genmeta_request::run(options).await,
     }
 }

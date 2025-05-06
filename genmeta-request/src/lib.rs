@@ -11,7 +11,7 @@ use tokio::{
     io::{self, AsyncReadExt, AsyncWrite, AsyncWriteExt},
 };
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(version, about)]
 pub struct Options {
     /// URL to request

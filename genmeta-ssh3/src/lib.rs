@@ -24,23 +24,45 @@ enum TerminalMessage {
     Heartbeat,
 }
 
-#[derive(Parser, Debug)]
+const URI_HELP: &str = "Example: `ssh3://user:password@host:port/ssh`.
+    Scheme is optional, only `ssh3` is accepted.
+    Username is optional, if not present, use current user.
+    Password is optional, if not present, prompt for it.
+    Path is optional, if not present, use `/ssh` as default.";
+
+#[derive(Parser, Debug, Clone)]
 #[command(version, about)]
 pub struct Options {
-    #[arg(
-        help = "Example: `ssh3://user:password@host:port/ssh`.\n Scheme is must not be present or be `ssh3`.\n Password is optional, if not present, prompt for it"
-    )]
+    #[arg(help = URI_HELP)]
     uri: Uri,
 }
 
 type Error = Box<dyn core::error::Error + Send + Sync>;
 
-pub async fn run(options: Options) -> Result<(), Error> {
-    let (username, password) = parse_username_password(&options)?;
+pub async fn run(mut options: Options) -> Result<(), Error> {
+    options.uri = {
+        let mut uri_parts = options.uri.into_parts();
+        uri_parts.scheme = match uri_parts.scheme {
+            Some(ref scheme) if scheme.as_str() == "ssh3" => uri_parts.scheme,
+            None => Some("ssh3".parse().unwrap()),
+            Some(scheme) => {
+                let message = format!(
+                    "Unsupported scheme `{scheme}` for ssh. Scheme in uri is must not be present or be `ssh3`"
+                );
+                return Err(message.into());
+            }
+        };
+        uri_parts.path_and_query = match uri_parts.path_and_query {
+            root if root.as_ref().is_none_or(|path| path == "/") => {
+                tracing::warn!("Path is empty, using `/ssh` as default");
+                Some("/ssh".parse().unwrap())
+            }
+            path_and_query => path_and_query,
+        };
+        Uri::from_parts(uri_parts)?
+    };
 
-    if options.uri.scheme_str().is_some_and(|s| s != "ssh3") {
-        return Err("Scheme in uri is must not be present or be `ssh3`".into());
-    }
+    let (username, password) = parse_username_password(&options)?;
 
     // 创建通道用于异步通信
     let (tx, mut rx) = mpsc::channel::<TerminalMessage>(32);
@@ -364,24 +386,41 @@ fn key_event_to_control_sequence(code: KeyCode, modifiers: KeyModifiers) -> Opti
             }
         }
 
+        // 字符键的修饰键处理 - 使用 CSI u 格式（更标准的字符修饰键格式）
+        if base_sequence.len() == 1 {
+            let char_code = base_sequence.chars().next().unwrap() as u32;
+            return format!("\x1b[{};{}u", char_code, mod_value + 1);
+        }
+
         // 未识别的格式，返回原序列
         base_sequence.to_string()
     }
 
     match code {
-        // Ctrl+字母键：特殊处理，生成ASCII控制字符
-        KeyCode::Char(c)
-            if modifiers.contains(KeyModifiers::CONTROL) && c.is_ascii_alphabetic() =>
-        {
-            let ctrl_code = (c.to_ascii_lowercase() as u8 & 0x1f) as char;
-            Some(ctrl_code.to_string())
+        // 字符键的处理
+        KeyCode::Char(c) => {
+            // 无修饰键的普通字符由上层直接处理为文本
+            if modifiers == KeyModifiers::NONE {
+                return None;
+            }
+
+            // Ctrl+字母键：特殊处理，生成ASCII控制字符（保持兼容性）
+            if modifiers == KeyModifiers::CONTROL && c.is_ascii_alphabetic() {
+                let ctrl_code = (c.to_ascii_lowercase() as u8 & 0x1f) as char;
+                return Some(ctrl_code.to_string());
+            }
+
+            // Alt+字符键：特殊处理，前缀为ESC（保持兼容性）
+            if modifiers == KeyModifiers::ALT {
+                return Some(format!("\x1b{c}"));
+            }
+
+            // 其他修饰键组合：使用标准 CSI u 格式
+            // 这是现代终端支持的更通用的格式，能处理任意字符和修饰键组合
+            let char_code = c as u32;
+            let mod_value = calculate_modifier_value(modifiers) + 1;
+            Some(format!("\x1b[{char_code};{mod_value}u"))
         }
-
-        // Alt+字符键：特殊处理，前缀为ESC
-        KeyCode::Char(c) if modifiers.contains(KeyModifiers::ALT) => Some(format!("\x1b{c}")),
-
-        // 普通字符键带其他修饰键：不处理，返回None
-        KeyCode::Char(_) if modifiers != KeyModifiers::NONE => None,
 
         // 基本控制键
         KeyCode::Backspace => Some("\x7f".to_string()),

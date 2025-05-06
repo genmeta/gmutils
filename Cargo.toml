@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["genmeta", "genmeta-request", "genmeta-ssh"]
+members = ["genmeta", "genmeta-request", "genmeta-ssh3"]
 
 
 [workspace.dependencies]
@@ -58,7 +58,7 @@ base64 = "0.22"
 crossterm = { version = "0.29", features = ["events", "event-stream"] }
 
 # workspace
-genmeta-ssh = { path = "genmeta-ssh" }
+genmeta-ssh3 = { path = "genmeta-ssh3" }
 genmeta-request = { path = "genmeta-request" }
 
 [patch.crates-io]
