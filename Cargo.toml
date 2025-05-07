@@ -21,7 +21,7 @@ qconnection = "0.2.0"
 qinterface = "0.2.0"
 qevent = "0.2.0"
 qtraversal = "0.2.0"
-gateway = { git = "ssh://git@github.com/genmeta/gateway.git", branch = "develop" }
+gateway = { git = "ssh://git@github.com/genmeta/gateway.git", branch = "develop", default-features = false }
 
 # http
 http = "1"

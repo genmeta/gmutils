@@ -135,7 +135,10 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     let (username, password) = parse_username_password(&options).await?;
     let basic_auth = {
         use base64::Engine;
-        let credentials = format!("{username}:{password}");
+        let credentials = match password {
+            Some(password) => format!("{username}:{password}"),
+            None => username,
+        };
         base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes())
     };
 
@@ -193,13 +196,13 @@ async fn send(
                 Some(msg) => {
                     let serialized = serde_json::to_vec(&msg).unwrap();
                     if let Err(e) = sender.send_data(serialized.into()).await {
-                        eprintln!("Send to peer error: {e}");
+                        tracing::error!("Send to peer error: {e}");
                         break;
                     }
                 }
                 None => {
                     if let Err(e) = sender.finish().await {
-                        eprintln!("Finish stream error: {e}");
+                        tracing::error!("Finish stream error: {e}");
                     }
                     break;
                 }
@@ -207,7 +210,7 @@ async fn send(
             _ = interval.tick() => {
                 let serialized = serde_json::to_vec(&TerminalMessage::Heartbeat).unwrap();
                 if let Err(e) = sender.send_data(serialized.into()).await {
-                    eprintln!("Send heartbeat error: {e}");
+                    tracing::error!("Send heartbeat error: {e}");
                     break;
                 }
             }
@@ -228,7 +231,7 @@ async fn recv(mut receiver: h3::client::RequestStream<h3_shim::RecvStream, Bytes
                 break;
             }
             Err(e) => {
-                eprintln!("Read from peer error: {e}");
+                tracing::error!("Read from peer error: {e}");
                 receiver.stop_sending(h3::error::Code::H3_NO_ERROR);
                 break;
             }
@@ -236,32 +239,19 @@ async fn recv(mut receiver: h3::client::RequestStream<h3_shim::RecvStream, Bytes
     }
 }
 
-async fn parse_username_password(options: &Options) -> Result<(String, String), Error> {
+async fn parse_username_password(options: &Options) -> Result<(String, Option<String>), Error> {
     let try_from_uri = |username_password: &str| {
         username_password
             .split_once(':')
             .map(|(username, password)| (username.to_string(), Some(password.to_string())))
             .unwrap_or((username_password.to_string(), None))
     };
-    let (username, password) = options
+    Ok(options
         .uri
         .authority()
         .and_then(|authority| authority.as_str().rsplit_once('@'))
         .map(|(username_password, _host)| try_from_uri(username_password))
-        .unwrap_or_else(|| (whoami::username(), None));
-
-    let password = match password {
-        Some(password) => password,
-        None => {
-            let prompt = format!("Please input password for {username}: ");
-            // rpassword::prompt_password(prompt)
-            tokio::task::spawn_blocking(|| rpassword::prompt_password(prompt))
-                .await
-                .map_err(|e| format!("Failed to read password: {e}"))?
-                .map_err(|e| format!("Failed to read password: {e}"))?
-        }
-    };
-    Ok((username, password))
+        .unwrap_or_else(|| (whoami::username(), None)))
 }
 
 async fn handle_event(mut tx: mpsc::Sender<TerminalMessage>) {
@@ -294,7 +284,6 @@ async fn handle_event(mut tx: mpsc::Sender<TerminalMessage>) {
 
         // 检查连接是否断开
         if send_result.is_err() {
-            eprintln!("Connection closed, exiting...");
             break;
         }
     }
