@@ -61,8 +61,6 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         Uri::from_parts(uri_parts)?
     };
 
-    let (username, password) = parse_username_password(&options)?;
-
     // 创建通道用于异步通信
     let (mut tx, rx) = mpsc::channel::<TerminalMessage>(32);
 
@@ -134,6 +132,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     };
 
     // 构建 Basic Auth 头
+    let (username, password) = parse_username_password(&options).await?;
     let basic_auth = {
         use base64::Engine;
         let credentials = format!("{username}:{password}");
@@ -237,7 +236,7 @@ async fn recv(mut receiver: h3::client::RequestStream<h3_shim::RecvStream, Bytes
     }
 }
 
-fn parse_username_password(options: &Options) -> Result<(String, String), Error> {
+async fn parse_username_password(options: &Options) -> Result<(String, String), Error> {
     let try_from_uri = |username_password: &str| {
         username_password
             .split_once(':')
@@ -253,8 +252,14 @@ fn parse_username_password(options: &Options) -> Result<(String, String), Error>
 
     let password = match password {
         Some(password) => password,
-        None => rpassword::prompt_password(format!("Please input password for {username}: "))
-            .map_err(|e| format!("Failed to read password: {e}"))?,
+        None => {
+            let prompt = format!("Please input password for {username}: ");
+            // rpassword::prompt_password(prompt)
+            tokio::task::spawn_blocking(|| rpassword::prompt_password(prompt))
+                .await
+                .map_err(|e| format!("Failed to read password: {e}"))?
+                .map_err(|e| format!("Failed to read password: {e}"))?
+        }
     };
     Ok((username, password))
 }
