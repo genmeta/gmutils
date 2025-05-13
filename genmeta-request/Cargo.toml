@@ -7,12 +7,13 @@ edition = "2024"
 [dependencies]
 bytes = { workspace = true }
 clap = { workspace = true }
-gateway = { workspace = true }
 gm-quic = { workspace = true }
 h3 = { workspace = true }
 h3-shim = { workspace = true }
 http = { workspace = true }
 qconnection = { workspace = true }
+qdns = { workspace = true }
+qtraversal = { workspace = true }
 rustls = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

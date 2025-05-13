@@ -8,9 +8,10 @@ use crossterm::{
     terminal::{self},
 };
 use futures::{SinkExt, StreamExt, channel::mpsc};
-use gateway::{Resolver, dns::UdpResolver, localhost::TraversalFactory};
 use gm_quic::{QuicClient, ToCertificate};
 use http::Uri;
+use qdns::{Resolve, UdpResolver};
+use qtraversal::iface::TraversalFactory;
 use serde::{Deserialize, Serialize};
 use tokio::time;
 use tracing::{error, info};
@@ -69,7 +70,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
 
     let resolver = UdpResolver::new("1.12.74.4:5300".parse().unwrap());
     let server_name = options.uri.host().ok_or("Missing host in uri")?;
-    let server_addrs = resolver.look_up(server_name).await?;
+    let server_addrs = resolver.lookup(server_name).await?;
 
     info!("resolved {} to address: {:?}", server_name, server_addrs);
 
@@ -86,13 +87,9 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         let binds = factory
             .devices()
             .keys()
-            .filter_map(|device_ip| {
-                device_ip
-                    .parse()
-                    // TODO 此处使用 0 端口, 测试通过, 但不太确定是否有什么问题
-                    .map(|ip| SocketAddr::new(ip, 0))
-                    .inspect_err(|e| error!("Invalid device IP {}: {:?}", device_ip, e))
-                    .ok()
+            .map(|device_ip| {
+                // TODO 此处使用 0 端口, 测试通过, 但不太确定是否有什么问题
+                SocketAddr::new(*device_ip, 0)
             })
             .collect::<Vec<_>>();
         QuicClient::builder()

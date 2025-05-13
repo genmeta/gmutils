@@ -1,11 +1,12 @@
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use bytes::{Buf, BytesMut};
-use gateway::{Resolver, dns::UdpResolver, localhost::TraversalFactory};
 use gm_quic::ToCertificate;
 use http::{Method, Request, Uri};
 
 use clap::Parser;
+use qdns::{Resolve, UdpResolver};
+use qtraversal::iface::TraversalFactory;
 use tokio::{
     fs,
     io::{self, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -99,7 +100,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let resolver = UdpResolver::new("1.12.74.4:5300".parse().unwrap());
     let server_name = options.uri.host().ok_or("missing host in uri")?;
     let addrs = resolver
-        .look_up(server_name)
+        .lookup(server_name)
         .await
         .map_err(|e| format!("failed to resolve host {server_name}: {e:?}"))?;
 
@@ -124,15 +125,8 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let mut binds = Vec::new();
 
     for device_ip in factory.devices().keys() {
-        let device_ip = match device_ip.parse() {
-            Ok(ip) => ip,
-            Err(e) => {
-                tracing::error!("Invalid device IP {}: {:?}", device_ip, e);
-                continue;
-            }
-        };
         // TODO 此处使用 0 端口, 测试通过, 但不太确定是否有什么问题
-        binds.push(SocketAddr::new(device_ip, 0));
+        binds.push(SocketAddr::new(*device_ip, 0));
     }
 
     let quic_client = ::gm_quic::QuicClient::builder()

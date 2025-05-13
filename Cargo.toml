@@ -15,25 +15,22 @@ rpassword = "7.3"
 whoami = "1.4"
 
 # genmeta
-gm-quic = "0.2.0"
-h3-shim = "0.2.0"
-qconnection = "0.2.0"
-qinterface = "0.2.0"
-qevent = "0.2.0"
-qtraversal = "0.2.0"
-gateway = { git = "ssh://git@github.com/genmeta/gateway.git", branch = "develop", default-features = false }
+h3-shim = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
+qconnection = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
+qdns = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
+qevent = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
+qinterface = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
+gm-quic = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
+qtraversal = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
 
 # http
 http = "1"
-http-body-util = "0.1"
-hyper = { version = "1", features = ["http1", "server", "client"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
 h3 = { version = "0.0.7", features = ["tracing"] }
 
 # security
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
-rustls-native-certs = "0.8"
-pam = "0.7"
+# dont load system certs
+# rustls-native-certs = "0.8" 
 
 # serialization
 serde = { version = "1", features = ["derive"] }
@@ -64,22 +61,6 @@ crossterm = { version = "0.29", features = [
 # workspace
 genmeta-ssh3 = { path = "genmeta-ssh3" }
 genmeta-request = { path = "genmeta-request" }
-
-[patch.crates-io]
-h3-shim = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-gm-quic = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qinterface = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qconnection = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qtraversal = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qevent = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-
-[patch.'ssh://git@github.com/genmeta/gateway.git']
-h3-shim = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-gm-quic = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qinterface = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qconnection = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qtraversal = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qevent = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
 
 [profile.release]
 opt-level = "z"

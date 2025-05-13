@@ -10,14 +10,14 @@ bytes = { workspace = true }
 clap = { workspace = true }
 crossterm = { workspace = true }
 futures = { workspace = true }
-gateway = { workspace = true }
 gm-quic = { workspace = true }
 h3 = { workspace = true }
 h3-shim = { workspace = true }
 http = { workspace = true }
 qconnection = { workspace = true }
+qdns = { workspace = true }
+qtraversal = { workspace = true }
 rustls = { workspace = true }
-rpassword = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
