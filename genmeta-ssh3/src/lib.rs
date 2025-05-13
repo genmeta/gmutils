@@ -211,6 +211,8 @@ pub async fn run(options: Options) -> Result<(), Error> {
         _ = tokio::spawn(send(sender, rx)) => (),
         // receive data from the stream and write to stdout
         _ = tokio::spawn(recv(receiver)) => (),
+        // send heartbeat messages to keep ssh connection alive
+        _ = tokio::spawn(heartbeat(tx.clone())) => (),
         // wait for the quic connection to be terminated
         _ = quic_conn.terminated() => (),
         // wait for the h3 connection to be closed
@@ -325,8 +327,6 @@ async fn handle_winresize(mut tx: mpsc::Sender<TerminalMessage>) {
             tracing::error!("Failed to update terminal size: {e}");
         };
     }
-
-    tracing::error!("Failed to handle signals");
 }
 
 async fn handle_stdin(mut tx: mpsc::Sender<TerminalMessage>) {
@@ -358,8 +358,17 @@ async fn handle_stdin(mut tx: mpsc::Sender<TerminalMessage>) {
             return;
         }
     }
+}
 
-    tracing::error!("Failed to read from stdin");
+async fn heartbeat(mut tx: mpsc::Sender<TerminalMessage>) {
+    let mut interval = tokio::time::interval(Duration::from_secs(20));
+    loop {
+        interval.tick().await;
+        let message = TerminalMessage::Heartbeat;
+        if tx.send(message).await.is_err() {
+            return;
+        }
+    }
 }
 
 fn client_parameters() -> gm_quic::ClientParameters {
