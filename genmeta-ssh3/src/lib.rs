@@ -87,10 +87,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         let binds = factory
             .devices()
             .keys()
-            .map(|device_ip| {
-                // TODO 此处使用 0 端口, 测试通过, 但不太确定是否有什么问题
-                SocketAddr::new(*device_ip, 0)
-            })
+            .map(|device_ip| SocketAddr::new(*device_ip, 0))
             .collect::<Vec<_>>();
         QuicClient::builder()
             .with_root_certificates(roots)
@@ -99,6 +96,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             .with_iface_factory(factory)
             .with_parameters(client_parameters())
             .enable_sslkeylog()
+            .reuse_address()
             .bind(&binds[..])
             .inspect_err(|e| {
                 error!("bind addrs: {binds:?}  err {e:?}");
@@ -110,19 +108,29 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         info!(server_name, ?server_addrs, "connect to server");
         let mut connect_result = Result::Err(Error::from("Dns not found"));
         for server_addr in server_addrs {
-            let connect = async {
+            let attempt = async {
                 let quic_conn = quic_client.connect(server_name, server_addr)?;
-                let (h3_conn, h3_client) =
-                    h3::client::new(h3_shim::QuicConnection::new(quic_conn.clone()).await).await?;
+                let connect = async {
+                    h3::client::new(h3_shim::QuicConnection::new(quic_conn.clone()).await).await
+                };
+                #[rustfmt::skip] // https://github.com/rust-lang/rustfmt/issues/6564
+                let (h3_conn, h3_client) = time::timeout(Duration::from_secs(3), connect)
+                    .await
+                    .map_err(|_| {
+                        quic_conn.close("connect timeout".into(), 0);
+                        "connect timeout"
+                })??;
                 Result::<_, Error>::Ok((quic_conn, h3_conn, h3_client))
             };
-            match time::timeout(Duration::from_secs(3), connect).await {
-                Ok(Ok(connect)) => {
+            match attempt.await {
+                Ok(connect) => {
                     connect_result = Ok(connect);
                     break;
                 }
-                Ok(Err(error)) => connect_result = Err(error),
-                Err(_timeout) => connect_result = Err("Connect timeout".into()),
+                Err(error) => {
+                    tracing::error!("attempt connect to server {server_addr} failed: error");
+                    connect_result = Err(error)
+                }
             }
         }
         connect_result?

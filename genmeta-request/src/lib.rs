@@ -10,6 +10,7 @@ use qtraversal::iface::TraversalFactory;
 use tokio::{
     fs,
     io::{self, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    time,
 };
 
 #[derive(Parser, Debug, Clone)]
@@ -99,63 +100,84 @@ type Error = Box<dyn core::error::Error + Send + Sync>;
 pub async fn run(options: Options) -> Result<(), Error> {
     let resolver = UdpResolver::new("1.12.74.4:5300".parse().unwrap());
     let server_name = options.uri.host().ok_or("missing host in uri")?;
-    let addrs = resolver
+    let server_addrs = resolver
         .lookup(server_name)
         .await
         .map_err(|e| format!("failed to resolve host {server_name}: {e:?}"))?;
 
-    tracing::info!("resolved {server_name} to address: {addrs:?}");
+    tracing::info!("resolved {server_name} to address: {server_addrs:?}");
     if options.verbose {
-        eprintln!("* resolved {server_name} to address: {addrs:?}");
+        eprintln!("* resolved {server_name} to address: {server_addrs:?}");
     }
 
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add_parsable_certificates(include_bytes!("../../root.crt").to_certificate());
+    let quic_client = {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add_parsable_certificates(include_bytes!("../../root.crt").to_certificate());
 
-    // NAT Traversal
-    let agents = [
-        "1.12.74.4:20004".parse().unwrap(),
-        "[2402:4e00:c011:1700:8624:7e0:5c9a:2]:20004"
-            .parse()
-            .unwrap(),
-    ];
+        let factory = TraversalFactory::with(&[
+            "1.12.74.4:20004".parse().unwrap(),
+            "[2402:4e00:c011:1700:8624:7e0:5c9a:2]:20004"
+                .parse()
+                .unwrap(),
+        ]);
+        let binds = factory
+            .devices()
+            .keys()
+            .map(|device_ip| SocketAddr::new(*device_ip, 0))
+            .collect::<Vec<_>>();
+        gm_quic::QuicClient::builder()
+            .with_root_certificates(roots)
+            .without_cert()
+            .with_alpns(["h3"])
+            .with_iface_factory(factory)
+            .with_parameters(client_parameters(Duration::from_secs(
+                options.connect_timeout.unwrap_or_default(),
+            )))
+            .enable_sslkeylog()
+            .reuse_address()
+            .bind(&binds[..])
+            .inspect_err(|e| {
+                tracing::error!("bind addrs: {binds:?}  err {e:?}");
+            })?
+            .build()
+    };
 
-    let factory = TraversalFactory::with(&agents[..]);
-
-    let mut binds = Vec::new();
-
-    for device_ip in factory.devices().keys() {
-        // TODO 此处使用 0 端口, 测试通过, 但不太确定是否有什么问题
-        binds.push(SocketAddr::new(*device_ip, 0));
-    }
-
-    let quic_client = ::gm_quic::QuicClient::builder()
-        .with_root_certificates(roots)
-        .without_cert()
-        .with_alpns(["h3"])
-        .with_iface_factory(factory)
-        .with_parameters(client_parameters(Duration::from_secs(
-            options.connect_timeout.unwrap_or_default(),
-        )))
-        .enable_sslkeylog()
-        .bind(&binds[..])
-        .inspect_err(|e| {
-            tracing::error!("bind addrs: {binds:?}  err {e:?}");
-        })?
-        .build();
-
-    let quic_connection = quic_client
-        .connect(server_name, addrs[0])
-        .map_err(|e| format!("failed to create quic connection: {e:?}"))?;
-    let (mut h3_connection, mut send_request) =
-        h3::client::new(h3_shim::QuicConnection::new(quic_connection).await)
-            .await
-            .map_err(|e| format!("failed to failed to establish http3 connection: {e:?}"))?;
+    let (_quic_conn, mut h3_conn, mut h3_client) = {
+        tracing::info!(server_name, ?server_addrs, "connect to server");
+        let mut connect_result = Result::Err(Error::from("Dns not found"));
+        for server_addr in server_addrs {
+            let attempt = async {
+                let quic_conn = quic_client.connect(server_name, server_addr)?;
+                let connect = async {
+                    h3::client::new(h3_shim::QuicConnection::new(quic_conn.clone()).await).await
+                };
+                #[rustfmt::skip] // https://github.com/rust-lang/rustfmt/issues/6564
+                    let (h3_conn, h3_client) = time::timeout(Duration::from_secs(3), connect)
+                        .await
+                        .map_err(|_| {
+                            quic_conn.close("connect timeout".into(), 0);
+                            "connect timeout"
+                    })??;
+                Result::<_, Error>::Ok((quic_conn, h3_conn, h3_client))
+            };
+            match attempt.await {
+                Ok(connect) => {
+                    connect_result = Ok(connect);
+                    break;
+                }
+                Err(error) => {
+                    tracing::error!("attempt connect to server {server_addr} failed: error");
+                    connect_result = Err(error)
+                }
+            }
+        }
+        connect_result?
+    };
     if options.verbose {
         eprintln!("* establish http3 connection to {server_name}");
     }
     tracing::info!("http3 connection established");
-    tokio::spawn(async move { h3_connection.wait_idle().await });
+    tokio::spawn(async move { h3_conn.wait_idle().await });
 
     let mut request_builder = Request::builder().uri(options.uri.clone());
 
@@ -185,7 +207,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
     tracing::info!("build request: {request:?}");
 
-    let request_stream = send_request
+    let request_stream = h3_client
         .send_request(request)
         .await
         .map_err(|e| format!("failed to send request: {e:?}"))?;
