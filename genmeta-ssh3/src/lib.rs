@@ -1,26 +1,25 @@
-use std::{io::Write, net::SocketAddr, time::Duration};
+use std::{io::Read, net::SocketAddr, time::Duration};
 
 use bytes::{Buf, Bytes};
 use clap::Parser;
-use crossterm::{
-    event::{self, Event, EventStream, KeyCode, KeyEvent, KeyModifiers},
-    execute,
-    terminal::{self},
-};
+use crossterm::terminal;
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use gm_quic::{QuicClient, ToCertificate};
 use http::Uri;
 use qdns::{Resolve, UdpResolver};
 use qtraversal::iface::TraversalFactory;
-use serde::{Deserialize, Serialize};
-use tokio::time;
-use tracing::{error, info};
+use serde::Serialize;
+use tokio::{
+    signal::unix::{SignalKind, signal},
+    time,
+};
 
 // 定义客户端与服务器通信的消息结构
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 enum TerminalMessage {
     WindowSize { rows: u16, cols: u16 },
-    ControlSequence(String),
+    Terminal { sequence: Vec<u8> },
+    // ControlSequence(String),
     Heartbeat,
 }
 
@@ -37,11 +36,9 @@ pub struct Options {
     uri: Uri,
 }
 
-type Error = Box<dyn core::error::Error + Send + Sync>;
-
-pub async fn run(mut options: Options) -> Result<(), Error> {
-    options.uri = {
-        let mut uri_parts = options.uri.into_parts();
+impl Options {
+    fn complete_uri(self) -> Result<Self, Error> {
+        let mut uri_parts = self.uri.into_parts();
         uri_parts.scheme = match uri_parts.scheme {
             Some(ref scheme) if scheme.as_str() == "ssh3" => uri_parts.scheme,
             None => Some("ssh3".parse().unwrap()),
@@ -59,20 +56,55 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             }
             path_and_query => path_and_query,
         };
-        Uri::from_parts(uri_parts)?
-    };
+        Ok(Self {
+            uri: Uri::from_parts(uri_parts)?,
+        })
+    }
+
+    fn username_password(&self) -> (String, Option<String>) {
+        let try_from_uri = |username_password: &str| {
+            username_password
+                .split_once(':')
+                .map(|(username, password)| (username.to_string(), Some(password.to_string())))
+                .unwrap_or((username_password.to_string(), None))
+        };
+        self.uri
+            .authority()
+            .and_then(|authority| authority.as_str().rsplit_once('@'))
+            .map(|(username_password, _host)| try_from_uri(username_password))
+            .unwrap_or_else(|| (whoami::username(), None))
+    }
+}
+
+type Error = Box<dyn core::error::Error + Send + Sync>;
+
+struct TerminalGuard(());
+impl TerminalGuard {
+    pub fn new() -> Self {
+        terminal::enable_raw_mode().expect("Failed to enable raw mode");
+        TerminalGuard(())
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        terminal::disable_raw_mode().expect("Failed to disable raw mode");
+    }
+}
+
+pub async fn run(options: Options) -> Result<(), Error> {
+    let options = options
+        .complete_uri()
+        .map_err(|e| format!("Failed to complete URI: {e:?}"))?;
 
     // 创建通道用于异步通信
     let (mut tx, rx) = mpsc::channel::<TerminalMessage>(32);
-
-    // 启动事件监听任务。不需要要await因为它结束时程序也结束了
-    let _event_task = tokio::spawn(handle_event(tx.clone()));
 
     let resolver = UdpResolver::new("1.12.74.4:5300".parse().unwrap());
     let server_name = options.uri.host().ok_or("Missing host in uri")?;
     let server_addrs = resolver.lookup(server_name).await?;
 
-    info!("resolved {} to address: {:?}", server_name, server_addrs);
+    tracing::info!("resolved {} to address: {:?}", server_name, server_addrs);
 
     let quic_client = {
         let mut roots = rustls::RootCertStore::empty();
@@ -99,13 +131,13 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             .reuse_address()
             .bind(&binds[..])
             .inspect_err(|e| {
-                error!("bind addrs: {binds:?}  err {e:?}");
+                tracing::error!("bind addrs: {binds:?}  err {e:?}");
             })?
             .build()
     };
 
     let (quic_conn, mut h3_conn, mut h3_client) = {
-        info!(server_name, ?server_addrs, "connect to server");
+        tracing::info!(server_name, ?server_addrs, "connect to server");
         let mut connect_result = Result::Err(Error::from("Dns not found"));
         for server_addr in server_addrs {
             let attempt = async {
@@ -137,17 +169,18 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     };
 
     // 构建 Basic Auth 头
-    let (username, password) = parse_username_password(&options).await?;
     let basic_auth = {
         use base64::Engine;
-        let credentials = match password {
-            Some(password) => format!("{username}:{password}"),
-            None => username,
+        let credentials = match options.username_password() {
+            (username, Some(password)) => {
+                format!("{username}:{password}")
+            }
+            (username, None) => username,
         };
         base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes())
     };
 
-    info!(%options.uri, "request");
+    tracing::info!(%options.uri, "request");
     let request = http::Request::builder()
         .method("PUT")
         .uri(options.uri)
@@ -158,20 +191,22 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     // which is also used for receiving response
     let mut stream = h3_client.send_request(request).await?;
     let response = stream.recv_response().await?;
-    info!(?response, "received");
+    tracing::info!(?response, "received");
     if response.status() != 200 {
         return Err(format!("Server response status: {}", response.status()).into());
     }
 
+    let (sender, receiver) = stream.split();
+
     // 初始化终端
     // execute!(std::io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
-    terminal::enable_raw_mode()?;
-
-    let (sender, receiver) = stream.split();
+    let _guard = TerminalGuard::new();
 
     tokio::select! {
         // read and encode messages from stdin
-        // _ = event_task => (),
+        _ = handle_stdin(tx.clone()) => (),
+        // handle window resize events
+        _ = handle_winresize(tx.clone())=> (),
         // write messages to the stream
         _ = tokio::spawn(send(sender, rx)) => (),
         // receive data from the stream and write to stdout
@@ -181,11 +216,11 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         // wait for the h3 connection to be closed
         _ = h3_conn.wait_idle() => (),
     }
-    // close the input channel when the connection is closed
-    tx.close_channel();
 
     // 清理
     terminal::disable_raw_mode()?;
+    tx.close_channel();
+    quic_conn.close("Bye bye".into(), h3::error::Code::H3_NO_ERROR.value());
 
     Ok(())
 }
@@ -199,7 +234,7 @@ async fn send(
         tokio::select! {
             msg = rx.next() => match msg {
                 Some(msg) => {
-                    let serialized = serde_json::to_vec(&msg).unwrap();
+                    let serialized = serde_cbor::to_vec(&msg).unwrap();
                     if let Err(e) = sender.send_data(serialized.into()).await {
                         tracing::error!("Send to peer error: {e}");
                         break;
@@ -213,7 +248,7 @@ async fn send(
                 }
             },
             _ = interval.tick() => {
-                let serialized = serde_json::to_vec(&TerminalMessage::Heartbeat).unwrap();
+                let serialized = serde_cbor::to_vec(&TerminalMessage::Heartbeat).unwrap();
                 if let Err(e) = sender.send_data(serialized.into()).await {
                     tracing::error!("Send heartbeat error: {e}");
                     break;
@@ -224,15 +259,30 @@ async fn send(
 }
 
 async fn recv(mut receiver: h3::client::RequestStream<h3_shim::RecvStream, Bytes>) {
-    let stdout = std::io::stdout();
     loop {
         match receiver.recv_data().await {
-            Ok(Some(chunk)) => {
-                let response = String::from_utf8_lossy(chunk.chunk());
-                execute!(stdout.lock(), crossterm::style::Print(response)).unwrap();
-                stdout.lock().flush().unwrap();
+            Ok(Some(mut data)) => {
+                // 不知为何往tokio::stdin写时会缺少一行输出
+                let write_result = tokio::task::spawn_blocking(move || {
+                    use std::io::Write;
+                    let mut stdout = std::io::stdout().lock();
+                    while data.has_remaining() {
+                        let chunk = data.chunk();
+                        stdout.write_all(chunk)?;
+                        data.advance(chunk.len());
+                    }
+                    stdout.flush()
+                })
+                .await;
+
+                if let Err(e) = write_result.unwrap() {
+                    tracing::error!("Write to stdout error: {e}");
+                    receiver.stop_sending(h3::error::Code::H3_NO_ERROR);
+                    break;
+                }
             }
             Ok(None) => {
+                tracing::info!("Peer closed the stream");
                 break;
             }
             Err(e) => {
@@ -244,203 +294,72 @@ async fn recv(mut receiver: h3::client::RequestStream<h3_shim::RecvStream, Bytes
     }
 }
 
-async fn parse_username_password(options: &Options) -> Result<(String, Option<String>), Error> {
-    let try_from_uri = |username_password: &str| {
-        username_password
-            .split_once(':')
-            .map(|(username, password)| (username.to_string(), Some(password.to_string())))
-            .unwrap_or((username_password.to_string(), None))
-    };
-    Ok(options
-        .uri
-        .authority()
-        .and_then(|authority| authority.as_str().rsplit_once('@'))
-        .map(|(username_password, _host)| try_from_uri(username_password))
-        .unwrap_or_else(|| (whoami::username(), None)))
-}
-
-async fn handle_event(mut tx: mpsc::Sender<TerminalMessage>) {
-    // 初始化发送窗口大小
-    let (cols, rows) = terminal::size().unwrap();
-    _ = tx.send(TerminalMessage::WindowSize { rows, cols }).await;
-
-    let mut event_stream = EventStream::new();
-    while let Some(Ok(event)) = event_stream.next().await {
-        let message = match event {
-            // 处理窗口大小变化
-            Event::Resize(cols, rows) => TerminalMessage::WindowSize { rows, cols },
-            // 发送剪切板内容
-            Event::Paste(text) => TerminalMessage::ControlSequence(text),
-            // 处理键盘事件
-            Event::Key(KeyEvent {
-                code, modifiers, ..
-            }) => {
-                tracing::trace!("key event: {code:?} {modifiers:?}");
-                match (code, modifiers).try_into() {
-                    Ok(message) => message,
-                    Err(()) => continue, // 不处理不支持的按键
-                }
+async fn handle_winresize(mut tx: mpsc::Sender<TerminalMessage>) {
+    let mut update_winsize = async || {
+        let message = match terminal::size() {
+            Ok((cols, rows)) => TerminalMessage::WindowSize { rows, cols },
+            Err(e) => {
+                return Err(Error::from(format!("Failed to get terminal size: {e}")));
             }
-            // 忽略其他类型的事件
-            _ => continue,
         };
-        // 发送终端消息
-        let send_result = tx.send(message).await;
-
-        // 检查连接是否断开
-        if send_result.is_err() {
-            break;
+        if tx.send(message).await.is_err() {
+            return Err("Event channel closed".into());
         }
+        Ok(())
+    };
+
+    if let Err(e) = update_winsize().await {
+        tracing::error!("Failed to update terminal size: {e}");
+    };
+
+    let mut signal_listener = match signal(SignalKind::window_change()) {
+        Ok(listener) => listener,
+        Err(e) => {
+            tracing::error!("Failed to create signal handler for SIGWINCH: {e}");
+            return;
+        }
+    };
+
+    while let Some(()) = signal_listener.recv().await {
+        if let Err(e) = update_winsize().await {
+            tracing::error!("Failed to update terminal size: {e}");
+        };
     }
+
+    tracing::error!("Failed to handle signals");
 }
 
-impl TryFrom<(KeyCode, KeyModifiers)> for TerminalMessage {
-    type Error = ();
-
-    fn try_from((code, modifiers): (KeyCode, KeyModifiers)) -> Result<Self, Self::Error> {
-        // 清空输入缓冲区，避免输入延迟
-        while let Ok(true) = event::poll(Duration::from_millis(0)) {
-            let _ = event::read();
-        }
-
-        // 对所有键盘事件统一处理：转换为适当的序列
-        Ok(TerminalMessage::ControlSequence(
-            key_event_to_sequence(code, modifiers).ok_or(())?,
-        ))
-    }
-}
-
-/// 将键盘事件转换为控制序列或文本
-fn key_event_to_sequence(code: KeyCode, modifiers: KeyModifiers) -> Option<String> {
-    // 计算修饰键的数值
-    fn calculate_modifier_value(modifiers: KeyModifiers) -> u8 {
-        let mut value = 0;
-        if modifiers.contains(KeyModifiers::SHIFT) {
-            value |= 1;
-        }
-        if modifiers.contains(KeyModifiers::ALT) {
-            value |= 2;
-        }
-        if modifiers.contains(KeyModifiers::CONTROL) {
-            value |= 4;
-        }
-        value
-    }
-
-    // 根据基础序列和修饰键生成完整的控制序列
-    fn with_modifiers(base_sequence: &str, modifiers: KeyModifiers) -> String {
-        let mod_value = calculate_modifier_value(modifiers);
-
-        // 无修饰键时直接返回基础序列
-        if mod_value == 0 {
-            return base_sequence.to_string();
-        }
-
-        // 处理特殊格式的序列（F1-F4使用O前缀）
-        if base_sequence.starts_with("\x1bO") && base_sequence.len() == 3 {
-            let key_char = base_sequence.chars().last().unwrap();
-            return format!("\x1b[1;{}{}", mod_value + 1, key_char);
-        }
-
-        // 处理标准CSI序列
-        if base_sequence.starts_with("\x1b[") {
-            if let Some(pos) = base_sequence.find(|c: char| {
-                c == '~' || c == 'A' || c == 'B' || c == 'C' || c == 'D' || c == 'H' || c == 'F'
-            }) {
-                let prefix = &base_sequence[2..pos];
-                let suffix = &base_sequence[pos..];
-
-                // 处理含数字的序列（如F5-F12, PageUp等）
-                if prefix.chars().all(|c| c.is_ascii_digit()) {
-                    return format!("\x1b[{};{}{}", prefix, mod_value + 1, suffix);
-                } else {
-                    // 处理不含数字的序列（如方向键）
-                    return format!("\x1b[1;{}{}", mod_value + 1, suffix);
+async fn handle_stdin(mut tx: mpsc::Sender<TerminalMessage>) {
+    // tokio::io::stdin() 不适合交互使用，读文档了解详情
+    let tracing_span = tracing::Span::current();
+    let (sequence_tx, mut sequence_rx) = tokio::sync::mpsc::channel(32);
+    std::thread::spawn(move || {
+        let _entered = tracing_span.entered();
+        loop {
+            let mut buf = [0; 4096];
+            match std::io::stdin().read(&mut buf) {
+                Ok(nread) => {
+                    if sequence_tx.blocking_send(buf[..nread].to_vec()).is_err() {
+                        return;
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to read from stdin: {e}");
+                    break;
                 }
             }
         }
+    });
 
-        // 字符键的修饰键处理 - 使用 CSI u 格式（更标准的字符修饰键格式）
-        if base_sequence.len() == 1 {
-            let char_code = base_sequence.chars().next().unwrap() as u32;
-            return format!("\x1b[{};{}u", char_code, mod_value + 1);
+    while let Some(sequence) = sequence_rx.recv().await {
+        let message = TerminalMessage::Terminal { sequence };
+        if tx.send(message).await.is_err() {
+            tracing::error!("Event channel closed");
+            return;
         }
-
-        // 未识别的格式，返回原序列
-        base_sequence.to_string()
     }
 
-    match code {
-        // 字符键的统一处理 - 包括普通字符和带修饰键的字符
-        KeyCode::Char(c) => {
-            // 处理无修饰键的普通字符
-            if modifiers == KeyModifiers::NONE || modifiers == KeyModifiers::SHIFT {
-                // 直接返回字符本身
-                return Some(c.to_string());
-            }
-
-            // Ctrl+字母键：生成ASCII控制字符
-            if modifiers == KeyModifiers::CONTROL && c.is_ascii_alphabetic() {
-                let ctrl_code = (c.to_ascii_lowercase() as u8 & 0x1f) as char;
-                return Some(ctrl_code.to_string());
-            }
-
-            // Alt+字符键：ESC前缀
-            if modifiers == KeyModifiers::ALT {
-                return Some(format!("\x1b{c}"));
-            }
-
-            // 其他修饰键组合：使用标准 CSI u 格式
-            let char_code = c as u32;
-            let mod_value = calculate_modifier_value(modifiers) + 1;
-            Some(format!("\x1b[{char_code};{mod_value}u"))
-        }
-
-        // 基本控制键
-        KeyCode::Backspace => Some("\x7f".to_string()),
-        KeyCode::Delete => Some(with_modifiers("\x1b[3~", modifiers)),
-        KeyCode::Esc => Some("\x1b".to_string()),
-
-        // Enter和Tab现在也通过这里处理，而不是特殊处理
-        KeyCode::Enter => Some("\r".to_string()),
-        KeyCode::Tab => Some("\t".to_string()),
-
-        // 方向键
-        KeyCode::Up => Some(with_modifiers("\x1b[A", modifiers)),
-        KeyCode::Down => Some(with_modifiers("\x1b[B", modifiers)),
-        KeyCode::Right => Some(with_modifiers("\x1b[C", modifiers)),
-        KeyCode::Left => Some(with_modifiers("\x1b[D", modifiers)),
-
-        // 其他控制键
-        KeyCode::Home => Some(with_modifiers("\x1b[H", modifiers)),
-        KeyCode::End => Some(with_modifiers("\x1b[F", modifiers)),
-        KeyCode::PageUp => Some(with_modifiers("\x1b[5~", modifiers)),
-        KeyCode::PageDown => Some(with_modifiers("\x1b[6~", modifiers)),
-        KeyCode::Insert => Some(with_modifiers("\x1b[2~", modifiers)),
-
-        // 功能键 F1-F12
-        KeyCode::F(n) => {
-            let base = match n {
-                1 => "\x1bOP",
-                2 => "\x1bOQ",
-                3 => "\x1bOR",
-                4 => "\x1bOS",
-                5 => "\x1b[15~",
-                6 => "\x1b[17~",
-                7 => "\x1b[18~",
-                8 => "\x1b[19~",
-                9 => "\x1b[20~",
-                10 => "\x1b[21~",
-                11 => "\x1b[23~",
-                12 => "\x1b[24~",
-                _ => return None, // 不支持的功能键
-            };
-            Some(with_modifiers(base, modifiers))
-        }
-
-        // 不支持的按键
-        _ => None,
-    }
+    tracing::error!("Failed to read from stdin");
 }
 
 fn client_parameters() -> gm_quic::ClientParameters {

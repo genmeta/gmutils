@@ -1,6 +1,7 @@
 [package]
 name = "genmeta"
-version = "0.1.2"
+description = "Genmeta Binary Utilities"
+version = "0.1.3"
 edition = "2024"
 
 [dependencies]
@@ -17,7 +18,6 @@ tracing-subscriber = { workspace = true }
 name = "gmutils"
 maintainer = "Genmeta QUIC Team <quic_team@genmeta.net>"
 copyright = "Copyright © 2025 Genmeta QUIC Team"
-extended-description = """Genmeta Binary Utilities"""
 depends = "$auto"
 section = "utilities"
 priority = "optional"
