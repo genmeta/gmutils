@@ -1,0 +1,14 @@
+[package]
+name = "genmeta-common"
+description = "common code for genmeta binary utilities"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-trait = { workspace = true }
+bytes = { workspace = true }
+h3 = { workspace = true }
+h3-shim = { workspace = true }
+qbase = { workspace = true }
+qdns = { workspace = true }
+qtraversal = { workspace = true }

@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use bytes::{Buf, BytesMut};
+use genmeta_common::{AGENTS, ROOT_CERT, Resolvers};
 use gm_quic::ToCertificate;
 use http::{Method, Request, Uri};
 
@@ -98,9 +99,11 @@ fn parse_header(s: &str) -> Result<(String, String), String> {
 type Error = Box<dyn core::error::Error + Send + Sync>;
 
 pub async fn run(options: Options) -> Result<(), Error> {
-    let resolver = UdpResolver::new("1.12.74.4:5300".parse().unwrap());
+    let resolvers = Resolvers::new()
+        // .with(HttpResolver::new("http://127.0.0.1:20004/v1/dns/")?)
+        .with(UdpResolver::new(Resolvers::UDP_DNS_SERVER));
     let server_name = options.uri.host().ok_or("missing host in uri")?;
-    let server_addrs = resolver
+    let server_addrs = resolvers
         .lookup(server_name)
         .await
         .map_err(|e| format!("failed to resolve host {server_name}: {e:?}"))?;
@@ -112,14 +115,9 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
     let quic_client = {
         let mut roots = rustls::RootCertStore::empty();
-        roots.add_parsable_certificates(include_bytes!("../../root.crt").to_certificate());
+        roots.add_parsable_certificates(ROOT_CERT.to_certificate());
 
-        let factory = TraversalFactory::with(&[
-            "1.12.74.4:20004".parse().unwrap(),
-            "[2402:4e00:c011:1700:8624:7e0:5c9a:2]:20004"
-                .parse()
-                .unwrap(),
-        ]);
+        let factory = TraversalFactory::with(&AGENTS);
         let binds = factory
             .devices()
             .keys()
@@ -137,7 +135,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
             .reuse_address()
             .bind(&binds[..])
             .inspect_err(|e| {
-                tracing::error!("bind addrs: {binds:?}  err {e:?}");
+                tracing::error!("bind addrs {binds:?} failed: {e:?}");
             })?
             .build()
     };

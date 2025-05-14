@@ -628,11 +628,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "genmeta-common"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "h3",
+ "h3-shim",
+ "qbase",
+ "qdns",
+ "qtraversal",
+]
+
+[[package]]
 name = "genmeta-request"
 version = "0.1.1"
 dependencies = [
  "bytes",
  "clap",
+ "genmeta-common",
  "gm-quic",
  "h3",
  "h3-shim",
@@ -655,6 +669,7 @@ dependencies = [
  "clap",
  "crossterm",
  "futures",
+ "genmeta-common",
  "gm-quic",
  "h3",
  "h3-shim",
