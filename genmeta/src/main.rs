@@ -18,19 +18,11 @@ async fn main() {
         .with_writer(std::io::stderr)
         .init();
 
-    match Options::try_parse() {
-        Ok(options) => {
-            if let Err(error) = run(options).await {
-                eprintln!("ERROR: {error}");
-                tracing::error!("Error: {error}");
-                std::process::exit(1);
-            }
-        }
-        Err(e) => {
-            eprintln!("Failed to parse command line arguments");
-            e.exit()
-        }
-    };
+    if let Err(error) = run(Options::parse()).await {
+        eprintln!("ERROR: {error}");
+        tracing::error!("Error: {error}");
+        std::process::exit(1);
+    }
 }
 
 async fn run(options: Options) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

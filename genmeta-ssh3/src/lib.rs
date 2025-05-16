@@ -1,40 +1,67 @@
-use std::{io::Read, net::SocketAddr, time::Duration};
+use std::{
+    fmt::Debug,
+    io::Read,
+    net::{Ipv4Addr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
-use bytes::{Buf, Bytes};
+mod socks;
+
+use bytes::Bytes;
 use clap::Parser;
 use crossterm::terminal;
-use futures::{SinkExt, StreamExt, channel::mpsc};
-use genmeta_common::{AGENTS, ROOT_CERT, Resolvers};
+use futures::{Sink, SinkExt, Stream, StreamExt, TryStream, TryStreamExt, channel::mpsc};
+use genmeta_common::{
+    AGENTS, ROOT_CERT, Resolvers, cbor_codec,
+    h3_stream::{self, H3StreamReader},
+    map_sink::MapSinkExt,
+};
 use gm_quic::{QuicClient, ToCertificate};
 use http::Uri;
 use qdns::{Resolve, UdpResolver};
 use qtraversal::iface::TraversalFactory;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::{
+    net::TcpListener,
     signal::unix::{SignalKind, signal},
     time,
 };
+use tokio_util::{codec, io::StreamReader, task::AbortOnDropHandle};
 
 // 定义客户端与服务器通信的消息结构
 #[derive(Serialize, Debug)]
-enum TerminalMessage {
+enum ClientMessage {
     WindowSize { rows: u16, cols: u16 },
-    Terminal { sequence: Vec<u8> },
-    // ControlSequence(String),
+    Terminal { sequence: Bytes },
+    Socks(socks::ClientSocksMessage),
     Heartbeat,
 }
 
-const URI_HELP: &str = "Example: `ssh3://user:password@host:port/ssh`.
-    Scheme is optional, only `ssh3` is accepted.
-    Username is optional, if not present, use current user.
-    Password is optional, if not present, prompt for it.
-    Path is optional, if not present, use `/ssh` as default.";
+#[derive(Deserialize, Debug)]
+enum ServerMessage {
+    Terminal { sequence: Bytes },
+    Socks(socks::ServerSocksMessage),
+    Heartbeat,
+}
+
+const URI_LONG_HELP: &str = "Example: `developer@ssh3.test.genmeta.net`
+Scheme is optional, only `ssh3` is accepted.
+Username is optional, if not present, use current user.
+Password is optional, if not present, prompt for it.
+Path is optional, if not present, use `/ssh` as default.";
+
+const DYNAMIC_FORWARD_LONG_HELP: &str = "Example: `12345`, `127.0.0.1:12335`
+Specify a local address port, which will forward the accepted TCP connection to the server's SOCKS server.
+You can specify just the port, and the bind_address defaults to 127.0.0.1.";
 
 #[derive(Parser, Debug, Clone)]
 #[command(version, about)]
 pub struct Options {
-    #[arg(help = URI_HELP)]
+    #[arg(value_name = "[ssh3://][[username][:password]@]host[:port][path]", long_help = URI_LONG_HELP)]
     uri: Uri,
+    #[arg(short = 'D', value_name = "[bind_address:]port", long_help = DYNAMIC_FORWARD_LONG_HELP)]
+    dynamic_forward: Option<String>,
 }
 
 impl Options {
@@ -59,6 +86,7 @@ impl Options {
         };
         Ok(Self {
             uri: Uri::from_parts(uri_parts)?,
+            ..self
         })
     }
 
@@ -74,6 +102,22 @@ impl Options {
             .and_then(|authority| authority.as_str().rsplit_once('@'))
             .map(|(username_password, _host)| try_from_uri(username_password))
             .unwrap_or_else(|| (whoami::username(), None))
+    }
+
+    fn dynamic_forward_server(&self) -> Option<Result<SocketAddr, Error>> {
+        let bind_address = self.dynamic_forward.as_ref()?;
+        match bind_address.parse::<SocketAddr>().ok().or_else(|| {
+            bind_address
+                .parse::<u16>()
+                .map(|port| SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port))
+                .ok()
+        }) {
+            Some(bind_address) => Some(Ok(bind_address)),
+            None => Some(Err(format!(
+                "Invalid bind address argument `{bind_address}` provide:"
+            )
+            .into())),
+        }
     }
 }
 
@@ -98,8 +142,14 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .complete_uri()
         .map_err(|e| format!("Failed to complete URI: {e:?}"))?;
 
-    // 创建通道用于异步通信
-    let (mut tx, rx) = mpsc::channel::<TerminalMessage>(32);
+    let dynamic_forward_server = match options.dynamic_forward_server().transpose()? {
+        Some(bind_addr) => Some(
+            TcpListener::bind(bind_addr)
+                .await
+                .map_err(|e| format!("Failed to bind local dynamic forward server: {e:?}"))?,
+        ),
+        None => None,
+    };
 
     let resolvers = Resolvers::new()
         // .with(HttpResolver::new("http://127.0.0.1:20004/v1/dns/")?)
@@ -198,10 +248,37 @@ pub async fn run(options: Options) -> Result<(), Error> {
         return Err(format!("Server response status: {}", response.status()).into());
     }
 
-    let (sender, receiver) = stream.split();
+    let (mut sender, mut receiver) = stream.split();
+
+    let message_sender = codec::FramedWrite::new(
+        h3_stream::H3StreamWriter::new(&mut sender),
+        cbor_codec::CborEncoder::default(),
+    );
+
+    let message_recver = codec::FramedRead::new(
+        StreamReader::new(H3StreamReader::new(&mut receiver)),
+        cbor_codec::CborDecoder::default(),
+    );
+
+    let (mut tx, pending_messages) = mpsc::channel::<ClientMessage>(32);
+
+    let _dynamic_forward_task;
+    let socks_forward_server = match dynamic_forward_server {
+        Some(listener) => {
+            let message_sender = tx
+                .clone()
+                .mapped(|message| Ok(ClientMessage::Socks(message)));
+            let server = Arc::new(socks::SocksForwardServer::new(message_sender));
+            _dynamic_forward_task = AbortOnDropHandle::new(tokio::spawn({
+                let server = server.clone();
+                async move { server.listen(listener).await }
+            }));
+            Some(server)
+        }
+        None => None,
+    };
 
     // 初始化终端
-    // execute!(std::io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
     let _guard = TerminalGuard::new();
 
     tokio::select! {
@@ -210,11 +287,11 @@ pub async fn run(options: Options) -> Result<(), Error> {
         // handle window resize events
         _ = handle_winresize(tx.clone())=> (),
         // write messages to the stream
-        _ = tokio::spawn(send(sender, rx)) => (),
+        _ = send_messages(message_sender, pending_messages) => (),
         // receive data from the stream and write to stdout
-        _ = tokio::spawn(recv(receiver)) => (),
+        _ = recv_messages(message_recver, socks_forward_server) => (),
         // send heartbeat messages to keep ssh connection alive
-        _ = tokio::spawn(heartbeat(tx.clone())) => (),
+        _ = heartbeat(tx.clone()) => (),
         // wait for the quic connection to be terminated
         _ = quic_conn.terminated() => (),
         // wait for the h3 connection to be closed
@@ -229,79 +306,74 @@ pub async fn run(options: Options) -> Result<(), Error> {
     Ok(())
 }
 
-async fn send(
-    mut sender: h3::client::RequestStream<h3_shim::SendStream<Bytes>, Bytes>,
-    mut rx: mpsc::Receiver<TerminalMessage>,
+async fn send_messages(
+    mut sender: impl Sink<ClientMessage, Error: Debug> + Unpin,
+    mut rx: impl Stream<Item = ClientMessage> + Unpin,
 ) {
-    let mut interval = tokio::time::interval(Duration::from_secs(30));
-    loop {
-        tokio::select! {
-            msg = rx.next() => match msg {
-                Some(msg) => {
-                    let serialized = serde_cbor::to_vec(&msg).unwrap();
-                    if let Err(e) = sender.send_data(serialized.into()).await {
-                        tracing::error!("Send to peer error: {e}");
-                        break;
-                    }
-                }
-                None => {
-                    if let Err(e) = sender.finish().await {
-                        tracing::error!("Finish stream error: {e}");
-                    }
-                    break;
-                }
-            },
-            _ = interval.tick() => {
-                let serialized = serde_cbor::to_vec(&TerminalMessage::Heartbeat).unwrap();
-                if let Err(e) = sender.send_data(serialized.into()).await {
-                    tracing::error!("Send heartbeat error: {e}");
-                    break;
-                }
-            }
+    while let Some(message) = rx.next().await {
+        if let Err(send_error) = sender.send(message).await {
+            tracing::error!("Failed to send message: {send_error:?}");
+            break;
         }
     }
 }
 
-async fn recv(mut receiver: h3::client::RequestStream<h3_shim::RecvStream, Bytes>) {
+async fn recv_messages<S>(
+    mut message_recver: impl TryStream<Ok = ServerMessage, Error: Debug> + Unpin,
+    socks_forward_server: Option<Arc<socks::SocksForwardServer<S>>>,
+) where
+    S: Sink<socks::ClientSocksMessage, Error: Debug + Send> + Clone + Send + Unpin + 'static,
+{
     loop {
-        match receiver.recv_data().await {
-            Ok(Some(mut data)) => {
-                // 不知为何往tokio::stdin写时会缺少一行输出
-                let write_result = tokio::task::spawn_blocking(move || {
-                    use std::io::Write;
-                    let mut stdout = std::io::stdout().lock();
-                    while data.has_remaining() {
-                        let chunk = data.chunk();
-                        stdout.write_all(chunk)?;
-                        data.advance(chunk.len());
-                    }
-                    stdout.flush()
-                })
-                .await;
-
-                if let Err(e) = write_result.unwrap() {
-                    tracing::error!("Write to stdout error: {e}");
-                    receiver.stop_sending(h3::error::Code::H3_NO_ERROR);
-                    break;
-                }
-            }
+        let message: ServerMessage = match message_recver.try_next().await {
+            Ok(Some(message)) => message,
             Ok(None) => {
                 tracing::info!("Peer closed the stream");
                 break;
             }
-            Err(e) => {
-                tracing::error!("Read from peer error: {e}");
-                receiver.stop_sending(h3::error::Code::H3_NO_ERROR);
+            Err(recv_error) => {
+                tracing::error!("Read from peer error: {recv_error:?}");
                 break;
             }
+        };
+
+        match message {
+            ServerMessage::Terminal { sequence } => {
+                // 不知为何往tokio::stdin写时会缺少一行输出，所以
+                let write_to_stdout = tokio::task::spawn_blocking(move || {
+                    use std::io::Write;
+                    let mut stdout = std::io::stdout().lock();
+                    stdout.write_all(&sequence)?;
+                    stdout.flush()
+                });
+
+                if let Err(e) = write_to_stdout.await {
+                    tracing::error!("Write to stdout error: {e}");
+                    break;
+                }
+            }
+            ServerMessage::Socks(server_socks_message) => {
+                if let Some(socks_forward_server) = &socks_forward_server {
+                    match server_socks_message {
+                        socks::ServerSocksMessage::Data { token, data } => {
+                            socks_forward_server.receive(token, data).await;
+                        }
+                        socks::ServerSocksMessage::Error { token, error } => {
+                            let _ = error; //TODO
+                            socks_forward_server.close(token);
+                        }
+                    }
+                }
+            }
+            ServerMessage::Heartbeat => {}
         }
     }
 }
 
-async fn handle_winresize(mut tx: mpsc::Sender<TerminalMessage>) {
+async fn handle_winresize(mut tx: mpsc::Sender<ClientMessage>) {
     let mut update_winsize = async || {
         let message = match terminal::size() {
-            Ok((cols, rows)) => TerminalMessage::WindowSize { rows, cols },
+            Ok((cols, rows)) => ClientMessage::WindowSize { rows, cols },
             Err(e) => {
                 return Err(Error::from(format!("Failed to get terminal size: {e}")));
             }
@@ -331,7 +403,7 @@ async fn handle_winresize(mut tx: mpsc::Sender<TerminalMessage>) {
     }
 }
 
-async fn handle_stdin(mut tx: mpsc::Sender<TerminalMessage>) {
+async fn handle_stdin(mut tx: mpsc::Sender<ClientMessage>) {
     // tokio::io::stdin() 不适合交互使用，读文档了解详情
     let tracing_span = tracing::Span::current();
     let (sequence_tx, mut sequence_rx) = tokio::sync::mpsc::channel(32);
@@ -341,7 +413,10 @@ async fn handle_stdin(mut tx: mpsc::Sender<TerminalMessage>) {
             let mut buf = [0; 4096];
             match std::io::stdin().read(&mut buf) {
                 Ok(nread) => {
-                    if sequence_tx.blocking_send(buf[..nread].to_vec()).is_err() {
+                    if sequence_tx
+                        .blocking_send(buf[..nread].to_vec().into())
+                        .is_err()
+                    {
                         return;
                     }
                 }
@@ -354,7 +429,7 @@ async fn handle_stdin(mut tx: mpsc::Sender<TerminalMessage>) {
     });
 
     while let Some(sequence) = sequence_rx.recv().await {
-        let message = TerminalMessage::Terminal { sequence };
+        let message = ClientMessage::Terminal { sequence };
         if tx.send(message).await.is_err() {
             tracing::error!("Event channel closed");
             return;
@@ -362,11 +437,11 @@ async fn handle_stdin(mut tx: mpsc::Sender<TerminalMessage>) {
     }
 }
 
-async fn heartbeat(mut tx: mpsc::Sender<TerminalMessage>) {
+async fn heartbeat(mut tx: mpsc::Sender<ClientMessage>) {
     let mut interval = tokio::time::interval(Duration::from_secs(20));
     loop {
         interval.tick().await;
-        let message = TerminalMessage::Heartbeat;
+        let message = ClientMessage::Heartbeat;
         if tx.send(message).await.is_err() {
             return;
         }

@@ -6,9 +6,10 @@ edition = "2024"
 
 [dependencies]
 base64 = { workspace = true }
-bytes = { workspace = true }
+bytes = { workspace = true, features = ["serde"] }
 clap = { workspace = true }
 crossterm = { workspace = true }
+dashmap = { workspace = true }
 futures = { workspace = true }
 genmeta-common = { workspace = true }
 gm-quic = { workspace = true }
@@ -22,6 +23,7 @@ rustls = { workspace = true }
 serde = { workspace = true }
 serde_cbor = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true, features = ["codec", "rt"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 whoami = { workspace = true }
