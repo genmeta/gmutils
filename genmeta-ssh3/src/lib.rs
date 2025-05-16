@@ -62,6 +62,15 @@ pub struct Options {
     uri: Uri,
     #[arg(short = 'D', value_name = "[bind_address:]port", long_help = DYNAMIC_FORWARD_LONG_HELP)]
     dynamic_forward: Option<String>,
+
+    #[arg(short = 'o', value_delimiter=',')]
+    options: Vec<String>,
+
+    #[arg(
+        trailing_var_arg = true,
+        help = "Command to execute on the remote server"
+    )]
+    commands: Vec<String>,
 }
 
 impl Options {
@@ -220,8 +229,12 @@ pub async fn run(options: Options) -> Result<(), Error> {
         connect_result?
     };
 
+    tracing::info!(%options.uri, "request");
+    let mut request_builder = http::Request::builder()
+        .method("PUT")
+        .uri(options.uri.clone());
     // 构建 Basic Auth 头
-    let basic_auth = {
+    {
         use base64::Engine;
         let credentials = match options.username_password() {
             (username, Some(password)) => {
@@ -229,15 +242,20 @@ pub async fn run(options: Options) -> Result<(), Error> {
             }
             (username, None) => username,
         };
-        base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes())
+        let basic_auth = base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes());
+        request_builder = request_builder.header("Authorization", format!("Basic {basic_auth}"));
     };
 
-    tracing::info!(%options.uri, "request");
-    let request = http::Request::builder()
-        .method("PUT")
-        .uri(options.uri)
-        .header("Authorization", format!("Basic {basic_auth}"))
-        .body(())?;
+    // 构建X-Comamnds头
+    if !options.commands.is_empty() {
+        use base64::Engine;
+        let commands = options.commands.join(" ");
+        request_builder = request_builder.header(
+            "X-Commands",
+            base64::engine::general_purpose::STANDARD.encode(commands.as_bytes()),
+        );
+    }
+    let request = request_builder.body(())?;
 
     // sending request results in a bidirectional stream,
     // which is also used for receiving response
