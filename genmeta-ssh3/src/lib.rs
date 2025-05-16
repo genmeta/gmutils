@@ -1,49 +1,23 @@
-use std::{
-    fmt::Debug,
-    io::Read,
-    net::{Ipv4Addr, SocketAddr},
-    sync::Arc,
-    time::Duration,
-};
+use std::{fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
 
+mod auth;
+mod mux;
 mod socks;
+mod terminal;
 
-use bytes::Bytes;
 use clap::Parser;
-use crossterm::terminal;
 use futures::{Sink, SinkExt, Stream, StreamExt, TryStream, TryStreamExt, channel::mpsc};
 use genmeta_common::{
     AGENTS, ROOT_CERT, Resolvers, cbor_codec,
     h3_stream::{self, H3StreamReader},
-    map_sink::MapSinkExt,
 };
 use gm_quic::{QuicClient, ToCertificate};
 use http::Uri;
+use mux::ChannelMessage;
 use qdns::{Resolve, UdpResolver};
 use qtraversal::iface::TraversalFactory;
-use serde::{Deserialize, Serialize};
-use tokio::{
-    net::TcpListener,
-    signal::unix::{SignalKind, signal},
-    time,
-};
+use tokio::{net::TcpListener, time};
 use tokio_util::{codec, io::StreamReader, task::AbortOnDropHandle};
-
-// 定义客户端与服务器通信的消息结构
-#[derive(Serialize, Debug)]
-enum ClientMessage {
-    WindowSize { rows: u16, cols: u16 },
-    Terminal { sequence: Bytes },
-    Socks(socks::ClientSocksMessage),
-    Heartbeat,
-}
-
-#[derive(Deserialize, Debug)]
-enum ServerMessage {
-    Terminal { sequence: Bytes },
-    Socks(socks::ServerSocksMessage),
-    Heartbeat,
-}
 
 const URI_LONG_HELP: &str = "Example: `developer@ssh3.test.genmeta.net`
 Scheme is optional, only `ssh3` is accepted.
@@ -67,10 +41,19 @@ pub struct Options {
     options: Vec<String>,
 
     #[arg(
+        short = 'T',
+        default_value_t = true,
+        action = clap::ArgAction::SetFalse,
+        help = "Disable pseudo-terminal allocation."
+    )]
+    pseudo: bool,
+
+    #[arg(
         trailing_var_arg = true,
+        value_name = "[command [argument ...]]",
         help = "Command to execute on the remote server"
     )]
-    command: Vec<String>,
+    commands: Vec<String>,
 }
 
 impl Options {
@@ -112,67 +95,22 @@ impl Options {
             .map(|(username_password, _host)| try_from_uri(username_password))
             .unwrap_or_else(|| (whoami::username(), None))
     }
-
-    fn dynamic_forward_server(&self) -> Option<Result<SocketAddr, Error>> {
-        let bind_address = self.dynamic_forward.as_ref()?;
-        match bind_address.parse::<SocketAddr>().ok().or_else(|| {
-            bind_address
-                .parse::<u16>()
-                .map(|port| SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port))
-                .ok()
-        }) {
-            Some(bind_address) => Some(Ok(bind_address)),
-            None => Some(Err(format!(
-                "Invalid bind address argument `{bind_address}` provide:"
-            )
-            .into())),
-        }
-    }
-
-    async fn full_command(&self) -> Result<String, Error> {
-        let mut command = self.command.join(" ");
-
-        let read_here_doc = tokio::task::spawn_blocking(|| {
-            use std::io::Read;
-
-            let mut heredoc = String::new();
-            if atty::isnt(atty::Stream::Stdin) {
-                std::io::stdin().read_to_string(&mut heredoc)?;
-            }
-
-            std::io::Result::Ok(heredoc)
-        });
-
-        match read_here_doc.await {
-            Ok(result) => match result {
-                Ok(content) if !content.is_empty() => {
-                    command.push_str(" <<EOF\n");
-                    command.push_str(&content);
-                    command.push_str("\nEOF");
-                }
-                Ok(_) => {} // no heredoc content
-                Err(e) => return Err(format!("Failed to read heredoc content: {e}").into()),
-            },
-            Err(e) => return Err(format!("Failed to read heredoc content: {e}").into()),
-        };
-
-        Ok(command)
-    }
 }
 
 type Error = Box<dyn core::error::Error + Send + Sync>;
 
 struct TerminalGuard(());
+
 impl TerminalGuard {
     pub fn new() -> Self {
-        terminal::enable_raw_mode().expect("Failed to enable raw mode");
+        crossterm::terminal::enable_raw_mode().expect("Failed to enable raw mode");
         TerminalGuard(())
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        terminal::disable_raw_mode().expect("Failed to disable raw mode");
+        crossterm::terminal::disable_raw_mode().expect("Failed to disable raw mode");
     }
 }
 
@@ -189,6 +127,8 @@ pub async fn run(options: Options) -> Result<(), Error> {
         ),
         None => None,
     };
+
+    let command = options.command().await?;
 
     let resolvers = Resolvers::new()
         // .with(HttpResolver::new("http://127.0.0.1:20004/v1/dns/")?)
@@ -259,28 +199,9 @@ pub async fn run(options: Options) -> Result<(), Error> {
         connect_result?
     };
 
-    // 构建 Basic Auth 头
-    let basic_auth = {
-        use base64::Engine;
-        let credentials = match options.username_password() {
-            (username, Some(password)) => {
-                format!("{username}:{password}")
-            }
-            (username, None) => username,
-        };
-        base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes())
-    };
-
-    let x_commands = {
-        use base64::Engine;
-        base64::engine::general_purpose::STANDARD.encode(options.full_command().await?.as_bytes())
-    };
-
     let request = http::Request::builder()
         .method("PUT")
         .uri(options.uri.clone())
-        .header("Authorization", format!("Basic {basic_auth}"))
-        .header("X-Commands", x_commands)
         .body(())?;
     tracing::info!(?request, "request");
 
@@ -293,84 +214,101 @@ pub async fn run(options: Options) -> Result<(), Error> {
         return Err(format!("Server response status: {}", response.status()).into());
     }
 
-    let (mut sender, mut receiver) = stream.split();
+    let (message_sender, pending_messages) = mpsc::channel::<mux::ChannelMessage>(32);
+    let mux = Arc::new(mux::Mux::new(message_sender, mux::Role::Client));
 
-    let message_sender = codec::FramedWrite::new(
-        h3_stream::H3StreamWriter::new(&mut sender),
-        cbor_codec::CborEncoder::default(),
-    );
+    let (mut sender, mut recver) = stream.split();
+    let send_messages = AbortOnDropHandle::new(tokio::spawn(async move {
+        let message_sender = codec::FramedWrite::new(
+            h3_stream::H3StreamWriter::new(&mut sender),
+            cbor_codec::CborEncoder::default(),
+        );
+        send_messages(message_sender, pending_messages).await
+    }));
 
-    let message_recver = codec::FramedRead::new(
-        StreamReader::new(H3StreamReader::new(&mut receiver)),
-        cbor_codec::CborDecoder::default(),
-    );
+    let message_handler = mux.clone();
+    let recv_messages = AbortOnDropHandle::new(tokio::spawn(async move {
+        let message_recver = codec::FramedRead::new(
+            StreamReader::new(H3StreamReader::new(&mut recver)),
+            cbor_codec::CborDecoder::default(),
+        );
+        recv_messages(message_recver, message_handler).await
+    }));
 
-    let (mut tx, pending_messages) = mpsc::channel::<ClientMessage>(32);
+    let run = async move {
+        let (username, password) = options.username_password();
 
-    let _dynamic_forward_task;
-    let socks_forward_server = match dynamic_forward_server {
-        Some(listener) => {
-            let message_sender = tx
-                .clone()
-                .mapped(|message| Ok(ClientMessage::Socks(message)));
-            let server = Arc::new(socks::SocksForwardServer::new(message_sender));
+        auth::login(&mux, &username, password.as_deref())
+            .await
+            .map_err(|e| format!("Failed to login: {e:?}"))?;
+
+        // 初始化终端。guard自动释放
+        let _guard = TerminalGuard::new();
+
+        let run_command = AbortOnDropHandle::new(tokio::spawn({
+            let mux = mux.clone();
+            async move {
+                if let Err(e) = command.run(&mux, options.pseudo).await {
+                    tracing::error!("Failed to run command: {e:?}");
+                }
+            }
+        }));
+
+        let _dynamic_forward_task;
+        if let Some(socks_listener) = dynamic_forward_server {
+            let server = Arc::new(socks::SocksForwardServer::new(mux.clone()));
             _dynamic_forward_task = AbortOnDropHandle::new(tokio::spawn({
                 let server = server.clone();
-                async move { server.listen(listener).await }
+                async move {
+                    let error = server.listen(socks_listener).await;
+                    tracing::error!(target: "socks", "Socks forward server error: {error:?}");
+                }
             }));
-            Some(server)
         }
-        None => None,
+
+        _ = run_command.await;
+        tracing::info!("Command finished");
+
+        Result::<(), Error>::Ok(())
     };
 
-    // 初始化终端
-    let _guard = TerminalGuard::new();
-
-    tokio::select! {
-        // read and encode messages from stdin
-        _ = handle_stdin(tx.clone()) => (),
-        // handle window resize events
-        _ = handle_winresize(tx.clone())=> (),
+    let error = tokio::select! {
         // write messages to the stream
-        _ = send_messages(message_sender, pending_messages) => (),
+        _ = send_messages => None,
         // receive data from the stream and write to stdout
-        _ = recv_messages(message_recver, socks_forward_server) => (),
+        _ = recv_messages => None,
         // send heartbeat messages to keep ssh connection alive
-        _ = heartbeat(tx.clone()) => (),
+        Err(error) = run => Some(error),
         // wait for the quic connection to be terminated
-        _ = quic_conn.terminated() => (),
+        _ = quic_conn.terminated() => None,
         // wait for the h3 connection to be closed
-        _ = h3_conn.wait_idle() => (),
-    }
+        _ = h3_conn.wait_idle() => None,
+    };
 
     // 清理
-    terminal::disable_raw_mode()?;
-    tx.close_channel();
     quic_conn.close("Bye bye".into(), h3::error::Code::H3_NO_ERROR.value());
 
-    Ok(())
+    error.map_or(Ok(()), Err)
 }
 
 async fn send_messages(
-    mut sender: impl Sink<ClientMessage, Error: Debug> + Unpin,
-    mut rx: impl Stream<Item = ClientMessage> + Unpin,
+    mut message_sender: impl Sink<ChannelMessage, Error: Debug> + Unpin,
+    mut pending_messages: impl Stream<Item = ChannelMessage> + Unpin,
 ) {
-    while let Some(message) = rx.next().await {
-        if let Err(send_error) = sender.send(message).await {
+    while let Some(message) = pending_messages.next().await {
+        if let Err(send_error) = message_sender.send(message).await {
             tracing::error!("Failed to send message: {send_error:?}");
             break;
         }
     }
 }
 
-async fn recv_messages<S>(
-    mut message_recver: impl TryStream<Ok = ServerMessage, Error: Debug> + Unpin,
-    socks_forward_server: Option<Arc<socks::SocksForwardServer<S>>>,
-) where
-    S: Sink<socks::ClientSocksMessage, Error: Debug + Send> + Clone + Send + Unpin + 'static,
-{
+async fn recv_messages(
+    mut message_recver: impl TryStream<Ok = ChannelMessage, Error: Debug> + Unpin,
+    mux: Arc<mux::Mux>,
+) {
     loop {
-        let message: ServerMessage = match message_recver.try_next().await {
+        let message: ChannelMessage = match message_recver.try_next().await {
             Ok(Some(message)) => message,
             Ok(None) => {
                 tracing::info!("Peer closed the stream");
@@ -382,116 +320,142 @@ async fn recv_messages<S>(
             }
         };
 
-        match message {
-            ServerMessage::Terminal { sequence } => {
-                // 不知为何往tokio::stdin写时会缺少一行输出，所以
-                let write_to_stdout = tokio::task::spawn_blocking(move || {
-                    use std::io::Write;
-                    let mut stdout = std::io::stdout().lock();
-                    stdout.write_all(&sequence)?;
-                    stdout.flush()
-                });
-
-                if let Err(e) = write_to_stdout.await {
-                    tracing::error!("Write to stdout error: {e}");
-                    break;
-                }
-            }
-            ServerMessage::Socks(server_socks_message) => {
-                if let Some(socks_forward_server) = &socks_forward_server {
-                    match server_socks_message {
-                        socks::ServerSocksMessage::Data { token, data } => {
-                            socks_forward_server.receive(token, data).await;
-                        }
-                        socks::ServerSocksMessage::Error { token, error } => {
-                            let _ = error; //TODO
-                            socks_forward_server.close(token);
-                        }
-                    }
-                }
-            }
-            ServerMessage::Heartbeat => {}
+        tracing::trace!(?message, "Received message");
+        if let Err(e) = mux.receive(message).await {
+            tracing::error!("Failed to receive message: {e:?}");
         }
     }
 }
 
-async fn handle_winresize(mut tx: mpsc::Sender<ClientMessage>) {
-    let mut update_winsize = async || {
-        let message = match terminal::size() {
-            Ok((cols, rows)) => ClientMessage::WindowSize { rows, cols },
-            Err(e) => {
-                return Err(Error::from(format!("Failed to get terminal size: {e}")));
-            }
-        };
-        if tx.send(message).await.is_err() {
-            return Err("Event channel closed".into());
-        }
-        Ok(())
-    };
+// async fn recv_messages<S>(
+//     mut message_recver: impl TryStream<Ok = ServerMessage, Error: Debug> + Unpin,
+//     socks_forward_server: Option<Arc<socks::SocksForwardServer<S>>>,
+// ) where
+//     S: Sink<socks::ClientSocksMessage, Error: Debug + Send> + Clone + Send + Unpin + 'static,
+// {
+//     loop {
+//         let message: ServerMessage = match message_recver.try_next().await {
+//             Ok(Some(message)) => message,
+//             Ok(None) => {
+//                 tracing::info!("Peer closed the stream");
+//                 break;
+//             }
+//             Err(recv_error) => {
+//                 tracing::error!("Read from peer error: {recv_error:?}");
+//                 break;
+//             }
+//         };
 
-    if let Err(e) = update_winsize().await {
-        tracing::error!("Failed to update terminal size: {e}");
-    };
+//         match message {
+//             ServerMessage::Terminal { sequence } => {
+//                 // 不知为何往tokio::stdin写时会缺少一行输出，所以
+//                 let write_to_stdout = tokio::task::spawn_blocking(move || {
+//                     use std::io::Write;
+//                     let mut stdout = std::io::stdout().lock();
+//                     stdout.write_all(&sequence)?;
+//                     stdout.flush()
+//                 });
 
-    let mut signal_listener = match signal(SignalKind::window_change()) {
-        Ok(listener) => listener,
-        Err(e) => {
-            tracing::error!("Failed to create signal handler for SIGWINCH: {e}");
-            return;
-        }
-    };
+//                 if let Err(e) = write_to_stdout.await {
+//                     tracing::error!("Write to stdout error: {e}");
+//                     break;
+//                 }
+//             }
+//             ServerMessage::Socks(server_socks_message) => {
+//                 if let Some(socks_forward_server) = &socks_forward_server {
+//                     match server_socks_message {
+//                         socks::ServerSocksMessage::Data { token, data } => {
+//                             socks_forward_server.receive(token, data).await;
+//                         }
+//                         socks::ServerSocksMessage::Error { token, error } => {
+//                             let _ = error; //TODO
+//                             socks_forward_server.close(token);
+//                         }
+//                     }
+//                 }
+//             }
+//             ServerMessage::Heartbeat => {}
+//         }
+//     }
+// }
 
-    while let Some(()) = signal_listener.recv().await {
-        if let Err(e) = update_winsize().await {
-            tracing::error!("Failed to update terminal size: {e}");
-        };
-    }
-}
+// async fn handle_winresize(mut tx: mpsc::Sender<ClientMessage>) {
+//     let mut update_winsize = async || {
+//         let message = match terminal::size() {
+//             Ok((cols, rows)) => ClientMessage::WindowSize { rows, cols },
+//             Err(e) => {
+//                 return Err(Error::from(format!("Failed to get terminal size: {e}")));
+//             }
+//         };
+//         if tx.send(message).await.is_err() {
+//             return Err("Event channel closed".into());
+//         }
+//         Ok(())
+//     };
 
-async fn handle_stdin(mut tx: mpsc::Sender<ClientMessage>) {
-    // tokio::io::stdin() 不适合交互使用，读文档了解详情
-    let tracing_span = tracing::Span::current();
-    let (sequence_tx, mut sequence_rx) = tokio::sync::mpsc::channel(32);
-    std::thread::spawn(move || {
-        let _entered = tracing_span.entered();
-        loop {
-            let mut buf = [0; 4096];
-            match std::io::stdin().read(&mut buf) {
-                Ok(nread) => {
-                    if sequence_tx
-                        .blocking_send(buf[..nread].to_vec().into())
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Failed to read from stdin: {e}");
-                    break;
-                }
-            }
-        }
-    });
+//     if let Err(e) = update_winsize().await {
+//         tracing::error!("Failed to update terminal size: {e}");
+//     };
 
-    while let Some(sequence) = sequence_rx.recv().await {
-        let message = ClientMessage::Terminal { sequence };
-        if tx.send(message).await.is_err() {
-            tracing::error!("Event channel closed");
-            return;
-        }
-    }
-}
+//     let mut signal_listener = match signal(SignalKind::window_change()) {
+//         Ok(listener) => listener,
+//         Err(e) => {
+//             tracing::error!("Failed to create signal handler for SIGWINCH: {e}");
+//             return;
+//         }
+//     };
 
-async fn heartbeat(mut tx: mpsc::Sender<ClientMessage>) {
-    let mut interval = tokio::time::interval(Duration::from_secs(20));
-    loop {
-        interval.tick().await;
-        let message = ClientMessage::Heartbeat;
-        if tx.send(message).await.is_err() {
-            return;
-        }
-    }
-}
+//     while let Some(()) = signal_listener.recv().await {
+//         if let Err(e) = update_winsize().await {
+//             tracing::error!("Failed to update terminal size: {e}");
+//         };
+//     }
+// }
+
+// async fn handle_stdin(mut tx: mpsc::Sender<ClientMessage>) {
+//     // tokio::io::stdin() 不适合交互使用，读文档了解详情
+//     let tracing_span = tracing::Span::current();
+//     let (sequence_tx, mut sequence_rx) = tokio::sync::mpsc::channel(32);
+//     std::thread::spawn(move || {
+//         let _entered = tracing_span.entered();
+//         loop {
+//             let mut buf = [0; 4096];
+//             match std::io::stdin().read(&mut buf) {
+//                 Ok(nread) => {
+//                     if sequence_tx
+//                         .blocking_send(buf[..nread].to_vec().into())
+//                         .is_err()
+//                     {
+//                         return;
+//                     }
+//                 }
+//                 Err(e) => {
+//                     tracing::error!("Failed to read from stdin: {e}");
+//                     break;
+//                 }
+//             }
+//         }
+//     });
+
+//     while let Some(sequence) = sequence_rx.recv().await {
+//         let message = ClientMessage::Terminal { sequence };
+//         if tx.send(message).await.is_err() {
+//             tracing::error!("Event channel closed");
+//             return;
+//         }
+//     }
+// }
+
+// async fn heartbeat(mut tx: mpsc::Sender<ClientMessage>) {
+//     let mut interval = tokio::time::interval(Duration::from_secs(20));
+//     loop {
+//         interval.tick().await;
+//         let message = ClientMessage::Heartbeat;
+//         if tx.send(message).await.is_err() {
+//             return;
+//         }
+//     }
+// }
 
 fn client_parameters() -> gm_quic::ClientParameters {
     let mut params = gm_quic::ClientParameters::default();

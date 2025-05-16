@@ -11,15 +11,18 @@ bytes = { workspace = true, features = ["serde"] }
 clap = { workspace = true }
 crossterm = { workspace = true }
 dashmap = { workspace = true }
+derive_more = { workspace = true, features = ["display", "debug"] }
 futures = { workspace = true }
 genmeta-common = { workspace = true }
 gm-quic = { workspace = true }
 h3 = { workspace = true }
 h3-shim = { workspace = true }
 http = { workspace = true }
+pin-project-lite = { workspace = true }
 qconnection = { workspace = true }
 qdns = { workspace = true }
 qtraversal = { workspace = true }
+rpassword = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }
 serde_cbor = { workspace = true }

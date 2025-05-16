@@ -1,16 +1,11 @@
 use std::{
-    fmt::Debug,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering::Relaxed},
-    },
+    net::{Ipv4Addr, SocketAddr},
+    sync::Arc,
 };
 
 use bytes::Bytes;
 use dashmap::DashMap;
-use futures::{Sink, SinkExt, StreamExt, channel::mpsc, never::Never};
-use genmeta_common::map_sink::MapSinkExt;
-use serde::{Deserialize, Serialize};
+use futures::never::Never;
 use tokio::{
     io,
     net::{TcpListener, TcpStream},
@@ -21,58 +16,29 @@ use tokio_util::{
 };
 use tracing::Instrument;
 
-type Token = u64;
-type AtomicToken = AtomicU64;
+use crate::{
+    Error,
+    mux::{Mux, OpenChannel, Token},
+};
 
-#[derive(Serialize, Debug)]
-pub enum ClientSocksMessage {
-    Init { token: Token },
-    Data { token: Token, data: Bytes },
-    Finish { token: Token },
+pub struct SocksForwardServer {
+    connections: Arc<DashMap<Token, AbortOnDropHandle<()>>>,
+    mux: Arc<Mux>,
 }
 
-#[derive(Deserialize, Debug)]
-pub enum ServerSocksMessage {
-    Data { token: Token, data: Bytes },
-    Error { token: Token, error: String },
-}
-
-pub struct SocksConnection {
-    data_recver: mpsc::Sender<Bytes>,
-    _task_handle: AbortOnDropHandle<()>,
-}
-
-pub struct SocksForwardServer<S> {
-    token: Arc<AtomicToken>,
-    connections: Arc<DashMap<Token, SocksConnection>>,
-    message_sender: S,
-}
-
-impl<S> SocksForwardServer<S>
-where
-    S: Sink<ClientSocksMessage, Error: Debug + Send> + Clone + Send + Unpin + 'static,
-{
-    pub fn new(message_sender: S) -> Self {
+impl SocksForwardServer {
+    pub fn new(mux: Arc<Mux>) -> Self {
         Self {
-            token: Arc::new(AtomicToken::new(0)),
             connections: Arc::new(DashMap::new()),
-            message_sender,
+            mux,
         }
     }
 
-    pub async fn accpet(&self, mut incoming: TcpStream) {
-        let token = self.token.fetch_add(1, Relaxed);
-        let message_sender = self.message_sender.clone();
+    pub async fn accpet(&self, mut incoming: TcpStream) -> Result<(), Error> {
+        let (token, recver, sender) = self.mux.open::<Bytes, Bytes>(OpenChannel::Socks {}).await?;
 
-        let (data_recver, rcvd_data_stream) = mpsc::channel(16);
-        let mut reader = StreamReader::new(rcvd_data_stream.map(io::Result::Ok));
-        let data_sender = message_sender
-            .clone()
-            .mapped(move |data: Bytes| Ok(ClientSocksMessage::Data { token, data }))
-            .sink_map_err(|send_error| {
-                io::Error::other(format!("Server internal send error: {send_error:?}"))
-            });
-        let mut writer = SinkWriter::new(CopyToBytes::new(data_sender));
+        let mut reader = StreamReader::new(recver);
+        let mut writer = SinkWriter::new(CopyToBytes::new(sender));
 
         let forward_task = async move {
             let mut forwrad_io = io::join(&mut reader, &mut writer);
@@ -81,54 +47,49 @@ where
         };
 
         let connections = self.connections.clone();
-        let mut message_sender = message_sender.clone();
         let forward_task = async move {
-            let initial_message = ClientSocksMessage::Init { token };
-            if let Err(e) = message_sender.send(initial_message).await {
-                tracing::error!(target: "socks", "Error sending initial message: {e:?}");
-                return;
-            }
             if let Err(e) = forward_task.await {
                 tracing::error!(target: "socks", "Error in forward task: {e:?}");
             }
 
-            let close_message = ClientSocksMessage::Finish { token };
-            _ = message_sender.send(close_message).await;
             connections.remove(&token);
         };
 
-        let connection = SocksConnection {
-            data_recver,
-            _task_handle: AbortOnDropHandle::new(tokio::spawn(forward_task.in_current_span())),
-        };
-        self.connections.insert(token, connection);
+        self.connections.insert(
+            token,
+            AbortOnDropHandle::new(tokio::spawn(forward_task.in_current_span())),
+        );
+        Ok(())
     }
 
-    pub async fn receive(&self, token: Token, data: Bytes) {
-        if let Some(mut connection) = self.connections.get_mut(&token) {
-            if let Err(error) = connection.data_recver.send(data).await {
-                tracing::warn!(target: "socks", "Failed to send data to connection {token}: {error:?}");
-            }
-        } else {
-            tracing::warn!(target: "socks", "Connection {token} not found");
-        }
-    }
-
-    pub async fn listen(&self, listener: TcpListener) -> io::Error {
+    pub async fn listen(&self, listener: TcpListener) -> Error {
         let listen = async {
             tracing::info!(target: "socks", "Listening on {}", listener.local_addr()?);
             loop {
                 let (incoming, from) = listener.accept().await?;
                 tracing::info!(target: "socks", "Accepted connection from {from}");
-                self.accpet(incoming).await;
+                self.accpet(incoming).await?;
             }
         };
-        let io::Result::<Never>::Err(error) = listen.await;
-        tracing::error!(target: "socks", "Socks forward server error: {error:?}");
+        let Result::<Never, Error>::Err(error) = listen.await;
         error
     }
+}
 
-    pub fn close(&self, token: Token) {
-        self.connections.remove(&token);
+impl super::Options {
+    pub fn dynamic_forward_server(&self) -> Option<Result<SocketAddr, Error>> {
+        let bind_address = self.dynamic_forward.as_ref()?;
+        match bind_address.parse::<SocketAddr>().ok().or_else(|| {
+            bind_address
+                .parse::<u16>()
+                .map(|port| SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port))
+                .ok()
+        }) {
+            Some(bind_address) => Some(Ok(bind_address)),
+            None => Some(Err(format!(
+                "Invalid bind address argument `{bind_address}` provide:"
+            )
+            .into())),
+        }
     }
 }
