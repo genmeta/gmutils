@@ -63,14 +63,14 @@ pub struct Options {
     #[arg(short = 'D', value_name = "[bind_address:]port", long_help = DYNAMIC_FORWARD_LONG_HELP)]
     dynamic_forward: Option<String>,
 
-    #[arg(short = 'o', value_delimiter=',')]
+    #[arg(short = 'o', value_delimiter = ',')]
     options: Vec<String>,
 
     #[arg(
         trailing_var_arg = true,
         help = "Command to execute on the remote server"
     )]
-    commands: Vec<String>,
+    command: Vec<String>,
 }
 
 impl Options {
@@ -127,6 +127,36 @@ impl Options {
             )
             .into())),
         }
+    }
+
+    async fn full_command(&self) -> Result<String, Error> {
+        let mut command = self.command.join(" ");
+
+        let read_here_doc = tokio::task::spawn_blocking(|| {
+            use std::io::Read;
+
+            let mut heredoc = String::new();
+            if atty::isnt(atty::Stream::Stdin) {
+                std::io::stdin().read_to_string(&mut heredoc)?;
+            }
+
+            std::io::Result::Ok(heredoc)
+        });
+
+        match read_here_doc.await {
+            Ok(result) => match result {
+                Ok(content) if !content.is_empty() => {
+                    command.push_str(" <<EOF\n");
+                    command.push_str(&content);
+                    command.push_str("\nEOF");
+                }
+                Ok(_) => {} // no heredoc content
+                Err(e) => return Err(format!("Failed to read heredoc content: {e}").into()),
+            },
+            Err(e) => return Err(format!("Failed to read heredoc content: {e}").into()),
+        };
+
+        Ok(command)
     }
 }
 
@@ -229,12 +259,8 @@ pub async fn run(options: Options) -> Result<(), Error> {
         connect_result?
     };
 
-    tracing::info!(%options.uri, "request");
-    let mut request_builder = http::Request::builder()
-        .method("PUT")
-        .uri(options.uri.clone());
     // 构建 Basic Auth 头
-    {
+    let basic_auth = {
         use base64::Engine;
         let credentials = match options.username_password() {
             (username, Some(password)) => {
@@ -242,20 +268,21 @@ pub async fn run(options: Options) -> Result<(), Error> {
             }
             (username, None) => username,
         };
-        let basic_auth = base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes());
-        request_builder = request_builder.header("Authorization", format!("Basic {basic_auth}"));
+        base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes())
     };
 
-    // 构建X-Comamnds头
-    if !options.commands.is_empty() {
+    let x_commands = {
         use base64::Engine;
-        let commands = options.commands.join(" ");
-        request_builder = request_builder.header(
-            "X-Commands",
-            base64::engine::general_purpose::STANDARD.encode(commands.as_bytes()),
-        );
-    }
-    let request = request_builder.body(())?;
+        base64::engine::general_purpose::STANDARD.encode(options.full_command().await?.as_bytes())
+    };
+
+    let request = http::Request::builder()
+        .method("PUT")
+        .uri(options.uri.clone())
+        .header("Authorization", format!("Basic {basic_auth}"))
+        .header("X-Commands", x_commands)
+        .body(())?;
+    tracing::info!(?request, "request");
 
     // sending request results in a bidirectional stream,
     // which is also used for receiving response
