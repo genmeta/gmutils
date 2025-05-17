@@ -278,7 +278,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         // receive data from the stream and write to stdout
         _ = recv_messages => None,
         // send heartbeat messages to keep ssh connection alive
-        Err(error) = run => Some(error),
+        result = run => result.err(),
         // wait for the quic connection to be terminated
         _ = quic_conn.terminated() => None,
         // wait for the h3 connection to be closed
