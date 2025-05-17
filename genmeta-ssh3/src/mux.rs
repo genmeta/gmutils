@@ -144,6 +144,7 @@ impl Mux {
                 Ok(None)
             }
             ChannelMessage::Close { token } => {
+                tracing::debug!(target: "ssh", ?token, "Closed by peer");
                 if self.channels.remove(&token).is_none() {
                     return Err(format!("Failed to close channel: {token}: already closed").into());
                 }
@@ -315,6 +316,7 @@ impl<T: Serialize> Sink<T> for Sender<T> {
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let mut project = self.project();
+        tracing::debug!(target: "ssh", token=?project.token, "Closed by local");
         ready!(
             (project.sink.as_mut().poll_ready(cx)).map_err(|se| io::Error::other(format!(
                 "Mux sender failed to ready for Close: {se:?}"

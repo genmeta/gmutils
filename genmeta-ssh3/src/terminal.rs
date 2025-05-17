@@ -4,6 +4,7 @@ use bytes::Bytes;
 use crossterm::terminal;
 use futures::{SinkExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
+use tokio_util::task::AbortOnDropHandle;
 
 use crate::{
     Error,
@@ -57,11 +58,11 @@ impl Command {
             }
         }
 
-        tokio::select! {
-            _ = send_terminal(sender.clone()) => {}
-            _ = update_winsize(sender) => {}
-            _ = recv_terminal(recver) => {}
-        }
+        let _update_winize = AbortOnDropHandle::new(tokio::spawn(update_winsize(sender.clone())));
+        let _send_terminal = AbortOnDropHandle::new(tokio::spawn(send_terminal(sender.clone())));
+
+        // stdin 关闭不代表流关闭，以recv为准
+        _ = recv_terminal(recver).await;
 
         Ok(())
     }
@@ -136,7 +137,7 @@ async fn send_terminal(mut message_sender: Sender<ClientTerminalMessage>) {
 
         let message = ClientTerminalMessage::Sequence(sequence);
         if message_sender.send(message).await.is_err() {
-            tracing::error!("Event channel closed");
+            tracing::error!(target:"ssh", "Event channel closed");
             return;
         }
     }
@@ -152,9 +153,10 @@ async fn recv_terminal(mut recver: Recver<'_, ServerTerminalMessage>) {
             stdout.flush()
         });
         if let Err(write_error) = write_to_stdout.await.expect("Write should never panic") {
-            tracing::error!("Failed to write to stdout: {write_error}");
+            tracing::error!(target:"ssh", "Failed to write to stdout: {write_error}");
         }
     }
+    tracing::debug!(target:"ssh", "recv_terminal: Recv EOF");
 }
 
 impl super::Options {
