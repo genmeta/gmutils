@@ -105,7 +105,7 @@ async fn update_winsize(mut message_sender: Sender<ClientTerminalMessage>) {
 async fn send_terminal(mut message_sender: Sender<ClientTerminalMessage>) {
     // tokio::io::stdin() 不适合交互使用，读文档了解详情
     let tracing_span = tracing::Span::current();
-    let (sequence_tx, mut sequence_rx) = tokio::sync::mpsc::channel(32);
+    let (sequence_tx, mut sequence_rx) = tokio::sync::mpsc::channel::<Bytes>(32);
     std::thread::spawn(move || {
         let _entered = tracing_span.entered();
         loop {
@@ -120,7 +120,7 @@ async fn send_terminal(mut message_sender: Sender<ClientTerminalMessage>) {
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Failed to read from stdin: {e}");
+                    tracing::error!(target:"ssh", "Failed to read from stdin: {e}");
                     break;
                 }
             }
@@ -128,6 +128,12 @@ async fn send_terminal(mut message_sender: Sender<ClientTerminalMessage>) {
     });
 
     while let Some(sequence) = sequence_rx.recv().await {
+        // read() -> Ok(0)
+        if sequence.is_empty() {
+            tracing::debug!(target:"ssh", "Read stdin EOF received");
+            break;
+        }
+
         let message = ClientTerminalMessage::Sequence(sequence);
         if message_sender.send(message).await.is_err() {
             tracing::error!("Event channel closed");
