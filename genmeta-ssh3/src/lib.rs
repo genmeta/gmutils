@@ -243,8 +243,10 @@ pub async fn run(options: Options) -> Result<(), Error> {
             .map_err(|e| format!("Failed to login: {e:?}"))?;
 
         // 初始化终端。guard自动释放
-        let _guard = TerminalGuard::new();
-
+        let _raw_terminal_guard;
+        if options.pseudo {
+            _raw_terminal_guard = TerminalGuard::new();
+        };
         let run_command = AbortOnDropHandle::new(tokio::spawn({
             let mux = mux.clone();
             async move {
