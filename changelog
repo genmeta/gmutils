@@ -1,0 +1,15 @@
+# genmeta v0.2
+
+完全重写ssh
+
+往事不可追
+
+# genmeta v0.2.1, genmeta-ssh3 v0.2.1
+
+优化mux的行为，更贴近标准的ssh，只有多路复用的所有Channel结束ssh才结束
+
+优化了日志打印
+
+让ssh不处理heredoc
+
+加上了这个changelog
