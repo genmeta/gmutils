@@ -706,6 +706,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_cbor",
+ "thiserror",
  "tokio",
  "tokio-util",
  "tracing",

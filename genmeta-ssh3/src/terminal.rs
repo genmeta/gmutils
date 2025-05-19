@@ -45,13 +45,13 @@ impl Command {
             None => OpenChannel::Shell { pseudo },
         };
 
-        tracing::debug!(target: "ssh", "Running command: {self:?} with Open {open:?}");
+        tracing::debug!(target: "terminal", "Running command: {self:?} with Open {open:?}");
         let (_token, recver, mut sender) = mux
             .open::<ServerTerminalMessage, ClientTerminalMessage>(open)
             .await?;
 
         if let Some(heredoc) = &self.heredoc {
-            tracing::debug!(target: "ssh", "Writing heredoc: {heredoc:?}");
+            tracing::debug!(target: "terminal", "Writing heredoc: {heredoc:?}");
             let heredoc = ClientTerminalMessage::Sequence(heredoc.as_bytes().to_vec().into());
             if sender.send(heredoc).await.is_err() {
                 return Err("Failed to send heredoc".into());
@@ -83,7 +83,7 @@ async fn update_winsize(mut message_sender: Sender<ClientTerminalMessage>) {
     };
 
     if let Err(e) = update_winsize().await {
-        tracing::error!("Failed to update terminal size: {e}");
+        tracing::error!(target: "terminal", "Failed to update terminal size: {e}");
     };
 
     use tokio::signal::unix::{SignalKind, signal};
@@ -91,14 +91,14 @@ async fn update_winsize(mut message_sender: Sender<ClientTerminalMessage>) {
     let mut signal_listener = match signal(SignalKind::window_change()) {
         Ok(listener) => listener,
         Err(e) => {
-            tracing::error!("Failed to create signal handler for SIGWINCH: {e}");
+            tracing::error!(target: "terminal", "Failed to create signal handler for SIGWINCH: {e}");
             return;
         }
     };
 
     while let Some(()) = signal_listener.recv().await {
         if let Err(e) = update_winsize().await {
-            tracing::error!("Failed to update terminal size: {e}");
+            tracing::error!(target: "terminal", "Failed to update terminal size: {e}");
         };
     }
 }
@@ -131,19 +131,19 @@ async fn send_terminal(mut message_sender: Sender<ClientTerminalMessage>) {
     while let Some(sequence) = sequence_rx.recv().await {
         // read() -> Ok(0)
         if sequence.is_empty() {
-            tracing::debug!(target:"ssh", "Read stdin EOF received");
+            tracing::debug!(target: "terminal", "Read stdin EOF received");
             break;
         }
 
         let message = ClientTerminalMessage::Sequence(sequence);
         if message_sender.send(message).await.is_err() {
-            tracing::error!(target:"ssh", "Event channel closed");
+            tracing::error!(target: "terminal", "Event channel closed");
             return;
         }
     }
 }
 
-async fn recv_terminal(mut recver: Recver<'_, ServerTerminalMessage>) {
+async fn recv_terminal(mut recver: Recver<ServerTerminalMessage>) {
     while let Ok(Some(sequence)) = recver.try_next().await {
         // 不知为何往tokio::stdin写时会缺少一行输出，所以使用stdio
         let write_to_stdout = tokio::task::spawn_blocking(move || {
@@ -153,10 +153,10 @@ async fn recv_terminal(mut recver: Recver<'_, ServerTerminalMessage>) {
             stdout.flush()
         });
         if let Err(write_error) = write_to_stdout.await.expect("Write should never panic") {
-            tracing::error!(target:"ssh", "Failed to write to stdout: {write_error}");
+            tracing::error!(target: "terminal", "Failed to write to stdout: {write_error}");
         }
     }
-    tracing::debug!(target:"ssh", "recv_terminal: Recv EOF");
+    tracing::debug!(target: "terminal", "recv_terminal: Recv EOF");
 }
 
 impl super::Options {

@@ -26,6 +26,7 @@ rpassword = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }
 serde_cbor = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "rt"] }
 tracing = { workspace = true }

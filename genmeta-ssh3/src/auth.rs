@@ -27,14 +27,13 @@ pub async fn login(mux: &Arc<Mux>, user: &str, mut password: Option<&str>) -> Re
         let Some(message) = recver.try_next().await.ok().and_then(identity) else {
             return Err("Auth stream closed unexpectedly.".into());
         };
-        tracing::debug!("Received auth message: {message:?}");
+        tracing::debug!(target: "auth", ?message, "Received auth message");
         match message {
             ServerAuthMessage::Accpet => return Ok(()),
             ServerAuthMessage::Password { prompt } => {
                 let password = match password.take() {
                     Some(password) => password.to_owned(),
                     None => {
-                        tracing::info!("Password required for user {user}");
                         let Ok(Ok(password)) =
                             tokio::task::spawn_blocking(|| rpassword::prompt_password(prompt))
                                 .await

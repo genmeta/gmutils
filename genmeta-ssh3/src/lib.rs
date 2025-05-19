@@ -6,18 +6,17 @@ mod socks;
 mod terminal;
 
 use clap::Parser;
-use futures::{Sink, SinkExt, Stream, StreamExt, TryStream, TryStreamExt, channel::mpsc};
+use futures::TryStreamExt;
 use genmeta_common::{
     AGENTS, ROOT_CERT, Resolvers, cbor_codec,
-    h3_stream::{self, H3StreamReader},
+    h3_stream::{self, H3Stream},
 };
 use gm_quic::{QuicClient, ToCertificate};
 use http::Uri;
-use mux::ChannelMessage;
 use qdns::{Resolve, UdpResolver};
 use qtraversal::iface::TraversalFactory;
-use tokio::{net::TcpListener, time};
-use tokio_util::{codec, io::StreamReader, task::AbortOnDropHandle};
+use tokio::{net::TcpListener, task::JoinSet, time};
+use tokio_util::{codec, io::StreamReader};
 
 const URI_LONG_HELP: &str = "Example: `developer@ssh3.test.genmeta.net`
 Scheme is optional, only `ssh3` is accepted.
@@ -71,7 +70,7 @@ impl Options {
         };
         uri_parts.path_and_query = match uri_parts.path_and_query {
             root if root.as_ref().is_none_or(|path| path == "/") => {
-                tracing::warn!("Path is empty, using `/ssh` as default");
+                tracing::warn!(target: "connect", "Path is empty, using `/ssh` as default");
                 Some("/ssh".parse().unwrap())
             }
             path_and_query => path_and_query,
@@ -103,6 +102,7 @@ struct TerminalGuard(());
 
 impl TerminalGuard {
     pub fn new() -> Self {
+        tracing::info!(target: "terminal", "Enable raw mode");
         crossterm::terminal::enable_raw_mode().expect("Failed to enable raw mode");
         TerminalGuard(())
     }
@@ -110,6 +110,7 @@ impl TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        tracing::info!(target: "terminal", "Disable raw mode(RAII)");
         crossterm::terminal::disable_raw_mode().expect("Failed to disable raw mode");
     }
 }
@@ -140,7 +141,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .await
         .map_err(|e| format!("failed to resolve host {server_name}: {e:?}"))?;
 
-    tracing::info!("resolved {} to address: {:?}", server_name, server_addrs);
+    tracing::info!(target: "connect", "resolved {} to address: {:?}", server_name, server_addrs);
 
     let quic_client = {
         let mut roots = rustls::RootCertStore::empty();
@@ -168,7 +169,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     };
 
     let (quic_conn, mut h3_conn, mut h3_client) = {
-        tracing::info!(server_name, ?server_addrs, "connect to server");
+        tracing::info!(target: "connect", server_name, ?server_addrs, "connect to server");
         let mut connect_result = Result::Err(Error::from("Dns not found"));
         for server_addr in server_addrs {
             let attempt = async {
@@ -191,7 +192,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
                     break;
                 }
                 Err(error) => {
-                    tracing::error!("attempt connect to server {server_addr} failed: error");
+                    tracing::error!(target: "connect", "attempt connect to server {server_addr} failed: error");
                     connect_result = Err(error)
                 }
             }
@@ -203,82 +204,73 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .method("PUT")
         .uri(options.uri.clone())
         .body(())?;
-    tracing::info!(?request, "request");
+    tracing::info!(target: "connect", ?request, "request");
 
     // sending request results in a bidirectional stream,
     // which is also used for receiving response
     let mut stream = h3_client.send_request(request).await?;
     let response = stream.recv_response().await?;
-    tracing::info!(?response, "received");
+    tracing::info!(target: "connect", ?response, "received");
     if response.status() != 200 {
         return Err(format!("Server response status: {}", response.status()).into());
     }
 
-    let (message_sender, pending_messages) = mpsc::channel::<mux::ChannelMessage>(32);
-    let mux = Arc::new(mux::Mux::new(message_sender, mux::Role::Client));
-
-    let (mut sender, mut recver) = stream.split();
-    let send_messages = AbortOnDropHandle::new(tokio::spawn(async move {
-        let message_sender = codec::FramedWrite::new(
-            h3_stream::H3StreamWriter::new(&mut sender),
-            cbor_codec::CborEncoder::default(),
-        );
-        send_messages(message_sender, pending_messages).await
-    }));
-
-    let message_handler = mux.clone();
-    let recv_messages = AbortOnDropHandle::new(tokio::spawn(async move {
-        let message_recver = codec::FramedRead::new(
-            StreamReader::new(H3StreamReader::new(&mut recver)),
+    let (sender, recver) = stream.split();
+    let (mux, mut incoming) = mux::Mux::new(
+        mux::Role::Client,
+        codec::FramedRead::new(
+            StreamReader::new(H3Stream::new(recver)),
             cbor_codec::CborDecoder::default(),
-        );
-        recv_messages(message_recver, message_handler).await
-    }));
+        ),
+        codec::FramedWrite::new(
+            h3_stream::H3Sink::new(sender),
+            cbor_codec::CborEncoder::default(),
+        ),
+    );
+
+    tokio::spawn(async move {
+        while let Ok(Some(new_channel)) = incoming.try_next().await {
+            tracing::warn!(target: "mux", ?new_channel, "Received channel, ignore");
+        }
+    });
 
     let run = async move {
         let (username, password) = options.username_password();
+
+        let mut channels = JoinSet::new();
 
         auth::login(&mux, &username, password.as_deref())
             .await
             .map_err(|e| format!("Failed to login: {e:?}"))?;
 
-        // 初始化终端。guard自动释放
-        let _raw_terminal_guard;
-        if options.pseudo {
-            _raw_terminal_guard = TerminalGuard::new();
-        };
-        let run_command = AbortOnDropHandle::new(tokio::spawn({
+        channels.spawn({
             let mux = mux.clone();
             async move {
+                // 初始化终端。guard自动释放
+                let _raw_terminal_guard = TerminalGuard::new();
                 if let Err(e) = command.run(&mux, options.pseudo).await {
-                    tracing::error!("Failed to run command: {e:?}");
+                    tracing::error!(target: "terminal", "Failed to run command: {e:?}");
                 }
             }
-        }));
+        });
 
-        let _dynamic_forward_task;
         if let Some(socks_listener) = dynamic_forward_server {
             let server = Arc::new(socks::SocksForwardServer::new(mux.clone()));
-            _dynamic_forward_task = AbortOnDropHandle::new(tokio::spawn({
+            channels.spawn({
                 let server = server.clone();
                 async move {
                     let error = server.listen(socks_listener).await;
                     tracing::error!(target: "socks", "Socks forward server error: {error:?}");
                 }
-            }));
+            });
         }
 
-        _ = run_command.await;
-        tracing::info!("Command finished");
+        channels.join_all().await;
 
         Result::<(), Error>::Ok(())
     };
 
     let error = tokio::select! {
-        // write messages to the stream
-        _ = send_messages => None,
-        // receive data from the stream and write to stdout
-        _ = recv_messages => None,
         // send heartbeat messages to keep ssh connection alive
         result = run => result.err(),
         // wait for the quic connection to be terminated
@@ -292,172 +284,6 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
     error.map_or(Ok(()), Err)
 }
-
-async fn send_messages(
-    mut message_sender: impl Sink<ChannelMessage, Error: Debug> + Unpin,
-    mut pending_messages: impl Stream<Item = ChannelMessage> + Unpin,
-) {
-    while let Some(message) = pending_messages.next().await {
-        if let Err(send_error) = message_sender.send(message).await {
-            tracing::error!("Failed to send message: {send_error:?}");
-            break;
-        }
-    }
-}
-
-async fn recv_messages(
-    mut message_recver: impl TryStream<Ok = ChannelMessage, Error: Debug> + Unpin,
-    mux: Arc<mux::Mux>,
-) {
-    loop {
-        let message: ChannelMessage = match message_recver.try_next().await {
-            Ok(Some(message)) => message,
-            Ok(None) => {
-                tracing::info!("Peer closed the stream");
-                break;
-            }
-            Err(recv_error) => {
-                tracing::error!("Read from peer error: {recv_error:?}");
-                break;
-            }
-        };
-
-        tracing::trace!(?message, "Received message");
-        if let Err(e) = mux.receive(message).await {
-            tracing::error!("Failed to receive message: {e:?}");
-        }
-    }
-}
-
-// async fn recv_messages<S>(
-//     mut message_recver: impl TryStream<Ok = ServerMessage, Error: Debug> + Unpin,
-//     socks_forward_server: Option<Arc<socks::SocksForwardServer<S>>>,
-// ) where
-//     S: Sink<socks::ClientSocksMessage, Error: Debug + Send> + Clone + Send + Unpin + 'static,
-// {
-//     loop {
-//         let message: ServerMessage = match message_recver.try_next().await {
-//             Ok(Some(message)) => message,
-//             Ok(None) => {
-//                 tracing::info!("Peer closed the stream");
-//                 break;
-//             }
-//             Err(recv_error) => {
-//                 tracing::error!("Read from peer error: {recv_error:?}");
-//                 break;
-//             }
-//         };
-
-//         match message {
-//             ServerMessage::Terminal { sequence } => {
-//                 // 不知为何往tokio::stdin写时会缺少一行输出，所以
-//                 let write_to_stdout = tokio::task::spawn_blocking(move || {
-//                     use std::io::Write;
-//                     let mut stdout = std::io::stdout().lock();
-//                     stdout.write_all(&sequence)?;
-//                     stdout.flush()
-//                 });
-
-//                 if let Err(e) = write_to_stdout.await {
-//                     tracing::error!("Write to stdout error: {e}");
-//                     break;
-//                 }
-//             }
-//             ServerMessage::Socks(server_socks_message) => {
-//                 if let Some(socks_forward_server) = &socks_forward_server {
-//                     match server_socks_message {
-//                         socks::ServerSocksMessage::Data { token, data } => {
-//                             socks_forward_server.receive(token, data).await;
-//                         }
-//                         socks::ServerSocksMessage::Error { token, error } => {
-//                             let _ = error; //TODO
-//                             socks_forward_server.close(token);
-//                         }
-//                     }
-//                 }
-//             }
-//             ServerMessage::Heartbeat => {}
-//         }
-//     }
-// }
-
-// async fn handle_winresize(mut tx: mpsc::Sender<ClientMessage>) {
-//     let mut update_winsize = async || {
-//         let message = match terminal::size() {
-//             Ok((cols, rows)) => ClientMessage::WindowSize { rows, cols },
-//             Err(e) => {
-//                 return Err(Error::from(format!("Failed to get terminal size: {e}")));
-//             }
-//         };
-//         if tx.send(message).await.is_err() {
-//             return Err("Event channel closed".into());
-//         }
-//         Ok(())
-//     };
-
-//     if let Err(e) = update_winsize().await {
-//         tracing::error!("Failed to update terminal size: {e}");
-//     };
-
-//     let mut signal_listener = match signal(SignalKind::window_change()) {
-//         Ok(listener) => listener,
-//         Err(e) => {
-//             tracing::error!("Failed to create signal handler for SIGWINCH: {e}");
-//             return;
-//         }
-//     };
-
-//     while let Some(()) = signal_listener.recv().await {
-//         if let Err(e) = update_winsize().await {
-//             tracing::error!("Failed to update terminal size: {e}");
-//         };
-//     }
-// }
-
-// async fn handle_stdin(mut tx: mpsc::Sender<ClientMessage>) {
-//     // tokio::io::stdin() 不适合交互使用，读文档了解详情
-//     let tracing_span = tracing::Span::current();
-//     let (sequence_tx, mut sequence_rx) = tokio::sync::mpsc::channel(32);
-//     std::thread::spawn(move || {
-//         let _entered = tracing_span.entered();
-//         loop {
-//             let mut buf = [0; 4096];
-//             match std::io::stdin().read(&mut buf) {
-//                 Ok(nread) => {
-//                     if sequence_tx
-//                         .blocking_send(buf[..nread].to_vec().into())
-//                         .is_err()
-//                     {
-//                         return;
-//                     }
-//                 }
-//                 Err(e) => {
-//                     tracing::error!("Failed to read from stdin: {e}");
-//                     break;
-//                 }
-//             }
-//         }
-//     });
-
-//     while let Some(sequence) = sequence_rx.recv().await {
-//         let message = ClientMessage::Terminal { sequence };
-//         if tx.send(message).await.is_err() {
-//             tracing::error!("Event channel closed");
-//             return;
-//         }
-//     }
-// }
-
-// async fn heartbeat(mut tx: mpsc::Sender<ClientMessage>) {
-//     let mut interval = tokio::time::interval(Duration::from_secs(20));
-//     loop {
-//         interval.tick().await;
-//         let message = ClientMessage::Heartbeat;
-//         if tx.send(message).await.is_err() {
-//             return;
-//         }
-//     }
-// }
 
 fn client_parameters() -> gm_quic::ClientParameters {
     let mut params = gm_quic::ClientParameters::default();
