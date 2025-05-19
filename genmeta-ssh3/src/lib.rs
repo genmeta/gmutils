@@ -129,8 +129,6 @@ pub async fn run(options: Options) -> Result<(), Error> {
         None => None,
     };
 
-    let command = options.command().await?;
-
     let resolvers = Resolvers::new()
         // .with(HttpResolver::new("http://127.0.0.1:20004/v1/dns/")?)
         .with(UdpResolver::new(Resolvers::UDP_DNS_SERVER));
@@ -245,6 +243,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
         channels.spawn({
             let mux = mux.clone();
+            let command = options.command();
             async move {
                 // 初始化终端。guard自动释放
                 let _raw_terminal_guard = TerminalGuard::new();

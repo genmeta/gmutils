@@ -23,7 +23,6 @@ pub type ServerTerminalMessage = Bytes;
 pub struct Command {
     program: Option<String>,
     arguments: Option<Vec<String>>,
-    heredoc: Option<String>,
 }
 
 impl Command {
@@ -46,17 +45,9 @@ impl Command {
         };
 
         tracing::debug!(target: "terminal", "Running command: {self:?} with Open {open:?}");
-        let (_token, recver, mut sender) = mux
+        let (_token, recver, sender) = mux
             .open::<ServerTerminalMessage, ClientTerminalMessage>(open)
             .await?;
-
-        if let Some(heredoc) = &self.heredoc {
-            tracing::debug!(target: "terminal", "Writing heredoc: {heredoc:?}");
-            let heredoc = ClientTerminalMessage::Sequence(heredoc.as_bytes().to_vec().into());
-            if sender.send(heredoc).await.is_err() {
-                return Err("Failed to send heredoc".into());
-            }
-        }
 
         let _update_winize = AbortOnDropHandle::new(tokio::spawn(update_winsize(sender.clone())));
         let _send_terminal = AbortOnDropHandle::new(tokio::spawn(send_terminal(sender.clone())));
@@ -160,41 +151,17 @@ async fn recv_terminal(mut recver: Recver<ServerTerminalMessage>) {
 }
 
 impl super::Options {
-    pub async fn command(&self) -> Result<Command, Error> {
-        async fn read_heredoc() -> Result<Option<String>, Error> {
-            let read_here_doc = tokio::task::spawn_blocking(|| {
-                use std::io::Read;
-
-                let mut heredoc = String::new();
-                if atty::isnt(atty::Stream::Stdin) {
-                    std::io::stdin().read_to_string(&mut heredoc)?;
-                }
-
-                std::io::Result::Ok(heredoc)
-            });
-
-            match read_here_doc.await {
-                Ok(result) => match result {
-                    Ok(content) if !content.is_empty() => Ok(Some(content)),
-                    Ok(_) => Ok(None), // no heredoc content
-                    Err(e) => Err(format!("Failed to read heredoc content: {e}").into()),
-                },
-                Err(e) => Err(format!("Failed to read heredoc content: {e}").into()),
-            }
-        }
-
+    pub fn command(&self) -> Command {
         match self.commands.as_slice() {
-            [] => Ok(Command::default()),
-            [command] => Ok(Command {
+            [] => Command::default(),
+            [command] => Command {
                 program: Some(command.to_string()),
                 arguments: None,
-                heredoc: read_heredoc().await?,
-            }),
-            [command, arguments @ ..] => Ok(Command {
+            },
+            [command, arguments @ ..] => Command {
                 program: Some(command.to_string()),
                 arguments: Some(arguments.to_vec()),
-                heredoc: read_heredoc().await?,
-            }),
+            },
         }
     }
 }
