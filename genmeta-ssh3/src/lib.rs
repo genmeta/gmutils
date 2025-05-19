@@ -1,6 +1,7 @@
 use std::{fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
 
 mod auth;
+mod config;
 mod mux;
 mod socks;
 mod terminal;
@@ -17,25 +18,34 @@ use qtraversal::iface::TraversalFactory;
 use tokio::{net::TcpListener, task::JoinSet, time};
 use tokio_util::{codec, io::StreamReader};
 
-const URI_LONG_HELP: &str = "Example: `developer@ssh3.test.genmeta.net`
-Scheme is optional, only `ssh3` is accepted.
-Username is optional, if not present, use current user.
-Password is optional, if not present, prompt for it.
+const URI_LONG_HELP: &str = "Example: `my-remote-dev`, `developer@ssh3.test.genmeta.net`
+If this argument matches the ssh configuration file, the HostName and User of the matched Host will be used. \
+Otherwise the argument will be parsed as a URI. URIs follow these rules: \
+Scheme is optional, only `ssh3` is accepted. \
+Username is optional, if not present, use current user. \
+Password is optional, if not present, prompt for it. \
 Path is optional, if not present, use `/ssh` as default.";
 
 const DYNAMIC_FORWARD_LONG_HELP: &str = "Example: `12345`, `127.0.0.1:12335`
-Specify a local address port, which will forward the accepted TCP connection to the server's SOCKS server.
+Specify a local address port, which will forward the accepted TCP connection to the server's SOCKS server. \
 You can specify just the port, and the bind_address defaults to 127.0.0.1.";
+
+const OPTIONS_LONG_HELP: &str =
+    "Set options for the SSH connection, currently all options are ignored.";
 
 #[derive(Parser, Debug, Clone)]
 #[command(version, about)]
 pub struct Options {
-    #[arg(value_name = "[ssh3://][[username][:password]@]host[:port][path]", long_help = URI_LONG_HELP)]
-    uri: Uri,
+    #[arg(value_name = "HOST/URI", long_help = URI_LONG_HELP)]
+    server: Uri,
     #[arg(short = 'D', value_name = "[bind_address:]port", long_help = DYNAMIC_FORWARD_LONG_HELP)]
     dynamic_forward: Option<String>,
 
-    #[arg(short = 'o', value_delimiter = ',')]
+    #[arg(
+        short = 'o',
+        value_delimiter = ',',
+        long_help = OPTIONS_LONG_HELP
+    )]
     options: Vec<String>,
 
     #[arg(
@@ -49,50 +59,9 @@ pub struct Options {
     #[arg(
         trailing_var_arg = true,
         value_name = "[command [argument ...]]",
-        help = "Command to execute on the remote server"
+        help = "Command to execute on the remote server."
     )]
     commands: Vec<String>,
-}
-
-impl Options {
-    fn complete_uri(self) -> Result<Self, Error> {
-        let mut uri_parts = self.uri.into_parts();
-        uri_parts.scheme = match uri_parts.scheme {
-            Some(ref scheme) if scheme.as_str() == "ssh3" => uri_parts.scheme,
-            None => Some("ssh3".parse().unwrap()),
-            Some(scheme) => {
-                let message = format!(
-                    "Unsupported scheme `{scheme}` for ssh. Scheme in uri is must not be present or be `ssh3`"
-                );
-                return Err(message.into());
-            }
-        };
-        uri_parts.path_and_query = match uri_parts.path_and_query {
-            root if root.as_ref().is_none_or(|path| path == "/") => {
-                tracing::warn!(target: "connect", "Path is empty, using `/ssh` as default");
-                Some("/ssh".parse().unwrap())
-            }
-            path_and_query => path_and_query,
-        };
-        Ok(Self {
-            uri: Uri::from_parts(uri_parts)?,
-            ..self
-        })
-    }
-
-    fn username_password(&self) -> (String, Option<String>) {
-        let try_from_uri = |username_password: &str| {
-            username_password
-                .split_once(':')
-                .map(|(username, password)| (username.to_string(), Some(password.to_string())))
-                .unwrap_or((username_password.to_string(), None))
-        };
-        self.uri
-            .authority()
-            .and_then(|authority| authority.as_str().rsplit_once('@'))
-            .map(|(username_password, _host)| try_from_uri(username_password))
-            .unwrap_or_else(|| (whoami::username(), None))
-    }
 }
 
 type Error = Box<dyn core::error::Error + Send + Sync>;
@@ -115,9 +84,7 @@ impl Drop for TerminalGuard {
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
-    let options = options
-        .complete_uri()
-        .map_err(|e| format!("Failed to complete URI: {e:?}"))?;
+    let profile = options.profile().await?;
 
     let dynamic_forward_server = match options.dynamic_forward_server().transpose()? {
         Some(bind_addr) => Some(
@@ -132,7 +99,9 @@ pub async fn run(options: Options) -> Result<(), Error> {
         // .with(HttpResolver::new("http://127.0.0.1:20004/v1/dns/")?)
         .with(UdpResolver::new(Resolvers::UDP_DNS_SERVER));
     // let resolver = UdpResolver::new("1.12.74.4:5300".parse().unwrap());
-    let server_name = options.uri.host().ok_or("Missing host in uri")?;
+    let server_name =
+        (profile.uri.host()).ok_or_else(|| format!("Host missing in URI: {}", profile.uri))?;
+
     let server_addrs = resolvers
         .lookup(server_name)
         .await
@@ -199,7 +168,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
     let request = http::Request::builder()
         .method("PUT")
-        .uri(options.uri.clone())
+        .uri(profile.uri)
         .body(())?;
     tracing::info!(target: "connect", ?request, "request");
 
@@ -226,7 +195,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     );
 
     let run = async move {
-        let (username, password) = options.username_password();
+        let (username, password) = (profile.user, profile.password);
 
         let mut channels = JoinSet::new();
 
