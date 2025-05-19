@@ -4,16 +4,13 @@ use std::{
 };
 
 use bytes::Bytes;
-use dashmap::DashMap;
 use futures::never::Never;
 use tokio::{
     io,
     net::{TcpListener, TcpStream},
+    task::JoinSet,
 };
-use tokio_util::{
-    io::{CopyToBytes, SinkWriter, StreamReader},
-    task::AbortOnDropHandle,
-};
+use tokio_util::io::{CopyToBytes, SinkWriter, StreamReader};
 use tracing::Instrument;
 
 use crate::{
@@ -22,19 +19,18 @@ use crate::{
 };
 
 pub struct SocksForwardServer {
-    connections: Arc<DashMap<Token, AbortOnDropHandle<()>>>,
     mux: Arc<Mux>,
 }
 
 impl SocksForwardServer {
     pub fn new(mux: Arc<Mux>) -> Self {
-        Self {
-            connections: Arc::new(DashMap::new()),
-            mux,
-        }
+        Self { mux }
     }
 
-    pub async fn accpet(&self, mut incoming: TcpStream) -> Result<(), Error> {
+    pub async fn accpet(
+        &self,
+        mut incoming: TcpStream,
+    ) -> Result<(Token, impl Future<Output: Send> + Send + use<>), Error> {
         let (token, recver, sender) = self.mux.open::<Bytes, Bytes>(OpenChannel::Socks {}).await?;
 
         let mut reader = StreamReader::new(recver);
@@ -46,32 +42,30 @@ impl SocksForwardServer {
             io::Result::Ok(())
         };
 
-        let connections = self.connections.clone();
         let forward_task = async move {
             if let Err(e) = forward_task.await {
                 tracing::error!(target: "socks", "Error in forward task: {e:?}");
             }
-
-            connections.remove(&token);
         };
 
-        self.connections.insert(
-            token,
-            AbortOnDropHandle::new(tokio::spawn(forward_task.in_current_span())),
-        );
-        Ok(())
+        Result::Ok((token, forward_task))
     }
 
     pub async fn listen(&self, listener: TcpListener) -> Error {
+        let mut connections = JoinSet::new();
         let listen = async {
             tracing::info!(target: "socks", "Listening on {}", listener.local_addr()?);
             loop {
                 let (incoming, from) = listener.accept().await?;
                 tracing::info!(target: "socks", "Accepted connection from {from}");
-                self.accpet(incoming).await?;
+                let (token, forward_task) = self.accpet(incoming).await?;
+                connections.spawn(
+                    forward_task.instrument(tracing::info_span!("forward_task", token = %token)),
+                );
             }
         };
         let Result::<Never, Error>::Err(error) = listen.await;
+        _ = connections.join_all().await;
         error
     }
 }
