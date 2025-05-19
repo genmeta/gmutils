@@ -21,4 +21,15 @@ copyright = "Copyright © 2025 Genmeta QUIC Team"
 depends = "$auto"
 section = "utilities"
 priority = "optional"
-assets = [["target/release/genmeta", "usr/bin/", "755"]]
+assets = [
+    [
+        "target/release/genmeta",
+        "usr/bin/",
+        "755",
+    ],
+    [
+        "../genmeta-ssh3.sh",
+        "usr/bin/",
+        "755",
+    ],
+]

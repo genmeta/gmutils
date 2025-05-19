@@ -20,3 +20,5 @@
 修复mux不正确退出，收包完全惰性的问题
 
 支持加载系统ssh配置文件
+
+将fake-ssh.sh（genmeta-ssh3.sh）打包进deb
