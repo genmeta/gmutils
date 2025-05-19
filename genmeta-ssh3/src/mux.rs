@@ -12,12 +12,13 @@ use std::{
 use bytes::Bytes;
 use dashmap::{DashMap, Entry};
 use derive_more::Display;
-use futures::{Sink, SinkExt, Stream, StreamExt, TryStream, channel::mpsc};
+use futures::{Sink, SinkExt, Stream, StreamExt, channel::mpsc};
 use genmeta_common::cbor_codec;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::io;
 use tokio_util::{codec, io::StreamReader};
+use tracing::Instrument;
 
 #[derive(Debug, Display, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct Token(u64);
@@ -116,34 +117,62 @@ pub enum Error {
 impl Mux {
     pub fn new<St, StE, Si>(
         role: Role,
-        stream: St,
+        mut stream: St,
         mut sink: Si,
-    ) -> (
-        Arc<Self>,
-        impl TryStream<Ok = NewChannel, Error = super::Error> + Unpin + use<St, StE, Si>,
-    )
+    ) -> (Arc<Self>, mpsc::Receiver<Result<NewChannel, super::Error>>)
     where
         St: Stream<Item = Result<ChannelMessage, StE>> + Send + Unpin + 'static,
         StE: Into<super::Error> + Send + 'static,
         Si: Sink<ChannelMessage, Error: Debug> + Send + Unpin + 'static,
     {
         let (message_sender, mut pending_messages) = mpsc::channel::<ChannelMessage>(8);
-        tokio::spawn(async move {
-            while let Some(message) = pending_messages.next().await {
-                tracing::trace!(target: "mux", ?message, "Send message");
-                if let Err(error) = sink.send(message).await {
-                    tracing::error!(target: "mux", ?error, "Failed to send message");
-                    return;
-                }
-            }
-        });
-        let mux = Arc::new(Mux {
+        let (mut incoming_forwarder, incomings) = mpsc::channel(8);
+
+        let this = Arc::new(Mux {
+            token_gen: AtomicU64::new(Token::new(role, 0).into_inner()),
             channels: DashMap::new(),
             message_sender,
-            token_gen: AtomicU64::new(Token::new(role, 0).into_inner()),
         });
-        let incoming = Mux::receive_from(mux.clone(), stream);
-        (mux, incoming)
+
+        let mux = this.clone();
+        let task = async move {
+            let recv_messages = async {
+                while let Some(item) = stream.next().await {
+                    let item = match item {
+                        Ok(item) => mux.receive(item).await.map_err(super::Error::from),
+                        Err(error) => Err(error.into()),
+                    };
+
+                    let is_err = item.is_err();
+                    if let Some(item) = item.transpose() {
+                        tracing::trace!(target: "mux", ?item, "Forward incoming message");
+                        _ = incoming_forwarder.send(item).await;
+                    }
+                    if is_err {
+                        return;
+                    }
+                }
+                tracing::debug!(target: "mux", "Incoming stream closed");
+            };
+            let send_messages = async {
+                while let Some(message) = pending_messages.next().await {
+                    tracing::trace!(target: "mux", ?message, "Send message");
+                    if let Err(error) = sink.send(message).await {
+                        tracing::warn!(target: "mux", ?error, "Failed to send message");
+                        return;
+                    }
+                }
+            };
+            tokio::select! {
+                _ = recv_messages => {},
+                _ = send_messages => {},
+            }
+            _ = sink.close().await;
+            tracing::debug!(target: "mux", "Sink closed");
+        };
+
+        tokio::spawn(task.in_current_span());
+        (this, incomings)
     }
 
     fn token(&self) -> Token {
@@ -153,26 +182,6 @@ impl Mux {
     fn next_token(&self) -> Token {
         let token = self.token_gen.fetch_add(2, SeqCst);
         Token(token)
-    }
-
-    fn receive_from<S, E>(
-        mux: Arc<Self>,
-        messages: S,
-    ) -> impl TryStream<Ok = NewChannel, Error = super::Error> + Unpin + use<S, E>
-    where
-        S: Stream<Item = Result<ChannelMessage, E>> + Send + Unpin + 'static,
-        E: Into<super::Error> + Send + 'static,
-    {
-        let receive = move |message: Result<ChannelMessage, E>| {
-            let mux = mux.clone();
-            async move {
-                match message {
-                    Ok(message) => mux.receive(message).await.map_err(Into::into).transpose(),
-                    Err(e) => Some(Err(e.into())),
-                }
-            }
-        };
-        messages.filter_map(receive).boxed()
     }
 
     async fn receive(
@@ -209,9 +218,9 @@ impl Mux {
                 Ok(None)
             }
             ChannelMessage::Close { token } => {
-                tracing::debug!(target: "mux", ?token, "Channel by peer");
+                tracing::debug!(target: "mux", ?token, "Channel closed by peer");
                 if self.channels.remove(&token).is_none() {
-                    return Err(Error::ChannelClosed(token));
+                    tracing::warn!(target: "mux", ?token, "Channel already closed by peer");
                 }
                 Ok(None)
             }

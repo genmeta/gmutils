@@ -13,3 +13,8 @@
 让ssh不处理heredoc
 
 加上了这个changelog
+
+
+# genmeta v0.2.2, genmeta-ssh3 v0.2.2
+
+修复mux不正确退出，收包完全惰性的问题

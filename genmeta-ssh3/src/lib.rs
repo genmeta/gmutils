@@ -6,7 +6,6 @@ mod socks;
 mod terminal;
 
 use clap::Parser;
-use futures::TryStreamExt;
 use genmeta_common::{
     AGENTS, ROOT_CERT, Resolvers, cbor_codec,
     h3_stream::{self, H3Stream},
@@ -214,7 +213,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     }
 
     let (sender, recver) = stream.split();
-    let (mux, mut incoming) = mux::Mux::new(
+    let (mux, _incomings) = mux::Mux::new(
         mux::Role::Client,
         codec::FramedRead::new(
             StreamReader::new(H3Stream::new(recver)),
@@ -225,12 +224,6 @@ pub async fn run(options: Options) -> Result<(), Error> {
             cbor_codec::CborEncoder::default(),
         ),
     );
-
-    tokio::spawn(async move {
-        while let Ok(Some(new_channel)) = incoming.try_next().await {
-            tracing::warn!(target: "mux", ?new_channel, "Received channel, ignore");
-        }
-    });
 
     let run = async move {
         let (username, password) = options.username_password();
