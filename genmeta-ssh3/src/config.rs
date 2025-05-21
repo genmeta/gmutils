@@ -1,7 +1,10 @@
-use std::{env, io::Cursor};
+mod parser;
+
+use parser::SshConfig;
+
+use std::env;
 
 use http::Uri;
-use ssh2_config::{ParseRule, SshConfig};
 use tokio::fs;
 
 use crate::Error;
@@ -31,12 +34,12 @@ fn username_password_from_uri(uri: &Uri) -> (Option<String>, Option<String>) {
 impl super::Options {
     pub async fn profile(&self) -> Result<Profile, Error> {
         let ssh_config = read_ssh_config().await?;
-        let host_params = ssh_config.query(self.server.to_string());
+        let host_params = ssh_config.query(&self.server.to_string());
 
-        let mut user = host_params.user;
+        let mut user = host_params.get("user").cloned();
         let mut password = None;
 
-        let uri = match host_params.host_name {
+        let uri = match host_params.get("hostname") {
             Some(host_name) => host_name
                 .parse::<Uri>()
                 .map_err(|e| format!("Failed to parse host name '{host_name}' as URI: {e}"))?,
@@ -73,8 +76,6 @@ impl super::Options {
 
         let uri = Uri::from_parts(uri_parts).expect("Failed to construct URI from parts");
 
-        if uri.host().is_none() {}
-
         let (user, password) = match user {
             Some(user) => (user, password),
             None => (whoami::username(), None),
@@ -93,27 +94,42 @@ pub async fn read_ssh_config() -> Result<SshConfig, Error> {
 
     // Read the user-wide SSH configuration file.
     // This is typically located at /etc/ssh/ssh_config.
-    if let Some(home) = env::var_os("HOME")
-        && let Ok(content) =
-            fs::read_to_string(format!("{}/.ssh/config", home.to_string_lossy())).await
-    {
-        ssh_config = ssh_config
-            .parse(
-                &mut Cursor::new(content),
-                ParseRule::ALLOW_UNSUPPORTED_FIELDS | ParseRule::ALLOW_UNKNOWN_FIELDS,
-            )
-            .map_err(|e| format!("Failed to parse user-wide SSH config: {e}"))?;
+    let read_user_config = async {
+        let home = env::var_os("HOME")
+            .ok_or("Failed to get HOME environment variable to locate user-wide SSH config file")?;
+        fs::read_to_string(format!("{}/.ssh/config", home.to_string_lossy()))
+            .await
+            .map_err(|e| format!("{e:?}"))
+    };
+
+    match read_user_config.await {
+        Ok(content) => {
+            ssh_config += content
+                .parse::<SshConfig>()
+                .map_err(|e| format!("Failed to parse user-wide SSH config: {e}"))?;
+        }
+        Err(e) => {
+            tracing::error!(target: "config", "Failed to read user-wide SSH config: {e:?}");
+        }
     }
 
     // Read the system-wide SSH configuration file.
     // This is typically located at /etc/ssh/ssh_config.
-    if let Ok(system_wide_content) = fs::read_to_string("/etc/ssh/ssh_config").await {
-        ssh_config = ssh_config
-            .parse(
-                &mut Cursor::new(system_wide_content),
-                ParseRule::ALLOW_UNSUPPORTED_FIELDS | ParseRule::ALLOW_UNKNOWN_FIELDS,
-            )
-            .map_err(|e| format!("Failed to parse system-wide SSH config: {e}"))?;
+    let read_system_config = async {
+        fs::read_to_string("/etc/ssh/ssh_config")
+            .await
+            .map_err(|e| format!("{e:?}"))
+    };
+
+    match read_system_config.await {
+        Ok(content) => {
+            ssh_config += content
+                .parse::<SshConfig>()
+                .map_err(|e| format!("Failed to parse system-wide SSH config: {e}"))?;
+        }
+        Err(e) => {
+            tracing::error!(target: "config", "Failed to read system-wide SSH config: {e:?}");
+        }
     }
 
     Ok(ssh_config)

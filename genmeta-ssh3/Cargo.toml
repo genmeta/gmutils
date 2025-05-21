@@ -18,15 +18,16 @@ gm-quic = { workspace = true }
 h3 = { workspace = true }
 h3-shim = { workspace = true }
 http = { workspace = true }
+peg = { workspace = true }
 pin-project-lite = { workspace = true }
 qconnection = { workspace = true }
 qdns = { workspace = true }
 qtraversal = { workspace = true }
+regex = { workspace = true }
 rpassword = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }
 serde_cbor = { workspace = true }
-ssh2-config = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "rt"] }

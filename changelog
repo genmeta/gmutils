@@ -22,3 +22,7 @@
 支持加载系统ssh配置文件
 
 将fake-ssh.sh（genmeta-ssh3.sh）打包进deb
+
+# genmeta v0.2.3, genmeta-ssh3 v0.2.3
+
+自己实现配置解析而不是使用ssh_config(修复了难以交叉编译的问题)
