@@ -630,7 +630,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "clap",
  "genmeta-request",
@@ -649,7 +649,7 @@ dependencies = [
  "bytes",
  "derive_more",
  "futures",
- "h3 0.0.7",
+ "h3",
  "h3-shim",
  "pin-project-lite",
  "qbase",
@@ -669,7 +669,7 @@ dependencies = [
  "clap",
  "genmeta-common",
  "gm-quic",
- "h3 0.0.7",
+ "h3",
  "h3-shim",
  "http",
  "qconnection",
@@ -683,7 +683,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-ssh3"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "atty",
  "base64",
@@ -695,7 +695,7 @@ dependencies = [
  "futures",
  "genmeta-common",
  "gm-quic",
- "h3 0.0.7",
+ "h3",
  "h3-shim",
  "http",
  "peg",
@@ -835,9 +835,9 @@ dependencies = [
 
 [[package]]
 name = "h3"
-version = "0.0.7"
+version = "0.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dfb059a4f28a66f186ed16ad912d142f490676acba59353831d7cb45a96b0d3"
+checksum = "10872b55cfb02a821b69dc7cf8dc6a71d6af25eb9a79662bec4a9d016056b3be"
 dependencies = [
  "bytes",
  "fastrand",
@@ -849,20 +849,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "h3"
-version = "0.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10872b55cfb02a821b69dc7cf8dc6a71d6af25eb9a79662bec4a9d016056b3be"
-dependencies = [
- "bytes",
- "fastrand",
- "futures-util",
- "http",
- "pin-project-lite",
- "tokio",
-]
-
-[[package]]
 name = "h3-shim"
 version = "0.2.2"
 source = "git+ssh://git@github.com/genmeta/gm-quic-traversal.git?branch=develop#cd80f542dd7f93abb676b96bff242d40a9b6aa98"
@@ -871,7 +857,7 @@ dependencies = [
  "dashmap",
  "futures",
  "gm-quic",
- "h3 0.0.8",
+ "h3",
  "qbase",
  "qconnection",
  "tokio",

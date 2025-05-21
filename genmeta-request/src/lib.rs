@@ -147,7 +147,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
             let attempt = async {
                 let quic_conn = quic_client.connect(server_name, server_addr)?;
                 let connect = async {
-                    h3::client::new(h3_shim::QuicConnection::new(quic_conn.clone()).await).await
+                    h3::client::new(h3_shim::QuicConnection::new(quic_conn.clone())).await
                 };
                 #[rustfmt::skip] // https://github.com/rust-lang/rustfmt/issues/6564
                     let (h3_conn, h3_client) = time::timeout(Duration::from_secs(3), connect)

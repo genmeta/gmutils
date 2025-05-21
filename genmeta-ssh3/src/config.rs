@@ -9,7 +9,7 @@ use tokio::fs;
 
 use crate::Error;
 
-pub struct Profile {
+pub struct Config {
     pub user: String,
     pub password: Option<String>,
     pub uri: Uri,
@@ -32,7 +32,7 @@ fn username_password_from_uri(uri: &Uri) -> (Option<String>, Option<String>) {
 // Host Xxx > Host.XXX > Host.HostName xxx
 // HostName可以提供Uri的host部分
 impl super::Options {
-    pub async fn profile(&self) -> Result<Profile, Error> {
+    pub async fn profile(&self) -> Result<Config, Error> {
         let ssh_config = read_ssh_config().await?;
         let host_params = ssh_config.query(&self.server.to_string());
 
@@ -46,11 +46,12 @@ impl super::Options {
             None => self.server.clone(),
         };
 
-        let mut uri_parts = uri.into_parts();
-
         if user.is_none() {
-            (user, password) = username_password_from_uri(&self.server);
+            tracing::debug!(target: "config", "User not found in ssh_config, Try parse it from hostname");
+            (user, password) = username_password_from_uri(&uri);
         }
+
+        let mut uri_parts = uri.into_parts();
 
         uri_parts.scheme = match uri_parts.scheme {
             Some(ref scheme) if scheme.as_str() == "ssh3" => uri_parts.scheme,
@@ -81,7 +82,7 @@ impl super::Options {
             None => (whoami::username(), None),
         };
 
-        Ok(Profile {
+        Ok(Config {
             user,
             password,
             uri,

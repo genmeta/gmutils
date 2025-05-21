@@ -84,7 +84,7 @@ impl Drop for TerminalGuard {
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
-    let profile = options.profile().await?;
+    let config = options.profile().await?;
 
     let dynamic_forward_server = match options.dynamic_forward_server().transpose()? {
         Some(bind_addr) => Some(
@@ -100,7 +100,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .with(UdpResolver::new(Resolvers::UDP_DNS_SERVER));
     // let resolver = UdpResolver::new("1.12.74.4:5300".parse().unwrap());
     let server_name =
-        (profile.uri.host()).ok_or_else(|| format!("Host missing in URI: {}", profile.uri))?;
+        (config.uri.host()).ok_or_else(|| format!("Host missing in URI: {}", config.uri))?;
 
     let server_addrs = resolvers
         .lookup(server_name)
@@ -141,7 +141,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
             let attempt = async {
                 let quic_conn = quic_client.connect(server_name, server_addr)?;
                 let connect = async {
-                    h3::client::new(h3_shim::QuicConnection::new(quic_conn.clone()).await).await
+                    h3::client::new(h3_shim::QuicConnection::new(quic_conn.clone())).await
                 };
                 #[rustfmt::skip] // https://github.com/rust-lang/rustfmt/issues/6564
                 let (h3_conn, h3_client) = time::timeout(Duration::from_secs(3), connect)
@@ -168,7 +168,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
     let request = http::Request::builder()
         .method("PUT")
-        .uri(profile.uri)
+        .uri(config.uri)
         .body(())?;
     tracing::info!(target: "connect", ?request, "request");
 
@@ -195,7 +195,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     );
 
     let run = async move {
-        let (username, password) = (profile.user, profile.password);
+        let (username, password) = (config.user, config.password);
 
         let mut channels = JoinSet::new();
 
