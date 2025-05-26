@@ -14,7 +14,6 @@
 
 加上了这个changelog
 
-
 # genmeta v0.2.2, genmeta-ssh3 v0.2.2
 
 修复mux不正确退出，收包完全惰性的问题
@@ -28,3 +27,15 @@
 自己实现配置解析而不是使用ssh_config(修复了难以交叉编译的问题)
 
 跟进gm-quic-traversal更新
+
+# genmeta v0.2.4, genmeta-ssh3 v0.2.4, ssh3-proto v0.1.0
+
+提取gateway和gmutils关于ssh协议的共通代码
+
+支持本地转发和远程转发，整理动态转发
+
+发送心跳保活包保持连接活跃
+
+session结束时结束程序
+
+server返回进程退出的状态码

@@ -1,31 +1,28 @@
-use std::{convert::identity, sync::Arc};
+use std::sync::Arc;
 
 use futures::{SinkExt, TryStreamExt};
-use serde::{Deserialize, Serialize};
+use ssh3_proto::messages::{
+    OpenChannel,
+    auth::{ClientAuthMessage, ServerAuthMessage},
+};
 
 use crate::{Error, mux::Mux};
 
-#[derive(Debug, Serialize, Deserialize)]
-enum ClientAuthMessage {
-    Password(String),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-enum ServerAuthMessage {
-    Accpet,
-    Password { prompt: String }, // Reject: ChannelMessage::Close
-    Reject { reason: String },
-}
-
 pub async fn login(mux: &Arc<Mux>, user: &str, mut password: Option<&str>) -> Result<(), Error> {
-    let (_token, mut recver, mut sender) = mux
-        .open(crate::mux::OpenChannel::Auth {
+    let (_token, recver, sender) = mux
+        .open(OpenChannel::Auth {
             username: user.to_owned(),
         })
         .await?;
+    let mut recver = recver.framed();
+    let mut sender = sender.framed();
     loop {
-        let Some(message) = recver.try_next().await.ok().and_then(identity) else {
-            return Err("Auth stream closed unexpectedly.".into());
+        let auth_message = recver.try_next().await;
+        tracing::debug!(target: "auth", ?auth_message, "Received auth message");
+        let message = match auth_message {
+            Ok(Some(message)) => message,
+            Ok(None) => return Err("Auth stream closed unexpectedly.".into()),
+            Err(e) => return Err(e.into()),
         };
         tracing::debug!(target: "auth", ?message, "Received auth message");
         match message {
@@ -46,9 +43,6 @@ pub async fn login(mux: &Arc<Mux>, user: &str, mut password: Option<&str>) -> Re
                 if let Err(_se) = sender.send(ClientAuthMessage::Password(password)).await {
                     return Err("Failed to send password".into());
                 }
-            }
-            ServerAuthMessage::Reject { reason } => {
-                return Err(format!("Authentication failed: {reason}").into());
             }
         }
     }

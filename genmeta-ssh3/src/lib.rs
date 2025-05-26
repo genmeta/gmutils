@@ -2,11 +2,11 @@ use std::{fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
 
 mod auth;
 mod config;
-mod mux;
+mod forward;
+mod session;
 mod socks;
-mod terminal;
-
 use clap::Parser;
+use futures::{FutureExt, StreamExt};
 use genmeta_common::{
     AGENTS, ROOT_CERT, Resolvers, cbor_codec,
     h3_stream::{self, H3Stream},
@@ -15,31 +15,59 @@ use gm_quic::{QuicClient, ToCertificate};
 use http::Uri;
 use qdns::{Resolve, UdpResolver};
 use qtraversal::iface::TraversalFactory;
-use tokio::{net::TcpListener, task::JoinSet, time};
+use ssh3_proto::{listener, messages, mux};
+use tokio::time;
 use tokio_util::{codec, io::StreamReader};
 
 const URI_LONG_HELP: &str = "Example: `my-remote-dev`, `developer@ssh3.test.genmeta.net`
-If this argument matches the ssh configuration file, the HostName and User of the matched Host will be used. \
+If this argument matches the ssh configuration file, \
+the HostName and User of the matched Host will be used. \
 Otherwise the argument will be parsed as a URI. URIs follow these rules: \
 Scheme is optional, only `ssh3` is accepted. \
 Username is optional, if not present, use current user. \
 Password is optional, if not present, prompt for it. \
 Path is optional, if not present, use `/ssh` as default.";
 
-const DYNAMIC_FORWARD_LONG_HELP: &str = "Example: `12345`, `127.0.0.1:12335`
-Specify a local address port, which will forward the accepted TCP connection to the server's SOCKS server. \
-You can specify just the port, and the bind_address defaults to 127.0.0.1.";
-
 const OPTIONS_LONG_HELP: &str =
     "Set options for the SSH connection, currently all options are ignored.";
+
+const DYNAMIC_FORWARD_LONG_HELP: &str = "Example: `12345`, `127.0.0.1:12335`
+Start a Socks server on the specified local port, forward the connection to the server and decide which address \
+the server should connect to based on the application protocol.\
+You can specify just the port, while an empty address or `*` indicates that the port should be available from all interfaces.";
+
+const LOCAL_FORWARDING_LONG_HELP: &str = "
+Specifies that connections to the given TCP port or Unix \
+socket on the local (client) host are to be forwarded to \
+the given host and port, or Unix socket, on the remote \
+side.
+This works by allocating a socket to listen to \
+either a TCP port on the local side, optionally bound to \
+the specified bind_address, or to a Unix socket.  Whenever \
+a connection is made to the local port or socket, the \
+connection is forwarded over the secure channel, and a \
+connection is made to either host port hostport, or the \
+Unix socket remote_socket, from the remote machine.";
+
+const REMOTE_FORWARDING_LONG_HELP: &str = "
+Specifies that connections to the given TCP port or Unix socket on the remote (server) host \
+are to be forwarded to the local side.
+This works by allocating a socket to listen to either a \
+TCP port or to a Unix socket on the remote side.  Whenever \
+a connection is made to this port or Unix socket, the \
+connection is forwarded over the secure channel, and a \
+connection is made from the local machine to either an \
+explicit destination specified by host port hostport, or \
+local_socket, or, if no explicit destination was \
+specified, ssh will act as a SOCKS 4/5 proxy and forward \
+connections to the destinations requested by the remote \
+SOCKS client.";
 
 #[derive(Parser, Debug, Clone)]
 #[command(version, about)]
 pub struct Options {
     #[arg(value_name = "HOST/URI", long_help = URI_LONG_HELP)]
     server: Uri,
-    #[arg(short = 'D', value_name = "[bind_address:]port", long_help = DYNAMIC_FORWARD_LONG_HELP)]
-    dynamic_forward: Option<String>,
 
     #[arg(
         short = 'o',
@@ -56,6 +84,23 @@ pub struct Options {
     )]
     pseudo: bool,
 
+    #[arg(short = 'D', value_name = "[bind_address:]port", long_help = DYNAMIC_FORWARD_LONG_HELP)]
+    dynamic_forward: Vec<String>,
+
+    #[arg(
+        short = 'L',
+        value_name = "[bind_address:]port:host:hostport / [bind_address:]port:remote_socket / local_socket:host:hostport / local_socket:remote_socket",
+        long_help = LOCAL_FORWARDING_LONG_HELP
+    )]
+    local_forwards: Vec<String>,
+
+    #[arg(
+        short = 'R',
+        value_name = "[bind_address:]port:host:hostport / [bind_address:]port:local_socket / remote_socket:host:hostport / remote_socket:local_socket / [bind_address:]port",
+        long_help = REMOTE_FORWARDING_LONG_HELP
+    )]
+    remote_forwards: Vec<String>,
+
     #[arg(
         trailing_var_arg = true,
         value_name = "[command [argument ...]]",
@@ -70,7 +115,7 @@ struct TerminalGuard(());
 
 impl TerminalGuard {
     pub fn new() -> Self {
-        tracing::info!(target: "terminal", "Enable raw mode");
+        tracing::info!(target: "session", "Enable raw mode");
         crossterm::terminal::enable_raw_mode().expect("Failed to enable raw mode");
         TerminalGuard(())
     }
@@ -78,7 +123,7 @@ impl TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        tracing::info!(target: "terminal", "Disable raw mode(RAII)");
+        tracing::info!(target: "session", "Disable raw mode(RAII)");
         crossterm::terminal::disable_raw_mode().expect("Failed to disable raw mode");
     }
 }
@@ -86,13 +131,32 @@ impl Drop for TerminalGuard {
 pub async fn run(options: Options) -> Result<(), Error> {
     let config = options.profile().await?;
 
-    let dynamic_forward_server = match options.dynamic_forward_server().transpose()? {
-        Some(bind_addr) => Some(
-            TcpListener::bind(bind_addr)
-                .await
-                .map_err(|e| format!("Failed to bind local dynamic forward server: {e:?}"))?,
-        ),
-        None => None,
+    let dynamic_forward_endpoints = options.dynamic_forward_endpoints().await?;
+    let local_forward_rules = options.local_forward_rules()?;
+    let remote_forward_rules = options.remote_forward_rules()?;
+
+    tracing::info!(target: "config", ?dynamic_forward_endpoints, ?local_forward_rules, ?remote_forward_rules);
+
+    let dynamic_forward_listeners =
+        {
+            let mut listeners = Vec::new();
+            for &local_addr in &dynamic_forward_endpoints {
+                listeners.push((listener::Listener::bind(local_addr.into()).await).map_err(
+                    |e| format!("Failed to bind to dynamic forward endpoint`{local_addr}`: {e:?}"),
+                )?);
+            }
+            listeners
+        };
+    let local_forwards = {
+        let mut forwards = Vec::new();
+        for (local_endpoint, remote_endpoint) in local_forward_rules {
+            let listener =
+                (listener::Listener::bind(local_endpoint.clone()).await).map_err(|e| {
+                    format!("Failed to bind to local forward endpoint `{local_endpoint}`: {e:?}")
+                })?;
+            forwards.push((local_endpoint, listener, remote_endpoint));
+        }
+        forwards
     };
 
     let resolvers = Resolvers::new()
@@ -107,7 +171,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .await
         .map_err(|e| format!("failed to resolve host {server_name}: {e:?}"))?;
 
-    tracing::info!(target: "connect", "resolved {} to address: {:?}", server_name, server_addrs);
+    tracing::info!(target: "connect", "Resolved {} to address: {:?}", server_name, server_addrs);
 
     let quic_client = {
         let mut roots = rustls::RootCertStore::empty();
@@ -129,13 +193,13 @@ pub async fn run(options: Options) -> Result<(), Error> {
             .reuse_address()
             .bind(&binds[..])
             .inspect_err(|e| {
-                tracing::error!("bind addrs {binds:?} failed: {e:?}");
+                tracing::error!(target: "connect", "Bind addrs {binds:?} failed: {e:?}");
             })?
             .build()
     };
 
     let (quic_conn, mut h3_conn, mut h3_client) = {
-        tracing::info!(target: "connect", server_name, ?server_addrs, "connect to server");
+        tracing::info!(target: "connect", server_name, ?server_addrs, "Attempt connect to server");
         let mut connect_result = Result::Err(Error::from("Dns not found"));
         for server_addr in server_addrs {
             let attempt = async {
@@ -158,7 +222,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
                     break;
                 }
                 Err(error) => {
-                    tracing::error!(target: "connect", "attempt connect to server {server_addr} failed: error");
+                    tracing::error!(target: "connect", "Attempt connect to server {server_addr} failed: error");
                     connect_result = Err(error)
                 }
             }
@@ -176,13 +240,13 @@ pub async fn run(options: Options) -> Result<(), Error> {
     // which is also used for receiving response
     let mut stream = h3_client.send_request(request).await?;
     let response = stream.recv_response().await?;
-    tracing::info!(target: "connect", ?response, "received");
+    tracing::info!(target: "connect", ?response, "Received");
     if response.status() != 200 {
         return Err(format!("Server response status: {}", response.status()).into());
     }
 
     let (sender, recver) = stream.split();
-    let (mux, _incomings) = mux::Mux::new(
+    let (mux, mut incomings) = mux::Mux::new(
         mux::Role::Client,
         codec::FramedRead::new(
             StreamReader::new(H3Stream::new(recver)),
@@ -194,46 +258,101 @@ pub async fn run(options: Options) -> Result<(), Error> {
         ),
     );
 
+    let remote_forwarders = Arc::new(forward::RemoteForwardAcceptor::new(mux.clone()));
+
+    let recv_requests = {
+        let remote_forwarders = remote_forwarders.clone();
+        async move {
+            while let Some(Ok(mux::NewChannel {
+                token: _,
+                request,
+                sender,
+                recver,
+            })) = incomings.next().await
+            {
+                match request {
+                    messages::OpenChannel::Forwarded { listen, to } => {
+                        if let Some(remote_forward_task) =
+                            remote_forwarders.accpet(listen, to, recver, sender).await?
+                        {
+                            tokio::spawn(async move {
+                                if let Err(e) = remote_forward_task.await {
+                                    tracing::error!(target: "remote_forward", "Error in remote forward task: {e:?}");
+                                }
+                            });
+                        }
+                    }
+                    _ => {
+                        return Err(format!("Unexpected message from server: {request:?}").into());
+                    }
+                }
+            }
+            Result::<_, Error>::Ok(())
+        }
+    };
+
     let run = async move {
         let (username, password) = (config.user, config.password);
-
-        let mut channels = JoinSet::new();
 
         auth::login(&mux, &username, password.as_deref())
             .await
             .map_err(|e| format!("Failed to login: {e:?}"))?;
 
-        channels.spawn({
+        let session = tokio::spawn({
             let mux = mux.clone();
             let command = options.command();
             async move {
                 // 初始化终端。guard自动释放
                 let _raw_terminal_guard = TerminalGuard::new();
-                if let Err(e) = command.run(&mux, options.pseudo).await {
-                    tracing::error!(target: "terminal", "Failed to run command: {e:?}");
+                match command.run(&mux, options.pseudo).await {
+                    Ok(code) => std::process::exit(code),
+                    Err(e) => {
+                        tracing::error!(target: "session", "Failed to run command: {e:?}");
+                        Err(e)
+                    }
                 }
             }
         });
 
-        if let Some(socks_listener) = dynamic_forward_server {
-            let server = Arc::new(socks::SocksForwardServer::new(mux.clone()));
-            channels.spawn({
-                let server = server.clone();
+        for (local, listener, remote) in local_forwards {
+            let forwarder =
+                forward::Forwarder::new(mux.clone(), messages::OpenChannel::Direct { to: remote });
+            let listen_task =
+                listener.listen(move |reader, writer| forwarder.forward(reader, writer).boxed());
+            tokio::spawn(async move {
+                let error = listen_task.await;
+                tracing::error!(target: "local_forward", "Local forward server listen on {local} error: {error:?}");
+            });
+        }
+
+        for (local, remote) in remote_forward_rules {
+            let forward_task = remote_forwarders.forward(local, remote.clone()).await?;
+            let forward_task = async move {
+                if let Err(error) = forward_task.await {
+                    tracing::error!(target: "remote_forward", "Remote server failed to accpet connections from {remote}: {error:?}");
+                }
+            };
+            tokio::spawn(forward_task);
+        }
+
+        for dynamic_forward_listener in dynamic_forward_listeners {
+            let listen_task = socks::listen_dynamic_forward(mux.clone(), dynamic_forward_listener);
+            tokio::spawn({
                 async move {
-                    let error = server.listen(socks_listener).await;
+                    let error = listen_task.await;
                     tracing::error!(target: "socks", "Socks forward server error: {error:?}");
                 }
             });
         }
 
-        channels.join_all().await;
+        session.await??;
 
         Result::<(), Error>::Ok(())
     };
 
     let error = tokio::select! {
         // send heartbeat messages to keep ssh connection alive
-        result = run => result.err(),
+        result = async { tokio::try_join!(recv_requests, run) } => result.err(),
         // wait for the quic connection to be terminated
         _ = quic_conn.terminated() => None,
         // wait for the h3 connection to be closed

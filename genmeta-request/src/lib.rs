@@ -1,11 +1,10 @@
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use bytes::{Buf, BytesMut};
+use clap::Parser;
 use genmeta_common::{AGENTS, ROOT_CERT, Resolvers};
 use gm_quic::ToCertificate;
 use http::{Method, Request, Uri};
-
-use clap::Parser;
 use qdns::{Resolve, UdpResolver};
 use qtraversal::iface::TraversalFactory;
 use tokio::{
@@ -135,13 +134,13 @@ pub async fn run(options: Options) -> Result<(), Error> {
             .reuse_address()
             .bind(&binds[..])
             .inspect_err(|e| {
-                tracing::error!("bind addrs {binds:?} failed: {e:?}");
+                tracing::error!(target: "connect", "bind addrs {binds:?} failed: {e:?}");
             })?
             .build()
     };
 
     let (_quic_conn, mut h3_conn, mut h3_client) = {
-        tracing::info!(server_name, ?server_addrs, "connect to server");
+        tracing::info!(target: "connect", server_name, ?server_addrs, "attempt connect to server");
         let mut connect_result = Result::Err(Error::from("Dns not found"));
         for server_addr in server_addrs {
             let attempt = async {
@@ -164,7 +163,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
                     break;
                 }
                 Err(error) => {
-                    tracing::error!("attempt connect to server {server_addr} failed: error");
+                    tracing::error!(target: "connect", "attempt connect to server {server_addr} failed: error");
                     connect_result = Err(error)
                 }
             }
@@ -174,7 +173,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     if options.verbose {
         eprintln!("* establish http3 connection to {server_name}");
     }
-    tracing::info!("http3 connection established");
+    tracing::info!(target: "connect", "http3 connection established");
     tokio::spawn(async move { h3_conn.wait_idle().await });
 
     let mut request_builder = Request::builder().uri(options.uri.clone());
@@ -203,7 +202,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         println!("{output}",)
     }
 
-    tracing::info!("build request: {request:?}");
+    tracing::info!(target: "request", "build request: {request:?}");
 
     let request_stream = h3_client
         .send_request(request)
@@ -249,7 +248,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
             .await
             .map_err(|e| format!("failed to receive response: {e:?}"))?;
 
-        tracing::info!("response: {response:#?}");
+        tracing::info!(target: "request", "response: {response:#?}");
         if options.verbose {
             let output = format!("< received response: {response:#?}")
                 .lines()
@@ -259,12 +258,12 @@ pub async fn run(options: Options) -> Result<(), Error> {
         }
 
         let dst: &mut (dyn AsyncWrite + Unpin) = if let Some(output) = options.output {
-            tracing::debug!("dump output to {}", output.display());
+            tracing::debug!(target: "request", "dump output to {}", output.display());
             &mut fs::File::create(output)
                 .await
                 .map_err(|e| format!("failed to create output file: {e:?}"))?
         } else {
-            tracing::debug!("dump output to stdio");
+            tracing::debug!(target: "request", "dump output to stdio");
             &mut io::stdout()
         };
 

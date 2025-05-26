@@ -1,6 +1,6 @@
 pub mod cbor_codec;
+pub mod entry_guard;
 pub mod h3_stream;
-pub mod map_sink;
 
 use std::{
     io,

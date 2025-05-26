@@ -13,12 +13,19 @@ use bytes::Bytes;
 use dashmap::{DashMap, Entry};
 use derive_more::Display;
 use futures::{Sink, SinkExt, Stream, StreamExt, channel::mpsc};
-use genmeta_common::cbor_codec;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::io;
-use tokio_util::{codec, io::StreamReader};
+use tokio::{io, time};
+use tokio_util::{
+    codec,
+    io::{CopyToBytes, SinkWriter, StreamReader},
+};
 use tracing::Instrument;
+
+use crate::{
+    cbor_codec,
+    messages::{Message, OpenChannel},
+};
 
 #[derive(Debug, Display, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct Token(u64);
@@ -60,36 +67,10 @@ impl Token {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub enum ChannelMessage {
-    Open { token: Token, open: OpenChannel },
-    Data { token: Token, data: Bytes },
-    Close { token: Token },
-}
-
-impl ChannelMessage {
-    pub fn token(&self) -> Token {
-        match self {
-            ChannelMessage::Open { token, .. } => *token,
-            ChannelMessage::Data { token, .. } => *token,
-            ChannelMessage::Close { token } => *token,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum OpenChannel {
-    Auth { username: String },
-    Shell { pseudo: bool },
-    Exec { pseudo: bool, command: String },
-    Socks {},
-    Heartbeat {},
-}
-
 pub struct Mux {
     token_gen: AtomicU64,
     channels: DashMap<Token, mpsc::Sender<io::Result<Bytes>>>,
-    message_sender: mpsc::Sender<ChannelMessage>,
+    message_sender: mpsc::Sender<Message>,
 }
 
 impl Debug for Mux {
@@ -121,11 +102,12 @@ impl Mux {
         mut sink: Si,
     ) -> (Arc<Self>, mpsc::Receiver<Result<NewChannel, super::Error>>)
     where
-        St: Stream<Item = Result<ChannelMessage, StE>> + Send + Unpin + 'static,
+        St: Stream<Item = Result<Message, StE>> + Send + Unpin + 'static,
         StE: Into<super::Error> + Send + 'static,
-        Si: Sink<ChannelMessage, Error: Debug> + Send + Unpin + 'static,
+        Si: Sink<Message, Error: Debug> + Send + Unpin + 'static,
     {
-        let (message_sender, mut pending_messages) = mpsc::channel::<ChannelMessage>(8);
+        let (message_sender, mut pending_messages) = mpsc::channel::<Message>(8);
+        let mut headrbeat_sender = message_sender.clone();
         let (mut incoming_forwarder, incomings) = mpsc::channel(8);
 
         let this = Arc::new(Mux {
@@ -137,19 +119,18 @@ impl Mux {
         let mux = this.clone();
         let task = async move {
             let recv_messages = async {
-                while let Some(item) = stream.next().await {
-                    let item = match item {
+                while let Some(itmessagem) = stream.next().await {
+                    let new_channel = match itmessagem {
                         Ok(item) => mux.receive(item).await.map_err(super::Error::from),
                         Err(error) => Err(error.into()),
                     };
 
-                    let is_err = item.is_err();
-                    if let Some(item) = item.transpose() {
-                        tracing::trace!(target: "mux", ?item, "Forward incoming message");
-                        _ = incoming_forwarder.send(item).await;
+                    let is_err = new_channel.is_err();
+                    if let Some(new_channel) = new_channel.transpose() {
+                        _ = incoming_forwarder.send(new_channel).await;
                     }
                     if is_err {
-                        return;
+                        break;
                     }
                 }
                 tracing::debug!(target: "mux", "Incoming stream closed");
@@ -163,9 +144,17 @@ impl Mux {
                     }
                 }
             };
+            let headrbeat = async move {
+                let mut interval = time::interval(time::Duration::from_secs(20));
+                loop {
+                    interval.tick().await;
+                    _ = headrbeat_sender.send(Message::Headrbeat {}).await
+                }
+            };
             tokio::select! {
                 _ = recv_messages => {},
                 _ = send_messages => {},
+                _ = headrbeat => {},
             }
             _ = sink.close().await;
             tracing::debug!(target: "mux", "Sink closed");
@@ -184,13 +173,13 @@ impl Mux {
         Token(token)
     }
 
-    async fn receive(
-        self: &Arc<Self>,
-        message: ChannelMessage,
-    ) -> Result<Option<NewChannel>, Error> {
+    async fn receive(self: &Arc<Self>, message: Message) -> Result<Option<NewChannel>, Error> {
         tracing::trace!(target: "mux", ?message, "Received message");
         match message {
-            ChannelMessage::Open { token, open } => {
+            Message::Open {
+                token,
+                open: request,
+            } => {
                 if token.role() == self.token().role() {
                     return Err(Error::SameRole(token));
                 }
@@ -200,41 +189,64 @@ impl Mux {
                     return Err(Error::ChannelAlreadyOpen(token));
                 }
                 entry.insert(sender);
-                let channel = NewChannel {
+
+                let recver = Recver {
                     token,
                     mux: self.clone(),
+                    stream: recver,
+                };
+                let sender = Sender {
+                    token,
+                    mux: self.clone(),
+                    sink: self.message_sender.clone(),
+                };
+
+                let channel = NewChannel {
+                    token,
+                    sender,
                     recver,
-                    open,
+                    request,
                 };
                 Ok(Some(channel))
             }
-            ChannelMessage::Data { token, data } => {
+            Message::Data { token, data } => {
                 let channel = self.channels.entry(token);
-                if let Entry::Occupied(mut channel) = channel {
-                    if (channel.get_mut().send(Ok(data)).await).is_err() {
-                        channel.remove();
-                    }
+                if let Entry::Occupied(mut channel) = channel
+                    && channel.get_mut().send(Ok(data)).await.is_err()
+                {
+                    channel.remove();
                 }
                 Ok(None)
             }
-            ChannelMessage::Close { token } => {
+            Message::Error { token, error } => {
+                let channel = self.channels.entry(token);
+                let item = Err(io::Error::new(io::ErrorKind::BrokenPipe, error));
+                if let Entry::Occupied(mut channel) = channel
+                    && channel.get_mut().send(item).await.is_err()
+                {
+                    tracing::warn!(target: "mux", ?token, "Failed to forward error message to a closed channal");
+                    channel.remove();
+                }
+                Ok(None)
+            }
+            Message::Close { token } => {
                 tracing::debug!(target: "mux", ?token, "Channel closed by peer");
                 if self.channels.remove(&token).is_none() {
                     tracing::warn!(target: "mux", ?token, "Channel already closed by peer");
                 }
                 Ok(None)
             }
+            Message::Headrbeat {} => {
+                tracing::debug!(target: "mux", "Received heartbeat");
+                Ok(None)
+            }
         }
     }
 
-    pub async fn open<R, W>(
+    pub async fn open(
         self: &Arc<Self>,
         open: OpenChannel,
-    ) -> Result<(Token, Recver<R>, Sender<W>), Error>
-    where
-        R: Deserialize<'static> + 'static,
-        W: Serialize,
-    {
+    ) -> Result<(Token, Recver, Sender), Error> {
         let token = self.next_token();
         let mut message_sender = self.message_sender.clone();
         let (sender, recver) = mpsc::channel(8);
@@ -245,7 +257,7 @@ impl Mux {
         }
         entry.insert(sender);
 
-        let open = ChannelMessage::Open { token, open };
+        let open = Message::Open { token, open };
         if message_sender.send(open).await.is_err() {
             // unknown reason
             let error = io::ErrorKind::BrokenPipe.into();
@@ -255,16 +267,12 @@ impl Mux {
         let recver = Recver {
             token,
             mux: self.clone(),
-            stream: codec::FramedRead::new(
-                StreamReader::new(recver),
-                cbor_codec::CborDecoder::default(),
-            ),
+            stream: recver,
         };
         let sender = Sender {
             token,
             mux: self.clone(),
             sink: message_sender,
-            _item: PhantomData,
         };
         Ok((token, recver, sender))
     }
@@ -278,89 +286,87 @@ impl Drop for Mux {
 
 #[derive(Debug)]
 pub struct NewChannel {
-    token: Token,
-    mux: Arc<Mux>,
-    recver: mpsc::Receiver<io::Result<Bytes>>,
-    open: OpenChannel,
-}
-
-impl NewChannel {
-    pub fn request(&self) -> &OpenChannel {
-        &self.open
-    }
-
-    pub fn token(&self) -> Token {
-        self.token
-    }
-
-    pub fn assume<R, W>(self) -> (Recver<R>, Sender<W>)
-    where
-        R: Deserialize<'static>,
-        W: Serialize,
-    {
-        let recver = Recver {
-            token: self.token,
-            mux: self.mux.clone(),
-            stream: codec::FramedRead::new(
-                StreamReader::new(self.recver),
-                cbor_codec::CborDecoder::default(),
-            ),
-        };
-        let sender = Sender {
-            token: self.token,
-            mux: self.mux.clone(),
-            sink: self.mux.message_sender.clone(),
-            _item: PhantomData,
-        };
-        (recver, sender)
-    }
+    pub token: Token,
+    pub request: OpenChannel,
+    pub sender: Sender,
+    pub recver: Recver,
 }
 
 pin_project_lite::pin_project! {
-    pub struct Recver<T: 'static> {
+    #[derive(Debug)]
+    pub struct Recver {
         token: Token,
         mux: Arc<Mux>,
         #[pin]
-        stream: codec::FramedRead<
-            StreamReader<mpsc::Receiver<io::Result<Bytes>>, Bytes>,
-            cbor_codec::CborDecoder<'static, T>,
-        >,
+        stream: mpsc::Receiver<io::Result<Bytes>>,
     }
-}
 
-impl<T: Deserialize<'static>> Stream for Recver<T> {
-    type Item = io::Result<T>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.project()
-            .stream
-            .poll_next(cx)
-            .map_err(|_dee| io::ErrorKind::BrokenPipe.into())
-    }
-}
-
-pin_project_lite::pin_project! {
-    pub struct Sender<T> {
-        token: Token,
-        mux: Arc<Mux>,
-        #[pin]
-        sink: mpsc::Sender<ChannelMessage>,
-        _item: PhantomData<T>,
-    }
-}
-
-impl<T> Clone for Sender<T> {
-    fn clone(&self) -> Self {
-        Self {
-            token: self.token,
-            mux: self.mux.clone(),
-            sink: self.sink.clone(),
-            _item: self._item,
+    impl PinnedDrop for Recver {
+        fn drop(this: Pin<&mut Self>) {
+            let project = this.project();
+            project.mux.channels.remove(project.token);
         }
     }
 }
 
-impl<T: Serialize> Sink<T> for Sender<T> {
+pub type StreamingRecver = StreamReader<Recver, Bytes>;
+pub type FramedRecver<T> = codec::FramedRead<StreamingRecver, cbor_codec::CborDecoder<'static, T>>;
+
+impl Recver {
+    pub fn streaming(self) -> StreamReader<Self, Bytes> {
+        StreamReader::new(self)
+    }
+
+    pub fn framed<T: Deserialize<'static>>(self) -> FramedRecver<T> {
+        codec::FramedRead::new(self.streaming(), cbor_codec::CborDecoder::default())
+    }
+}
+
+impl Stream for Recver {
+    type Item = io::Result<Bytes>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.project().stream.poll_next(cx)
+    }
+}
+
+pin_project_lite::pin_project! {
+    #[derive(Debug, Clone)]
+    pub struct Sender {
+        token: Token,
+        mux: Arc<Mux>,
+        #[pin]
+        sink: mpsc::Sender<Message>,
+    }
+}
+
+pub type StreamingSender = SinkWriter<CopyToBytes<Sender>>;
+// pub type FramedSender<T> =
+
+impl Sender {
+    pub async fn cancel(&mut self, error: io::Error) -> io::Result<()> {
+        self.sink
+            .send(Message::Error {
+                token: self.token,
+                error: error.to_string(),
+            })
+            .await
+            .map_err(|_se| io::ErrorKind::BrokenPipe.into())
+    }
+
+    pub fn streaming(self) -> SinkWriter<CopyToBytes<Self>> {
+        SinkWriter::new(CopyToBytes::new(self))
+    }
+
+    pub fn framed<T: Serialize>(self) -> FramedSender<T> {
+        FramedSender {
+            sender: self,
+            _t: PhantomData,
+        }
+    }
+}
+
+impl Sink<Bytes> for Sender {
     type Error = io::Error;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -370,20 +376,13 @@ impl<T: Serialize> Sink<T> for Sender<T> {
             .map_err(|_se| io::ErrorKind::BrokenPipe.into())
     }
 
-    fn start_send(self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
+    fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
         let project = self.project();
         project
             .sink
-            .start_send(ChannelMessage::Data {
+            .start_send(Message::Data {
                 token: *project.token,
-                data: serde_cbor::to_vec(&item)
-                    .map_err(|see| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidInput,
-                            format!("Failed to serialize item: {see:?}"),
-                        )
-                    })?
-                    .into(),
+                data: item,
             })
             .map_err(|_se| io::ErrorKind::BrokenPipe.into())
     }
@@ -398,7 +397,6 @@ impl<T: Serialize> Sink<T> for Sender<T> {
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let mut project = self.project();
-        tracing::debug!(target: "mux", token=?project.token, "Close channel");
         ready!(
             (project.sink.as_mut().poll_ready(cx)).map_err(|se| io::Error::other(format!(
                 "Mux sender failed to ready for Close: {se:?}"
@@ -407,10 +405,63 @@ impl<T: Serialize> Sink<T> for Sender<T> {
         Poll::Ready(
             project
                 .sink
-                .start_send(ChannelMessage::Close {
+                .start_send(Message::Close {
                     token: *project.token,
                 })
                 .map_err(|_se| io::ErrorKind::BrokenPipe.into()),
         )
+    }
+}
+
+pin_project_lite::pin_project! {
+    #[derive(Debug)]
+    pub struct FramedSender<T> {
+        #[pin]
+        sender: Sender,
+        _t: PhantomData<T>
+    }
+}
+
+impl<T> FramedSender<T> {
+    pub async fn cancel(&mut self, error: io::Error) -> io::Result<()> {
+        self.sender.cancel(error).await
+    }
+}
+
+impl<T> Clone for FramedSender<T> {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            _t: PhantomData,
+        }
+    }
+}
+
+impl<T: Serialize> Sink<T> for FramedSender<T> {
+    type Error = io::Error;
+
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().sender.poll_ready(cx)
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
+        self.project().sender.start_send(
+            serde_cbor::to_vec(&item)
+                .map_err(|e| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Failed to serialize: {e}"),
+                    )
+                })?
+                .into(),
+        )
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().sender.poll_flush(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().sender.poll_close(cx)
     }
 }

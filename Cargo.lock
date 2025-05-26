@@ -109,17 +109,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
-name = "atty"
-version = "0.2.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9b39be18770d11421cdb1b9947a45dd3f37e93092cbf377614828a319d5fee8"
-dependencies = [
- "hermit-abi",
- "libc",
- "winapi",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -647,6 +636,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
+ "dashmap",
  "derive_more",
  "futures",
  "h3",
@@ -685,13 +675,12 @@ dependencies = [
 name = "genmeta-ssh3"
 version = "0.2.3"
 dependencies = [
- "atty",
  "base64",
  "bytes",
  "clap",
  "crossterm",
+ "crossterm_winapi",
  "dashmap",
- "derive_more",
  "futures",
  "genmeta-common",
  "gm-quic",
@@ -699,7 +688,6 @@ dependencies = [
  "h3-shim",
  "http",
  "peg",
- "pin-project-lite",
  "qconnection",
  "qdns",
  "qtraversal",
@@ -708,7 +696,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_cbor",
- "thiserror",
+ "ssh3-proto",
  "tokio",
  "tokio-util",
  "tracing",
@@ -809,7 +797,7 @@ dependencies = [
  "qtraversal",
  "qunreliable",
  "rustls",
- "thiserror",
+ "thiserror 2.0.12",
  "tokio",
  "tracing",
 ]
@@ -876,7 +864,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5d26f5298d7c8edca43d555a291540a24805142fa7da4da1359167846b9ef39"
 dependencies = [
  "paste",
- "thiserror",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -902,15 +890,6 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
-
-[[package]]
-name = "hermit-abi"
-version = "0.1.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62b467343b94ba476dcb2500d242dadbb39557df889310ac77c5d99100aaac33"
-dependencies = [
- "libc",
-]
 
 [[package]]
 name = "hex"
@@ -1693,7 +1672,7 @@ dependencies = [
  "rand",
  "rustls",
  "serde",
- "thiserror",
+ "thiserror 2.0.12",
  "tracing",
 ]
 
@@ -1780,7 +1759,7 @@ dependencies = [
  "qudp",
  "rustls",
  "serde",
- "thiserror",
+ "thiserror 2.0.12",
  "tokio",
  "tracing",
 ]
@@ -1798,7 +1777,7 @@ dependencies = [
  "qevent",
  "rand",
  "rustls",
- "thiserror",
+ "thiserror 2.0.12",
  "tokio",
  "tracing",
 ]
@@ -1823,7 +1802,7 @@ dependencies = [
  "qudp",
  "rand",
  "rustls",
- "thiserror",
+ "thiserror 2.0.12",
  "tokio",
  "tracing",
 ]
@@ -1857,7 +1836,7 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "socket2",
- "thiserror",
+ "thiserror 2.0.12",
  "tokio",
  "tracing",
  "web-time",
@@ -1878,7 +1857,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "slab",
- "thiserror",
+ "thiserror 2.0.12",
  "tinyvec",
  "tracing",
  "web-time",
@@ -2408,6 +2387,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "socks5-proto"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d91431c4672e25e372ef46bc554be8f315068c03608f99267a71ad32a12e8c4"
+dependencies = [
+ "bytes",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
+name = "ssh3-proto"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "dashmap",
+ "derive_more",
+ "either",
+ "futures",
+ "genmeta-common",
+ "pin-project-lite",
+ "serde",
+ "serde_cbor",
+ "socket2",
+ "socks5-proto",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2479,11 +2490,31 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
+dependencies = [
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
 version = "2.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "567b8a2dae586314f7be2a752ec7474332959c6460e02bde30d702a66d488708"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 2.0.12",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

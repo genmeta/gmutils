@@ -1,10 +1,9 @@
 mod parser;
 
-use parser::SshConfig;
-
 use std::env;
 
 use http::Uri;
+use parser::SshConfig;
 use tokio::fs;
 
 use crate::Error;

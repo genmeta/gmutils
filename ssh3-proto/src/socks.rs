@@ -1,0 +1,138 @@
+// //! Socks5 proxy server implementation.
+
+use std::sync::Arc;
+
+use socks5_proto::{Address, Error, ProtocolError, Reply, Request, Response, handshake};
+use tokio::io::{self, AsyncRead, AsyncWrite};
+
+use crate::{
+    forward, messages,
+    mux::{Mux, Recver, Sender, Token},
+};
+
+pub async fn accept(
+    reader: &mut (impl AsyncRead + Unpin),
+    writer: &mut (impl AsyncWrite + Unpin),
+    connect: impl AsyncFnOnce(&str, u16) -> io::Result<(Recver, Sender)>,
+) -> io::Result<()> {
+    let handshake_request = match handshake::Request::read_from(reader).await {
+        Ok(handshake_request) => handshake_request,
+        Err(error) => {
+            tracing::warn!(target: "socks", "Failed to parse handshake request: {error:?}");
+            return Err(error.into());
+        }
+    };
+
+    if handshake_request.methods.contains(&handshake::Method::NONE) {
+        handshake::Response::new(handshake::Method::NONE)
+            .write_to(writer)
+            .await?;
+    } else {
+        tracing::warn!(target: "socks", "No acceptable method, reject handshake request");
+        handshake::Response::new(handshake::Method::UNACCEPTABLE)
+            .write_to(writer)
+            .await?;
+        return Err(Error::Protocol(
+            ProtocolError::NoAcceptableHandshakeMethod {
+                version: socks5_proto::SOCKS_VERSION,
+                chosen_method: handshake::Method::NONE,
+                methods: handshake_request.methods,
+            },
+        ))?;
+    }
+
+    let request = match Request::read_from(reader).await {
+        Ok(request) => request,
+        Err(error) => {
+            tracing::warn!(target: "socks", "Failed to parse request: {error:?}");
+            Response::new(Reply::GeneralFailure, Address::unspecified())
+                .write_to(writer)
+                .await?;
+            return Err(error.into());
+        }
+    };
+
+    match request.command {
+        socks5_proto::Command::Connect => {
+            let connect = match request.address {
+                Address::SocketAddress(socket_addr) => {
+                    connect(&socket_addr.ip().to_string(), socket_addr.port()).await
+                }
+                Address::DomainAddress(ref domain, port) => {
+                    let domain = String::from_utf8_lossy(domain);
+                    connect(&domain, port).await
+                }
+            };
+            let mut tcp_stream = match connect {
+                Ok((recver, sender)) => io::join(recver.streaming(), sender.streaming()),
+                Err(error) => {
+                    let reply = match error.kind() {
+                        io::ErrorKind::ConnectionRefused => Reply::ConnectionRefused,
+                        io::ErrorKind::NetworkUnreachable => Reply::NetworkUnreachable,
+                        io::ErrorKind::HostUnreachable => Reply::HostUnreachable,
+                        io::ErrorKind::TimedOut => Reply::NetworkUnreachable,
+                        _ => Reply::GeneralFailure,
+                    };
+                    tracing::warn!(target: "socks", "Failed to connect to {}: {error:?}", request.address);
+                    Response::new(reply, Address::unspecified())
+                        .write_to(writer)
+                        .await?;
+                    return Err(error);
+                }
+            };
+
+            Response::new(Reply::Succeeded, Address::unspecified())
+                .write_to(writer)
+                .await?;
+
+            tracing::info!(target: "socks", "Connected to {}", request.address);
+            io::copy_bidirectional(&mut tcp_stream, &mut io::join(reader, writer)).await?;
+            tracing::info!(target: "socks", "Shutdown connect to {}", request.address);
+            Ok(())
+        }
+        socks5_proto::Command::Bind | socks5_proto::Command::Associate => {
+            tracing::warn!(target: "socks", "BIND and ASSOCIATE commands are not supported");
+            Response::new(Reply::CommandNotSupported, Address::unspecified())
+                .write_to(writer)
+                .await
+        }
+    }
+}
+
+pub async fn accept_direct(
+    mut reader: &mut (impl AsyncRead + Unpin + ?Sized),
+    mut writer: &mut (impl AsyncWrite + Unpin + ?Sized),
+    mux: Arc<Mux>,
+) -> io::Result<()> {
+    accept(&mut reader, &mut writer, async |host, port| {
+        let open = messages::OpenChannel::Direct {
+            to: (host.to_owned(), port).into(),
+        };
+        forward::Forwarder::new(mux, open)
+            .connect()
+            .await
+            .map(|(_, r, s)| (r, s))
+            .map_err(io::Error::other)
+    })
+    .await
+}
+
+pub async fn accpet_forward(
+    mut reader: &mut (impl AsyncRead + Unpin + ?Sized),
+    mut writer: &mut (impl AsyncWrite + Unpin + ?Sized),
+    mux: Arc<Mux>,
+    token: Token,
+) -> io::Result<()> {
+    accept(&mut reader, &mut writer, async |host, port| {
+        let open = messages::OpenChannel::Forwarded {
+            listen: token,
+            to: Some((host.to_owned(), port).into()),
+        };
+        forward::Forwarder::new(mux, open)
+            .connect()
+            .await
+            .map(|(_, r, s)| (r, s))
+            .map_err(io::Error::other)
+    })
+    .await
+}
