@@ -46,15 +46,22 @@ tar -czvf $AMD_ARCHIVE_PATH -C $AMD_ARCHIVES_DIR .
 AMD_ARCHIVE_SHA256=$(shasum -a 256 $AMD_ARCHIVE_PATH | cut -d ' ' -f 1)
 echo "AMD64 构建完成，SHA256: $AMD_ARCHIVE_SHA256 $AMD_ARCHIVE_PATH"
 
-# 确保homebrew-gmutils目录存在
-if [ ! -d "../homebrew-gmutils" ]; then
-    echo "错误: ../homebrew-gmutils 目录不存在"
-    echo "请先创建或克隆该目录"
+echo "构建归档位于:"
+echo "ARM64: $ARM_ARCHIVE_PATH"
+echo "AMD64: $AMD_ARCHIVE_PATH"
+
+echo "上传归档到服务器:"
+rsync --rsync-path="sudo rsync" $ARM_ARCHIVE_PATH $AMD_ARCHIVE_PATH ubuntu@download.genmeta.net:/data/wwwroot/homebrew/
+
+# 确保homebrew-genmeta目录存在
+if [ ! -d "../homebrew-genmeta" ]; then
+    echo "错误: ../homebrew-genmeta 目录不存在"
+    echo "请先 git clone git@github.com:genmeta/homebrew-genmeta.git"
     exit 1
 fi
 
 echo "生成 Homebrew formula..."
-cat>../homebrew-gmutils/gmutils.rb<<EOF
+cat>../homebrew-genmeta/gmutils.rb<<EOF
 class Gmutils < Formula
   desc "Genmeta Binary Utilities"
   version "${VERSION}"
@@ -80,18 +87,11 @@ class Gmutils < Formula
 end
 EOF
 
-echo "提交变更到 homebrew-gmutils 仓库..."
-cd ../homebrew-gmutils/
+echo "提交变更到 homebrew-genmeta 仓库..."
+cd ../homebrew-genmeta/
 git add gmutils.rb
 git commit -S -m "feat: release gmutils v${VERSION}"
 echo "打包完成！请检查并推送仓库更改。"
-
-echo "构建归档位于:"
-echo "ARM64: $ARM_ARCHIVE_PATH"
-echo "AMD64: $AMD_ARCHIVE_PATH"
-
-echo "上传文件到服务器:"
-rsync --rsync-path="sudo rsync" $ARM_ARCHIVE_PATH $AMD_ARCHIVE_PATH ubuntu@download.genmeta.net:/data/wwwroot/homebrew/
 
 echo "清理临时文件..."
 rm -r $ARM_WORKDIR $AMD_WORKDIR
