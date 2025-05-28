@@ -5,6 +5,7 @@ members = [
     "genmeta-common",
     "genmeta-request",
     "genmeta-ssh3",
+    "genmeta-nslookup",
     "ssh3-proto",
 ]
 
@@ -21,14 +22,15 @@ rpassword = "7.3"
 whoami = "1.4"
 
 # genmeta
-h3-shim = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qconnection = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qbase = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qdns = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qevent = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qinterface = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-gm-quic = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qtraversal = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
+h3-shim = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/mdns" }
+qconnection = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/mdns" }
+qbase = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/mdns" }
+qdns = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/mdns" }
+qevent = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/mdns" }
+qinterface = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/mdns" }
+gm-quic = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/mdns" }
+qtraversal = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/mdns" }
+
 
 # http
 http = "1"
@@ -75,10 +77,11 @@ thiserror = "2"
 tokio-util = { version = "0.7" }
 
 # workspace
-genmeta-common = { path = "genmeta-common" }   # common code
-ssh3-proto = { path = "ssh3-proto" }           # ssh3-common
-genmeta-ssh3 = { path = "genmeta-ssh3" }       # ssh3 
-genmeta-request = { path = "genmeta-request" } # request
+genmeta-common = { path = "genmeta-common" }     # common code
+ssh3-proto = { path = "ssh3-proto" }             # ssh3-common
+genmeta-ssh3 = { path = "genmeta-ssh3" }         # ssh3 
+genmeta-request = { path = "genmeta-request" }   # request
+genmeta-nslookup = { path = "genmeta-nslookup" } # nslookup
 
 [profile.release]
 opt-level = "z"
