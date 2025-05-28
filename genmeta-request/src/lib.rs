@@ -1,11 +1,11 @@
-use std::{net::SocketAddr, path::PathBuf, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use bytes::{Buf, BytesMut};
 use clap::Parser;
-use genmeta_common::{AGENTS, ROOT_CERT, Resolvers};
+use genmeta_common::{AGENTS, ROOT_CERT};
 use gm_quic::ToCertificate;
 use http::{Method, Request, Uri};
-use qdns::{Resolve, UdpResolver};
+use qdns::{HttpResolver, MdnsResolver, Resolve, Resolvers, UdpResolver};
 use qtraversal::iface::TraversalFactory;
 use tokio::{
     fs,
@@ -99,8 +99,9 @@ type Error = Box<dyn core::error::Error + Send + Sync>;
 
 pub async fn run(options: Options) -> Result<(), Error> {
     let resolvers = Resolvers::new()
-        // .with(HttpResolver::new("http://127.0.0.1:20004/v1/dns/")?)
-        .with(UdpResolver::new(Resolvers::UDP_DNS_SERVER));
+        .with(Arc::new(HttpResolver::new(Resolvers::HTTP_DNS_SERVER)?))
+        .with(Arc::new(MdnsResolver::new(Resolvers::MDNS_SERVICE)?))
+        .with(Arc::new(UdpResolver::new(Resolvers::UDP_DNS_SERVER)));
     let server_name = options.uri.host().ok_or("missing host in uri")?;
     let server_addrs = resolvers
         .lookup(server_name)

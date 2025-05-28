@@ -8,12 +8,12 @@ mod socks;
 use clap::Parser;
 use futures::{FutureExt, StreamExt};
 use genmeta_common::{
-    AGENTS, ROOT_CERT, Resolvers, cbor_codec,
+    AGENTS, ROOT_CERT, cbor_codec,
     h3_stream::{self, H3Stream},
 };
 use gm_quic::{QuicClient, ToCertificate};
 use http::Uri;
-use qdns::{Resolve, UdpResolver};
+use qdns::{HttpResolver, MdnsResolver, Resolve, Resolvers, UdpResolver};
 use qtraversal::iface::TraversalFactory;
 use ssh3_proto::{listener, messages, mux};
 use tokio::time;
@@ -169,8 +169,9 @@ pub async fn run(options: Options) -> Result<(), Error> {
     };
 
     let resolvers = Resolvers::new()
-        // .with(HttpResolver::new("http://127.0.0.1:20004/v1/dns/")?)
-        .with(UdpResolver::new(Resolvers::UDP_DNS_SERVER));
+        .with(Arc::new(HttpResolver::new(Resolvers::HTTP_DNS_SERVER)?))
+        .with(Arc::new(MdnsResolver::new(Resolvers::MDNS_SERVICE)?))
+        .with(Arc::new(UdpResolver::new(Resolvers::UDP_DNS_SERVER)));
     // let resolver = UdpResolver::new("1.12.74.4:5300".parse().unwrap());
     let server_name =
         (config.uri.host()).ok_or_else(|| format!("Host missing in URI: {}", config.uri))?;
