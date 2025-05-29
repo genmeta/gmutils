@@ -263,17 +263,15 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let recv_requests = {
         let remote_forwarders = remote_forwarders.clone();
         async move {
-            while let Some(Ok(mux::NewChannel {
-                token: _,
-                request,
-                sender,
-                recver,
-            })) = incomings.next().await
-            {
-                match request {
+            while let Some(message) = incomings.next().await {
+                let Ok(new_channel) = message else {
+                    return Err("Failed to parse message from server, check the version?".into());
+                };
+                match new_channel.request {
                     messages::OpenChannel::Forwarded { listen, to } => {
-                        if let Some(remote_forward_task) =
-                            remote_forwarders.accpet(listen, to, recver, sender).await?
+                        if let Some(remote_forward_task) = remote_forwarders
+                            .accpet(listen, to, new_channel.recver, new_channel.sender)
+                            .await?
                         {
                             tokio::spawn(async move {
                                 if let Err(e) = remote_forward_task.await {
@@ -283,7 +281,10 @@ pub async fn run(options: Options) -> Result<(), Error> {
                         }
                     }
                     _ => {
-                        return Err(format!("Unexpected message from server: {request:?}").into());
+                        return Err(Error::from(format!(
+                            "Unexpected message from server: {:?}",
+                            new_channel.request
+                        )));
                     }
                 }
             }
@@ -303,9 +304,12 @@ pub async fn run(options: Options) -> Result<(), Error> {
             let command = options.command();
             async move {
                 // 初始化终端。guard自动释放
-                let _raw_terminal_guard = TerminalGuard::new();
+                let raw_terminal_guard = TerminalGuard::new();
                 match command.run(&mux, options.pseudo).await {
-                    Ok(code) => std::process::exit(code),
+                    Ok(code) => {
+                        drop(raw_terminal_guard); // 在退出之前恢复终端
+                        std::process::exit(code)
+                    }
                     Err(e) => {
                         tracing::error!(target: "session", "Failed to run command: {e:?}");
                         Err(e)
