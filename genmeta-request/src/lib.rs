@@ -176,7 +176,9 @@ pub async fn run(options: Options) -> Result<(), Error> {
     tracing::info!(target: "connect", "http3 connection established");
     tokio::spawn(async move { h3_conn.wait_idle().await });
 
-    let mut request_builder = Request::builder().uri(options.uri.clone());
+    let mut request_builder = Request::builder()
+        .uri(options.uri.clone())
+        .version(http::Version::HTTP_3);
 
     let method = options.request.as_ref().unwrap_or(match &options {
         options if options.data.is_some() => &Method::POST,
