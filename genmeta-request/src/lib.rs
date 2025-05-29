@@ -178,7 +178,13 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
     let mut request_builder = Request::builder()
         .uri(options.uri.clone())
-        .version(http::Version::HTTP_3);
+        .version(http::Version::HTTP_3)
+        .header("Host", server_name)
+        .header(
+            "User-Agent",
+            format!("genmeta-request/{}", env!("CARGO_PKG_VERSION")),
+        )
+        .header("Accept", "*/*");
 
     let method = options.request.as_ref().unwrap_or(match &options {
         options if options.data.is_some() => &Method::POST,
@@ -195,6 +201,8 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let request = request_builder
         .body(())
         .map_err(|e| format!("failed to build request: {e:?}"))?;
+
+    // Host and User Agent header
 
     if options.verbose {
         let output = format!("> send request: {request:#?}")
