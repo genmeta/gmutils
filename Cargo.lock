@@ -630,7 +630,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "clap",
  "genmeta-request",
@@ -664,7 +664,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-request"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "clap",
@@ -684,7 +684,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-ssh3"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "base64",
  "bytes",

@@ -39,3 +39,13 @@
 session结束时结束程序
 
 server返回进程退出的状态码
+
+# genmeta v0.2.5, genmeta-ssh3 v0.2.5, genemta-request v0.1.2
+
+request发送请求时设置http版本为h3
+
+request发送请求时设置Host, User-Agent, Accept 头
+
+ssh修复进程退出时没有恢复终端
+
+ssh支持-l（登录用户名）选项，更好支持rsync
