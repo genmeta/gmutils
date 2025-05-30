@@ -8,13 +8,56 @@ use tokio::fs;
 
 use crate::Error;
 
+#[derive(Debug)]
 pub struct Config {
-    pub user: String,
+    pub username: String,
     pub password: Option<String>,
     pub uri: Uri,
 }
 
-fn username_password_from_uri(uri: &Uri) -> (Option<String>, Option<String>) {
+// Host Xxx > Host.XXX > Host.HostName xxx
+// HostName可以提供Uri的host部分
+impl super::Options {
+    pub async fn config(&self) -> Result<Config, Error> {
+        let ssh_config = ssh_config().await?;
+        let host_params = ssh_config.query(&self.uri.to_string());
+
+        // user: command line -> config file -> uri -> whoami
+        let mut username = self
+            .login_name
+            .clone()
+            .or_else(|| host_params.get("user").cloned());
+        let mut password = None;
+
+        // uri: ssh_config(if present) -> command line
+        let uri = match host_params.get("hostname") {
+            Some(host_name) => host_name
+                .parse::<Uri>()
+                .map_err(|e| format!("Failed to parse host name '{host_name}' as URI: {e}"))?,
+            None => self.uri.clone(),
+        };
+
+        if username.is_none() {
+            tracing::debug!(target: "config", "User not found in ssh_config, Try parse it from hostname");
+            (username, password) = parse_username_password_from_uri(&uri);
+        }
+
+        let uri = complete_uri(uri)?;
+
+        let (username, password) = match username {
+            Some(username) => (username, password),
+            None => (whoami::username(), None),
+        };
+
+        Ok(Config {
+            username,
+            password,
+            uri,
+        })
+    }
+}
+
+fn parse_username_password_from_uri(uri: &Uri) -> (Option<String>, Option<String>) {
     uri.authority()
         .and_then(|authority| authority.as_str().rsplit_once('@'))
         .map(|(username_password, _host)| {
@@ -28,68 +71,32 @@ fn username_password_from_uri(uri: &Uri) -> (Option<String>, Option<String>) {
         .unwrap_or((None, None))
 }
 
-// Host Xxx > Host.XXX > Host.HostName xxx
-// HostName可以提供Uri的host部分
-impl super::Options {
-    pub async fn profile(&self) -> Result<Config, Error> {
-        let ssh_config = read_ssh_config().await?;
-        let host_params = ssh_config.query(&self.server.to_string());
-
-        let mut user = host_params.get("user").cloned();
-        let mut password = None;
-
-        let uri = match host_params.get("hostname") {
-            Some(host_name) => host_name
-                .parse::<Uri>()
-                .map_err(|e| format!("Failed to parse host name '{host_name}' as URI: {e}"))?,
-            None => self.server.clone(),
-        };
-
-        if user.is_none() {
-            tracing::debug!(target: "config", "User not found in ssh_config, Try parse it from hostname");
-            (user, password) = username_password_from_uri(&uri);
+fn complete_uri(uri: Uri) -> Result<Uri, Error> {
+    let mut uri_parts = uri.into_parts();
+    uri_parts.scheme = match uri_parts.scheme {
+        Some(ref scheme) if scheme.as_str() == "ssh3" => uri_parts.scheme,
+        None => Some("ssh3".parse().unwrap()),
+        Some(scheme) => {
+            let message = format!(
+                "Unsupported scheme `{scheme}` for ssh. Scheme in uri is must not be present or be `ssh3`"
+            );
+            return Err(message.into());
         }
-
-        let mut uri_parts = uri.into_parts();
-
-        uri_parts.scheme = match uri_parts.scheme {
-            Some(ref scheme) if scheme.as_str() == "ssh3" => uri_parts.scheme,
-            None => Some("ssh3".parse().unwrap()),
-            Some(scheme) => {
-                let message = format!(
-                    "Unsupported scheme `{scheme}` for ssh. Scheme in uri is must not be present or be `ssh3`"
-                );
-                return Err(message.into());
-            }
-        };
-        uri_parts.path_and_query = match uri_parts.path_and_query {
-            root if root.as_ref().is_none_or(|path| path == "/") => {
-                tracing::warn!(target: "connect", "Path is empty, using `/ssh` as default");
-                Some("/ssh".parse().unwrap())
-            }
-            path_and_query => path_and_query,
-        };
-
-        uri_parts.authority = uri_parts
-            .authority
-            .map(|authority| authority.host().parse().unwrap());
-
-        let uri = Uri::from_parts(uri_parts).expect("Failed to construct URI from parts");
-
-        let (user, password) = match user {
-            Some(user) => (user, password),
-            None => (whoami::username(), None),
-        };
-
-        Ok(Config {
-            user,
-            password,
-            uri,
-        })
-    }
+    };
+    uri_parts.path_and_query = match uri_parts.path_and_query {
+        root if root.as_ref().is_none_or(|path| path == "/") => {
+            tracing::warn!(target: "connect", "Path is empty, using `/ssh` as default");
+            Some("/ssh".parse().unwrap())
+        }
+        path_and_query => path_and_query,
+    };
+    uri_parts.authority = uri_parts
+        .authority
+        .map(|authority| authority.host().parse().unwrap());
+    Ok(Uri::from_parts(uri_parts).expect("Failed to construct URI from parts"))
 }
 
-pub async fn read_ssh_config() -> Result<SshConfig, Error> {
+pub async fn ssh_config() -> Result<SshConfig, Error> {
     let mut ssh_config = SshConfig::default();
 
     // Read the user-wide SSH configuration file.

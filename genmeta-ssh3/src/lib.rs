@@ -67,10 +67,11 @@ SOCKS client.";
 #[command(version, about)]
 pub struct Options {
     #[arg(value_name = "HOST/URI", long_help = URI_LONG_HELP)]
-    server: Uri,
+    uri: Uri,
 
     #[arg(
         short = 'o',
+        value_name = "option",
         value_delimiter = ',',
         long_help = OPTIONS_LONG_HELP
     )]
@@ -83,6 +84,13 @@ pub struct Options {
         help = "Disable pseudo-terminal allocation."
     )]
     pseudo: bool,
+
+    #[arg(
+        short = 'l',
+        value_name = "login_name",
+        help = "Specifies the user to log in as on the remote machine."
+    )]
+    login_name: Option<String>,
 
     #[arg(short = 'D', value_name = "[bind_address:]port", long_help = DYNAMIC_FORWARD_LONG_HELP)]
     dynamic_forward: Vec<String>,
@@ -103,7 +111,7 @@ pub struct Options {
 
     #[arg(
         trailing_var_arg = true,
-        value_name = "[command [argument ...]]",
+        value_name = "command [argument ...]",
         help = "Command to execute on the remote server."
     )]
     commands: Vec<String>,
@@ -129,13 +137,14 @@ impl Drop for TerminalGuard {
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
-    let config = options.profile().await?;
+    let config = options.config().await?;
+    tracing::info!(target: "config", ?config, "Parsed config");
 
     let dynamic_forward_endpoints = options.dynamic_forward_endpoints().await?;
     let local_forward_rules = options.local_forward_rules()?;
     let remote_forward_rules = options.remote_forward_rules()?;
 
-    tracing::info!(target: "config", ?dynamic_forward_endpoints, ?local_forward_rules, ?remote_forward_rules);
+    tracing::info!(target: "config", ?dynamic_forward_endpoints, ?local_forward_rules, ?remote_forward_rules, "Forwards");
 
     let dynamic_forward_listeners =
         {
@@ -293,7 +302,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     };
 
     let run = async move {
-        let (username, password) = (config.user, config.password);
+        let (username, password) = (config.username, config.password);
 
         auth::login(&mux, &username, password.as_deref())
             .await
