@@ -13,7 +13,7 @@ use genmeta_common::{
 };
 use gm_quic::{QuicClient, ToCertificate};
 use http::Uri;
-use qdns::{HttpResolver, MdnsResolver, Resolve, Resolvers, UdpResolver};
+use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
 use qtraversal::iface::TraversalFactory;
 use ssh3_proto::{listener, messages, mux};
 use tokio::time;
@@ -169,17 +169,20 @@ pub async fn run(options: Options) -> Result<(), Error> {
     };
 
     let resolvers = Resolvers::new()
-        .with(Arc::new(HttpResolver::new(Resolvers::HTTP_DNS_SERVER)?))
-        .with(Arc::new(MdnsResolver::new(Resolvers::MDNS_SERVICE)?))
-        .with(Arc::new(UdpResolver::new(Resolvers::UDP_DNS_SERVER)));
+        .with(Arc::new(HttpResolver::new(qdns::HTTP_DNS_SERVER)?))
+        .with(Arc::new(MdnsResolver::new(qdns::MDNS_SERVICE)?))
+        .with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER)));
     // let resolver = UdpResolver::new("1.12.74.4:5300".parse().unwrap());
     let server_name =
         (config.uri.host()).ok_or_else(|| format!("Host missing in URI: {}", config.uri))?;
 
-    let server_addrs = resolvers
-        .lookup(server_name)
+    let (_srouce, server_addrs) = resolvers
+        .lookup(server_name, false)
         .await
-        .map_err(|e| format!("failed to resolve host {server_name}: {e:?}"))?;
+        .map_err(|e| format!("failed to resolve host {server_name}: {e:?}"))?
+        .first()
+        .cloned()
+        .unwrap();
 
     tracing::info!(target: "connect", "Resolved {} to address: {:?}", server_name, server_addrs);
 

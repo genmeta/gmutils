@@ -9,6 +9,7 @@ clap = { workspace = true }
 genmeta-ssh3 = { workspace = true }
 genmeta-request = { workspace = true }
 genmeta-nslookup = { workspace = true }
+genmeta-discover = { workspace = true }
 http = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

@@ -1,64 +1,59 @@
 use std::sync::Arc;
 
 use clap::Parser;
-use qbase::net::EndpointAddr;
-use qdns::{HttpResolver, MdnsResolver, Resolve, Resolvers, UdpResolver};
+use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
 
-/// command-line tool to resolve domain names.
 #[derive(Parser, Debug, Clone)]
 #[command(name = "nslookup")]
 pub struct Options {
     /// Target domain name or IP address to resolve (default: test.genmeta.net)
     #[arg(
-        short,
-        long,
         value_name = "DOMAIN",
-        help = "Domain name or IP address to query"
+        index = 1,
+        help = "Domain name to query, query "
     )]
     domain: String,
 
-    /// Type of DNS record to query (default: All).
+    /// Type of DNS record to query (default: all)
     #[arg(
-        short,
-        long,
-        value_name = "RECORD_TYPE",
-        default_value = "All",
-        help = "Type of DNS record to query (e.g. E, EE, E6, EE6, All)"
+        value_name = "SCHEMA",
+        index = 2,
+        default_value = "all",
+        help = "Schema of DNS to query eg. mdns system https udp , default is all"
     )]
-    record_type: String,
-
-    /// Enable verbose output and detailed tracing information.
-    #[arg(short, long, help = "Enable verbose output with detailed tracing")]
-    verbose: bool,
+    schema: String,
 }
 
 type Error = Box<dyn core::error::Error + Send + Sync>;
 
 pub async fn run(options: Options) -> Result<(), Error> {
-    let resolvers = Resolvers::new()
-        .with(Arc::new(MdnsResolver::new(Resolvers::MDNS_SERVICE)?))
-        .with(Arc::new(HttpResolver::new(Resolvers::HTTP_DNS_SERVER)?))
-        .with(Arc::new(UdpResolver::new(Resolvers::UDP_DNS_SERVER)));
-    let ret = resolvers.lookup(&options.domain).await.map_err(Box::new)?;
+    let mut resolvers = Resolvers::new();
+    resolvers = match options.schema.as_str() {
+        "mdns" => resolvers.with(Arc::new(MdnsResolver::new(qdns::MDNS_SERVICE)?)),
+        "https" => resolvers.with(Arc::new(HttpResolver::new(qdns::HTTP_DNS_SERVER)?)),
+        "udp" => resolvers.with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER))),
+        "all" => resolvers
+            .with(Arc::new(MdnsResolver::new(qdns::MDNS_SERVICE)?))
+            .with(Arc::new(HttpResolver::new(qdns::HTTP_DNS_SERVER)?))
+            .with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER))),
+        _ => return Err("Invalid DNS schema".into()),
+    };
 
-    for addr in ret {
-        let record_type = record_type(addr);
-        if options.record_type == "All" || options.record_type == record_type {
+    let mut ret = resolvers
+        .lookup(&options.domain, true)
+        .await
+        .map_err(Box::new)?;
+
+    ret.dedup();
+    for (src, eps) in ret {
+        for addr in eps {
+            println!("Source: {src}");
             println!("Name: {}", options.domain);
-            println!("Endpoint: {addr:?}\n");
+            println!("Endpoint: {addr}\n");
         }
     }
-    Ok(())
-}
 
-fn record_type(ep: EndpointAddr) -> String {
-    match ep {
-        EndpointAddr::Direct { addr } if addr.is_ipv4() => "E".to_string(),
-        EndpointAddr::Direct { addr } if addr.is_ipv6() => "E6".to_string(),
-        EndpointAddr::Agent { agent, outer: _ } if agent.is_ipv4() => "EE".to_string(),
-        EndpointAddr::Agent { agent, outer: _ } if agent.is_ipv6() => "EE6".to_string(),
-        _ => "Unknown".to_string(),
-    }
+    Ok(())
 }
 
 #[cfg(test)]
