@@ -6,6 +6,7 @@ enum Options {
     Ssh3(genmeta_ssh3::Options),
     Request(genmeta_request::Options),
     Nslookup(genmeta_nslookup::Options),
+    Discover(genmeta_discover::Options),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -31,5 +32,6 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error + Send + 
         Options::Ssh3(options) => genmeta_ssh3::run(options).await,
         Options::Request(options) => genmeta_request::run(options).await,
         Options::Nslookup(options) => genmeta_nslookup::run(options).await,
+        Options::Discover(options) => genmeta_discover::run(options).await,
     }
 }

@@ -5,7 +5,7 @@ use clap::Parser;
 use genmeta_common::{AGENTS, ROOT_CERT};
 use gm_quic::ToCertificate;
 use http::{Method, Request, Uri};
-use qdns::{HttpResolver, MdnsResolver, Resolve, Resolvers, UdpResolver};
+use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
 use qtraversal::iface::TraversalFactory;
 use tokio::{
     fs,
@@ -99,14 +99,18 @@ type Error = Box<dyn core::error::Error + Send + Sync>;
 
 pub async fn run(options: Options) -> Result<(), Error> {
     let resolvers = Resolvers::new()
-        .with(Arc::new(HttpResolver::new(Resolvers::HTTP_DNS_SERVER)?))
-        .with(Arc::new(MdnsResolver::new(Resolvers::MDNS_SERVICE)?))
-        .with(Arc::new(UdpResolver::new(Resolvers::UDP_DNS_SERVER)));
+        .with(Arc::new(HttpResolver::new(qdns::HTTP_DNS_SERVER)?))
+        .with(Arc::new(MdnsResolver::new(qdns::MDNS_SERVICE)?))
+        .with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER)));
     let server_name = options.uri.host().ok_or("missing host in uri")?;
-    let server_addrs = resolvers
-        .lookup(server_name)
+
+    let (_srouce, server_addrs) = resolvers
+        .lookup(server_name, false)
         .await
-        .map_err(|e| format!("failed to resolve host {server_name}: {e:?}"))?;
+        .map_err(|e| format!("failed to resolve host {server_name}: {e:?}"))?
+        .first()
+        .cloned()
+        .unwrap();
 
     tracing::info!("resolved {server_name} to address: {server_addrs:?}");
     if options.verbose {

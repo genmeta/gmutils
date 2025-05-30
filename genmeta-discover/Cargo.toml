@@ -1,6 +1,6 @@
 [package]
-name = "genmeta-nslookup"
-description = "command-line tool to resolve domain names"
+name = "genmeta-discover"
+description = "command-line tool to mdns discover services"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,8 +8,6 @@ edition = "2024"
 tokio-stream = "0.1.17"
 clap = { workspace = true }
 genmeta-common = { workspace = true }
-qdns = { workspace = true }
-qbase = { workspace = true }
 gmdns = { git = "ssh://git@github.com/genmeta/gmdns.git", branch = "main" }
 tokio = { workspace = true }
 tracing = { workspace = true }
