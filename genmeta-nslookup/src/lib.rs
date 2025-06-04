@@ -4,7 +4,7 @@ use clap::Parser;
 use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "nslookup")]
+#[command(name = "nslookup", version, about)]
 pub struct Options {
     /// Target domain name or IP address to resolve (default: test.genmeta.net)
     #[arg(

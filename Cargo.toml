@@ -1,4 +1,5 @@
 [workspace]
+resolver = "3"
 members = [
     "genmeta",
     "genmeta-common",
@@ -8,7 +9,6 @@ members = [
     "genmeta-discover",
     "ssh3-proto",
 ]
-
 
 [workspace.dependencies]
 # async
@@ -22,15 +22,15 @@ rpassword = "7.3"
 whoami = "1.4"
 
 # genmeta
+gm-quic = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
+gmdns = { git = "ssh://git@github.com/genmeta/gmdns.git", branch = "main" }
 h3-shim = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
 qconnection = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
 qbase = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
 qdns = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
 qevent = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
 qinterface = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-gm-quic = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
 qtraversal = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-
 
 # http
 http = "1"

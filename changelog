@@ -49,3 +49,9 @@ request发送请求时设置Host, User-Agent, Accept 头
 ssh修复进程退出时没有恢复终端
 
 ssh支持-l（登录用户名）选项，更好支持rsync
+
+# genemta v0.2.6, genmeta-ssh3 v0.2.6, genmeta-request v0.1.3, genmeta-nslookup v0.1.0, gnemeta-discover v0.1.0
+
+新工具：genmeta-nslookup，支持DNS查询，genmeta-discover，支持发现局域网中的设备（mdns）
+
+genmeta-ssh3和genmeta-request支持http dns和mdns解析

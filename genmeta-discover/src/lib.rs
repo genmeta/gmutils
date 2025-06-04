@@ -3,7 +3,7 @@ use gmdns::mdns::Mdns;
 use tokio_stream::StreamExt;
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "discover")]
+#[command(name = "discover", version, about)]
 pub struct Options {
     /// Target domain name or IP address to resolve (default: test.genmeta.net)
     #[arg(
