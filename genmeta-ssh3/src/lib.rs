@@ -14,7 +14,7 @@ use genmeta_common::{
 use gm_quic::{QuicClient, ToCertificate};
 use http::Uri;
 use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
-use qtraversal::iface::TraversalFactory;
+use qtraversal::iface::traversal_factory;
 use ssh3_proto::{listener, messages, mux};
 use tokio::time;
 use tokio_util::{codec, io::StreamReader};
@@ -190,7 +190,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         let mut roots = rustls::RootCertStore::empty();
         roots.add_parsable_certificates(ROOT_CERT.to_certificate());
 
-        let factory = TraversalFactory::with(&AGENTS);
+        let factory = traversal_factory(&AGENTS);
         let binds = factory
             .devices()
             .keys()

@@ -6,7 +6,7 @@ use genmeta_common::{AGENTS, ROOT_CERT};
 use gm_quic::ToCertificate;
 use http::{Method, Request, Uri};
 use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
-use qtraversal::iface::TraversalFactory;
+use qtraversal::iface::traversal_factory;
 use tokio::{
     fs,
     io::{self, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -84,6 +84,26 @@ pub struct Options {
     // silent: bool,
 }
 
+impl Options {
+    fn complete_uri(&mut self) -> Result<(), Error> {
+        let mut uri_parts = self.uri.clone().into_parts();
+
+        uri_parts.authority = match uri_parts.authority {
+            Some(authority) => {
+                let host = authority.host().replacen("~", ".genmeta.net", 1);
+                Some(host.parse().map_err(|e| {
+                    format!("Failed to parse authority '{host}' as URI authority: {e}")
+                })?)
+            }
+            None => return Err("Missing authority in URI".into()),
+        };
+
+        self.uri =
+            Uri::from_parts(uri_parts).map_err(|e| format!("Failed to complete URI: {e}"))?;
+        Ok(())
+    }
+}
+
 fn parse_header(s: &str) -> Result<(String, String), String> {
     let mut parts = s.splitn(2, ':');
     let key = parts.next().ok_or("missing header key")?.trim().to_string();
@@ -97,11 +117,12 @@ fn parse_header(s: &str) -> Result<(String, String), String> {
 
 type Error = Box<dyn core::error::Error + Send + Sync>;
 
-pub async fn run(options: Options) -> Result<(), Error> {
+pub async fn run(mut options: Options) -> Result<(), Error> {
     let resolvers = Resolvers::new()
         .with(Arc::new(HttpResolver::new(qdns::HTTP_DNS_SERVER)?))
         .with(Arc::new(MdnsResolver::new(qdns::MDNS_SERVICE)?))
         .with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER)));
+    options.complete_uri()?;
     let server_name = options.uri.host().ok_or("missing host in uri")?;
 
     let (_srouce, server_addrs) = resolvers
@@ -121,7 +142,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         let mut roots = rustls::RootCertStore::empty();
         roots.add_parsable_certificates(ROOT_CERT.to_certificate());
 
-        let factory = TraversalFactory::with(&AGENTS);
+        let factory = traversal_factory(&AGENTS);
         let binds = factory
             .devices()
             .keys()

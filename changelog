@@ -55,3 +55,10 @@ ssh支持-l（登录用户名）选项，更好支持rsync
 新工具：genmeta-nslookup，支持DNS查询，genmeta-discover，支持发现局域网中的设备（mdns）
 
 genmeta-ssh3和genmeta-request支持http dns和mdns解析
+
+# genmeta v0.2.7, genmeta-ssh3 v0.2.7, genmeta-request v0.1.4, genmeta-nslookup v0.1.1
+
+更新依赖。提升打洞能力
+
+ssh3, request, nslookup支持使用~省略.genemta.net
+

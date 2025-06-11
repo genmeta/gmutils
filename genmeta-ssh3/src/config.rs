@@ -90,9 +90,18 @@ fn complete_uri(uri: Uri) -> Result<Uri, Error> {
         }
         path_and_query => path_and_query,
     };
-    uri_parts.authority = uri_parts
-        .authority
-        .map(|authority| authority.host().parse().unwrap());
+
+    uri_parts.authority =
+        match uri_parts.authority {
+            Some(authority) => {
+                let host = authority.host().replacen("~", ".genmeta.net", 1);
+                Some(host.parse().map_err(|e| {
+                    format!("Failed to parse authority '{host}' as URI authority: {e}")
+                })?)
+            }
+            None => return Err("Missing authority in URI".into()),
+        };
+
     Ok(Uri::from_parts(uri_parts).expect("Failed to construct URI from parts"))
 }
 
