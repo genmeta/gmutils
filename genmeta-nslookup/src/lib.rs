@@ -39,16 +39,18 @@ pub async fn run(options: Options) -> Result<(), Error> {
         _ => return Err("Invalid DNS schema".into()),
     };
 
-    let mut ret = resolvers
-        .lookup(&options.domain, true)
-        .await
-        .map_err(Box::new)?;
+    let domain = if options.domain.ends_with("~") {
+        options.domain.replacen("~", ".genmeta.net", 1)
+    } else {
+        options.domain.clone()
+    };
+    let mut ret = resolvers.lookup(&domain, true).await.map_err(Box::new)?;
 
     ret.dedup();
     for (src, eps) in ret {
         for addr in eps {
             println!("Source: {src}");
-            println!("Name: {}", options.domain);
+            println!("Name: {domain}");
             println!("Endpoint: {addr}\n");
         }
     }
