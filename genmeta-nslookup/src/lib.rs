@@ -51,7 +51,12 @@ pub async fn run(options: Options) -> Result<(), Error> {
         for addr in eps {
             println!("Source: {src}");
             println!("Name: {domain}");
-            println!("Endpoint: {addr}\n");
+            match addr {
+                qbase::net::EndpointAddr::Direct { addr } => println!("Address: {addr}\n"),
+                qbase::net::EndpointAddr::Agent { agent, outer } => {
+                    println!("Address: {agent}->{outer}\n")
+                }
+            }
         }
     }
 

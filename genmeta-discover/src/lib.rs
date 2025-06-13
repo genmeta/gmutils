@@ -18,7 +18,7 @@ pub struct Options {
 type Error = Box<dyn core::error::Error + Send + Sync>;
 
 pub async fn run(options: Options) -> Result<(), Error> {
-    let mut mdns_resolver = Mdns::new("_genmeta.local")?;
+    let mut mdns_resolver = Mdns::new("_genmeta.local", None)?;
     let mut stream = mdns_resolver.discover();
 
     while let Some((_, packet)) = stream.next().await {
@@ -31,7 +31,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         if !relevant_answers.is_empty() {
             println!("Name: {}", relevant_answers[0].name());
             relevant_answers.iter().for_each(|a| {
-                println!("{:?}", a.data());
+                println!("{}", a.data());
             });
             println!();
         }
