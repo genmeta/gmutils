@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use clap::Parser;
 use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
@@ -44,10 +44,14 @@ pub async fn run(options: Options) -> Result<(), Error> {
     } else {
         options.domain.clone()
     };
-    let mut ret = resolvers.lookup(&domain, true).await.map_err(Box::new)?;
+    let ret = resolvers.lookup(&domain, true).await.map_err(Box::new)?;
 
-    ret.dedup();
     for (src, eps) in ret {
+        let mut set = HashSet::new();
+        let eps: Vec<_> = eps
+            .into_iter()
+            .filter(|&x| set.insert(x)) // 如果元素未存在，insert 返回 true
+            .collect();
         for addr in eps {
             println!("Source: {src}");
             println!("Name: {domain}");

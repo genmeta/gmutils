@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use clap::Parser;
 use gmdns::mdns::Mdns;
 use tokio_stream::StreamExt;
@@ -28,6 +30,11 @@ pub async fn run(options: Options) -> Result<(), Error> {
             .filter(|a| a.name().contains(&options.domain))
             .collect();
 
+        let mut set = HashSet::new();
+        let relevant_answers: Vec<_> = relevant_answers
+            .into_iter()
+            .filter(|&x| set.insert(x)) // 如果元素未存在，insert 返回 true
+            .collect();
         if !relevant_answers.is_empty() {
             println!("Name: {}", relevant_answers[0].name());
             relevant_answers.iter().for_each(|a| {
