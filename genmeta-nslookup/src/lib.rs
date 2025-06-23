@@ -46,17 +46,17 @@ pub async fn run(options: Options) -> Result<(), Error> {
     };
     let ret = resolvers.lookup(&domain, true).await.map_err(Box::new)?;
 
+    println!("\nDNS lookup results for {domain}:");
+
     for (src, eps) in ret {
         let mut set = HashSet::new();
-        let eps: Vec<_> = eps
-            .into_iter()
-            .filter(|&x| set.insert(x)) // 如果元素未存在，insert 返回 true
-            .collect();
-        for addr in eps {
-            println!("Source: {src}");
-            println!("Name: {domain}");
+        let eps: Vec<_> = eps.into_iter().filter(|&x| set.insert(x)).collect();
+        println!("Source: {src}");
+        for addr in eps.iter() {
             match addr {
-                qbase::net::EndpointAddr::Direct { addr } => println!("Address: {addr}\n"),
+                qbase::net::EndpointAddr::Direct { addr } => {
+                    println!("Address: {addr}");
+                }
                 qbase::net::EndpointAddr::Agent { agent, outer } => {
                     println!("Address: {agent}->{outer}\n")
                 }
