@@ -208,7 +208,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         .header("Host", server_name)
         .header(
             "User-Agent",
-            format!("genmeta-request/{}", env!("CARGO_PKG_VERSION")),
+            format!("genmeta-curl/{}", env!("CARGO_PKG_VERSION")),
         )
         .header("Accept", "*/*");
 

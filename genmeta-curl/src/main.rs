@@ -11,7 +11,7 @@ async fn main() {
         .with_writer(std::io::stderr)
         .init();
 
-    if let Err(error) = genmeta_request::run(genmeta_request::Options::parse()).await {
+    if let Err(error) = genmeta_curl::run(genmeta_curl::Options::parse()).await {
         eprintln!("ERROR: {error}");
         tracing::error!("Error: {}", error);
         std::process::exit(1);

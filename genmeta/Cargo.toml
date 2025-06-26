@@ -7,7 +7,7 @@ edition = "2024"
 [dependencies]
 clap = { workspace = true }
 genmeta-ssh3 = { workspace = true }
-genmeta-request = { workspace = true }
+genmeta-curl = { workspace = true }
 genmeta-nslookup = { workspace = true }
 genmeta-discover = { workspace = true }
 http = { workspace = true }

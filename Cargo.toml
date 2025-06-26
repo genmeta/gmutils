@@ -3,7 +3,7 @@ resolver = "3"
 members = [
     "genmeta",
     "genmeta-common",
-    "genmeta-request",
+    "genmeta-curl",
     "genmeta-ssh3",
     "genmeta-nslookup",
     "genmeta-discover",
@@ -80,7 +80,7 @@ tokio-util = { version = "0.7" }
 genmeta-common = { path = "genmeta-common" }     # common code
 ssh3-proto = { path = "ssh3-proto" }             # ssh3-common
 genmeta-ssh3 = { path = "genmeta-ssh3" }         # ssh3 
-genmeta-request = { path = "genmeta-request" }   # request
+genmeta-curl = { path = "genmeta-curl" }         # curl
 genmeta-nslookup = { path = "genmeta-nslookup" } # nslookup
 genmeta-discover = { path = "genmeta-discover" } # discover
 
