@@ -9,6 +9,8 @@ tokio-stream = "0.1.17"
 clap = { workspace = true }
 genmeta-common = { workspace = true }
 qtraversal = {workspace = true}
+qinterface = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+trust-dns-resolver = {workspace = true}

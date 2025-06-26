@@ -387,6 +387,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "data-encoding"
+version = "2.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a2330da5de22e8a3cb63252ce2abb30116bf5265e89c0e01bc17015ce30a476"
+
+[[package]]
 name = "deranged"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -488,6 +494,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "enum-as-inner"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1e6a265c649f3f5979b601d26f1d05ada116434c87741c9493cb56218f76cbc"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -697,7 +715,7 @@ version = "0.1.1"
 dependencies = [
  "clap",
  "genmeta-common",
- "gmdns 0.1.0",
+ "gmdns",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -710,11 +728,13 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "genmeta-common",
+ "qinterface",
  "qtraversal",
  "tokio",
  "tokio-stream",
  "tracing",
  "tracing-subscriber",
+ "trust-dns-resolver",
 ]
 
 [[package]]
@@ -723,7 +743,7 @@ version = "0.1.2"
 dependencies = [
  "clap",
  "genmeta-common",
- "gmdns 0.1.0",
+ "gmdns",
  "qbase",
  "qdns",
  "tokio",
@@ -843,6 +863,7 @@ checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
 [[package]]
 name = "gm-quic"
 version = "0.2.2"
+source = "git+ssh://git@github.com/genmeta/gm-quic-traversal.git?branch=develop#bb62ae4b0523195f2a8df190426006ffadacb7c0"
 dependencies = [
  "bytes",
  "dashmap",
@@ -865,26 +886,6 @@ dependencies = [
 [[package]]
 name = "gmdns"
 version = "0.1.0"
-dependencies = [
- "bitfield-struct",
- "bytes",
- "clap",
- "dashmap",
- "futures",
- "getifs",
- "nom",
- "pnet",
- "rand",
- "socket2",
- "tokio",
- "tokio-stream",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "gmdns"
-version = "0.1.0"
 source = "git+ssh://git@github.com/genmeta/gmdns.git?branch=main#255af5cd3b0d706521f8488bff7914a00c5e4850"
 dependencies = [
  "bitfield-struct",
@@ -895,7 +896,7 @@ dependencies = [
  "getifs",
  "nom",
  "pnet",
- "rand",
+ "rand 0.9.1",
  "socket2",
  "tokio",
  "tokio-stream",
@@ -940,6 +941,7 @@ dependencies = [
 [[package]]
 name = "h3-shim"
 version = "0.2.2"
+source = "git+ssh://git@github.com/genmeta/gm-quic-traversal.git?branch=develop#bb62ae4b0523195f2a8df190426006ffadacb7c0"
 dependencies = [
  "bytes",
  "dashmap",
@@ -1218,6 +1220,16 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "idna"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d20d6b07bfbc108882d88ed8e37d39636dcc260e15e30c45e6ba089610b917c"
+dependencies = [
+ "unicode-bidi",
+ "unicode-normalization",
+]
+
+[[package]]
+name = "idna"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "686f825264d630750a544639377bae737628043f20d38bbc029e8f29ea968a7e"
@@ -1257,6 +1269,18 @@ dependencies = [
  "equivalent",
  "hashbrown 0.15.4",
  "serde",
+]
+
+[[package]]
+name = "ipconfig"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b58db92f96b720de98181bbbe63c831e87005ab460c1bf306eb2622b4707997f"
+dependencies = [
+ "socket2",
+ "widestring",
+ "windows-sys 0.48.0",
+ "winreg",
 ]
 
 [[package]]
@@ -1339,6 +1363,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1171693293099992e19cddea4e8b849964e9846f4acee11b3948bcc337be8776"
 
 [[package]]
+name = "linked-hash-map"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0717cef1bc8b636c6e1c1bbdefc09e6322da8a9321966e8928ef80d20f7f770f"
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1371,6 +1401,15 @@ name = "log"
 version = "0.4.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
+
+[[package]]
+name = "lru-cache"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31e24f1ad8321ca0e8a1e0ac13f23cb668e6f5466c2c57319f6a5cf1cc8e3b1c"
+dependencies = [
+ "linked-hash-map",
+]
 
 [[package]]
 name = "lru-slab"
@@ -1781,6 +1820,7 @@ dependencies = [
 [[package]]
 name = "qbase"
 version = "0.2.2"
+source = "git+ssh://git@github.com/genmeta/gm-quic-traversal.git?branch=develop#bb62ae4b0523195f2a8df190426006ffadacb7c0"
 dependencies = [
  "bitflags",
  "bytes",
@@ -1789,7 +1829,7 @@ dependencies = [
  "futures",
  "getset",
  "nom",
- "rand",
+ "rand 0.9.1",
  "rustls",
  "serde",
  "thiserror 2.0.12",
@@ -1799,10 +1839,11 @@ dependencies = [
 [[package]]
 name = "qcongestion"
 version = "0.2.2"
+source = "git+ssh://git@github.com/genmeta/gm-quic-traversal.git?branch=develop#bb62ae4b0523195f2a8df190426006ffadacb7c0"
 dependencies = [
  "qbase",
  "qevent",
- "rand",
+ "rand 0.9.1",
  "tokio",
  "tracing",
 ]
@@ -1810,6 +1851,7 @@ dependencies = [
 [[package]]
 name = "qconnection"
 version = "0.2.2"
+source = "git+ssh://git@github.com/genmeta/gm-quic-traversal.git?branch=develop#bb62ae4b0523195f2a8df190426006ffadacb7c0"
 dependencies = [
  "bytes",
  "dashmap",
@@ -1823,7 +1865,7 @@ dependencies = [
  "qrecovery",
  "qtraversal",
  "qunreliable",
- "rand",
+ "rand 0.9.1",
  "rustls",
  "tokio",
  "tracing",
@@ -1832,12 +1874,13 @@ dependencies = [
 [[package]]
 name = "qdns"
 version = "0.2.2"
+source = "git+ssh://git@github.com/genmeta/gm-quic-traversal.git?branch=develop#bb62ae4b0523195f2a8df190426006ffadacb7c0"
 dependencies = [
  "async-trait",
  "bytes",
  "dashmap",
  "futures",
- "gmdns 0.1.0 (git+ssh://git@github.com/genmeta/gmdns.git?branch=main)",
+ "gmdns",
  "qbase",
  "qtraversal",
  "reqwest",
@@ -1850,6 +1893,7 @@ dependencies = [
 [[package]]
 name = "qevent"
 version = "0.2.2"
+source = "git+ssh://git@github.com/genmeta/gm-quic-traversal.git?branch=develop#bb62ae4b0523195f2a8df190426006ffadacb7c0"
 dependencies = [
  "bytes",
  "derive_builder",
@@ -1867,6 +1911,7 @@ dependencies = [
 [[package]]
 name = "qinterface"
 version = "0.2.2"
+source = "git+ssh://git@github.com/genmeta/gm-quic-traversal.git?branch=develop#bb62ae4b0523195f2a8df190426006ffadacb7c0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1886,6 +1931,7 @@ dependencies = [
 [[package]]
 name = "qrecovery"
 version = "0.2.2"
+source = "git+ssh://git@github.com/genmeta/gm-quic-traversal.git?branch=develop#bb62ae4b0523195f2a8df190426006ffadacb7c0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -1893,7 +1939,7 @@ dependencies = [
  "futures",
  "qbase",
  "qevent",
- "rand",
+ "rand 0.9.1",
  "rustls",
  "thiserror 2.0.12",
  "tokio",
@@ -1903,6 +1949,7 @@ dependencies = [
 [[package]]
 name = "qtraversal"
 version = "0.2.2"
+source = "git+ssh://git@github.com/genmeta/gm-quic-traversal.git?branch=develop#bb62ae4b0523195f2a8df190426006ffadacb7c0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1918,7 +1965,7 @@ dependencies = [
  "qevent",
  "qinterface",
  "qudp",
- "rand",
+ "rand 0.9.1",
  "rustls",
  "thiserror 2.0.12",
  "tokio",
@@ -1928,6 +1975,7 @@ dependencies = [
 [[package]]
 name = "qudp"
 version = "0.2.2"
+source = "git+ssh://git@github.com/genmeta/gm-quic-traversal.git?branch=develop#bb62ae4b0523195f2a8df190426006ffadacb7c0"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -1968,7 +2016,7 @@ dependencies = [
  "bytes",
  "getrandom 0.3.3",
  "lru-slab",
- "rand",
+ "rand 0.9.1",
  "ring",
  "rustc-hash",
  "rustls",
@@ -1997,6 +2045,7 @@ dependencies = [
 [[package]]
 name = "qunreliable"
 version = "0.2.2"
+source = "git+ssh://git@github.com/genmeta/gm-quic-traversal.git?branch=develop#bb62ae4b0523195f2a8df190426006ffadacb7c0"
 dependencies = [
  "bytes",
  "futures",
@@ -2031,12 +2080,33 @@ dependencies = [
 
 [[package]]
 name = "rand"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
+dependencies = [
+ "libc",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+]
+
+[[package]]
+name = "rand"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9fbfd9d094a40bf3ae768db9361049ace4c0e04a4fd6b359518bd7b73a73dd97"
 dependencies = [
- "rand_chacha",
- "rand_core",
+ "rand_chacha 0.9.0",
+ "rand_core 0.9.3",
+]
+
+[[package]]
+name = "rand_chacha"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
+dependencies = [
+ "ppv-lite86",
+ "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -2046,7 +2116,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
 dependencies = [
  "ppv-lite86",
- "rand_core",
+ "rand_core 0.9.3",
+]
+
+[[package]]
+name = "rand_core"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+dependencies = [
+ "getrandom 0.2.16",
 ]
 
 [[package]]
@@ -2180,6 +2259,12 @@ dependencies = [
  "web-sys",
  "webpki-roots",
 ]
+
+[[package]]
+name = "resolv-conf"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95325155c684b1c89f7765e30bc1c42e4a6da51ca513615660cb8a62ef9a88e3"
 
 [[package]]
 name = "ring"
@@ -2910,16 +2995,77 @@ dependencies = [
 ]
 
 [[package]]
+name = "trust-dns-proto"
+version = "0.23.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3119112651c157f4488931a01e586aa459736e9d6046d3bd9105ffb69352d374"
+dependencies = [
+ "async-trait",
+ "cfg-if",
+ "data-encoding",
+ "enum-as-inner",
+ "futures-channel",
+ "futures-io",
+ "futures-util",
+ "idna 0.4.0",
+ "ipnet",
+ "once_cell",
+ "rand 0.8.5",
+ "smallvec",
+ "thiserror 1.0.69",
+ "tinyvec",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "trust-dns-resolver"
+version = "0.23.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a3e6c3aff1718b3c73e395d1f35202ba2ffa847c6a62eea0db8fb4cfe30be6"
+dependencies = [
+ "cfg-if",
+ "futures-util",
+ "ipconfig",
+ "lru-cache",
+ "once_cell",
+ "parking_lot",
+ "rand 0.8.5",
+ "resolv-conf",
+ "smallvec",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "trust-dns-proto",
+]
+
+[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
+name = "unicode-bidi"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a5f39404a5da50712a4c1eecf25e90dd62b613502b7e925fd4e4d19b5c96512"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5033c97c4262335cded6d6fc3e5c18ab755e1a3dc96376350f3d8e9f009ad956"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-segmentation"
@@ -2946,7 +3092,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32f8b686cadd1473f4bd0117a5d28d36b1ade384ea9b5069a1c40aefed7fda60"
 dependencies = [
  "form_urlencoded",
- "idna",
+ "idna 1.0.3",
  "percent-encoding",
 ]
 
@@ -3219,6 +3365,15 @@ dependencies = [
 
 [[package]]
 name = "windows-sys"
+version = "0.48.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "677d2418bec65e3338edb076e806bc1ec15693c5d0104683f2efe857f61056a9"
+dependencies = [
+ "windows-targets 0.48.5",
+]
+
+[[package]]
+name = "windows-sys"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
@@ -3242,6 +3397,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2f500e4d28234f72040990ec9d39e3a6b950f9f22d3dba18416c35882612bcb"
 dependencies = [
  "windows-targets 0.53.2",
+]
+
+[[package]]
+name = "windows-targets"
+version = "0.48.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a2fa6e2155d7247be68c096456083145c183cbbbc2764150dda45a87197940c"
+dependencies = [
+ "windows_aarch64_gnullvm 0.48.5",
+ "windows_aarch64_msvc 0.48.5",
+ "windows_i686_gnu 0.48.5",
+ "windows_i686_msvc 0.48.5",
+ "windows_x86_64_gnu 0.48.5",
+ "windows_x86_64_gnullvm 0.48.5",
+ "windows_x86_64_msvc 0.48.5",
 ]
 
 [[package]]
@@ -3278,6 +3448,12 @@ dependencies = [
 
 [[package]]
 name = "windows_aarch64_gnullvm"
+version = "0.48.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b38e32f0abccf9987a4e3079dfb67dcd799fb61361e53e2882c3cbaf0d905d8"
+
+[[package]]
+name = "windows_aarch64_gnullvm"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a4622180e7a0ec044bb555404c800bc9fd9ec262ec147edd5989ccd0c02cd3"
@@ -3290,6 +3466,12 @@ checksum = "86b8d5f90ddd19cb4a147a5fa63ca848db3df085e25fee3cc10b39b6eebae764"
 
 [[package]]
 name = "windows_aarch64_msvc"
+version = "0.48.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc35310971f3b2dbbf3f0690a219f40e2d9afcf64f9ab7cc1be722937c26b4bc"
+
+[[package]]
+name = "windows_aarch64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09ec2a7bb152e2252b53fa7803150007879548bc709c039df7627cabbd05d469"
@@ -3299,6 +3481,12 @@ name = "windows_aarch64_msvc"
 version = "0.53.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c7651a1f62a11b8cbd5e0d42526e55f2c99886c77e007179efff86c2b137e66c"
+
+[[package]]
+name = "windows_i686_gnu"
+version = "0.48.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a75915e7def60c94dcef72200b9a8e58e5091744960da64ec734a6c6e9b3743e"
 
 [[package]]
 name = "windows_i686_gnu"
@@ -3326,6 +3514,12 @@ checksum = "9ce6ccbdedbf6d6354471319e781c0dfef054c81fbc7cf83f338a4296c0cae11"
 
 [[package]]
 name = "windows_i686_msvc"
+version = "0.48.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f55c233f70c4b27f66c523580f78f1004e8b5a8b659e05a4eb49d4166cca406"
+
+[[package]]
+name = "windows_i686_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "240948bc05c5e7c6dabba28bf89d89ffce3e303022809e73deaefe4f6ec56c66"
@@ -3335,6 +3529,12 @@ name = "windows_i686_msvc"
 version = "0.53.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "581fee95406bb13382d2f65cd4a908ca7b1e4c2f1917f143ba16efe98a589b5d"
+
+[[package]]
+name = "windows_x86_64_gnu"
+version = "0.48.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53d40abd2583d23e4718fddf1ebec84dbff8381c07cae67ff7768bbf19c6718e"
 
 [[package]]
 name = "windows_x86_64_gnu"
@@ -3350,6 +3550,12 @@ checksum = "2e55b5ac9ea33f2fc1716d1742db15574fd6fc8dadc51caab1c16a3d3b4190ba"
 
 [[package]]
 name = "windows_x86_64_gnullvm"
+version = "0.48.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b7b52767868a23d5bab768e390dc5f5c55825b6d30b86c844ff2dc7414044cc"
+
+[[package]]
+name = "windows_x86_64_gnullvm"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "24d5b23dc417412679681396f2b49f3de8c1473deb516bd34410872eff51ed0d"
@@ -3362,6 +3568,12 @@ checksum = "0a6e035dd0599267ce1ee132e51c27dd29437f63325753051e71dd9e42406c57"
 
 [[package]]
 name = "windows_x86_64_msvc"
+version = "0.48.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed94fce61571a4006852b7389a063ab983c02eb1bb37b47f8272ce92d06d9538"
+
+[[package]]
+name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
@@ -3371,6 +3583,16 @@ name = "windows_x86_64_msvc"
 version = "0.53.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "271414315aff87387382ec3d271b52d7ae78726f5d44ac98b4f4030c91880486"
+
+[[package]]
+name = "winreg"
+version = "0.50.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "524e57b2c537c0f9b1e69f1965311ec12182b4122e45035b1508cd24d2adadb1"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.48.0",
+]
 
 [[package]]
 name = "wit-bindgen-rt"
