@@ -636,7 +636,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "clap",
  "genmeta-curl",
@@ -692,7 +692,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-discover"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "genmeta-common",
@@ -705,7 +705,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nslookup"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "genmeta-common",

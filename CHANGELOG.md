@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.8] - 2025-06-26
+
+### Changed
+- 重构：将 genmeta-request 重命名为 genmeta-curl，更好地反映工具的用途
+- genmeta-nslookup: 优化输出格式，提升可读性
+- genmeta-discover: 优化输出格式，提升可读性
+
+### Fixed
+- genmeta-nslookup: DNS 结果去重，避免重复显示
+- genmeta-discover: DNS 结果去重，避免重复显示
+
+### Components
+- genmeta v0.2.8
+- genmeta-ssh3 v0.2.7
+- genmeta-curl v0.1.4 (formerly genmeta-request)
+- genmeta-nslookup v0.1.2
+- genmeta-discover v0.1.1
+
 ## [0.2.7] - 2025-06-11
 
 ### Added
