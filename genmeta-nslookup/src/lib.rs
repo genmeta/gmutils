@@ -46,7 +46,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     };
     let ret = resolvers.lookup(&domain, true).await.map_err(Box::new)?;
 
-    println!("\nDNS lookup results for {domain}:");
+    println!("DNS lookup results for {domain}:");
 
     for (src, eps) in ret {
         let mut set = HashSet::new();
@@ -58,7 +58,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
                     println!("Address: {addr}");
                 }
                 qbase::net::EndpointAddr::Agent { agent, outer } => {
-                    println!("Address: {agent}->{outer}\n")
+                    println!("Address: {agent}-{outer}")
                 }
             }
         }

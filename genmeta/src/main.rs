@@ -7,6 +7,7 @@ enum Options {
     Curl(genmeta_curl::Options),
     Nslookup(genmeta_nslookup::Options),
     Discover(genmeta_discover::Options),
+    NatDetect(genmeta_nat::Options),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -33,5 +34,6 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error + Send + 
         Options::Curl(options) => genmeta_curl::run(options).await,
         Options::Nslookup(options) => genmeta_nslookup::run(options).await,
         Options::Discover(options) => genmeta_discover::run(options).await,
+        Options::NatDetect(options) => genmeta_nat::run(options).await,
     }
 }

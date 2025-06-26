@@ -20,7 +20,7 @@ pub struct Options {
 type Error = Box<dyn core::error::Error + Send + Sync>;
 
 pub async fn run(options: Options) -> Result<(), Error> {
-    let mut mdns_resolver = Mdns::new("_genmeta.local", None)?;
+    let mut mdns_resolver = Mdns::new("", None)?;
     let mut stream = mdns_resolver.discover();
 
     while let Some((_, packet)) = stream.next().await {
@@ -34,14 +34,12 @@ pub async fn run(options: Options) -> Result<(), Error> {
                     .insert(record.data().clone());
                 map
             });
-
         for (name, rdata_set) in records {
-            println!("{name}");
+            println!("Name: {name}");
             for rdata in rdata_set {
-                println!("    {rdata}");
+                println!("{rdata}");
             }
         }
-        println!();
     }
     Ok(())
 }
