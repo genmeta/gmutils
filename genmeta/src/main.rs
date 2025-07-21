@@ -22,7 +22,7 @@ async fn main() {
         .init();
 
     if let Err(error) = run(Options::parse()).await {
-        eprintln!("ERROR: {error}");
+        eprintln!("{error}");
         tracing::error!("Error: {error}");
         std::process::exit(1);
     }
@@ -32,7 +32,7 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error + Send + 
     match options {
         Options::Ssh3(options) => genmeta_ssh3::run(options).await,
         Options::Curl(options) => genmeta_curl::run(options).await,
-        Options::Nslookup(options) => genmeta_nslookup::run(options).await,
+        Options::Nslookup(options) => Ok(genmeta_nslookup::run(options).await?),
         Options::Discover(options) => genmeta_discover::run(options).await,
         Options::NatDetect(options) => genmeta_nat::run(options).await,
     }

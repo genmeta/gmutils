@@ -11,7 +11,7 @@ use genmeta_common::{
     AGENTS, ROOT_CERT, cbor_codec,
     h3_stream::{self, H3Stream},
 };
-use gm_quic::{QuicClient, ToCertificate};
+use gm_quic::{ToCertificate, handy::client_parameters};
 use http::Uri;
 use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
 use qtraversal::iface::traversal_factory;
@@ -102,6 +102,7 @@ pub struct Options {
     )]
     local_forwards: Vec<String>,
 
+    // TODO：不二次处理，在解析中直接处理好
     #[arg(
         short = 'R',
         value_name = "[bind_address:]port:host:hostport / [bind_address:]port:local_socket / remote_socket:host:hostport / remote_socket:local_socket / [bind_address:]port",
@@ -117,6 +118,7 @@ pub struct Options {
     commands: Vec<String>,
 }
 
+// TODO: 使用Snafu
 type Error = Box<dyn core::error::Error + Send + Sync>;
 
 struct TerminalGuard(());
@@ -176,71 +178,52 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let server_name =
         (config.uri.host()).ok_or_else(|| format!("Host missing in URI: {}", config.uri))?;
 
-    let (_srouce, server_addrs) = resolvers
-        .lookup(server_name, false)
+    let mut dns_lookup = resolvers.lookup(server_name);
+    let (_source, server_eps) = dns_lookup
+        .next()
         .await
-        .map_err(|e| format!("failed to resolve host {server_name}: {e:?}"))?
-        .first()
-        .cloned()
-        .unwrap();
-
-    tracing::info!(target: "connect", "Resolved {} to address: {:?}", server_name, server_addrs);
+        .ok_or(format!("No endpoints found for server: {server_name}"))?;
 
     let quic_client = {
         let mut roots = rustls::RootCertStore::empty();
         roots.add_parsable_certificates(ROOT_CERT.to_certificate());
 
         let factory = traversal_factory(&AGENTS);
-        let binds = factory
-            .devices()
-            .keys()
-            .map(|device_ip| SocketAddr::new(*device_ip, 0))
-            .collect::<Vec<_>>();
-        QuicClient::builder()
+        gm_quic::QuicClient::builder()
             .with_root_certificates(roots)
             .without_cert()
-            .with_alpns(["h3"])
-            .with_iface_factory(factory)
             .with_parameters(client_parameters())
+            .with_iface_factory(factory.as_ref().clone())
+            .bind(factory.devices().keys().map(|ip| SocketAddr::new(*ip, 0)))
             .enable_sslkeylog()
-            .reuse_address()
-            .bind(&binds[..])
-            .inspect_err(|e| {
-                tracing::error!(target: "connect", "Bind addrs {binds:?} failed: {e:?}");
-            })?
             .build()
     };
 
     let (quic_conn, mut h3_conn, mut h3_client) = {
-        tracing::info!(target: "connect", server_name, ?server_addrs, "Attempt connect to server");
-        let mut connect_result = Result::Err(Error::from("Dns not found"));
-        for server_addr in server_addrs {
-            let attempt = async {
-                let quic_conn = quic_client.connect(server_name, server_addr)?;
-                let connect = async {
-                    h3::client::new(h3_shim::QuicConnection::new(quic_conn.clone())).await
-                };
-                #[rustfmt::skip] // https://github.com/rust-lang/rustfmt/issues/6564
-                let (h3_conn, h3_client) = time::timeout(Duration::from_secs(3), connect)
-                    .await
-                    .map_err(|_| {
-                        quic_conn.close("connect timeout".into(), 0);
-                        "connect timeout"
-                })??;
-                Result::<_, Error>::Ok((quic_conn, h3_conn, h3_client))
-            };
-            match attempt.await {
-                Ok(connect) => {
-                    connect_result = Ok(connect);
-                    break;
-                }
-                Err(error) => {
-                    tracing::error!(target: "connect", "Attempt connect to server {server_addr} failed: error");
-                    connect_result = Err(error)
+        tracing::info!(target: "connect", server_name, ?server_eps, "attempt connect to server");
+        let quic_connection = quic_client.connect(server_name, server_eps)?;
+        tokio::spawn({
+            let conn = quic_connection.clone();
+            async move {
+                let mut server_eps = dns_lookup
+                    .map(|(_, server_eps)| futures::stream::iter(server_eps))
+                    .flatten();
+                while let Some(server_ep) = server_eps.next().await {
+                    if conn.add_peer_endpoint(server_ep.into()).is_err() {
+                        return;
+                    }
                 }
             }
-        }
-        connect_result?
+        });
+        let connect = h3::client::new(h3_shim::QuicConnection::new(quic_connection.clone()));
+        #[rustfmt::skip] // https://github.com/rust-lang/rustfmt/issues/6564
+        let (h3_conn, h3_client) = time::timeout(Duration::from_secs(10), connect)
+            .await
+            .map_err(|_| {
+                quic_connection.close("connect timeout", 0);
+                "connect timeout"
+        })??;
+        (quic_connection, h3_conn, h3_client)
     };
 
     let request = http::Request::builder()
@@ -377,20 +360,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     };
 
     // 清理
-    quic_conn.close("Bye bye".into(), h3::error::Code::H3_NO_ERROR.value());
+    quic_conn.close("Bye bye", h3::error::Code::H3_NO_ERROR.value());
 
     error.map_or(Ok(()), Err)
-}
-
-fn client_parameters() -> gm_quic::ClientParameters {
-    let mut params = gm_quic::ClientParameters::default();
-
-    params.set_initial_max_streams_bidi(100u32);
-    params.set_initial_max_streams_uni(100u32);
-    params.set_initial_max_data(1u32 << 20);
-    params.set_initial_max_stream_data_uni(1u32 << 20);
-    params.set_initial_max_stream_data_bidi_local(1u32 << 20);
-    params.set_initial_max_stream_data_bidi_remote(1u32 << 20);
-
-    params
 }

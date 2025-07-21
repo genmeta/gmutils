@@ -12,7 +12,7 @@ async fn main() {
         .init();
 
     if let Err(error) = genmeta_curl::run(genmeta_curl::Options::parse()).await {
-        eprintln!("ERROR: {error}");
+        eprintln!("{error}");
         tracing::error!("Error: {}", error);
         std::process::exit(1);
     }

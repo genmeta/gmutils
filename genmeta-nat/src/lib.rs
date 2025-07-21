@@ -1,8 +1,8 @@
-use std::net::SocketAddr;
+use std::{future::poll_fn, net::SocketAddr};
 
 use clap::Parser;
-use qinterface::factory::ProductQuicInterface;
-use qtraversal::{iface::traversal_factory, nat::client::NatType};
+use qinterface::factory::ProductQuicIO;
+use qtraversal::iface::traversal_factory;
 use trust_dns_resolver::TokioAsyncResolver;
 
 #[derive(Parser, Debug, Clone)]
@@ -23,10 +23,10 @@ type Error = Box<dyn core::error::Error + Send + Sync>;
 pub async fn run(options: Options) -> Result<(), Error> {
     let servers = nslook_up(options.server.as_str(), options.bind.ip().is_ipv6() as u8).await?;
     let factory = traversal_factory(&servers);
-    let iface = factory.bind(options.bind)?;
+    let iface = factory.bind(options.bind.into())?;
 
-    let external_addr = iface.endpoint_addr().await?.addr();
-    let nat_type: NatType = iface.nat_type().await?.try_into()?;
+    let external_addr = poll_fn(|cx| iface.poll_endpoint_addr(cx)).await?;
+    let nat_type = poll_fn(|cx| iface.poll_nat_type(cx)).await?;
 
     println!("NAT type: {nat_type:?}");
     println!("External Address: {external_addr}");

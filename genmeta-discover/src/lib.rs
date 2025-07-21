@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    net::Ipv4Addr,
+};
 
 use clap::Parser;
 use gmdns::mdns::Mdns;
@@ -20,7 +23,7 @@ pub struct Options {
 type Error = Box<dyn core::error::Error + Send + Sync>;
 
 pub async fn run(options: Options) -> Result<(), Error> {
-    let mut mdns_resolver = Mdns::new("", None)?;
+    let mut mdns_resolver = Mdns::new("", Ipv4Addr::LOCALHOST, "lo")?;
     let mut stream = mdns_resolver.discover();
 
     while let Some((_, packet)) = stream.next().await {

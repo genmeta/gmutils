@@ -1,7 +1,9 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, fmt::Display, io, sync::Arc};
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
+use futures::StreamExt;
 use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
+use snafu::{ResultExt, Snafu};
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "nslookup", version, about)]
@@ -21,46 +23,83 @@ pub struct Options {
         default_value = "all",
         help = "Schema of DNS to query eg. mdns system https udp , default is all"
     )]
-    schema: String,
+    schema: Schema,
 }
 
-type Error = Box<dyn core::error::Error + Send + Sync>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Schema {
+    Udp,
+    Http,
+    Mdns,
+    All,
+}
 
-pub async fn run(options: Options) -> Result<(), Error> {
+impl Display for Schema {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Schema::Udp => write!(f, "udp"),
+            Schema::Http => write!(f, "https"),
+            Schema::Mdns => write!(f, "mdns"),
+            Schema::All => write!(f, "all"),
+        }
+    }
+}
+
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("Failed to bind `{schema}` resolver: {source}"))]
+    BindResolverFailed {
+        schema: Schema,
+        #[snafu(source)]
+        source: io::Error,
+    },
+
+    #[snafu(display("No DNS records found for domain `{domain}`"))]
+    NoResult { domain: String },
+}
+
+pub async fn run(Options { domain, schema }: Options) -> Result<(), Error> {
     let mut resolvers = Resolvers::new();
-    resolvers = match options.schema.as_str() {
-        "mdns" => resolvers.with(Arc::new(MdnsResolver::new(qdns::MDNS_SERVICE)?)),
-        "https" => resolvers.with(Arc::new(HttpResolver::new(qdns::HTTP_DNS_SERVER)?)),
-        "udp" => resolvers.with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER))),
-        "all" => resolvers
-            .with(Arc::new(MdnsResolver::new(qdns::MDNS_SERVICE)?))
-            .with(Arc::new(HttpResolver::new(qdns::HTTP_DNS_SERVER)?))
+    resolvers = match schema {
+        Schema::Udp => resolvers.with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER))),
+        Schema::Http => resolvers.with(Arc::new(
+            HttpResolver::new(qdns::HTTP_DNS_SERVER).context(BindResolverFailedSnafu { schema })?,
+        )),
+        Schema::Mdns => resolvers.with(Arc::new(
+            MdnsResolver::new(qdns::MDNS_SERVICE).context(BindResolverFailedSnafu { schema })?,
+        )),
+        Schema::All => resolvers
+            .with(Arc::new(
+                MdnsResolver::new(qdns::MDNS_SERVICE)
+                    .context(BindResolverFailedSnafu { schema })?,
+            ))
+            .with(Arc::new(
+                HttpResolver::new(qdns::HTTP_DNS_SERVER)
+                    .context(BindResolverFailedSnafu { schema })?,
+            ))
             .with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER))),
-        _ => return Err("Invalid DNS schema".into()),
     };
 
-    let domain = if options.domain.ends_with("~") {
-        options.domain.replacen("~", ".genmeta.net", 1)
+    let domain = if domain.ends_with("~") {
+        domain.replacen("~", ".genmeta.net", 1)
     } else {
-        options.domain.clone()
+        domain.clone()
     };
-    let ret = resolvers.lookup(&domain, true).await.map_err(Box::new)?;
+
+    let mut results = resolvers.lookup(&domain);
+
+    let first_result = results.next().await.ok_or_else(|| Error::NoResult {
+        domain: domain.clone(),
+    })?;
+
+    let mut results = Box::pin(futures::stream::once(async move { first_result }).chain(results));
 
     println!("DNS lookup results for {domain}:");
 
-    for (src, eps) in ret {
-        let mut set = HashSet::new();
-        let eps: Vec<_> = eps.into_iter().filter(|&x| set.insert(x)).collect();
+    while let Some((src, eps)) = results.next().await {
         println!("Source: {src}");
-        for addr in eps.iter() {
-            match addr {
-                qbase::net::EndpointAddr::Direct { addr } => {
-                    println!("Address: {addr}");
-                }
-                qbase::net::EndpointAddr::Agent { agent, outer } => {
-                    println!("Address: {agent}-{outer}")
-                }
-            }
+        for endpoint_addr in eps.into_iter().collect::<HashSet<_>>() {
+            println!("Address: {endpoint_addr}");
         }
     }
 
@@ -69,15 +108,15 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use qbase::net::EndpointAddr;
+    use qbase::net::route::SocketEndpointAddr;
     use qdns::{HttpResolver, Resolve};
 
     #[tokio::test]
     async fn test_dns_query() {
         let http_dns = HttpResolver::new("https://dns.genmeta.net/").unwrap();
         let addresses = vec![
-            EndpointAddr::direct("192.168.1.1:8080".parse().unwrap()),
-            EndpointAddr::with_agent(
+            SocketEndpointAddr::direct("192.168.1.1:8080".parse().unwrap()),
+            SocketEndpointAddr::with_agent(
                 "192.168.1.2:8080".parse().unwrap(),
                 "114.114.114.114:8080".parse().unwrap(),
             ),

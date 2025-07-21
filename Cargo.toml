@@ -23,15 +23,15 @@ rpassword = "7.3"
 whoami = "1.4"
 
 # genmeta
-gm-quic = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-gmdns = { git = "ssh://git@github.com/genmeta/gmdns.git", branch = "main" }
-h3-shim = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qconnection = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qbase = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qdns = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qevent = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qinterface = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
-qtraversal = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "develop" }
+gm-quic = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/binduri" }
+gmdns = { git = "ssh://git@github.com/genmeta/gmdns.git", branch = "fix/bind_ip" }
+h3-shim = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/binduri" }
+qconnection = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/binduri" }
+qbase = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/binduri" }
+qdns = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/binduri" }
+qevent = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/binduri" }
+qinterface = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/binduri" }
+qtraversal = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/binduri" }
 
 
 # http
@@ -73,6 +73,7 @@ either = { version = "1" }
 peg = "0.8"
 pin-project-lite = "0.2"
 regex = "1"
+snafu = "0.8"
 socks5-proto = "0.4"
 socket2 = "0.5"
 trust-dns-resolver = "0.23.2"
