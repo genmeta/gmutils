@@ -139,6 +139,14 @@ impl Drop for TerminalGuard {
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::OFF.into())
+                .from_env_lossy(),
+        )
+        .with_writer(std::io::stderr)
+        .init();
     let config = options.config().await?;
     tracing::info!(target: "config", ?config, "Parsed config");
 

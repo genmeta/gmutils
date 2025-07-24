@@ -7,8 +7,8 @@ edition = "2024"
 [dependencies]
 tokio-stream = "0.1.17"
 clap = { workspace = true }
+qdns = { workspace = true }
 genmeta-common = { workspace = true }
-gmdns = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

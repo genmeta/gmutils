@@ -59,6 +59,14 @@ pub enum Error {
 }
 
 pub async fn run(Options { domain, schema }: Options) -> Result<(), Error> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::OFF.into())
+                .from_env_lossy(),
+        )
+        .with_writer(std::io::stderr)
+        .init();
     let mut resolvers = Resolvers::new();
     resolvers = match schema {
         Schema::Udp => resolvers.with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER))),
@@ -94,10 +102,10 @@ pub async fn run(Options { domain, schema }: Options) -> Result<(), Error> {
 
     let mut results = Box::pin(futures::stream::once(async move { first_result }).chain(results));
 
-    println!("DNS lookup results for {domain}:");
+    println!("Name: {domain}:");
 
     while let Some((src, eps)) = results.next().await {
-        println!("Source: {src}");
+        println!("{src}");
         for endpoint_addr in eps.into_iter().collect::<HashSet<_>>() {
             println!("Address: {endpoint_addr}");
         }

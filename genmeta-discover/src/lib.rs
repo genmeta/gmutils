@@ -1,10 +1,7 @@
-use std::{
-    collections::{HashMap, HashSet},
-    net::Ipv4Addr,
-};
+use std::collections::{HashMap, HashSet};
 
 use clap::Parser;
-use gmdns::mdns::Mdns;
+use qdns::MdnsResolver;
 use tokio_stream::StreamExt;
 
 #[derive(Parser, Debug, Clone)]
@@ -23,9 +20,17 @@ pub struct Options {
 type Error = Box<dyn core::error::Error + Send + Sync>;
 
 pub async fn run(options: Options) -> Result<(), Error> {
-    let mut mdns_resolver = Mdns::new("", Ipv4Addr::LOCALHOST, "lo")?;
-    let mut stream = mdns_resolver.discover();
-
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::OFF.into())
+                .from_env_lossy(),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+    let mut mdns = MdnsResolver::new(qdns::MDNS_SERVICE)?;
+    let mut stream = mdns.discover();
+    let mut domain_set = HashSet::new();
     while let Some((_, packet)) = stream.next().await {
         let records: HashMap<_, HashSet<_>> = packet
             .answers
@@ -38,9 +43,22 @@ pub async fn run(options: Options) -> Result<(), Error> {
                 map
             });
         for (name, rdata_set) in records {
+            if !domain_set.insert(name.clone()) {
+                continue;
+            }
             println!("Name: {name}");
             for rdata in rdata_set {
-                println!("{rdata}");
+                match rdata {
+                    qdns::RData::A(ip) => println!("{ip}"),
+                    qdns::RData::AAAA(ip) => println!("{ip}"),
+                    qdns::RData::E(ep)
+                    | qdns::RData::EE(ep)
+                    | qdns::RData::E6(ep)
+                    | qdns::RData::EE6(ep) => {
+                        println!("{ep}")
+                    }
+                    _ => continue,
+                }
             }
         }
     }
