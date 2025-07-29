@@ -1,9 +1,7 @@
 mod parser;
+mod types;
 
-use std::{
-    net::{Ipv4Addr, Ipv6Addr},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -15,6 +13,7 @@ use ssh3_proto::{
     mux::{Mux, Recver, Sender, Token},
 };
 use tokio::io;
+pub use types::{DynamicForwardEndpoint, LocalForwardRule, RemoteForwardRule};
 
 use crate::Error;
 
@@ -85,97 +84,5 @@ impl RemoteForwardAcceptor {
             }
             Ok(())
         })
-    }
-}
-
-impl super::Options {
-    pub fn local_forward_rules(&self) -> Result<Vec<(BindAddress, BindAddress)>, Error> {
-        self.local_forwards
-            .iter()
-            .try_fold(vec![], |mut pairs, rule| {
-                let rule = rule
-                    .parse::<parser::LocalForwardRule>()
-                    .map_err(|e| format!("Failed to parse local forward rule `{rule}`: {e:?}"))?;
-
-                let remote_endpoint = match rule.remote {
-                    parser::RemoteEndpoint::Host { host, port } => BindAddress::Host { host, port },
-                    parser::RemoteEndpoint::Unix { path } => BindAddress::Unix { path },
-                };
-
-                match rule.local {
-                    parser::LocalEndpoint::Addr(socket_addr) => pairs.push((
-                        BindAddress::Host {
-                            host: socket_addr.ip().to_string(),
-                            port: socket_addr.port(),
-                        },
-                        remote_endpoint,
-                    )),
-                    parser::LocalEndpoint::Port(port) => {
-                        pairs.push((
-                            BindAddress::Host {
-                                host: Ipv4Addr::UNSPECIFIED.to_string(),
-                                port,
-                            },
-                            remote_endpoint.clone(),
-                        ));
-                        pairs.push((
-                            BindAddress::Host {
-                                host: Ipv6Addr::UNSPECIFIED.to_string(),
-                                port,
-                            },
-                            remote_endpoint.clone(),
-                        ));
-                    }
-                    parser::LocalEndpoint::Unix(path) => {
-                        pairs.push((BindAddress::Unix { path }, remote_endpoint))
-                    }
-                }
-                Ok(pairs)
-            })
-    }
-
-    pub fn remote_forward_rules(&self) -> Result<Vec<(Option<BindAddress>, BindAddress)>, Error> {
-        self.remote_forwards
-            .iter()
-            .try_fold(vec![], |mut pairs, rule| {
-                let rule = rule
-                    .parse::<parser::RemoteForwardRule>()
-                    .map_err(|e| format!("Failed to parse local forward rule `{rule}`: {e:?}"))?;
-
-                let local_endpoint = rule.local.map(|local| match local {
-                    parser::RemoteEndpoint::Host { host, port } => BindAddress::Host { host, port },
-                    parser::RemoteEndpoint::Unix { path } => BindAddress::Unix { path },
-                });
-
-                match rule.remote {
-                    parser::LocalEndpoint::Addr(socket_addr) => pairs.push((
-                        local_endpoint,
-                        BindAddress::Host {
-                            host: socket_addr.ip().to_string(),
-                            port: socket_addr.port(),
-                        },
-                    )),
-                    parser::LocalEndpoint::Port(port) => {
-                        pairs.push((
-                            local_endpoint.clone(),
-                            BindAddress::Host {
-                                host: Ipv4Addr::UNSPECIFIED.to_string(),
-                                port,
-                            },
-                        ));
-                        pairs.push((
-                            local_endpoint,
-                            BindAddress::Host {
-                                host: Ipv6Addr::UNSPECIFIED.to_string(),
-                                port,
-                            },
-                        ));
-                    }
-                    parser::LocalEndpoint::Unix(path) => {
-                        pairs.push((local_endpoint, BindAddress::Unix { path }))
-                    }
-                }
-                Ok(pairs)
-            })
     }
 }

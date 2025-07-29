@@ -2046,6 +2046,7 @@ dependencies = [
  "rustls",
  "thiserror 2.0.12",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -2104,6 +2105,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.12",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -2159,6 +2161,7 @@ dependencies = [
  "rustls",
  "thiserror 2.0.12",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

@@ -6,6 +6,7 @@ mod forward;
 mod session;
 mod socks;
 use clap::Parser;
+use forward::{DynamicForwardEndpoint, LocalForwardRule, RemoteForwardRule};
 use futures::{FutureExt, StreamExt};
 use genmeta_common::{
     AGENTS, ROOT_CERT, cbor_codec,
@@ -93,22 +94,21 @@ pub struct Options {
     login_name: Option<String>,
 
     #[arg(short = 'D', value_name = "[bind_address:]port", long_help = DYNAMIC_FORWARD_LONG_HELP)]
-    dynamic_forward: Vec<String>,
+    dynamic_forward: Vec<DynamicForwardEndpoint>,
 
     #[arg(
         short = 'L',
         value_name = "[bind_address:]port:host:hostport / [bind_address:]port:remote_socket / local_socket:host:hostport / local_socket:remote_socket",
         long_help = LOCAL_FORWARDING_LONG_HELP
     )]
-    local_forwards: Vec<String>,
+    local_forwards: Vec<LocalForwardRule>,
 
-    // TODO：不二次处理，在解析中直接处理好
     #[arg(
         short = 'R',
         value_name = "[bind_address:]port:host:hostport / [bind_address:]port:local_socket / remote_socket:host:hostport / remote_socket:local_socket / [bind_address:]port",
         long_help = REMOTE_FORWARDING_LONG_HELP
     )]
-    remote_forwards: Vec<String>,
+    remote_forwards: Vec<RemoteForwardRule>,
 
     #[arg(
         trailing_var_arg = true,
@@ -150,25 +150,26 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let config = options.config().await?;
     tracing::info!(target: "config", ?config, "Parsed config");
 
-    let dynamic_forward_endpoints = options.dynamic_forward_endpoints().await?;
-    let local_forward_rules = options.local_forward_rules()?;
-    let remote_forward_rules = options.remote_forward_rules()?;
-
-    tracing::info!(target: "config", ?dynamic_forward_endpoints, ?local_forward_rules, ?remote_forward_rules, "Forwards");
-
     let dynamic_forward_listeners =
         {
             let mut listeners = Vec::new();
-            for &local_addr in &dynamic_forward_endpoints {
+            for &local_addr in options
+                .dynamic_forward
+                .iter()
+                .flat_map(|endpoint| endpoint.addresses())
+            {
                 listeners.push((listener::Listener::bind(local_addr.into()).await).map_err(
                     |e| format!("Failed to bind to dynamic forward endpoint`{local_addr}`: {e:?}"),
                 )?);
             }
             listeners
         };
+
     let local_forwards = {
         let mut forwards = Vec::new();
-        for (local_endpoint, remote_endpoint) in local_forward_rules {
+        for (local_endpoint, remote_endpoint) in
+            options.local_forwards.iter().flat_map(|rule| rule.pairs())
+        {
             let listener =
                 (listener::Listener::bind(local_endpoint.clone()).await).map_err(|e| {
                     format!("Failed to bind to local forward endpoint `{local_endpoint}`: {e:?}")
@@ -333,7 +334,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
             });
         }
 
-        for (local, remote) in remote_forward_rules {
+        for (local, remote) in options.remote_forwards.iter().flat_map(|rule| rule.pairs()) {
             let forward_task = remote_forwarders.forward(local, remote.clone()).await?;
             let forward_task = async move {
                 if let Err(error) = forward_task.await {
