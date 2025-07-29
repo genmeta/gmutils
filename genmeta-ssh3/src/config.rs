@@ -4,9 +4,61 @@ use std::env;
 
 use http::Uri;
 use parser::SshConfig;
+use snafu::{Backtrace, ResultExt, Snafu};
 use tokio::fs;
 
-use crate::Error;
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("Failed to parse URI '{uri}' from hostname"))]
+    UriParse {
+        uri: String,
+        source: http::uri::InvalidUri,
+        backtrace: Backtrace,
+    },
+
+    #[snafu(display("Failed to parse authority '{authority}' as URI authority"))]
+    AuthorityParse {
+        authority: String,
+        source: http::uri::InvalidUri,
+        backtrace: Backtrace,
+    },
+
+    #[snafu(display("Unsupported URI scheme '{scheme}', only 'ssh3' is supported"))]
+    UnsupportedScheme {
+        scheme: String,
+        backtrace: Backtrace,
+    },
+
+    #[snafu(display("Missing authority in URI"))]
+    MissingAuthority { backtrace: Backtrace },
+
+    #[snafu(display("Failed to get HOME environment variable to locate SSH config"))]
+    MissingHomeEnv { backtrace: Backtrace },
+
+    #[snafu(display("Failed to read SSH config file '{path}'"))]
+    ConfigFileRead {
+        path: String,
+        source: std::io::Error,
+        backtrace: Backtrace,
+    },
+
+    #[snafu(display("Failed to parse SSH config file '{path}'"))]
+    ConfigFileParse {
+        path: String,
+        source: peg::error::ParseError<peg::str::LineCol>,
+        backtrace: Backtrace,
+    },
+}
+
+// 为主 Error 提供 From 转换
+impl From<Error> for crate::error::Error {
+    fn from(err: Error) -> Self {
+        crate::error::Error::Config {
+            source: err,
+            backtrace: Backtrace::capture(),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Config {
@@ -31,9 +83,9 @@ impl super::Options {
 
         // uri: ssh_config(if present) -> command line
         let uri = match host_params.get("hostname") {
-            Some(host_name) => host_name
-                .parse::<Uri>()
-                .map_err(|e| format!("Failed to parse host name '{host_name}' as URI: {e}"))?,
+            Some(host_name) => host_name.parse::<Uri>().context(UriParseSnafu {
+                uri: host_name.clone(),
+            })?,
             None => self.uri.clone(),
         };
 
@@ -77,10 +129,10 @@ fn complete_uri(uri: Uri) -> Result<Uri, Error> {
         Some(ref scheme) if scheme.as_str() == "ssh3" => uri_parts.scheme,
         None => Some("ssh3".parse().unwrap()),
         Some(scheme) => {
-            let message = format!(
-                "Unsupported scheme `{scheme}` for ssh. Scheme in uri is must not be present or be `ssh3`"
-            );
-            return Err(message.into());
+            return Err(UnsupportedSchemeSnafu {
+                scheme: scheme.to_string(),
+            }
+            .build());
         }
     };
     uri_parts.path_and_query = match uri_parts.path_and_query {
@@ -91,16 +143,15 @@ fn complete_uri(uri: Uri) -> Result<Uri, Error> {
         path_and_query => path_and_query,
     };
 
-    uri_parts.authority =
-        match uri_parts.authority {
-            Some(authority) => {
-                let host = authority.host().replacen("~", ".genmeta.net", 1);
-                Some(host.parse().map_err(|e| {
-                    format!("Failed to parse authority '{host}' as URI authority: {e}")
-                })?)
-            }
-            None => return Err("Missing authority in URI".into()),
-        };
+    uri_parts.authority = match uri_parts.authority {
+        Some(authority) => {
+            let host = authority.host().replacen("~", ".genmeta.net", 1);
+            Some(host.parse().context(AuthorityParseSnafu {
+                authority: host.clone(),
+            })?)
+        }
+        None => return Err(MissingAuthoritySnafu {}.build()),
+    };
 
     Ok(Uri::from_parts(uri_parts).expect("Failed to construct URI from parts"))
 }
@@ -111,18 +162,19 @@ pub async fn ssh_config() -> Result<SshConfig, Error> {
     // Read the user-wide SSH configuration file.
     // This is typically located at /etc/ssh/ssh_config.
     let read_user_config = async {
-        let home = env::var_os("HOME")
-            .ok_or("Failed to get HOME environment variable to locate user-wide SSH config file")?;
-        fs::read_to_string(format!("{}/.ssh/config", home.to_string_lossy()))
+        let home = env::var_os("HOME").ok_or_else(|| MissingHomeEnvSnafu {}.build())?;
+        let path = format!("{}/.ssh/config", home.to_string_lossy());
+        fs::read_to_string(&path)
             .await
-            .map_err(|e| format!("{e:?}"))
+            .context(ConfigFileReadSnafu { path })
     };
 
     match read_user_config.await {
         Ok(content) => {
+            let path = "user SSH config".to_string();
             ssh_config += content
                 .parse::<SshConfig>()
-                .map_err(|e| format!("Failed to parse user-wide SSH config: {e}"))?;
+                .context(ConfigFileParseSnafu { path })?;
         }
         Err(e) => {
             tracing::error!(target: "config", "Failed to read user-wide SSH config: {e:?}");
@@ -132,16 +184,18 @@ pub async fn ssh_config() -> Result<SshConfig, Error> {
     // Read the system-wide SSH configuration file.
     // This is typically located at /etc/ssh/ssh_config.
     let read_system_config = async {
-        fs::read_to_string("/etc/ssh/ssh_config")
+        let path = "/etc/ssh/ssh_config".to_string();
+        fs::read_to_string(&path)
             .await
-            .map_err(|e| format!("{e:?}"))
+            .context(ConfigFileReadSnafu { path })
     };
 
     match read_system_config.await {
         Ok(content) => {
+            let path = "system SSH config".to_string();
             ssh_config += content
                 .parse::<SshConfig>()
-                .map_err(|e| format!("Failed to parse system-wide SSH config: {e}"))?;
+                .context(ConfigFileParseSnafu { path })?;
         }
         Err(e) => {
             tracing::error!(target: "config", "Failed to read system-wide SSH config: {e:?}");

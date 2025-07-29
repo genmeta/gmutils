@@ -1,24 +1,19 @@
-use std::{fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
+use std::{fmt::Debug, sync::Arc};
 
 mod auth;
 mod config;
+mod connect;
+mod error;
 mod forward;
 mod session;
 mod socks;
 use clap::Parser;
-use forward::{DynamicForwardEndpoint, LocalForwardRule, RemoteForwardRule};
+use error::*;
+use forward::*;
 use futures::{FutureExt, StreamExt};
-use genmeta_common::{
-    AGENTS, ROOT_CERT, cbor_codec,
-    h3_stream::{self, H3Stream},
-};
-use gm_quic::{ToCertificate, handy::client_parameters};
 use http::Uri;
-use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
-use qtraversal::iface::traversal_factory;
+use snafu::{Backtrace, prelude::*};
 use ssh3_proto::{listener, messages, mux};
-use tokio::time;
-use tokio_util::{codec, io::StreamReader};
 
 const URI_LONG_HELP: &str = "Example: `my-remote-dev`, `developer@ssh3.test.genmeta.net`
 If this argument matches the ssh configuration file, \
@@ -118,27 +113,7 @@ pub struct Options {
     commands: Vec<String>,
 }
 
-// TODO: 使用Snafu
-type Error = Box<dyn core::error::Error + Send + Sync>;
-
-struct TerminalGuard(());
-
-impl TerminalGuard {
-    pub fn new() -> Self {
-        tracing::info!(target: "session", "Enable raw mode");
-        crossterm::terminal::enable_raw_mode().expect("Failed to enable raw mode");
-        TerminalGuard(())
-    }
-}
-
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
-        tracing::info!(target: "session", "Disable raw mode(RAII)");
-        crossterm::terminal::disable_raw_mode().expect("Failed to disable raw mode");
-    }
-}
-
-pub async fn run(options: Options) -> Result<(), Error> {
+pub async fn run(options: Options) -> Result<(), error::Error> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()
@@ -147,174 +122,96 @@ pub async fn run(options: Options) -> Result<(), Error> {
         )
         .with_writer(std::io::stderr)
         .init();
+
     let config = options.config().await?;
     tracing::info!(target: "config", ?config, "Parsed config");
 
-    let dynamic_forward_listeners =
+    let dynamic_forward_listeners = {
+        let mut listeners = Vec::new();
+        for &local_addr in options
+            .dynamic_forward
+            .iter()
+            .flat_map(|endpoint| endpoint.addresses())
         {
-            let mut listeners = Vec::new();
-            for &local_addr in options
-                .dynamic_forward
-                .iter()
-                .flat_map(|endpoint| endpoint.addresses())
-            {
-                listeners.push((listener::Listener::bind(local_addr.into()).await).map_err(
-                    |e| format!("Failed to bind to dynamic forward endpoint`{local_addr}`: {e:?}"),
-                )?);
-            }
-            listeners
-        };
+            listeners.push(listener::Listener::bind(local_addr.into()).await.context(
+                DynamicForwardBindSnafu {
+                    endpoint: local_addr,
+                },
+            )?);
+        }
+        listeners
+    };
 
     let local_forwards = {
         let mut forwards = Vec::new();
         for (local_endpoint, remote_endpoint) in
             options.local_forwards.iter().flat_map(|rule| rule.pairs())
         {
-            let listener =
-                (listener::Listener::bind(local_endpoint.clone()).await).map_err(|e| {
-                    format!("Failed to bind to local forward endpoint `{local_endpoint}`: {e:?}")
+            let listener = listener::Listener::bind(local_endpoint.clone())
+                .await
+                .context(LocalForwardBindSnafu {
+                    endpoint: local_endpoint.clone(),
                 })?;
             forwards.push((local_endpoint, listener, remote_endpoint));
         }
         forwards
     };
 
-    let resolvers = Resolvers::new()
-        .with(Arc::new(HttpResolver::new(qdns::HTTP_DNS_SERVER)?))
-        .with(Arc::new(MdnsResolver::new(qdns::MDNS_SERVICE)?))
-        .with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER)));
-    // let resolver = UdpResolver::new("1.12.74.4:5300".parse().unwrap());
-    let server_name =
-        (config.uri.host()).ok_or_else(|| format!("Host missing in URI: {}", config.uri))?;
-
-    let mut dns_lookup = resolvers.lookup(server_name);
-    let (_source, server_eps) = dns_lookup
-        .next()
-        .await
-        .ok_or(format!("No endpoints found for server: {server_name}"))?;
-
-    let quic_client = {
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add_parsable_certificates(ROOT_CERT.to_certificate());
-
-        let factory = traversal_factory(&AGENTS);
-        gm_quic::QuicClient::builder()
-            .with_root_certificates(roots)
-            .without_cert()
-            .with_parameters(client_parameters())
-            .with_iface_factory(factory.as_ref().clone())
-            .bind(factory.devices().keys().map(|ip| SocketAddr::new(*ip, 0)))
-            .enable_sslkeylog()
-            .build()
-    };
-
-    let (quic_conn, mut h3_conn, mut h3_client) = {
-        tracing::info!(target: "connect", server_name, ?server_eps, "attempt connect to server");
-        let quic_connection = quic_client.connect(server_name, server_eps)?;
-        tokio::spawn({
-            let conn = quic_connection.clone();
-            async move {
-                let mut server_eps = dns_lookup
-                    .map(|(_, server_eps)| futures::stream::iter(server_eps))
-                    .flatten();
-                while let Some(server_ep) = server_eps.next().await {
-                    if conn.add_peer_endpoint(server_ep.into()).is_err() {
-                        return;
-                    }
-                }
-            }
-        });
-        let connect = h3::client::new(h3_shim::QuicConnection::new(quic_connection.clone()));
-        #[rustfmt::skip] // https://github.com/rust-lang/rustfmt/issues/6564
-        let (h3_conn, h3_client) = time::timeout(Duration::from_secs(10), connect)
-            .await
-            .map_err(|_| {
-                quic_connection.close("connect timeout", 0);
-                "connect timeout"
-        })??;
-        (quic_connection, h3_conn, h3_client)
-    };
-
-    let request = http::Request::builder()
-        .method("PUT")
-        .uri(config.uri)
-        .body(())?;
-    tracing::info!(target: "connect", ?request, "request");
-
-    // sending request results in a bidirectional stream,
-    // which is also used for receiving response
-    let mut stream = h3_client.send_request(request).await?;
-    let response = stream.recv_response().await?;
-    tracing::info!(target: "connect", ?response, "Received");
-    if response.status() != 200 {
-        return Err(format!("Server response status: {}", response.status()).into());
-    }
-
-    let (sender, recver) = stream.split();
-    let (mux, mut incomings) = mux::Mux::new(
-        mux::Role::Client,
-        codec::FramedRead::new(
-            StreamReader::new(H3Stream::new(recver)),
-            cbor_codec::CborDecoder::default(),
-        ),
-        codec::FramedWrite::new(
-            h3_stream::H3Sink::new(sender),
-            cbor_codec::CborEncoder::default(),
-        ),
-    );
+    let (quic_conn, mut h3_conn, _h3_client, mux, mut incomings) =
+        connect::connect(&options.uri).await?;
 
     let remote_forwarders = Arc::new(forward::RemoteForwardAcceptor::new(mux.clone()));
 
     let recv_requests = {
         let remote_forwarders = remote_forwarders.clone();
         async move {
-            while let Some(message) = incomings.next().await {
-                let Ok(new_channel) = message else {
-                    return Err("Failed to parse message from server, check the version?".into());
-                };
+            while let Some(new_channel) = incomings.next().await.transpose()? {
                 match new_channel.request {
                     messages::OpenChannel::Forwarded { listen, to } => {
-                        if let Some(remote_forward_task) = remote_forwarders
-                            .accpet(listen, to, new_channel.recver, new_channel.sender)
-                            .await?
-                        {
-                            tokio::spawn(async move {
-                                if let Err(e) = remote_forward_task.await {
-                                    tracing::error!(target: "remote_forward", "Error in remote forward task: {e:?}");
-                                }
-                            });
-                        }
+                        let accept_forward = remote_forwarders
+                            .accept(listen, to.clone(), new_channel.recver, new_channel.sender)
+                            .await;
+                        let remote_forward_task = match accept_forward {
+                            Ok(Some(forward_task)) => forward_task,
+                            Ok(None) => {
+                                tracing::warn!(target: "remote_forward", "No remote forward request with {listen:?} to {to:?}");
+                                continue;
+                            }
+                            Err(connect_local) => {
+                                tracing::error!(target: "remote_forward", "Failed to accept remote forward connection: {connect_local}");
+                                continue;
+                            }
+                        };
+                        tokio::spawn(async move {
+                            if let Err(e) = remote_forward_task.await {
+                                tracing::error!(target: "remote_forward", "Error in remote forward task: {e:?}");
+                            }
+                        });
                     }
                     _ => {
-                        return Err(Error::from(format!(
-                            "Unexpected message from server: {:?}",
-                            new_channel.request
-                        )));
+                        return Err(error::Error::UnexpectedMessage {
+                            message: format!("{:?}", new_channel.request),
+                            backtrace: Backtrace::capture(),
+                        });
                     }
                 }
             }
-            Result::<_, Error>::Ok(())
+            Result::<_, error::Error>::Ok(())
         }
     };
 
     let run = async move {
         let (username, password) = (config.username, config.password);
 
-        auth::login(&mux, &username, password.as_deref())
-            .await
-            .map_err(|e| format!("Failed to login: {e:?}"))?;
+        auth::login(&mux, &username, password.as_deref()).await?;
 
         let session = tokio::spawn({
             let mux = mux.clone();
             let command = options.command();
             async move {
                 // 初始化终端。guard自动释放
-                let raw_terminal_guard = TerminalGuard::new();
                 match command.run(&mux, options.pseudo).await {
-                    Ok(code) => {
-                        drop(raw_terminal_guard); // 在退出之前恢复终端
-                        std::process::exit(code)
-                    }
+                    Ok(code) => std::process::exit(code),
                     Err(e) => {
                         tracing::error!(target: "session", "Failed to run command: {e:?}");
                         Err(e)
@@ -324,8 +221,10 @@ pub async fn run(options: Options) -> Result<(), Error> {
         });
 
         for (local, listener, remote) in local_forwards {
-            let forwarder =
-                forward::Forwarder::new(mux.clone(), messages::OpenChannel::Direct { to: remote });
+            let forwarder = forward::LocalForwarder::new(
+                mux.clone(),
+                messages::OpenChannel::Direct { to: remote },
+            );
             let listen_task =
                 listener.listen(move |reader, writer| forwarder.forward(reader, writer).boxed());
             tokio::spawn(async move {
@@ -335,10 +234,13 @@ pub async fn run(options: Options) -> Result<(), Error> {
         }
 
         for (local, remote) in options.remote_forwards.iter().flat_map(|rule| rule.pairs()) {
-            let forward_task = remote_forwarders.forward(local, remote.clone()).await?;
+            let forward_task = remote_forwarders
+                .initial_forward(local, remote.clone())
+                .await
+                .context(ForwardChannelOpenSnafu)?;
             let forward_task = async move {
                 if let Err(error) = forward_task.await {
-                    tracing::error!(target: "remote_forward", "Remote server failed to accpet connections from {remote}: {error:?}");
+                    tracing::error!(target: "remote_forward", "Remote server failed to accept connections from {remote}: {error:?}");
                 }
             };
             tokio::spawn(forward_task);
@@ -354,9 +256,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
             });
         }
 
-        session.await??;
-
-        Result::<(), Error>::Ok(())
+        Ok(session.await.expect("Never panic")?)
     };
 
     let error = tokio::select! {
@@ -369,7 +269,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     };
 
     // 清理
-    quic_conn.close("Bye bye", h3::error::Code::H3_NO_ERROR.value());
+    quic_conn.close("Bye bye~", h3::error::Code::H3_NO_ERROR.value());
 
     error.map_or(Ok(()), Err)
 }

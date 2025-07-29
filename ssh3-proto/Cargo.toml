@@ -13,9 +13,9 @@ genmeta-common = { workspace = true }
 serde = { workspace = true }
 serde_cbor = { workspace = true }
 pin-project-lite = { workspace = true }
+snafu = { workspace = true }
 socks5-proto = { workspace = true }
 socket2 = { workspace = true }
-thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "rt"] }
 tracing = { workspace = true }

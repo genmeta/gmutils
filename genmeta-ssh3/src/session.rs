@@ -3,19 +3,34 @@ use std::{io::Read, sync::Arc};
 use bytes::Bytes;
 use crossterm::terminal;
 use futures::{Sink, SinkExt, TryStreamExt};
-use serde::{Deserialize, Serialize};
+use snafu::{Backtrace, ResultExt, Snafu};
 use ssh3_proto::{
-    messages::{OpenChannel, session::ServerSessionMessage},
-    mux::FramedRecver,
+    messages::{
+        OpenChannel,
+        session::{ClientSessionMessage, ServerSessionMessage},
+    },
+    mux::{self, FramedRecver},
 };
+use tokio::io;
 use tokio_util::task::AbortOnDropHandle;
 
-use crate::{Error, mux::Mux};
+use crate::mux::Mux;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub enum ClientTerminalMessage {
-    WindowSize { rows: u16, cols: u16 },
-    Sequence(Bytes),
+struct TerminalGuard(());
+
+impl TerminalGuard {
+    pub fn new() -> Self {
+        tracing::info!(target: "session", "Enable raw mode");
+        crossterm::terminal::enable_raw_mode().expect("Failed to enable raw mode");
+        TerminalGuard(())
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        tracing::info!(target: "session", "Disable raw mode(RAII)");
+        crossterm::terminal::disable_raw_mode().expect("Failed to disable raw mode");
+    }
 }
 
 #[derive(Debug, Default)]
@@ -24,8 +39,24 @@ pub struct Command {
     arguments: Option<Vec<String>>,
 }
 
+#[derive(Debug, Snafu)]
+pub enum SessionError {
+    #[snafu(display("Failed to open session channel: {source}"))]
+    OpenSession {
+        source: mux::ChannelError,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Session channel was closed unexpectedly"))]
+    ClosedSession { backtrace: Backtrace },
+    #[snafu(display("Session is closed with error: {source}"))]
+    CloseWithError {
+        source: io::Error,
+        backtrace: Backtrace,
+    },
+}
+
 impl Command {
-    pub async fn run(&self, mux: &Arc<Mux>, pseudo: bool) -> Result<i32, Error> {
+    pub async fn run(&self, mux: &Arc<Mux>, pseudo: bool) -> Result<i32, SessionError> {
         let open = match &self.program {
             Some(program) => {
                 if let Some(arguments) = &self.arguments {
@@ -44,7 +75,9 @@ impl Command {
         };
 
         tracing::debug!(target: "session", "Running command: {self:?} with Open {open:?}");
-        let (_token, recver, sender) = mux.open(open).await?;
+        let (_token, recver, sender) = mux.open(open).await.context(OpenSessionSnafu)?;
+
+        let _terminal_guard = TerminalGuard::new();
 
         let _update_winize =
             AbortOnDropHandle::new(tokio::spawn(update_winsize(sender.clone().framed())));
@@ -56,16 +89,33 @@ impl Command {
     }
 }
 
-async fn update_winsize(mut message_sender: impl Sink<ClientTerminalMessage> + Unpin) {
+#[derive(Debug, Snafu)]
+pub enum UpdateWindowSizeError {
+    #[cfg(unix)]
+    #[snafu(display(
+        "Failed to register SIGWINCH listener: {source}, window size will not be updated"
+    ))]
+    RegisterSignalListener {
+        source: io::Error,
+        backtrace: Backtrace,
+    },
+
+    #[snafu(display("Failed get terminal size: {source}"))]
+    GetWindowSize {
+        source: io::Error,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Channel closed"))]
+    ChannelClosed { backtrace: Backtrace },
+}
+
+async fn update_winsize(mut message_sender: impl Sink<ClientSessionMessage> + Unpin) {
     let mut update_winsize = async || {
-        let message = match terminal::size() {
-            Ok((cols, rows)) => ClientTerminalMessage::WindowSize { rows, cols },
-            Err(e) => {
-                return Err(Error::from(format!("Failed to get terminal size: {e}")));
-            }
-        };
+        let (cols, rows) = terminal::size().context(GetWindowSizeSnafu)?;
+        let message = ClientSessionMessage::WindowSize { rows, cols };
+
         if message_sender.send(message).await.is_err() {
-            return Err("Event channel closed".into());
+            return Err(ChannelClosedSnafu.build());
         }
         Ok(())
     };
@@ -75,29 +125,28 @@ async fn update_winsize(mut message_sender: impl Sink<ClientTerminalMessage> + U
     };
 
     #[cfg(unix)]
-    {
+    let update_winsize = async {
         use tokio::signal::unix::{SignalKind, signal};
 
-        let mut signal_listener = match signal(SignalKind::window_change()) {
-            Ok(listener) => listener,
-            Err(e) => {
-                tracing::error!(target: "session", "Failed to create signal handler for SIGWINCH: {e}");
-                return;
-            }
-        };
+        let mut signal_listener =
+            signal(SignalKind::window_change()).context(RegisterSignalListenerSnafu)?;
 
         while let Some(()) = signal_listener.recv().await {
-            if let Err(e) = update_winsize().await {
-                tracing::error!(target: "session", "Failed to update terminal size: {e}");
-            };
+            update_winsize().await?;
         }
-    }
+
+        #[allow(unreachable_code)]
+        Result::<_, UpdateWindowSizeError>::Ok(unreachable!("signal sender went away"))
+    };
 
     #[cfg(not(unix))]
     compile_error!("Unsupported platform for terminal size updates");
+
+    let Err(error) = update_winsize.await;
+    tracing::error!(target: "session", "Failed to update terminal size: {error}");
 }
 
-async fn send_terminal(mut message_sender: impl Sink<ClientTerminalMessage> + Unpin) {
+async fn send_terminal(mut message_sender: impl Sink<ClientSessionMessage> + Unpin) {
     // tokio::io::stdin() 不适合交互使用，读文档了解详情
     let tracing_span = tracing::Span::current();
     let (sequence_tx, mut sequence_rx) = tokio::sync::mpsc::channel::<Bytes>(32);
@@ -129,7 +178,7 @@ async fn send_terminal(mut message_sender: impl Sink<ClientTerminalMessage> + Un
             break;
         }
 
-        let message = ClientTerminalMessage::Sequence(sequence);
+        let message = ClientSessionMessage::Sequence(sequence);
         if message_sender.send(message).await.is_err() {
             tracing::error!(target: "session", "Event channel closed");
             return;
@@ -137,8 +186,10 @@ async fn send_terminal(mut message_sender: impl Sink<ClientTerminalMessage> + Un
     }
 }
 
-async fn recv_terminal(mut recver: FramedRecver<ServerSessionMessage>) -> Result<i32, Error> {
-    while let Some(message) = recver.try_next().await? {
+async fn recv_terminal(
+    mut recver: FramedRecver<ServerSessionMessage>,
+) -> Result<i32, SessionError> {
+    while let Some(message) = recver.try_next().await.context(CloseWithSnafu)? {
         match message {
             ServerSessionMessage::Sequence(sequence) => {
                 // 不知为何往tokio::stdin写时会缺少一行输出，所以使用stdio
@@ -150,13 +201,14 @@ async fn recv_terminal(mut recver: FramedRecver<ServerSessionMessage>) -> Result
                 });
                 if let Err(write_error) = write_to_stdout.await.expect("Write should never panic") {
                     tracing::error!(target: "session", "Failed to write to stdout: {write_error}");
+                    // 不要因为 stdout 写入失败而终止程序，只记录错误
                 }
             }
             ServerSessionMessage::Exit { code } => return Ok(code),
         }
     }
-    tracing::debug!(target: "session", "recv_terminal: Recv EOF");
-    Err("Server closed unexpected".into())
+    tracing::debug!(target: "session", "recv_terminal: Recv EOF before received exit code");
+    ClosedSessionSnafu.fail()
 }
 
 impl super::Options {

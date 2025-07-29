@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{error::Error, net::SocketAddr, sync::Arc};
 
 use derive_more::From;
 use futures::{future::BoxFuture, never::Never};
@@ -10,7 +10,7 @@ use tokio::{
 };
 use tracing::Instrument;
 
-use crate::{Error, messages::BindAddress};
+use crate::messages::BindAddress;
 
 #[derive(Debug, From)]
 pub enum Listener {
@@ -59,15 +59,16 @@ impl Listener {
         })
     }
 
-    pub async fn listen_tcp<H>(listener: TcpListener, handler: H) -> Error
+    pub async fn listen_tcp<H, E>(listener: TcpListener, handler: H) -> io::Error
     where
         H: for<'io> Fn(
                 &'io mut (dyn AsyncRead + Send + Unpin),
                 &'io mut (dyn AsyncWrite + Send + Unpin),
-            ) -> BoxFuture<'io, Result<(), Error>>
+            ) -> BoxFuture<'io, Result<(), E>>
             + Send
             + Sync
             + 'static,
+        E: Error,
     {
         let listen_task = async move {
             tracing::info!("Listening on {:?}", listener.local_addr()?);
@@ -87,20 +88,21 @@ impl Listener {
                 );
             }
         };
-        let Result::<Never, Error>::Err(error) = listen_task.await;
+        let Result::<Never, _>::Err(error) = listen_task.await;
         error
     }
 
     #[cfg(unix)]
-    pub async fn listen_unix<H>(listener: UnixListener, handler: H) -> Error
+    pub async fn listen_unix<H, E>(listener: UnixListener, handler: H) -> io::Error
     where
         H: for<'io> Fn(
                 &'io mut (dyn AsyncRead + Send + Unpin),
                 &'io mut (dyn AsyncWrite + Send + Unpin),
-            ) -> BoxFuture<'io, Result<(), Error>>
+            ) -> BoxFuture<'io, Result<(), E>>
             + Send
             + Sync
             + 'static,
+        E: Error,
     {
         let listen_task = async move {
             tracing::info!("Listening on UNIX {:?}", listener.local_addr()?);
@@ -120,19 +122,20 @@ impl Listener {
                 );
             }
         };
-        let Result::<Never, Error>::Err(error) = listen_task.await;
+        let Result::<Never, _>::Err(error) = listen_task.await;
         error
     }
 
-    pub async fn listen<H>(self, handler: H) -> Error
+    pub async fn listen<H, E>(self, handler: H) -> io::Error
     where
         H: for<'io> Fn(
                 &'io mut (dyn AsyncRead + Send + Unpin),
                 &'io mut (dyn AsyncWrite + Send + Unpin),
-            ) -> BoxFuture<'io, Result<(), Error>>
+            ) -> BoxFuture<'io, Result<(), E>>
             + Send
             + Sync
             + 'static,
+        E: Error,
     {
         match self {
             Listener::Tcp(listener) => Self::listen_tcp(listener, handler).await,

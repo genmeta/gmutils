@@ -1,4 +1,5 @@
 use std::{
+    backtrace::Backtrace,
     fmt::Debug,
     marker::PhantomData,
     pin::Pin,
@@ -14,7 +15,7 @@ use dashmap::{DashMap, Entry};
 use derive_more::Display;
 use futures::{Sink, SinkExt, Stream, StreamExt, channel::mpsc};
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
+use snafu::{ResultExt, Snafu, ensure};
 use tokio::{io, time};
 use tokio_util::{
     codec,
@@ -83,27 +84,38 @@ impl Debug for Mux {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("Peer has the same role with local when routing for {0}")]
-    SameRole(Token),
-    #[error("Channel {0} already be opened")]
-    ChannelAlreadyOpen(Token),
-    #[error("Channel {0} already be closed")]
-    ChannelClosed(Token),
-    #[error("Failed to send open for {0}: {1}")]
-    SendOpen(Token, io::Error),
+#[derive(Debug, Snafu)]
+pub enum ChannelError {
+    #[snafu(display("Peer has the same role with local when routing for {token}"))]
+    SameRole { token: Token, backtrace: Backtrace },
+    #[snafu(display("Channel {token} already be opened"))]
+    ChannelAlreadyOpen { token: Token, backtrace: Backtrace },
+    #[snafu(display("Channel {token} already be closed"))]
+    ChannelClosed { token: Token, backtrace: Backtrace },
+    #[snafu(display("Failed to send open message for {token}"))]
+    SendOpen { token: Token, backtrace: Backtrace },
+    #[snafu(display("Failed to send close message for {token}"))]
+    SendClose { token: Token, backtrace: Backtrace },
 }
 
+#[derive(Debug, Snafu)]
+pub enum ForwardError<Oe: snafu::Error + 'static> {
+    #[snafu(display("Accept channel failed: {source}"))]
+    AcceptChannel {
+        source: ChannelError,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Message stream closed: {source}"))]
+    StreamClosed { source: Oe, backtrace: Backtrace },
+}
+
+pub type Incomings<StE = io::Error> = mpsc::Receiver<Result<NewChannel, ForwardError<StE>>>;
+
 impl Mux {
-    pub fn new<St, StE, Si>(
-        role: Role,
-        mut stream: St,
-        mut sink: Si,
-    ) -> (Arc<Self>, mpsc::Receiver<Result<NewChannel, super::Error>>)
+    pub fn new<St, StE, Si>(role: Role, mut stream: St, mut sink: Si) -> (Arc<Self>, Incomings<StE>)
     where
         St: Stream<Item = Result<Message, StE>> + Send + Unpin + 'static,
-        StE: Into<super::Error> + Send + 'static,
+        StE: snafu::Error + Send,
         Si: Sink<Message, Error: Debug> + Send + Unpin + 'static,
     {
         let (message_sender, mut pending_messages) = mpsc::channel::<Message>(8);
@@ -119,10 +131,10 @@ impl Mux {
         let mux = this.clone();
         let task = async move {
             let recv_messages = async {
-                while let Some(itmessagem) = stream.next().await {
-                    let new_channel = match itmessagem {
-                        Ok(item) => mux.receive(item).await.map_err(super::Error::from),
-                        Err(error) => Err(error.into()),
+                while let Some(item) = stream.next().await {
+                    let new_channel = match item {
+                        Ok(item) => mux.receive(item).await.context(AcceptChannelSnafu),
+                        Err(error) => Err(error).context(StreamClosedSnafu),
                     };
 
                     let is_err = new_channel.is_err();
@@ -134,6 +146,7 @@ impl Mux {
                     }
                 }
                 tracing::debug!(target: "mux", "Incoming stream closed");
+                std::future::pending().await // hold the incoming_forwarder
             };
             let send_messages = async {
                 while let Some(message) = pending_messages.next().await {
@@ -173,20 +186,21 @@ impl Mux {
         Token(token)
     }
 
-    async fn receive(self: &Arc<Self>, message: Message) -> Result<Option<NewChannel>, Error> {
+    async fn receive(
+        self: &Arc<Self>,
+        message: Message,
+    ) -> Result<Option<NewChannel>, ChannelError> {
         tracing::trace!(target: "mux", ?message, "Received message");
         match message {
             Message::Open {
                 token,
                 open: request,
             } => {
-                if token.role() == self.token().role() {
-                    return Err(Error::SameRole(token));
-                }
+                ensure!(token.role() == self.token().role(), SameRoleSnafu { token });
                 let (sender, recver) = mpsc::channel(8);
                 let entry = self.channels.entry(token);
                 if let Entry::Occupied(..) = &entry {
-                    return Err(Error::ChannelAlreadyOpen(token));
+                    return ChannelAlreadyOpenSnafu { token }.fail();
                 }
                 entry.insert(sender);
 
@@ -221,18 +235,20 @@ impl Mux {
             Message::Error { token, error } => {
                 let channel = self.channels.entry(token);
                 let item = Err(io::Error::new(io::ErrorKind::BrokenPipe, error));
+                // kept channel is successfully sent
                 if let Entry::Occupied(mut channel) = channel
-                    && channel.get_mut().send(item).await.is_err()
+                    && let Err(error) = channel.get_mut().send(item).await
                 {
-                    tracing::warn!(target: "mux", ?token, "Failed to forward error message to a closed channal");
-                    channel.remove();
+                    tracing::warn!(target: "mux", ?token, "Failed to forward error message to channel: {error:?}");
                 }
                 Ok(None)
             }
             Message::Close { token } => {
-                tracing::debug!(target: "mux", ?token, "Channel closed by peer");
-                if self.channels.remove(&token).is_none() {
-                    tracing::warn!(target: "mux", ?token, "Channel already closed by peer");
+                if let Some(mut channel) = self.channels.get(&token).map(|entry| entry.clone()) {
+                    tracing::debug!(target: "mux", ?token, "Channel closed by peer");
+                    if let Err(error) = channel.close().await {
+                        tracing::warn!(target: "mux", ?token, "Failed to close channel: {error:?}");
+                    }
                 }
                 Ok(None)
             }
@@ -246,22 +262,23 @@ impl Mux {
     pub async fn open(
         self: &Arc<Self>,
         open: OpenChannel,
-    ) -> Result<(Token, Recver, Sender), Error> {
+    ) -> Result<(Token, Recver, Sender), ChannelError> {
         let token = self.next_token();
         let mut message_sender = self.message_sender.clone();
         let (sender, recver) = mpsc::channel(8);
 
         let entry = self.channels.entry(token);
-        if let Entry::Occupied(..) = &entry {
-            return Err(Error::ChannelAlreadyOpen(token));
-        }
+        ensure!(
+            matches!(entry, Entry::Vacant(..)),
+            ChannelAlreadyOpenSnafu { token }
+        );
         entry.insert(sender);
 
         let open = Message::Open { token, open };
+
         if message_sender.send(open).await.is_err() {
             // unknown reason
-            let error = io::ErrorKind::BrokenPipe.into();
-            return Err(Error::SendOpen(token, error));
+            return SendOpenSnafu { token }.fail();
         };
 
         let recver = Recver {
@@ -344,14 +361,14 @@ pub type StreamingSender = SinkWriter<CopyToBytes<Sender>>;
 // pub type FramedSender<T> =
 
 impl Sender {
-    pub async fn cancel(&mut self, error: io::Error) -> io::Result<()> {
+    pub async fn cancel(&mut self, error: impl ToString) -> Result<(), ChannelError> {
         self.sink
             .send(Message::Error {
                 token: self.token,
                 error: error.to_string(),
             })
             .await
-            .map_err(|_se| io::ErrorKind::BrokenPipe.into())
+            .map_err(|_se| SendCloseSnafu { token: self.token }.build())
     }
 
     pub fn streaming(self) -> SinkWriter<CopyToBytes<Self>> {
@@ -423,7 +440,7 @@ pin_project_lite::pin_project! {
 }
 
 impl<T> FramedSender<T> {
-    pub async fn cancel(&mut self, error: io::Error) -> io::Result<()> {
+    pub async fn cancel(&mut self, error: io::Error) -> Result<(), ChannelError> {
         self.sender.cancel(error).await
     }
 }

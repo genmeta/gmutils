@@ -21,7 +21,7 @@ async fn main() {
 
 async fn run(options: Options) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match options {
-        Options::Ssh3(options) => genmeta_ssh3::run(options).await,
+        Options::Ssh3(options) => Ok(genmeta_ssh3::run(options).await?),
         Options::Curl(options) => genmeta_curl::run(options).await,
         Options::Nslookup(options) => Ok(genmeta_nslookup::run(options).await?),
         Options::Discover(options) => genmeta_discover::run(options).await,

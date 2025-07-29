@@ -1,48 +1,77 @@
-use std::sync::Arc;
+use std::{backtrace::Backtrace, sync::Arc};
 
 use futures::{SinkExt, TryStreamExt};
-use ssh3_proto::messages::{
-    OpenChannel,
-    auth::{ClientAuthMessage, ServerAuthMessage},
+use snafu::prelude::*;
+use ssh3_proto::{
+    messages::{
+        OpenChannel,
+        auth::{ClientAuthMessage, ServerAuthMessage},
+    },
+    mux,
+};
+use tokio::io;
+
+use crate::{
+    // error::{AuthChannelOpenSnafu, AuthMessageReceiveSnafu, AuthStreamClosedSnafu, Error},
+    mux::Mux,
 };
 
-use crate::{Error, mux::Mux};
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("Failed to open authentication channel: {source}"))]
+    OpenAuthChannel {
+        source: mux::ChannelError,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Failed to receive authentication message: {source}"))]
+    ReceiveAuthMessage {
+        source: io::Error,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Authentication channel was closed unexpectedly"))]
+    AuthChannelClosed { backtrace: Backtrace },
+    #[snafu(display("Failed to read password: {source}"))]
+    ReadPassword {
+        source: io::Error,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Failed to send password: {source}"))]
+    SendPassword {
+        source: io::Error,
+        backtrace: Backtrace,
+    },
+}
 
 pub async fn login(mux: &Arc<Mux>, user: &str, mut password: Option<&str>) -> Result<(), Error> {
     let (_token, recver, sender) = mux
         .open(OpenChannel::Auth {
             username: user.to_owned(),
         })
-        .await?;
+        .await
+        .context(OpenAuthChannelSnafu)?;
     let mut recver = recver.framed();
     let mut sender = sender.framed();
     loop {
         let auth_message = recver.try_next().await;
         tracing::debug!(target: "auth", ?auth_message, "Received auth message");
-        let message = match auth_message {
-            Ok(Some(message)) => message,
-            Ok(None) => return Err("Auth stream closed unexpectedly.".into()),
-            Err(e) => return Err(e.into()),
+        let message = match auth_message.context(ReceiveAuthMessageSnafu)? {
+            Some(message) => message,
+            None => return AuthChannelClosedSnafu.fail(),
         };
-        tracing::debug!(target: "auth", ?message, "Received auth message");
         match message {
-            ServerAuthMessage::Accpet => return Ok(()),
+            ServerAuthMessage::Accept => return Ok(()),
             ServerAuthMessage::Password { prompt } => {
                 let password = match password.take() {
                     Some(password) => password.to_owned(),
-                    None => {
-                        let Ok(Ok(password)) =
-                            tokio::task::spawn_blocking(|| rpassword::prompt_password(prompt))
-                                .await
-                        else {
-                            return Err("Failed to read password".into());
-                        };
-                        password
-                    }
+                    None => tokio::task::spawn_blocking(|| rpassword::prompt_password(prompt))
+                        .await
+                        .expect("Never panic")
+                        .context(ReadPasswordSnafu)?,
                 };
-                if let Err(_se) = sender.send(ClientAuthMessage::Password(password)).await {
-                    return Err("Failed to send password".into());
-                }
+                sender
+                    .send(ClientAuthMessage::Password(password))
+                    .await
+                    .context(SendPasswordSnafu)?;
             }
         }
     }

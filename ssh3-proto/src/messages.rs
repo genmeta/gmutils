@@ -55,7 +55,7 @@ pub enum OpenChannel {
     ///
     /// 通道使用[`session`]模块的消息
     Shell { pseudo: bool },
-    /// 让对端监听一个地址，接收到的连接通过此管道请求转发
+    /// 初始化远程转发。让对端监听一个地址，接收到的连接通过Forwarded消息转发给本地
     ///
     /// 发起方关闭通道发送Close表示不希望Server继续监听
     ///
@@ -77,11 +77,14 @@ pub enum OpenChannel {
     ///
     /// 通道消息不序列化，使用streaming
     Forwarded {
+        /// Forwarded接收方（Forward发送方）需要通过listen鉴权，listen应为对应Forward通道的token
         listen: Token,
-        /// Forwarded接收方需要通过listen鉴权，listen应为对应Forward通道的token
+        /// 远程转发可以不指定本地地址，对端就可以启动一个socks服务器，连接到*任意*本地地址
+        ///
+        /// 其他情况，接受连接的本地BindAddress不暴露给对面，to为None（本地知道）
         to: Option<BindAddress>,
     },
-    /// 转发数据到对端的某地址
+    /// 本地转发。转发数据到对端的某地址
     ///
     /// 不同于Forwarded，这个是客户端发出的。客户端不接受此消息
     ///
@@ -100,7 +103,7 @@ pub mod auth {
 
     #[derive(Debug, Serialize, Deserialize, Clone)]
     pub enum ServerAuthMessage {
-        Accpet,
+        Accept,
         Password { prompt: String },
         // Reject: Message::Error
     }

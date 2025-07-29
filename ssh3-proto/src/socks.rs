@@ -2,7 +2,8 @@
 
 use std::sync::Arc;
 
-use socks5_proto::{Address, Error, ProtocolError, Reply, Request, Response, handshake};
+pub use socks5_proto::Error;
+use socks5_proto::{Address, ProtocolError, Reply, Request, Response, handshake};
 use tokio::io::{self, AsyncRead, AsyncWrite};
 
 use crate::{
@@ -14,12 +15,12 @@ pub async fn accept(
     reader: &mut (impl AsyncRead + Unpin),
     writer: &mut (impl AsyncWrite + Unpin),
     connect: impl AsyncFnOnce(&str, u16) -> io::Result<(Recver, Sender)>,
-) -> io::Result<()> {
+) -> Result<(), Error> {
     let handshake_request = match handshake::Request::read_from(reader).await {
         Ok(handshake_request) => handshake_request,
         Err(error) => {
             tracing::warn!(target: "socks", "Failed to parse handshake request: {error:?}");
-            return Err(error.into());
+            return Err(error);
         }
     };
 
@@ -48,7 +49,7 @@ pub async fn accept(
             Response::new(Reply::GeneralFailure, Address::unspecified())
                 .write_to(writer)
                 .await?;
-            return Err(error.into());
+            return Err(error);
         }
     };
 
@@ -77,7 +78,7 @@ pub async fn accept(
                     Response::new(reply, Address::unspecified())
                         .write_to(writer)
                         .await?;
-                    return Err(error);
+                    return Err(error.into());
                 }
             };
 
@@ -94,7 +95,8 @@ pub async fn accept(
             tracing::warn!(target: "socks", "BIND and ASSOCIATE commands are not supported");
             Response::new(Reply::CommandNotSupported, Address::unspecified())
                 .write_to(writer)
-                .await
+                .await?;
+            Ok(())
         }
     }
 }
@@ -103,13 +105,13 @@ pub async fn accept_direct(
     mut reader: &mut (impl AsyncRead + Unpin + ?Sized),
     mut writer: &mut (impl AsyncWrite + Unpin + ?Sized),
     mux: Arc<Mux>,
-) -> io::Result<()> {
+) -> Result<(), Error> {
     accept(&mut reader, &mut writer, async |host, port| {
         let open = messages::OpenChannel::Direct {
             to: (host.to_owned(), port).into(),
         };
-        forward::Forwarder::new(mux, open)
-            .connect()
+        forward::LocalForwarder::new(mux, open)
+            .open_channel()
             .await
             .map(|(_, r, s)| (r, s))
             .map_err(io::Error::other)
@@ -117,19 +119,19 @@ pub async fn accept_direct(
     .await
 }
 
-pub async fn accpet_forward(
+pub async fn accept_forward(
     mut reader: &mut (impl AsyncRead + Unpin + ?Sized),
     mut writer: &mut (impl AsyncWrite + Unpin + ?Sized),
     mux: Arc<Mux>,
     token: Token,
-) -> io::Result<()> {
+) -> Result<(), Error> {
     accept(&mut reader, &mut writer, async |host, port| {
         let open = messages::OpenChannel::Forwarded {
             listen: token,
             to: Some((host.to_owned(), port).into()),
         };
-        forward::Forwarder::new(mux, open)
-            .connect()
+        forward::LocalForwarder::new(mux, open)
+            .open_channel()
             .await
             .map(|(_, r, s)| (r, s))
             .map_err(io::Error::other)
