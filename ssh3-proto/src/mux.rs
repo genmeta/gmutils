@@ -158,7 +158,7 @@ impl Mux {
                 }
             };
             let headrbeat = async move {
-                let mut interval = time::interval(time::Duration::from_secs(20));
+                let mut interval = time::interval(time::Duration::from_secs(5));
                 loop {
                     interval.tick().await;
                     _ = headrbeat_sender.send(Message::Headrbeat {}).await
@@ -196,7 +196,7 @@ impl Mux {
                 token,
                 open: request,
             } => {
-                ensure!(token.role() == self.token().role(), SameRoleSnafu { token });
+                ensure!(token.role() != self.token().role(), SameRoleSnafu { token });
                 let (sender, recver) = mpsc::channel(8);
                 let entry = self.channels.entry(token);
                 if let Entry::Occupied(..) = &entry {

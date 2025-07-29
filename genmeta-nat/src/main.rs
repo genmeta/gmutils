@@ -1,4 +1,5 @@
 use clap::Parser;
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     tracing_subscriber::fmt()
@@ -10,8 +11,8 @@ async fn main() {
         .with_writer(std::io::stderr)
         .init();
     if let Err(error) = genmeta_nat::run(genmeta_nat::Options::parse()).await {
-        eprintln!("ERROR: {error}");
-        tracing::error!("Error: {}", error);
+        eprintln!("{error}");
+        tracing::error!("Exit with error: {}", error);
         std::process::exit(1);
     }
 }

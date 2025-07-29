@@ -1,14 +1,13 @@
 [package]
 name = "genmeta-discover"
 description = "mdns discover services"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 
 [dependencies]
 tokio-stream = "0.1.17"
 clap = { workspace = true }
 qdns = { workspace = true }
-genmeta-common = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

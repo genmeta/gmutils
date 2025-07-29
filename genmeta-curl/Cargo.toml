@@ -1,7 +1,7 @@
 [package]
 name = "genmeta-curl"
 description = "curl-like HTTP3 client"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 
 [dependencies]
@@ -13,7 +13,6 @@ gm-quic = { workspace = true }
 h3 = { workspace = true }
 h3-shim = { workspace = true }
 http = { workspace = true }
-qconnection = { workspace = true }
 qdns = { workspace = true }
 qtraversal = { workspace = true }
 rustls = { workspace = true }

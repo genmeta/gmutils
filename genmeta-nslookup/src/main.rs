@@ -12,7 +12,7 @@ async fn main() {
 
     if let Err(error) = genmeta_nslookup::run(genmeta_nslookup::Options::parse()).await {
         eprintln!("{error}");
-        tracing::error!("Error: {}", error);
+        tracing::error!("Exit with error: {}", error);
         std::process::exit(1);
     }
 }

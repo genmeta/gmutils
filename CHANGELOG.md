@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-07-29
+
+### Changed
+- 依赖：适配gm-quic-traversal v0.3
+- 新增：nat探测工具
+- 重构：将tracing_subscriber初始化交给子模块
+- 重构：结构化ssh3和ssh3-proto的错误
+- 重构：优化ssh3的命令行参数解析
+- 重构：修复ssh3-proto的一些typo
+
+### Components
+
+- genmeta v0.3.0
+- genmeta-ssh3 v0.3.0
+- genmeta-curl v0.1.6
+- genmeta-nslookup v0.1.3
+- genmeta-discover v0.1.2
+- genmeta-nat v0.1.0
+- ssh3-proto v0.2.0
+
 ## [0.2.8] - 2025-06-26
 
 ### Changed

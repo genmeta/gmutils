@@ -158,7 +158,7 @@ pub async fn run(options: Options) -> Result<(), error::Error> {
     };
 
     let (quic_conn, mut h3_conn, _h3_client, mux, mut incomings) =
-        connect::connect(&options.uri).await?;
+        connect::connect(&config.uri).await?;
 
     let remote_forwarders = Arc::new(forward::RemoteForwardAcceptor::new(mux.clone()));
 

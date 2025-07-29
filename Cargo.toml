@@ -26,7 +26,6 @@ whoami = "1.4"
 gm-quic = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/v0.3" }
 gmdns = { git = "ssh://git@github.com/genmeta/gmdns.git", branch = "main" }
 h3-shim = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/v0.3" }
-qconnection = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/v0.3" }
 qbase = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/v0.3" }
 qdns = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/v0.3" }
 qevent = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/v0.3" }

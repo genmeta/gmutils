@@ -12,7 +12,7 @@ async fn main() {
 
     if let Err(error) = genmeta_discover::run(genmeta_discover::Options::parse()).await {
         eprintln!("{error}");
-        tracing::error!("Error: {}", error);
+        tracing::error!("Exit with error: {}", error);
         std::process::exit(1);
     }
 }

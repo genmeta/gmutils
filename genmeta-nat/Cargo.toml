@@ -1,13 +1,11 @@
 [package]
 name = "genmeta-nat"
 description = "nat detect tool"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-tokio-stream = "0.1.17"
 clap = { workspace = true }
-genmeta-common = { workspace = true }
 qtraversal = { workspace = true }
 qinterface = { workspace = true }
 tokio = { workspace = true }
