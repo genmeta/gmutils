@@ -23,8 +23,8 @@ pub enum Error {
         source: mux::ChannelError,
         backtrace: Backtrace,
     },
-    #[snafu(display("Failed to receive authentication message: {source}"))]
-    ReceiveAuthMessage {
+    #[snafu(display("Auth channel closed with error: {source}"))]
+    AuthAborted {
         source: io::Error,
         backtrace: Backtrace,
     },
@@ -54,7 +54,7 @@ pub async fn login(mux: &Arc<Mux>, user: &str, mut password: Option<&str>) -> Re
     loop {
         let auth_message = recver.try_next().await;
         tracing::debug!(target: "auth", ?auth_message, "Received auth message");
-        let message = match auth_message.context(ReceiveAuthMessageSnafu)? {
+        let message = match auth_message.context(AuthAbortedSnafu)? {
             Some(message) => message,
             None => return AuthChannelClosedSnafu.fail(),
         };

@@ -1,7 +1,5 @@
 mod parser;
 
-use std::env;
-
 use http::Uri;
 use parser::SshConfig;
 use snafu::{Backtrace, ResultExt, Snafu};
@@ -32,8 +30,8 @@ pub enum Error {
     #[snafu(display("Missing authority in URI"))]
     MissingAuthority { backtrace: Backtrace },
 
-    #[snafu(display("Failed to get HOME environment variable to locate SSH config"))]
-    MissingHomeEnv { backtrace: Backtrace },
+    #[snafu(display("Failed to get user home directory"))]
+    MissingHomeDir { backtrace: Backtrace },
 
     #[snafu(display("Failed to read SSH config file '{path}'"))]
     ConfigFileRead {
@@ -160,13 +158,14 @@ pub async fn ssh_config() -> Result<SshConfig, Error> {
     let mut ssh_config = SshConfig::default();
 
     // Read the user-wide SSH configuration file.
-    // This is typically located at /etc/ssh/ssh_config.
+    // This is typically located at ~/.ssh/config.
     let read_user_config = async {
-        let home = env::var_os("HOME").ok_or_else(|| MissingHomeEnvSnafu {}.build())?;
-        let path = format!("{}/.ssh/config", home.to_string_lossy());
+        let home = dirs::home_dir().ok_or_else(|| MissingHomeDirSnafu {}.build())?;
+        let path = home.join(".ssh").join("config");
+        let path_str = path.to_string_lossy().to_string();
         fs::read_to_string(&path)
             .await
-            .context(ConfigFileReadSnafu { path })
+            .context(ConfigFileReadSnafu { path: path_str })
     };
 
     match read_user_config.await {

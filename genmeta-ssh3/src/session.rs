@@ -2,7 +2,7 @@ use std::{io::Read, sync::Arc};
 
 use bytes::Bytes;
 use crossterm::terminal;
-use futures::{Sink, SinkExt, TryStreamExt};
+use futures::{Sink, SinkExt, StreamExt, TryStreamExt};
 use snafu::{Backtrace, ResultExt, Snafu};
 use ssh3_proto::{
     messages::{
@@ -110,8 +110,7 @@ pub enum UpdateWindowSizeError {
 }
 
 async fn update_winsize(mut message_sender: impl Sink<ClientSessionMessage> + Unpin) {
-    let mut update_winsize = async || {
-        let (cols, rows) = terminal::size().context(GetWindowSizeSnafu)?;
+    let mut update_winsize = async |(cols, rows): (u16, u16)| {
         let message = ClientSessionMessage::WindowSize { rows, cols };
 
         if message_sender.send(message).await.is_err() {
@@ -120,27 +119,56 @@ async fn update_winsize(mut message_sender: impl Sink<ClientSessionMessage> + Un
         Ok(())
     };
 
-    if let Err(e) = update_winsize().await {
-        tracing::error!(target: "session", "Failed to update terminal size: {e}");
+    #[cfg(unix)]
+    let init_winsize_update_listener = || {
+        use tokio::signal::unix::{SignalKind, signal};
+        Result::<_, UpdateWindowSizeError>::Ok(futures::stream::unfold(
+            signal(SignalKind::window_change()).context(RegisterSignalListenerSnafu)?,
+            |mut signal| async move {
+                signal.recv().await?;
+                Some((terminal::size().context(GetWindowSizeSnafu), signal))
+            },
+        ))
     };
 
-    #[cfg(unix)]
+    #[cfg(not(unix))]
+    let init_winsize_update_listener = || {
+        tracing::warn!(target: "session", "Window size updates listener not available on this platform, using polling pre 10ms fallback");
+        use tokio::time::{Duration, Interval, interval};
+
+        let interval = interval(Duration::from_millis(10));
+        let initial_size = terminal::size().context(GetWindowSizeSnafu)?;
+        let fold = |(mut interval, current_size): (Interval, _)| async move {
+            loop {
+                _ = interval.tick().await;
+                match terminal::size().context(GetWindowSizeSnafu) {
+                    Ok(new_size) if new_size != current_size => {
+                        return Some((Ok(new_size), (interval, new_size)));
+                    }
+                    Err(error) => {
+                        return Some((Err(error), (interval, current_size)));
+                    }
+                    _ => (),
+                }
+            }
+        };
+        Result::<_, UpdateWindowSizeError>::Ok(futures::stream::unfold(
+            (interval, initial_size),
+            fold,
+        ))
+    };
+
     let update_winsize = async {
-        use tokio::signal::unix::{SignalKind, signal};
+        update_winsize(terminal::size().context(GetWindowSizeSnafu)?).await?;
 
-        let mut signal_listener =
-            signal(SignalKind::window_change()).context(RegisterSignalListenerSnafu)?;
-
-        while let Some(()) = signal_listener.recv().await {
-            update_winsize().await?;
+        let mut winsize_update_listener = init_winsize_update_listener()?.boxed();
+        while let Some(new_size) = winsize_update_listener.try_next().await? {
+            update_winsize(new_size).await?;
         }
 
         #[allow(unreachable_code)]
         Result::<_, UpdateWindowSizeError>::Ok(unreachable!("signal sender went away"))
     };
-
-    #[cfg(not(unix))]
-    compile_error!("Unsupported platform for terminal size updates");
 
     let Err(error) = update_winsize.await;
     tracing::error!(target: "session", "Failed to update terminal size: {error}");

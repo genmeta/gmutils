@@ -63,7 +63,7 @@ impl FromStr for LocalForwardRule {
             .parse::<parser::LocalForwardRule>()
             .map_err(|e| Error::LocalForwardParse {
                 rule: s.to_string(),
-                message: format!("{:?}", e),
+                message: format!("{e:?}"),
                 backtrace: snafu::Backtrace::capture(),
             })?;
 
@@ -112,7 +112,7 @@ impl FromStr for RemoteForwardRule {
             s.parse::<parser::RemoteForwardRule>()
                 .map_err(|e| Error::RemoteForwardParse {
                     rule: s.to_string(),
-                    message: format!("{:?}", e),
+                    message: format!("{e:?}"),
                     backtrace: snafu::Backtrace::capture(),
                 })?;
 

@@ -4,8 +4,6 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use either::Either;
 use futures::StreamExt;
-#[cfg(not(unix))]
-use futures::never::Never;
 use genmeta_common::entry_guard::EntryGuard;
 use snafu::{ResultExt, Snafu};
 #[cfg(unix)]
@@ -160,13 +158,13 @@ async fn reject_unix_forward(
     mut sender: Sender,
     _recver: Recver,
     _endpoint: PathBuf,
-) -> Result<impl Future<Output = Result<(), LocalForwardError>>, Never> {
-    sender
+) -> Result<impl Future<Output = Result<(), LocalForwardError>>, ConnectLocalError> {
+    _ = sender
         .cancel(io::Error::new(
             io::ErrorKind::Unsupported,
             "UNIX domain sockets are not supported for this platform.",
         ))
-        .await?;
+        .await;
     Ok(async { Ok(()) })
 }
 
