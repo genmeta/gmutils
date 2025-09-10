@@ -47,7 +47,7 @@ impl Display for Schema {
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Failed to bind `{schema}` resolver: {source}"))]
+    #[snafu(display("Failed to bind `{schema}` resolver"))]
     BindResolverFailed {
         schema: Schema,
         #[snafu(source)]
@@ -62,7 +62,7 @@ pub async fn run(Options { domain, schema }: Options) -> Result<(), Error> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing_subscriber::filter::LevelFilter::OFF.into())
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::WARN.into())
                 .from_env_lossy(),
         )
         .with_writer(std::io::stderr)

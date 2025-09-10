@@ -7,9 +7,9 @@ use tokio::io;
 
 #[derive(Debug, Snafu)]
 pub enum SocksError {
-    #[snafu(display("Socks server error: {source}"))]
+    #[snafu(display("Socks server error"))]
     Server { source: socks::Error },
-    #[snafu(display("Failed to accept local connections: {source}"))]
+    #[snafu(display("Failed to accept local connections"))]
     AcceptError { source: io::Error },
 }
 

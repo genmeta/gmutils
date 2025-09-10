@@ -27,14 +27,14 @@ pub struct LocalForwarder {
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
 pub enum LocalForwardError {
-    #[snafu(display("Failed to open channel for forwarding: {source}"))]
+    #[snafu(display("Failed to open channel for forwarding"))]
     OpenChannel { source: mux::ChannelError },
-    #[snafu(display("Failed to copy data between streams: {source}"))]
+    #[snafu(display("Failed to copy data between streams"))]
     Copy { source: io::Error },
 }
 
 #[derive(Debug, Snafu)]
-#[snafu(display("Failed to connect to local `{bind_addr}`: {source}"))]
+#[snafu(display("Failed to connect to local `{bind_addr}`"))]
 #[snafu(visibility(pub))]
 pub struct ConnectLocalError {
     bind_addr: BindAddress,

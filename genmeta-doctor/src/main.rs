@@ -1,10 +1,11 @@
+use clap::Parser;
+use genmeta_doctor::{Options, run};
+use snafu::Whatever;
+
 #[tokio::main]
-async fn main() {
-    use clap::Parser;
-    use genmeta_doctor::{Options, run};
-    if let Err(error) = run(Options::parse()).await {
-        eprintln!("{error}");
-        tracing::error!("Error: {error}");
-        std::process::exit(1);
-    }
+#[snafu::report]
+async fn main() -> Result<(), Whatever> {
+    run(Options::parse()).await.inspect_err(|error| {
+        tracing::debug!(?error, "Exit with error");
+    })
 }

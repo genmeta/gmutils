@@ -18,15 +18,15 @@ use crate::{
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Failed to open authentication channel: {source}"))]
+    #[snafu(display("Failed to open authentication channel"))]
     OpenAuthChannel { source: mux::ChannelError },
-    #[snafu(display("Auth channel closed with error: {source}"))]
+    #[snafu(display("Auth channel closed with error"))]
     AuthAborted { source: io::Error },
     #[snafu(display("Authentication channel was closed unexpectedly"))]
     AuthChannelClosed {},
-    #[snafu(display("Failed to read password: {source}"))]
+    #[snafu(display("Failed to read password"))]
     ReadPassword { source: io::Error },
-    #[snafu(display("Failed to send password: {source}"))]
+    #[snafu(display("Failed to send password"))]
     SendPassword { source: io::Error },
 }
 

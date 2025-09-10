@@ -1,8 +1,9 @@
-use std::{future::poll_fn, net::SocketAddr};
+use std::net::SocketAddr;
 
 use clap::Parser;
-use qinterface::factory::ProductQuicIO;
+use qinterface::{QuicIoExt, factory::ProductQuicIO};
 use qtraversal::{iface::traversal_factory, nat::client::NatType};
+use snafu::{ResultExt, Whatever};
 use trust_dns_resolver::TokioAsyncResolver;
 
 #[derive(Parser, Debug, Clone)]
@@ -20,7 +21,7 @@ pub struct Options {
     pub verbose: bool,
 }
 
-type Error = Box<dyn core::error::Error + Send + Sync>;
+type Error = Whatever;
 
 pub async fn run(options: Options) -> Result<(), Error> {
     tracing_subscriber::fmt()
@@ -31,7 +32,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
                 .with_default_directive(if options.verbose {
                     tracing_subscriber::filter::LevelFilter::INFO.into()
                 } else {
-                    tracing_subscriber::filter::LevelFilter::OFF.into()
+                    tracing_subscriber::filter::LevelFilter::WARN.into()
                 })
                 .from_env_lossy(),
         )
@@ -39,11 +40,19 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .init();
     let servers = nslook_up(options.server.as_str(), options.bind.ip().is_ipv6() as u8).await?;
     let factory = traversal_factory(&servers);
-    let iface = factory.bind(options.bind.into())?;
+    let iface = factory
+        .bind(options.bind.into())
+        .whatever_context("Failed to bind to the specified bind uri")?;
 
-    let external_addr = poll_fn(|cx| iface.poll_endpoint_addr(cx)).await?;
-    let nat_type: NatType = poll_fn(|cx| iface.poll_nat_type(cx))
-        .await?
+    let external_addr = iface
+        .endpoint_addr()
+        .await
+        .whatever_context("Failed to get external address")?;
+
+    let nat_type: NatType = iface
+        .nat_type()
+        .await
+        .whatever_context("Failed to detect NAT type")?
         .try_into()
         .unwrap();
 
@@ -53,7 +62,8 @@ pub async fn run(options: Options) -> Result<(), Error> {
 }
 
 async fn nslook_up(domain: &str, family: u8) -> Result<Vec<SocketAddr>, Error> {
-    let resolver = TokioAsyncResolver::tokio_from_system_conf()?;
+    let resolver = TokioAsyncResolver::tokio_from_system_conf()
+        .whatever_context("Failed to create standard DNS resolver")?;
     let port = 20004;
     let addrs = if family == 1 {
         resolver.ipv6_lookup(domain).await.map(|ips| {
@@ -67,6 +77,7 @@ async fn nslook_up(domain: &str, family: u8) -> Result<Vec<SocketAddr>, Error> {
                 .map(|ip| SocketAddr::new(ip.0.into(), port))
                 .collect::<Vec<_>>()
         })
-    }?;
+    }
+    .whatever_context(format!("Failed to lookup domain `{domain}`"))?;
     Ok(addrs)
 }

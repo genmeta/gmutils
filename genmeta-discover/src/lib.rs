@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use clap::Parser;
 use qdns::MdnsResolver;
+use snafu::{ResultExt, Whatever};
 use tokio_stream::StreamExt;
 
 #[derive(Parser, Debug, Clone)]
@@ -17,18 +18,19 @@ pub struct Options {
     domain: String,
 }
 
-type Error = Box<dyn core::error::Error + Send + Sync>;
+type Error = Whatever;
 
 pub async fn run(options: Options) -> Result<(), Error> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing_subscriber::filter::LevelFilter::OFF.into())
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::WARN.into())
                 .from_env_lossy(),
         )
         .with_writer(std::io::stderr)
         .init();
-    let mut mdns = MdnsResolver::new(qdns::MDNS_SERVICE)?;
+    let mut mdns =
+        MdnsResolver::new(qdns::MDNS_SERVICE).whatever_context("Failed to create mDNS resolver")?;
     let mut stream = mdns.discover();
     let mut domain_set = HashSet::new();
     while let Some((_, packet)) = stream.next().await {

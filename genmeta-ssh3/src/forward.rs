@@ -11,7 +11,7 @@ use ssh3_proto::messages::BindAddress;
 // use crate::error::Error;
 
 #[derive(snafu::Snafu, Debug)]
-#[snafu(display("Failed to parse {kind} forward rule `{rule}`: {source}"))]
+#[snafu(display("Failed to parse {kind} forward rule `{rule}`"))]
 pub struct Error {
     kind: &'static str,
     rule: String,

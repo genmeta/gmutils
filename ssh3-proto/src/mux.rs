@@ -100,12 +100,12 @@ pub enum ChannelError {
 
 #[derive(Debug, Snafu)]
 pub enum ForwardError<Oe: snafu::Error + 'static> {
-    #[snafu(display("Accept channel failed: {source}"))]
+    #[snafu(display("Accept channel failed"))]
     AcceptChannel {
         source: ChannelError,
         backtrace: Backtrace,
     },
-    #[snafu(display("Message stream closed: {source}"))]
+    #[snafu(display("Message stream closed"))]
     StreamClosed { source: Oe, backtrace: Backtrace },
 }
 

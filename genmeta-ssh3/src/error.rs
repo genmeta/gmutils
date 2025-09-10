@@ -8,7 +8,7 @@ use crate::{auth, config, connect, session};
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
 pub enum Error {
-    #[snafu(display("Configuration error: {source}"))]
+    #[snafu(display("Configuration error"))]
     Config { source: config::Error },
 
     // === Connect Error ===
@@ -30,19 +30,19 @@ pub enum Error {
     Session { source: session::SessionError },
 
     // === Forward Errors ===
-    #[snafu(display("Failed to bind to local forward endpoint '{endpoint}': {source}"))]
+    #[snafu(display("Failed to bind to local forward endpoint '{endpoint}'"))]
     LocalForwardBind {
         endpoint: BindAddress,
         source: io::Error,
     },
 
-    #[snafu(display("Failed to bind to dynamic forward endpoint '{endpoint}': {source}"))]
+    #[snafu(display("Failed to bind to dynamic forward endpoint '{endpoint}'"))]
     DynamicForwardBind {
         endpoint: SocketAddr,
         source: io::Error,
     },
 
-    #[snafu(display("Failed to open forward channel: {source}"))]
+    #[snafu(display("Failed to open forward channel"))]
     ForwardChannelOpen {
         source: ssh3_proto::mux::ChannelError,
     },

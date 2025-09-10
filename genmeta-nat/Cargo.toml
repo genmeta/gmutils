@@ -8,6 +8,7 @@ edition = "2024"
 clap = { workspace = true }
 qtraversal = { workspace = true }
 qinterface = { workspace = true }
+snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

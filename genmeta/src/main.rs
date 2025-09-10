@@ -18,7 +18,7 @@ enum Options {
 #[snafu::report]
 async fn main() -> Result<(), Whatever> {
     run(Options::parse()).await.inspect_err(|error| {
-        tracing::error!(?error, "Exit with error");
+        tracing::debug!(?error, "Exit with error");
     })
 }
 

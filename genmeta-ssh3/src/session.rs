@@ -3,7 +3,7 @@ use std::{io::Read, sync::Arc};
 use bytes::Bytes;
 use crossterm::terminal;
 use futures::{Sink, SinkExt, StreamExt, TryStreamExt};
-use snafu::{Backtrace, ResultExt, Snafu};
+use snafu::{ResultExt, Snafu};
 use ssh3_proto::{
     messages::{
         OpenChannel,
@@ -41,18 +41,12 @@ pub struct Command {
 
 #[derive(Debug, Snafu)]
 pub enum SessionError {
-    #[snafu(display("Failed to open session channel: {source}"))]
-    OpenSession {
-        source: mux::ChannelError,
-        
-    },
+    #[snafu(display("Failed to open session channel"))]
+    OpenSession { source: mux::ChannelError },
     #[snafu(display("Session channel was closed unexpectedly"))]
-    ClosedSession {  },
-    #[snafu(display("Session is closed with error: {source}"))]
-    CloseWithError {
-        source: io::Error,
-        
-    },
+    ClosedSession {},
+    #[snafu(display("Session is closed with error"))]
+    CloseWithError { source: io::Error },
 }
 
 impl Command {
@@ -92,21 +86,13 @@ impl Command {
 #[derive(Debug, Snafu)]
 pub enum UpdateWindowSizeError {
     #[cfg(unix)]
-    #[snafu(display(
-        "Failed to register SIGWINCH listener: {source}, window size will not be updated"
-    ))]
-    RegisterSignalListener {
-        source: io::Error,
-        
-    },
+    #[snafu(display("Failed to register SIGWINCH listener, window size will not be updated"))]
+    RegisterSignalListener { source: io::Error },
 
-    #[snafu(display("Failed get terminal size: {source}"))]
-    GetWindowSize {
-        source: io::Error,
-        
-    },
+    #[snafu(display("Failed get terminal size"))]
+    GetWindowSize { source: io::Error },
     #[snafu(display("Channel closed"))]
-    ChannelClosed {  },
+    ChannelClosed {},
 }
 
 async fn update_winsize(mut message_sender: impl Sink<ClientSessionMessage> + Unpin) {

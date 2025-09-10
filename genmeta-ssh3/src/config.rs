@@ -1,5 +1,5 @@
 use http::Uri;
-use snafu::{Backtrace, IntoError, ResultExt, Snafu};
+use snafu::{IntoError, ResultExt, Snafu};
 use ssh_config::{error::ReadConfigError, genmeta::Profile};
 
 #[derive(Debug, Snafu)]
@@ -16,7 +16,7 @@ pub enum Error {
     #[snafu(display("Missing authority in URI"))]
     MissingAuthority {},
 
-    #[snafu(display("Failed to read profile for `{id}`: {source}'"))]
+    #[snafu(display("Failed to read profile for `{id}`'"))]
     ReadProfile { id: String, source: ReadConfigError },
 }
 

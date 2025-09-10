@@ -1,4 +1,4 @@
-use std::{backtrace::Backtrace, net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use futures::StreamExt;
@@ -15,7 +15,7 @@ use tokio_util::{codec, io::StreamReader};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Failed to create DNS resolver: {source}"))]
+    #[snafu(display("Failed to create DNS resolver"))]
     CreateDnsResolver {
         schema: &'static str,
         source: io::Error,
@@ -29,13 +29,13 @@ pub enum Error {
     #[snafu(display("Connection timed out after {}ms for server '{server}'", duration.as_millis()))]
     Timedout { duration: Duration, server: String },
 
-    #[snafu(display("Failed to initialize H3 connection: {source}"))]
+    #[snafu(display("Failed to initialize H3 connection"))]
     InitialH3 { source: h3::error::ConnectionError },
 
-    #[snafu(display("H3 request failed: {source}"))]
+    #[snafu(display("H3 request failed"))]
     Request { source: h3::error::StreamError },
 
-    #[snafu(display("H3 response failed: {source}"))]
+    #[snafu(display("H3 response failed"))]
     Response { source: h3::error::StreamError },
 
     #[snafu(display("Server returned error status: {status}"))]

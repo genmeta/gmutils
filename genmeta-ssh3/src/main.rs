@@ -1,10 +1,10 @@
 use clap::Parser;
+use genmeta_ssh3::{Error, Options, run};
 
 #[tokio::main]
-async fn main() {
-    if let Err(error) = genmeta_ssh3::run(genmeta_ssh3::Options::parse()).await {
-        eprintln!("{error}");
-        tracing::error!("Exit with error: {}", error);
-        std::process::exit(1);
-    }
+#[snafu::report]
+async fn main() -> Result<(), Error> {
+    run(Options::parse()).await.inspect_err(|error| {
+        tracing::debug!(?error, "Exit with error");
+    })
 }

@@ -1,18 +1,11 @@
 use clap::Parser;
-#[tokio::main]
-async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing_subscriber::filter::LevelFilter::OFF.into())
-                .from_env_lossy(),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+use genmeta_discover::{Options, run};
+use snafu::Whatever;
 
-    if let Err(error) = genmeta_discover::run(genmeta_discover::Options::parse()).await {
-        eprintln!("{error}");
-        tracing::error!("Exit with error: {}", error);
-        std::process::exit(1);
-    }
+#[tokio::main]
+#[snafu::report]
+async fn main() -> Result<(), Whatever> {
+    run(Options::parse()).await.inspect_err(|error| {
+        tracing::debug!(?error, "Exit with error");
+    })
 }

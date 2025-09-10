@@ -8,11 +8,12 @@ mod forward;
 mod session;
 mod socks;
 use clap::Parser;
+pub use error::Error;
 use error::*;
 use forward::*;
 use futures::{FutureExt, StreamExt};
 use http::Uri;
-use snafu::{Backtrace, prelude::*};
+use snafu::ResultExt;
 use ssh3_proto::{listener, messages, mux};
 
 const URI_LONG_HELP: &str = "Example: `my-remote-dev`, `developer@ssh3.test.genmeta.net`
@@ -111,7 +112,7 @@ pub struct Options {
     commands: Vec<String>,
 }
 
-pub async fn run(options: Options) -> Result<(), error::Error> {
+pub async fn run(options: Options) -> Result<(), Error> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()

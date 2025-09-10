@@ -11,7 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - 新增genmeta-doctor，genmeta-nat 移入其中作为net子命令
 - 新增ssh-config crate用于处理openssh和genmeta配置文件（ssh config语法）
-- genmeta-ssh3 支持--id参数携带身份，解析profile身份配置文件，发起带有client name参数和tls证书的quic连接
+- genmeta-ssh3h和curl支持--id参数携带身份，解析profile身份配置文件，发起带有client name参数和tls证书的quic连接
+- 重构了错误处理，使用snafu::report宏自动打印错误栈
+- 修复tracing初始化方式和默认日志级别
 
 ### Components
 - genmeta v0.4.0 ?
