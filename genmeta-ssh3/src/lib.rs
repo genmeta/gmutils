@@ -73,19 +73,20 @@ pub struct Options {
     )]
     options: Vec<String>,
 
+    /// Client id
+    #[arg(short = 'i', long, value_name = "identity_file")]
+    id: Option<String>,
+
+    /// Disable pseudo-terminal allocation.
     #[arg(
         short = 'T',
         default_value_t = true,
         action = clap::ArgAction::SetFalse,
-        help = "Disable pseudo-terminal allocation."
     )]
     pseudo: bool,
 
-    #[arg(
-        short = 'l',
-        value_name = "login_name",
-        help = "Specifies the user to log in as on the remote machine."
-    )]
+    /// Specifies the user to log in as on the remote machine.
+    #[arg(short = 'l', value_name = "login_name")]
     login_name: Option<String>,
 
     #[arg(short = 'D', value_name = "[bind_address:]port", long_help = DYNAMIC_FORWARD_LONG_HELP)]
@@ -105,11 +106,8 @@ pub struct Options {
     )]
     remote_forwards: Vec<RemoteForwardRule>,
 
-    #[arg(
-        trailing_var_arg = true,
-        value_name = "command [argument ...]",
-        help = "Command to execute on the remote server."
-    )]
+    /// Command to execute on the remote server.
+    #[arg(trailing_var_arg = true, value_name = "command [argument ...]")]
     commands: Vec<String>,
 }
 
@@ -117,7 +115,7 @@ pub async fn run(options: Options) -> Result<(), error::Error> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing_subscriber::filter::LevelFilter::OFF.into())
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::WARN.into())
                 .from_env_lossy(),
         )
         .with_writer(std::io::stderr)
@@ -158,7 +156,7 @@ pub async fn run(options: Options) -> Result<(), error::Error> {
     };
 
     let (quic_conn, mut h3_conn, _h3_client, mux, mut incomings) =
-        connect::connect(&config.uri).await?;
+        connect::connect(&config.uri, config.profile.as_ref()).await?;
 
     let remote_forwarders = Arc::new(forward::RemoteForwardAcceptor::new(mux.clone()));
 

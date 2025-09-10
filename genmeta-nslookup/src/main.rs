@@ -1,5 +1,5 @@
 use clap::Parser;
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(

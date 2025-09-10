@@ -1,51 +1,23 @@
-mod parser;
-
 use http::Uri;
-use parser::SshConfig;
 use snafu::{Backtrace, ResultExt, Snafu};
-use tokio::fs;
+use ssh_config::{error::ReadConfigError, genmeta::Profile};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Failed to parse URI '{uri}' from hostname"))]
-    UriParse {
-        uri: String,
-        source: http::uri::InvalidUri,
-        backtrace: Backtrace,
-    },
-
     #[snafu(display("Failed to parse authority '{authority}' as URI authority"))]
     AuthorityParse {
         authority: String,
         source: http::uri::InvalidUri,
-        backtrace: Backtrace,
     },
 
     #[snafu(display("Unsupported URI scheme '{scheme}', only 'ssh3' is supported"))]
-    UnsupportedScheme {
-        scheme: String,
-        backtrace: Backtrace,
-    },
+    UnsupportedScheme { scheme: String },
 
     #[snafu(display("Missing authority in URI"))]
-    MissingAuthority { backtrace: Backtrace },
+    MissingAuthority {},
 
-    #[snafu(display("Failed to get user home directory"))]
-    MissingHomeDir { backtrace: Backtrace },
-
-    #[snafu(display("Failed to read SSH config file '{path}'"))]
-    ConfigFileRead {
-        path: String,
-        source: std::io::Error,
-        backtrace: Backtrace,
-    },
-
-    #[snafu(display("Failed to parse SSH config file '{path}'"))]
-    ConfigFileParse {
-        path: String,
-        source: peg::error::ParseError<peg::str::LineCol>,
-        backtrace: Backtrace,
-    },
+    #[snafu(display("Failed to read profile for `{id}`: {source}'"))]
+    ReadProfile { id: String, source: ReadConfigError },
 }
 
 // 为主 Error 提供 From 转换
@@ -63,27 +35,27 @@ pub struct Config {
     pub username: String,
     pub password: Option<String>,
     pub uri: Uri,
+    pub profile: Option<Profile>,
 }
 
 // Host Xxx > Host.XXX > Host.HostName xxx
 // HostName可以提供Uri的host部分
 impl super::Options {
     pub async fn config(&self) -> Result<Config, Error> {
-        let ssh_config = ssh_config().await?;
-        let host_params = ssh_config.query(&self.uri.to_string());
+        let (host, read_config_errors) =
+            ssh_config::openssh::read_config(&self.uri.to_string()).await;
+
+        for (message, error) in read_config_errors {
+            tracing::error!(target: "config", "{message}: {error}", );
+        }
 
         // user: command line -> config file -> uri -> whoami
-        let mut username = self
-            .login_name
-            .clone()
-            .or_else(|| host_params.get("user").cloned());
+        let mut username = self.login_name.clone().or_else(|| host.user.clone());
         let mut password = None;
 
         // uri: ssh_config(if present) -> command line
-        let uri = match host_params.get("hostname") {
-            Some(host_name) => host_name.parse::<Uri>().context(UriParseSnafu {
-                uri: host_name.clone(),
-            })?,
+        let uri = match host.hostname {
+            Some(uri) => uri,
             None => self.uri.clone(),
         };
 
@@ -99,10 +71,20 @@ impl super::Options {
             None => (whoami::username(), None),
         };
 
+        let profile = match &self.id {
+            Some(id) => Some(
+                ssh_config::genmeta::read_config(id, None)
+                    .await
+                    .context(ReadProfileSnafu { id })?,
+            ),
+            None => None,
+        };
+
         Ok(Config {
             username,
             password,
             uri,
+            profile,
         })
     }
 }
@@ -152,54 +134,4 @@ fn complete_uri(uri: Uri) -> Result<Uri, Error> {
     };
 
     Ok(Uri::from_parts(uri_parts).expect("Failed to construct URI from parts"))
-}
-
-pub async fn ssh_config() -> Result<SshConfig, Error> {
-    let mut ssh_config = SshConfig::default();
-
-    // Read the user-wide SSH configuration file.
-    // This is typically located at ~/.ssh/config.
-    let read_user_config = async {
-        let home = dirs::home_dir().ok_or_else(|| MissingHomeDirSnafu {}.build())?;
-        let path = home.join(".ssh").join("config");
-        let path_str = path.to_string_lossy().to_string();
-        fs::read_to_string(&path)
-            .await
-            .context(ConfigFileReadSnafu { path: path_str })
-    };
-
-    match read_user_config.await {
-        Ok(content) => {
-            let path = "user SSH config".to_string();
-            ssh_config += content
-                .parse::<SshConfig>()
-                .context(ConfigFileParseSnafu { path })?;
-        }
-        Err(e) => {
-            tracing::error!(target: "config", "Failed to read user-wide SSH config: {e:?}");
-        }
-    }
-
-    // Read the system-wide SSH configuration file.
-    // This is typically located at /etc/ssh/ssh_config.
-    let read_system_config = async {
-        let path = "/etc/ssh/ssh_config".to_string();
-        fs::read_to_string(&path)
-            .await
-            .context(ConfigFileReadSnafu { path })
-    };
-
-    match read_system_config.await {
-        Ok(content) => {
-            let path = "system SSH config".to_string();
-            ssh_config += content
-                .parse::<SshConfig>()
-                .context(ConfigFileParseSnafu { path })?;
-        }
-        Err(e) => {
-            tracing::error!(target: "config", "Failed to read system-wide SSH config: {e:?}");
-        }
-    }
-
-    Ok(ssh_config)
 }

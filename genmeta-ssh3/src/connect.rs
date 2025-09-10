@@ -3,11 +3,12 @@ use std::{backtrace::Backtrace, net::SocketAddr, sync::Arc, time::Duration};
 use bytes::Bytes;
 use futures::StreamExt;
 use genmeta_common::{h3_stream::H3Stream, *};
-use gm_quic::{ConnectServerError, ToCertificate, handy::client_parameters};
+use gm_quic::{ConnectServerError, ParameterId, ToCertificate, handy::client_parameters};
 use http::Uri;
 use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
 use qtraversal::iface::traversal_factory;
 use snafu::prelude::*;
+use ssh_config::genmeta::Profile;
 use ssh3_proto::mux;
 use tokio::{io, time};
 use tokio_util::{codec, io::StreamReader};
@@ -70,6 +71,7 @@ pub type H3Client = h3::client::SendRequest<h3_shim::OpenStreams, Bytes>;
 
 pub async fn connect(
     uri: &Uri,
+    profile: Option<&Profile>,
 ) -> Result<
     (
         QuicConnection,
@@ -105,14 +107,26 @@ pub async fn connect(
         roots.add_parsable_certificates(ROOT_CERT.to_certificate());
 
         let factory = traversal_factory(&AGENTS);
-        gm_quic::QuicClient::builder()
-            .with_root_certificates(roots)
-            .without_cert()
-            .with_parameters(client_parameters())
-            .with_iface_factory(factory.as_ref().clone())
-            .bind(factory.devices().keys().map(|ip| SocketAddr::new(*ip, 0)))
-            .enable_sslkeylog()
-            .build()
+        let mut parameters = client_parameters();
+
+        match profile {
+            Some(Profile { id, key, cert }) => {
+                parameters
+                    .set(ParameterId::ClientName, id.to_owned())
+                    .unwrap();
+                gm_quic::QuicClient::builder()
+                    .with_root_certificates(roots)
+                    .with_cert(cert.as_slice(), key.as_slice())
+            }
+            None => gm_quic::QuicClient::builder()
+                .with_root_certificates(roots)
+                .without_cert(),
+        }
+        .with_parameters(parameters)
+        .with_iface_factory(factory.as_ref().clone())
+        .bind(factory.devices().keys().map(|ip| SocketAddr::new(*ip, 0)))
+        .enable_sslkeylog()
+        .build()
     };
 
     let (quic_conn, h3_conn, mut h3_client) = {

@@ -1,12 +1,22 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     str::FromStr,
 };
 mod parser;
+use peg::{error::ParseError, str::LineCol};
+use snafu::ResultExt;
 pub use ssh3_proto::forward::*;
 use ssh3_proto::messages::BindAddress;
 
-use crate::error::Error;
+// use crate::error::Error;
+
+#[derive(snafu::Snafu, Debug)]
+#[snafu(display("Failed to parse {kind} forward rule `{rule}`: {source}"))]
+pub struct Error {
+    kind: &'static str,
+    rule: String,
+    source: ParseError<LineCol>,
+}
 
 /// 动态转发端点
 #[derive(Debug, Clone, PartialEq)]
@@ -14,37 +24,31 @@ pub struct DynamicForwardEndpoint {
     pub addresses: Vec<SocketAddr>,
 }
 
+impl From<parser::DynamicForwardRule> for DynamicForwardEndpoint {
+    fn from(rule: parser::DynamicForwardRule) -> Self {
+        let port = rule.port;
+        let addresses = match rule.address {
+            Some(ipaddr) => vec![SocketAddr::new(ipaddr, port)],
+            None => vec![
+                SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), port),
+                SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), port),
+            ],
+        };
+
+        DynamicForwardEndpoint { addresses }
+    }
+}
+
 impl FromStr for DynamicForwardEndpoint {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (host, port) = s.rsplit_once(':').unwrap_or(("*", s));
-        let port = port
-            .parse::<u16>()
-            .map_err(|e| Error::DynamicForwardParse {
-                endpoint: s.to_string(),
-                message: format!("Invalid port `{port}`: {e}"),
-                backtrace: snafu::Backtrace::capture(),
-            })?;
-
-        let addresses = match host {
-            "*" | "" => vec![
-                SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), port),
-                SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), port),
-            ],
-            ipaddr => {
-                let ipaddr = ipaddr
-                    .parse::<IpAddr>()
-                    .map_err(|e| Error::DynamicForwardParse {
-                        endpoint: s.to_string(),
-                        message: format!("Invalid host `{host}`: {e}"),
-                        backtrace: snafu::Backtrace::capture(),
-                    })?;
-                vec![SocketAddr::new(ipaddr, port)]
-            }
-        };
-
-        Ok(DynamicForwardEndpoint { addresses })
+        s.parse::<parser::DynamicForwardRule>()
+            .map(Self::from)
+            .context(Snafu {
+                kind: "dynamic",
+                rule: s.to_string(),
+            })
     }
 }
 
@@ -55,18 +59,8 @@ pub struct LocalForwardRule {
     pub remote_address: BindAddress,
 }
 
-impl FromStr for LocalForwardRule {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let rule = s
-            .parse::<parser::LocalForwardRule>()
-            .map_err(|e| Error::LocalForwardParse {
-                rule: s.to_string(),
-                message: format!("{e:?}"),
-                backtrace: snafu::Backtrace::capture(),
-            })?;
-
+impl From<parser::LocalForwardRule> for LocalForwardRule {
+    fn from(rule: parser::LocalForwardRule) -> Self {
         let remote_address = match rule.remote {
             parser::RemoteEndpoint::Host { host, port } => BindAddress::Host { host, port },
             parser::RemoteEndpoint::Unix { path } => BindAddress::Unix { path },
@@ -90,10 +84,23 @@ impl FromStr for LocalForwardRule {
             parser::LocalEndpoint::Unix(path) => vec![BindAddress::Unix { path }],
         };
 
-        Ok(LocalForwardRule {
+        LocalForwardRule {
             local_addresses,
             remote_address,
-        })
+        }
+    }
+}
+
+impl FromStr for LocalForwardRule {
+    type Err = Error;
+
+    fn from_str(rule: &str) -> Result<Self, Self::Err> {
+        rule.parse::<parser::LocalForwardRule>()
+            .map(Self::from)
+            .context(Snafu {
+                kind: "local",
+                rule,
+            })
     }
 }
 
@@ -104,24 +111,14 @@ pub struct RemoteForwardRule {
     pub remote_addresses: Vec<BindAddress>,
 }
 
-impl FromStr for RemoteForwardRule {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let rule =
-            s.parse::<parser::RemoteForwardRule>()
-                .map_err(|e| Error::RemoteForwardParse {
-                    rule: s.to_string(),
-                    message: format!("{e:?}"),
-                    backtrace: snafu::Backtrace::capture(),
-                })?;
-
-        let local_address = rule.local.map(|local| match local {
+impl From<parser::RemoteForwardRule> for RemoteForwardRule {
+    fn from(value: parser::RemoteForwardRule) -> Self {
+        let local_address = value.local.map(|local| match local {
             parser::RemoteEndpoint::Host { host, port } => BindAddress::Host { host, port },
             parser::RemoteEndpoint::Unix { path } => BindAddress::Unix { path },
         });
 
-        let remote_addresses = match rule.remote {
+        let remote_addresses = match value.remote {
             parser::LocalEndpoint::Addr(socket_addr) => vec![BindAddress::Host {
                 host: socket_addr.ip().to_string(),
                 port: socket_addr.port(),
@@ -139,10 +136,23 @@ impl FromStr for RemoteForwardRule {
             parser::LocalEndpoint::Unix(path) => vec![BindAddress::Unix { path }],
         };
 
-        Ok(RemoteForwardRule {
+        RemoteForwardRule {
             local_address,
             remote_addresses,
-        })
+        }
+    }
+}
+
+impl FromStr for RemoteForwardRule {
+    type Err = Error;
+
+    fn from_str(rule: &str) -> Result<Self, Self::Err> {
+        rule.parse::<parser::RemoteForwardRule>()
+            .map(Self::from)
+            .context(Snafu {
+                kind: "remote",
+                rule,
+            })
     }
 }
 

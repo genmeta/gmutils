@@ -9,6 +9,9 @@ members = [
     "genmeta-discover",
     "genmeta-nat",
     "ssh3-proto",
+    "ssh-config",
+    "genmeta-profile",
+    "genmeta-doctor",
 ]
 
 [workspace.dependencies]
@@ -66,12 +69,13 @@ bytes = "1"
 base64 = "0.22"
 crossterm = { version = "0.29" }
 dashmap = { version = "6" }
-dirs = {version = "6"}
+dirs = { version = "6" }
 derive_more = { version = "2" }
 either = { version = "1" }
 peg = "0.8"
 pin-project-lite = "0.2"
 regex = "1"
+regex-syntax = "0.8"             # escape sequences
 snafu = "0.8"
 socks5-proto = "0.4"
 socket2 = "0.5"
@@ -82,10 +86,12 @@ tokio-util = { version = "0.7" }
 # workspace
 genmeta-common = { path = "genmeta-common" }     # common code
 ssh3-proto = { path = "ssh3-proto" }             # ssh3-common
+ssh-config = { path = "ssh-config" }             # ssh-like config parser
 genmeta-ssh3 = { path = "genmeta-ssh3" }         # ssh3 
 genmeta-curl = { path = "genmeta-curl" }         # curl
 genmeta-nslookup = { path = "genmeta-nslookup" } # nslookup
 genmeta-discover = { path = "genmeta-discover" } # discover
+genmeta-doctor = { path = "genmeta-doctor" }     # doctor
 genmeta-nat = { path = "genmeta-nat" }           # nat
 
 [profile.release]

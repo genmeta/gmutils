@@ -7,10 +7,13 @@ enum Options {
     Curl(genmeta_curl::Options),
     Nslookup(genmeta_nslookup::Options),
     Discover(genmeta_discover::Options),
-    NatDetect(genmeta_nat::Options),
+    Doctor {
+        #[command(subcommand)]
+        options: genmeta_doctor::Options,
+    },
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() {
     if let Err(error) = run(Options::parse()).await {
         eprintln!("{error}");
@@ -25,6 +28,6 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error + Send + 
         Options::Curl(options) => genmeta_curl::run(options).await,
         Options::Nslookup(options) => Ok(genmeta_nslookup::run(options).await?),
         Options::Discover(options) => genmeta_discover::run(options).await,
-        Options::NatDetect(options) => genmeta_nat::run(options).await,
+        Options::Doctor { options } => genmeta_doctor::run(options).await,
     }
 }

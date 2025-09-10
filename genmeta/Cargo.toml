@@ -10,7 +10,7 @@ genmeta-ssh3 = { workspace = true }
 genmeta-curl = { workspace = true }
 genmeta-nslookup = { workspace = true }
 genmeta-discover = { workspace = true }
-genmeta-nat = { workspace = true }
+genmeta-doctor = { workspace = true }
 http = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

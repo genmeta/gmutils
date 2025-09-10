@@ -69,25 +69,4 @@ pub enum Error {
         message: String,
         backtrace: Backtrace,
     },
-
-    #[snafu(display("Failed to parse local forward rule '{rule}': {message}"))]
-    LocalForwardParse {
-        rule: String,
-        message: String,
-        backtrace: Backtrace,
-    },
-
-    #[snafu(display("Failed to parse remote forward rule '{rule}': {message}"))]
-    RemoteForwardParse {
-        rule: String,
-        message: String,
-        backtrace: Backtrace,
-    },
-
-    #[snafu(display("Failed to parse dynamic forward endpoint '{endpoint}': {message}"))]
-    DynamicForwardParse {
-        endpoint: String,
-        message: String,
-        backtrace: Backtrace,
-    },
 }

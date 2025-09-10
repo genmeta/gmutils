@@ -4,6 +4,8 @@ use std::{
     str::FromStr,
 };
 
+use peg::{error::ParseError, str::LineCol};
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum LocalEndpoint {
     /// 本地端口，可能带有绑定地址
@@ -32,19 +34,29 @@ pub struct RemoteForwardRule {
     pub remote: LocalEndpoint,
 }
 
+pub struct DynamicForwardRule {
+    pub address: Option<IpAddr>,
+    pub port: u16,
+}
+
 peg::parser! {
     grammar forward_parser() for str {
         rule ip_addr() -> IpAddr
             = addr:$([^ ':']+) {?
-                addr.parse::<IpAddr>().or(Err("invalid IP address"))
+                addr.parse::<IpAddr>().or(Err("valid IP address"))
             }
             / "[" addr:$([^']']*) "]" {?
                 // IPv6 地址解析，移除方括号后解析
-                addr.parse::<IpAddr>().or(Err("invalid IPv6 address"))
+                addr.parse::<IpAddr>().or(Err("valid IPv6 address"))
             }
 
         rule port() -> u16
-            = n:$(['0'..='9']+) {? n.parse().or(Err("invalid port number")) }
+            = n:$(['0'..='9']+) {? n.parse().or(Err("valid port number")) }
+
+        pub rule dynamic_forward_rule() -> DynamicForwardRule
+            = address:(address:ip_addr() ":" {address} )? port:port() {
+                DynamicForwardRule { address, port }
+            }
 
         rule specified_bind_address_port() -> LocalEndpoint
             = ip:ip_addr() ":" port:port() {
@@ -92,22 +104,31 @@ peg::parser! {
                 RemoteForwardRule { remote, local }
             }
 
+
+    }
+}
+
+impl FromStr for DynamicForwardRule {
+    type Err = ParseError<LineCol>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        forward_parser::dynamic_forward_rule(s)
     }
 }
 
 impl FromStr for LocalForwardRule {
-    type Err = peg::error::ExpectedSet;
+    type Err = ParseError<LineCol>;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        forward_parser::local_forward_rule(s).map_err(|e| e.expected)
+        forward_parser::local_forward_rule(s)
     }
 }
 
 impl FromStr for RemoteForwardRule {
-    type Err = peg::error::ExpectedSet;
+    type Err = ParseError<LineCol>;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        forward_parser::remote_forward_rule(s).map_err(|e| e.expected)
+        forward_parser::remote_forward_rule(s)
     }
 }
 
