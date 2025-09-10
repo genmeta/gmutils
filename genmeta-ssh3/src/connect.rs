@@ -19,50 +19,27 @@ pub enum Error {
     CreateDnsResolver {
         schema: &'static str,
         source: io::Error,
-        backtrace: Backtrace,
     },
     #[snafu(display("Missing host in URI: {uri}"))]
-    MissingServerName { uri: Uri, backtrace: Backtrace },
+    MissingServerName { uri: Uri },
     #[snafu(display("No endpoints found for server '{server}'"))]
-    NoEndpoints {
-        server: String,
-        backtrace: Backtrace,
-    },
+    NoEndpoints { server: String },
     #[snafu(transparent)]
-    PickEndpoint {
-        source: ConnectServerError,
-        backtrace: Backtrace,
-    },
+    PickEndpoint { source: ConnectServerError },
     #[snafu(display("Connection timed out after {}ms for server '{server}'", duration.as_millis()))]
-    Timedout {
-        duration: Duration,
-        server: String,
-        backtrace: Backtrace,
-    },
+    Timedout { duration: Duration, server: String },
 
     #[snafu(display("Failed to initialize H3 connection: {source}"))]
-    InitialH3 {
-        source: h3::error::ConnectionError,
-        backtrace: Backtrace,
-    },
+    InitialH3 { source: h3::error::ConnectionError },
 
     #[snafu(display("H3 request failed: {source}"))]
-    Request {
-        source: h3::error::StreamError,
-        backtrace: Backtrace,
-    },
+    Request { source: h3::error::StreamError },
 
     #[snafu(display("H3 response failed: {source}"))]
-    Response {
-        source: h3::error::StreamError,
-        backtrace: Backtrace,
-    },
+    Response { source: h3::error::StreamError },
 
     #[snafu(display("Server returned error status: {status}"))]
-    ResponseStatus {
-        status: http::StatusCode,
-        backtrace: Backtrace,
-    },
+    ResponseStatus { status: http::StatusCode },
 }
 
 pub type QuicConnection = Arc<gm_quic::Connection>;

@@ -760,6 +760,7 @@ dependencies = [
  "genmeta-nslookup",
  "genmeta-ssh3",
  "http",
+ "snafu",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -787,7 +788,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-curl"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "clap",
@@ -800,6 +801,8 @@ dependencies = [
  "qdns",
  "qtraversal",
  "rustls",
+ "snafu",
+ "ssh-config",
  "tokio",
  "tracing",
  "tracing-subscriber",

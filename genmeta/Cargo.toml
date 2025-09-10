@@ -12,6 +12,7 @@ genmeta-nslookup = { workspace = true }
 genmeta-discover = { workspace = true }
 genmeta-doctor = { workspace = true }
 http = { workspace = true }
+snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

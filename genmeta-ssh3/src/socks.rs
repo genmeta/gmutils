@@ -1,30 +1,21 @@
 use std::sync::Arc;
 
 use futures::FutureExt;
-use snafu::{Backtrace, ResultExt, Snafu};
+use snafu::{IntoError, ResultExt, Snafu};
 use ssh3_proto::{listener::Listener, mux::Mux, socks};
 use tokio::io;
 
 #[derive(Debug, Snafu)]
 pub enum SocksError {
     #[snafu(display("Socks server error: {source}"))]
-    Server {
-        source: socks::Error,
-        backtrace: Backtrace,
-    },
+    Server { source: socks::Error },
     #[snafu(display("Failed to accept local connections: {source}"))]
-    AcceptError {
-        source: io::Error,
-        backtrace: Backtrace,
-    },
+    AcceptError { source: io::Error },
 }
 
 impl From<io::Error> for SocksError {
     fn from(source: io::Error) -> Self {
-        SocksError::AcceptError {
-            source,
-            backtrace: Backtrace::capture(),
-        }
+        AcceptSnafu {}.into_error(source)
     }
 }
 

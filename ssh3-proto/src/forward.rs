@@ -1,4 +1,4 @@
-use std::{backtrace::Backtrace, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -28,15 +28,9 @@ pub struct LocalForwarder {
 #[snafu(visibility(pub))]
 pub enum LocalForwardError {
     #[snafu(display("Failed to open channel for forwarding: {source}"))]
-    OpenChannel {
-        source: mux::ChannelError,
-        backtrace: Backtrace,
-    },
+    OpenChannel { source: mux::ChannelError },
     #[snafu(display("Failed to copy data between streams: {source}"))]
-    Copy {
-        source: io::Error,
-        backtrace: Backtrace,
-    },
+    Copy { source: io::Error },
 }
 
 #[derive(Debug, Snafu)]
@@ -45,7 +39,6 @@ pub enum LocalForwardError {
 pub struct ConnectLocalError {
     bind_addr: BindAddress,
     source: io::Error,
-    backtrace: Backtrace,
 }
 
 impl LocalForwarder {

@@ -4,10 +4,12 @@ use bytes::{Buf, BytesMut};
 use clap::Parser;
 use futures::StreamExt;
 use genmeta_common::{AGENTS, ROOT_CERT};
-use gm_quic::ToCertificate;
+use gm_quic::{ParameterId, ToCertificate};
 use http::{Method, Request, Uri};
 use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
 use qtraversal::iface::traversal_factory;
+use snafu::{OptionExt, ResultExt, Whatever, whatever};
+use ssh_config::genmeta::Profile;
 use tokio::{
     fs,
     io::{self, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -65,6 +67,10 @@ pub struct Options {
     // )]
     // user: Option<String>,
 
+    /// Client identity
+    #[arg(short = 'i', long, value_name = "client_identity")]
+    id: Option<String>,
+
     /// Connection timeout
     #[arg(long, help = "Maximum time allowed for connection in seconds")]
     connect_timeout: Option<u64>,
@@ -85,22 +91,23 @@ pub struct Options {
     // silent: bool,
 }
 
+pub type Error = Whatever;
+
 impl Options {
     fn complete_uri(&mut self) -> Result<(), Error> {
         let mut uri_parts = self.uri.clone().into_parts();
 
-        uri_parts.authority = match uri_parts.authority {
-            Some(authority) => {
-                let host = authority.host().replacen("~", ".genmeta.net", 1);
-                Some(host.parse().map_err(|e| {
-                    format!("Failed to parse authority '{host}' as URI authority: {e}")
-                })?)
-            }
-            None => return Err("Missing authority in URI".into()),
+        let Some(authority) = uri_parts.authority else {
+            whatever!("Missing authority in URI")
         };
 
-        self.uri =
-            Uri::from_parts(uri_parts).map_err(|e| format!("Failed to complete URI: {e}"))?;
+        let host = authority.host().replacen("~", ".genmeta.net", 1);
+        uri_parts.authority = Some(
+            host.parse()
+                .whatever_context(format!("Failed to parse authority `{host}`"))?,
+        );
+
+        self.uri = Uri::from_parts(uri_parts).whatever_context("Failed to complete URI")?;
         Ok(())
     }
 }
@@ -116,8 +123,6 @@ fn parse_header(s: &str) -> Result<(String, String), String> {
     Ok((key, value))
 }
 
-type Error = Box<dyn core::error::Error + Send + Sync>;
-
 pub async fn run(mut options: Options) -> Result<(), Error> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -127,44 +132,74 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         )
         .with_writer(std::io::stderr)
         .init();
-    let resolvers = Resolvers::new()
-        .with(Arc::new(HttpResolver::new(qdns::HTTP_DNS_SERVER)?))
-        .with(Arc::new(MdnsResolver::new(qdns::MDNS_SERVICE)?))
-        .with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER)));
     options.complete_uri()?;
-    let server_name = options.uri.host().ok_or("missing host in uri")?;
+    let resolvers = Resolvers::new()
+        .with(Arc::new(
+            HttpResolver::new(qdns::HTTP_DNS_SERVER)
+                .whatever_context("Cannot create HTTP resolver")?,
+        ))
+        .with(Arc::new(
+            MdnsResolver::new(qdns::MDNS_SERVICE)
+                .whatever_context("Cannot create mDNS resolver")?,
+        ))
+        .with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER)));
+    let server_name = options.uri.host().whatever_context("missing host in uri")?;
 
     let mut dns_lookup = resolvers.lookup(server_name);
     let (_source, server_eps) = dns_lookup
         .next()
         .await
-        .ok_or(format!("No endpoints found for server: {server_name}"))?;
+        .whatever_context("No endpoints address found for server")?;
 
     tracing::info!("resolved {server_name} to address: {server_eps:?}");
     if options.verbose {
         eprintln!("* resolved {server_name} to address: {server_eps:?}");
     }
 
+    let profile = match &options.id {
+        Some(id) => Some(
+            ssh_config::genmeta::read_config(id, None)
+                .await
+                .whatever_context(format!("Failed to read profile for `{id}`"))?,
+        ),
+        None => None,
+    };
+
     let quic_client = {
         let mut roots = rustls::RootCertStore::empty();
         roots.add_parsable_certificates(ROOT_CERT.to_certificate());
 
         let factory = traversal_factory(&AGENTS);
-        gm_quic::QuicClient::builder()
-            .with_root_certificates(roots)
-            .without_cert()
-            .with_parameters(client_parameters(Duration::from_secs(
-                options.connect_timeout.unwrap_or_default(),
-            )))
-            .with_iface_factory(factory.as_ref().clone())
-            .bind(factory.devices().keys().map(|ip| SocketAddr::new(*ip, 0)))
-            .enable_sslkeylog()
-            .build()
+
+        let mut parameters = client_parameters(Duration::from_secs(
+            options.connect_timeout.unwrap_or_default(),
+        ));
+
+        match profile {
+            Some(Profile { id, key, cert }) => {
+                parameters
+                    .set(ParameterId::ClientName, id.to_owned())
+                    .unwrap();
+                gm_quic::QuicClient::builder()
+                    .with_root_certificates(roots)
+                    .with_cert(cert.as_slice(), key.as_slice())
+            }
+            None => gm_quic::QuicClient::builder()
+                .with_root_certificates(roots)
+                .without_cert(),
+        }
+        .with_parameters(parameters)
+        .with_iface_factory(factory.as_ref().clone())
+        .bind(factory.devices().keys().map(|ip| SocketAddr::new(*ip, 0)))
+        .enable_sslkeylog()
+        .build()
     };
 
     let (_quic_conn, mut h3_conn, mut h3_client) = {
-        tracing::info!(target: "connect", server_name, ?server_eps, "attempt connect to server");
-        let quic_connection = quic_client.connect(server_name, server_eps)?;
+        tracing::info!(target: "connect", server_name, ?server_eps, "Attempt connect to server");
+        let quic_connection = quic_client
+            .connect(server_name, server_eps)
+            .whatever_context("Cannot connect to server")?;
         tokio::spawn({
             let conn = quic_connection.clone();
             async move {
@@ -179,13 +214,13 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             }
         });
         let connect = h3::client::new(h3_shim::QuicConnection::new(quic_connection.clone()));
-        #[rustfmt::skip] // https://github.com/rust-lang/rustfmt/issues/6564
         let (h3_conn, h3_client) = time::timeout(Duration::from_secs(10), connect)
             .await
-            .map_err(|_| {
+            .with_whatever_context(|_| {
                 quic_connection.close("connect timeout", 0);
-                "connect timeout"
-        })??;
+                "Connect timeouted"
+            })?
+            .whatever_context("Cannot connect to server")?;
         (quic_connection, h3_conn, h3_client)
     };
     if options.verbose {
@@ -218,7 +253,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
 
     let request = request_builder
         .body(())
-        .map_err(|e| format!("failed to build request: {e:?}"))?;
+        .whatever_context("Failed to build request")?;
 
     // Host and User Agent header
 
@@ -235,7 +270,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     let request_stream = h3_client
         .send_request(request)
         .await
-        .map_err(|e| format!("failed to send request: {e:?}"))?;
+        .whatever_context("Failed to send request")?;
 
     let (mut send_stream, mut recv_stream) = request_stream.split();
 
@@ -244,29 +279,32 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             send_stream
                 .send_data(Vec::from(data).into())
                 .await
-                .map_err(|e| format!("failed to send request body: {e:?}"))?;
+                .whatever_context("Failed to send request body")?;
         }
 
         if let Some(file) = options.upload_file {
             let mut file = fs::File::open(file)
                 .await
-                .map_err(|e| format!("failed to open file for upload: {e:?}"))?;
+                .whatever_context("Failed to open file to upload")?;
             loop {
                 let mut buf = BytesMut::with_capacity(1 << 20);
                 file.read_buf(&mut buf)
                     .await
-                    .map_err(|e| format!("failed to read file to upload: {e:?}"))?;
+                    .whatever_context("Failed to read file to upload")?;
                 if buf.is_empty() {
                     break;
                 }
                 send_stream
                     .send_data(buf.freeze())
                     .await
-                    .map_err(|e| format!("failed to send request body: {e:?}"))?;
+                    .whatever_context("Failed to send request body")?;
             }
         }
 
-        send_stream.finish().await?;
+        send_stream
+            .finish()
+            .await
+            .whatever_context("Failed to finish request stream")?;
 
         Result::<_, Error>::Ok(())
     };
@@ -274,7 +312,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         let response = recv_stream
             .recv_response()
             .await
-            .map_err(|e| format!("failed to receive response: {e:?}"))?;
+            .whatever_context("Failed to receive response")?;
 
         tracing::info!(target: "request", "response: {response:#?}");
         if options.verbose {
@@ -289,20 +327,28 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             tracing::debug!(target: "request", "dump output to {}", output.display());
             &mut fs::File::create(output)
                 .await
-                .map_err(|e| format!("failed to create output file: {e:?}"))?
+                .whatever_context("Failed to create output file")?
         } else {
             tracing::debug!(target: "request", "dump output to stdio");
             &mut io::stdout()
         };
 
-        while let Some(mut data) = recv_stream.recv_data().await? {
+        while let Some(mut data) = recv_stream
+            .recv_data()
+            .await
+            .whatever_context("Failed to receive data")?
+        {
             while data.has_remaining() {
                 let chunk = data.chunk();
-                dst.write_all(chunk).await?;
+                dst.write_all(chunk)
+                    .await
+                    .whatever_context("Failed to write data to output")?;
                 data.advance(chunk.len());
             }
         }
-        dst.flush().await?;
+        dst.flush()
+            .await
+            .whatever_context("Failed to flush output")?;
 
         Result::<_, Error>::Ok(())
     };

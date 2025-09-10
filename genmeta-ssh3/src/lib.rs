@@ -73,8 +73,8 @@ pub struct Options {
     )]
     options: Vec<String>,
 
-    /// Client id
-    #[arg(short = 'i', long, value_name = "identity_file")]
+    /// Client identity
+    #[arg(short = 'i', long, value_name = "client_identity")]
     id: Option<String>,
 
     /// Disable pseudo-terminal allocation.
@@ -187,10 +187,10 @@ pub async fn run(options: Options) -> Result<(), error::Error> {
                         });
                     }
                     _ => {
-                        return Err(error::Error::UnexpectedMessage {
+                        return UnexpectedMessageSnafu {
                             message: format!("{:?}", new_channel.request),
-                            backtrace: Backtrace::capture(),
-                        });
+                        }
+                        .fail();
                     }
                 }
             }

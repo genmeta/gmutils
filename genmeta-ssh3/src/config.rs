@@ -1,5 +1,5 @@
 use http::Uri;
-use snafu::{Backtrace, ResultExt, Snafu};
+use snafu::{Backtrace, IntoError, ResultExt, Snafu};
 use ssh_config::{error::ReadConfigError, genmeta::Profile};
 
 #[derive(Debug, Snafu)]
@@ -23,10 +23,7 @@ pub enum Error {
 // 为主 Error 提供 From 转换
 impl From<Error> for crate::error::Error {
     fn from(err: Error) -> Self {
-        crate::error::Error::Config {
-            source: err,
-            backtrace: Backtrace::capture(),
-        }
+        crate::error::ConfigSnafu {}.into_error(err)
     }
 }
 

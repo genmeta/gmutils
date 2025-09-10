@@ -1,4 +1,4 @@
-use std::{backtrace::Backtrace, sync::Arc};
+use std::sync::Arc;
 
 use futures::{SinkExt, TryStreamExt};
 use snafu::prelude::*;
@@ -19,27 +19,15 @@ use crate::{
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Failed to open authentication channel: {source}"))]
-    OpenAuthChannel {
-        source: mux::ChannelError,
-        backtrace: Backtrace,
-    },
+    OpenAuthChannel { source: mux::ChannelError },
     #[snafu(display("Auth channel closed with error: {source}"))]
-    AuthAborted {
-        source: io::Error,
-        backtrace: Backtrace,
-    },
+    AuthAborted { source: io::Error },
     #[snafu(display("Authentication channel was closed unexpectedly"))]
-    AuthChannelClosed { backtrace: Backtrace },
+    AuthChannelClosed {},
     #[snafu(display("Failed to read password: {source}"))]
-    ReadPassword {
-        source: io::Error,
-        backtrace: Backtrace,
-    },
+    ReadPassword { source: io::Error },
     #[snafu(display("Failed to send password: {source}"))]
-    SendPassword {
-        source: io::Error,
-        backtrace: Backtrace,
-    },
+    SendPassword { source: io::Error },
 }
 
 pub async fn login(mux: &Arc<Mux>, user: &str, mut password: Option<&str>) -> Result<(), Error> {

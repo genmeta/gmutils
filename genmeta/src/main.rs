@@ -1,4 +1,5 @@
 use clap::Parser;
+use snafu::{ResultExt, Whatever};
 
 #[derive(Parser, Debug, Clone)]
 #[command(version)]
@@ -14,20 +15,19 @@ enum Options {
 }
 
 #[tokio::main]
-async fn main() {
-    if let Err(error) = run(Options::parse()).await {
-        eprintln!("{error}");
-        tracing::error!("Error: {error}");
-        std::process::exit(1);
-    }
+#[snafu::report]
+async fn main() -> Result<(), Whatever> {
+    run(Options::parse()).await.inspect_err(|error| {
+        tracing::error!(?error, "Exit with error");
+    })
 }
 
-async fn run(options: Options) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn run(options: Options) -> Result<(), Whatever> {
     match options {
-        Options::Ssh3(options) => Ok(genmeta_ssh3::run(options).await?),
+        Options::Ssh3(options) => genmeta_ssh3::run(options).await.whatever_context(""),
         Options::Curl(options) => genmeta_curl::run(options).await,
-        Options::Nslookup(options) => Ok(genmeta_nslookup::run(options).await?),
-        Options::Discover(options) => genmeta_discover::run(options).await,
-        Options::Doctor { options } => genmeta_doctor::run(options).await,
+        Options::Nslookup(options) => genmeta_nslookup::run(options).await.whatever_context(""),
+        Options::Discover(options) => genmeta_discover::run(options).await.whatever_context(""),
+        Options::Doctor { options } => genmeta_doctor::run(options).await.whatever_context(""),
     }
 }

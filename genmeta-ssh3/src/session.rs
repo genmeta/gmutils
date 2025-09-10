@@ -44,14 +44,14 @@ pub enum SessionError {
     #[snafu(display("Failed to open session channel: {source}"))]
     OpenSession {
         source: mux::ChannelError,
-        backtrace: Backtrace,
+        
     },
     #[snafu(display("Session channel was closed unexpectedly"))]
-    ClosedSession { backtrace: Backtrace },
+    ClosedSession {  },
     #[snafu(display("Session is closed with error: {source}"))]
     CloseWithError {
         source: io::Error,
-        backtrace: Backtrace,
+        
     },
 }
 
@@ -97,16 +97,16 @@ pub enum UpdateWindowSizeError {
     ))]
     RegisterSignalListener {
         source: io::Error,
-        backtrace: Backtrace,
+        
     },
 
     #[snafu(display("Failed get terminal size: {source}"))]
     GetWindowSize {
         source: io::Error,
-        backtrace: Backtrace,
+        
     },
     #[snafu(display("Channel closed"))]
-    ChannelClosed { backtrace: Backtrace },
+    ChannelClosed {  },
 }
 
 async fn update_winsize(mut message_sender: impl Sink<ClientSessionMessage> + Unpin) {
