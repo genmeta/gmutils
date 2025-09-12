@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, btree_map},
     fmt::Display,
     ops::Deref,
@@ -7,11 +8,11 @@ use std::{
 use derive_more::{Deref, DerefMut, From};
 use peg::{Parse, str::LineCol};
 
-#[derive(Debug, Clone, From)]
+#[derive(Debug, Clone, Copy, From)]
 pub struct IStr<S>(S);
 
 impl<S: AsRef<str>> IStr<S> {
-    pub fn new(s: S) -> Self {
+    pub const fn new(s: S) -> Self {
         Self(s)
     }
 
@@ -41,21 +42,27 @@ impl<S: AsRef<str>> Display for IStr<S> {
     }
 }
 
-impl<S: AsRef<str>> PartialEq for IStr<S> {
-    fn eq(&self, other: &Self) -> bool {
+impl<S1: AsRef<str>, S2: AsRef<str>> PartialEq<IStr<S2>> for IStr<S1> {
+    fn eq(&self, other: &IStr<S2>) -> bool {
         self.0.as_ref().eq_ignore_ascii_case(other.0.as_ref())
     }
 }
 
-impl<S: AsRef<str>> Eq for IStr<S> {}
+impl<S: AsRef<str>> Eq for IStr<S> where Self: PartialEq<Self> {}
 
-impl<S: AsRef<str>> PartialOrd for IStr<S> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
+impl<S1: AsRef<str>, S2: AsRef<str>> PartialOrd<IStr<S2>> for IStr<S1> {
+    fn partial_cmp(&self, other: &IStr<S2>) -> Option<std::cmp::Ordering> {
+        let chars1 = self.0.as_ref().chars().flat_map(|c| c.to_lowercase());
+        let chars2 = other.0.as_ref().chars().flat_map(|c| c.to_lowercase());
+        Some(chars1.cmp(chars2))
+        // Some(self.cmp(other))
     }
 }
 
-impl<S: AsRef<str>> Ord for IStr<S> {
+impl<S: AsRef<str>> Ord for IStr<S>
+where
+    Self: Eq + PartialOrd<Self>,
+{
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         let chars1 = self.0.as_ref().chars().flat_map(|c| c.to_lowercase());
         let chars2 = other.0.as_ref().chars().flat_map(|c| c.to_lowercase());
@@ -72,6 +79,16 @@ impl<S: AsRef<str>> PartialEq<str> for IStr<S> {
 impl<S: AsRef<str>> PartialEq<&str> for IStr<S> {
     fn eq(&self, other: &&str) -> bool {
         self.0.as_ref().eq_ignore_ascii_case(other)
+    }
+}
+
+impl From<IStr<&'static str>> for Cow<'static, str> {
+    fn from(value: IStr<&'static str>) -> Self {
+        if value.0.chars().all(|c| c.is_lowercase()) {
+            Cow::Borrowed(value.into_inner())
+        } else {
+            Cow::Owned(value.to_string())
+        }
     }
 }
 
@@ -189,7 +206,7 @@ impl<'s> ConfigFile<'s> {
                 continue;
             }
 
-            if let btree_map::Entry::Vacant(vacant_entry) = map.entry(keyword.deref().clone()) {
+            if let btree_map::Entry::Vacant(vacant_entry) = map.entry(*keyword.deref()) {
                 vacant_entry.insert((
                     str::position_repr(self.source, keyword.position),
                     arguments.clone(),
@@ -198,6 +215,10 @@ impl<'s> ConfigFile<'s> {
         }
 
         map
+    }
+
+    pub fn locate<T>(&self, token: &PositionedToken<T>) -> LineCol {
+        str::position_repr(self.source, token.position())
     }
 }
 

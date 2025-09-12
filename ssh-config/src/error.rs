@@ -7,8 +7,9 @@ use peg::{error::ParseError, str::LineCol};
 pub enum ParseConfigError {
     #[snafu(display("Too many values at {location}"))]
     TooManyArguments { location: LineCol },
-    #[snafu(display("Cannot read file at `{}`", path.display()))]
-    ReadAsset {
+    #[snafu(display("Cannot read file `{}` which specified at {location}", path.display()))]
+    ReadAssetFile {
+        location: LineCol,
         path: PathBuf,
         source: std::io::Error,
     },
@@ -29,14 +30,9 @@ pub enum ParseConfigError {
 #[snafu(visibility(pub))]
 pub enum ReadConfigError {
     #[snafu(display("Cannot locate config file: {message}"))]
-    LocateConfig {
-        message: String,
-    },
+    LocateConfigFile { message: String },
     #[snafu(display("Cannot read config file at `{}`", path.display()))]
-    ReadConfig {
-        path: PathBuf,
-        source: io::Error,
-    },
+    ReadConfigFile { path: PathBuf, source: io::Error },
     #[snafu(display("Cannot parse config file `{}`", path.display()))]
     LexConfig {
         path: PathBuf,
@@ -47,6 +43,17 @@ pub enum ReadConfigError {
         path: PathBuf,
         source: ParseConfigError,
     },
+}
 
-    T,
+#[derive(snafu::Snafu, Debug)]
+#[snafu(visibility(pub))]
+pub enum CheckConfigError {
+    #[snafu(display("Find unknown keyword `{keyword}` at {}:{location}", path.display()))]
+    UnknownKeyword {
+        keyword: String,
+        path: PathBuf,
+        location: LineCol,
+    },
+    #[snafu(transparent)]
+    ReadConfig { source: ReadConfigError },
 }

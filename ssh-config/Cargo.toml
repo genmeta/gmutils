@@ -23,4 +23,4 @@ tracing = { workspace = true }
 
 [features]
 openssh = ["dep:dirs", "dep:http", "dep:rustls", "dep:tokio"]
-genmeta = ["dep:dirs"]
+genmeta = ["dep:dirs", "dep:tokio"]

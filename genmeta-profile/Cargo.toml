@@ -1,6 +1,13 @@
 [package]
 name = "genmeta-profile"
+description = "Diagnostic Identity Profile"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bytes = { workspace = true }
+clap = { workspace = true }
+ssh-config = { workspace = true, features = ["genmeta"] }
+snafu = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

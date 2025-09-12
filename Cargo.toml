@@ -92,7 +92,8 @@ genmeta-curl = { path = "genmeta-curl" }         # curl
 genmeta-nslookup = { path = "genmeta-nslookup" } # nslookup
 genmeta-discover = { path = "genmeta-discover" } # discover
 genmeta-doctor = { path = "genmeta-doctor" }     # doctor
-genmeta-nat = { path = "genmeta-nat" }           # nat
+genmeta-nat = { path = "genmeta-nat" }           # nat doctor
+genmeta-profile = { path = "genmeta-profile" }   # profile doctor
 
 [profile.release]
 opt-level = "z"

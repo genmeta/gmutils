@@ -43,7 +43,7 @@ pub async fn read_config(host: &str) -> (Host, Vec<(&'static str, ReadConfigErro
     let mut parse_config = async |path: &Path| {
         let data = fs::read_to_string(path)
             .await
-            .context(ReadConfigSnafu { path })?;
+            .context(ReadConfigFileSnafu { path })?;
 
         let config_file = ast::ConfigFile::new(&data).context(LexConfigSnafu { path })?;
 
@@ -87,7 +87,7 @@ pub async fn read_config(host: &str) -> (Host, Vec<(&'static str, ReadConfigErro
 
     let read_user_config = async {
         let message = "Cannot locate home directory to locate user's openssh configuration file (usually ~/.ssh/config)";
-        let path = user_config_file_path().context(LocateConfigSnafu { message })?;
+        let path = user_config_file_path().context(LocateConfigFileSnafu { message })?;
 
         parse_config(&path).await
     };
@@ -99,7 +99,7 @@ pub async fn read_config(host: &str) -> (Host, Vec<(&'static str, ReadConfigErro
     let read_system_config = async {
         let message =
             "Cannot locate system-wide openssh configuration file (usually /etc/ssh/ssh_config)";
-        let path = system_config_file_path().context(LocateConfigSnafu { message })?;
+        let path = system_config_file_path().context(LocateConfigFileSnafu { message })?;
 
         parse_config(&path).await
     };
