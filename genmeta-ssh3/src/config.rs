@@ -61,12 +61,12 @@ impl super::Options {
             (username, password) = parse_username_password_from_uri(&uri);
         }
 
-        let uri = complete_uri(uri)?;
-
         let (username, password) = match username {
             Some(username) => (username, password),
             None => (whoami::username(), None),
         };
+
+        let uri = complete_uri(uri, &username)?;
 
         let profile = match &self.id {
             Some(id) => Some(
@@ -100,7 +100,7 @@ fn parse_username_password_from_uri(uri: &Uri) -> (Option<String>, Option<String
         .unwrap_or((None, None))
 }
 
-fn complete_uri(uri: Uri) -> Result<Uri, Error> {
+fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {
     let mut uri_parts = uri.into_parts();
     uri_parts.scheme = match uri_parts.scheme {
         Some(ref scheme) if scheme.as_str() == "ssh3" => uri_parts.scheme,
@@ -118,6 +118,20 @@ fn complete_uri(uri: Uri) -> Result<Uri, Error> {
             Some("/ssh".parse().unwrap())
         }
         path_and_query => path_and_query,
+    };
+
+    uri_parts.path_and_query = match uri_parts.path_and_query {
+        Some(ref path_and_query) => Some(
+            format!(
+                "{}/{}?{}",
+                path_and_query.path(),
+                username,
+                path_and_query.query().unwrap_or_default()
+            )
+            .parse()
+            .unwrap(),
+        ),
+        None => unreachable!(),
     };
 
     uri_parts.authority = match uri_parts.authority {

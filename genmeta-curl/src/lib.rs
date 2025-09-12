@@ -151,7 +151,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         .await
         .whatever_context("No endpoints address found for server")?;
 
-    tracing::info!("resolved {server_name} to address: {server_eps:?}");
+    tracing::debug!("resolved {server_name} to address: {server_eps:?}");
     if options.verbose {
         eprintln!("* resolved {server_name} to address: {server_eps:?}");
     }
@@ -196,7 +196,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     };
 
     let (_quic_conn, mut h3_conn, mut h3_client) = {
-        tracing::info!(target: "connect", server_name, ?server_eps, "Attempt connect to server");
+        tracing::debug!(target: "connect", server_name, ?server_eps, "Attempt connect to server");
         let quic_connection = quic_client
             .connect(server_name, server_eps)
             .whatever_context("Cannot connect to server")?;
@@ -226,7 +226,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     if options.verbose {
         eprintln!("* establish http3 connection to {server_name}");
     }
-    tracing::info!(target: "connect", "http3 connection established");
+    tracing::debug!(target: "connect", "http3 connection established");
     tokio::spawn(async move { h3_conn.wait_idle().await });
 
     let mut request_builder = Request::builder()
@@ -265,7 +265,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         println!("{output}",)
     }
 
-    tracing::info!(target: "request", "build request: {request:?}");
+    tracing::debug!(target: "request", "build request: {request:?}");
 
     let request_stream = h3_client
         .send_request(request)
@@ -282,15 +282,16 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
                 .whatever_context("Failed to send request body")?;
         }
 
-        if let Some(file) = options.upload_file {
-            let mut file = fs::File::open(file)
+        if let Some(path) = options.upload_file {
+            let mut file = fs::File::open(&path)
                 .await
-                .whatever_context("Failed to open file to upload")?;
+                .whatever_context(format!("Failed to open file {} to upload", path.display()))?;
             loop {
                 let mut buf = BytesMut::with_capacity(1 << 20);
-                file.read_buf(&mut buf)
-                    .await
-                    .whatever_context("Failed to read file to upload")?;
+                file.read_buf(&mut buf).await.whatever_context(format!(
+                    "Failed to read file {} to upload",
+                    path.display()
+                ))?;
                 if buf.is_empty() {
                     break;
                 }
@@ -314,7 +315,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             .await
             .whatever_context("Failed to receive response")?;
 
-        tracing::info!(target: "request", "response: {response:#?}");
+        tracing::debug!(target: "request", "response: {response:#?}");
         if options.verbose {
             let output = format!("< received response: {response:#?}")
                 .lines()

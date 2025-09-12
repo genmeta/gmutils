@@ -10,6 +10,7 @@ derive_more = { workspace = true, features = ["display", "debug"] }
 either = { workspace = true }
 futures = { workspace = true }
 genmeta-common = { workspace = true }
+http = { workspace = true }
 serde = { workspace = true }
 serde_cbor = { workspace = true }
 pin-project-lite = { workspace = true }

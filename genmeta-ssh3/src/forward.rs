@@ -5,8 +5,8 @@ use std::{
 mod parser;
 use peg::{error::ParseError, str::LineCol};
 use snafu::ResultExt;
-pub use ssh3_proto::forward::*;
-use ssh3_proto::messages::BindAddress;
+pub use ssh3_proto::v0::forward::*;
+use ssh3_proto::v0::messages::BindAddress;
 
 // use crate::error::Error;
 

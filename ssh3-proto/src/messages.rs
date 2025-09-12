@@ -93,6 +93,36 @@ pub enum OpenChannel {
     // todo: Signal
 }
 
+impl Display for OpenChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OpenChannel::Auth { username } => write!(f, "Login {username}"),
+            OpenChannel::Exec { pseudo, command } => write!(
+                f,
+                "Exec {}: {command}",
+                if *pseudo { "with pty" } else { "no pty" }
+            ),
+            OpenChannel::Shell { pseudo } => {
+                write!(f, "Shell {}", if *pseudo { "with pty" } else { "no pty" })
+            }
+            OpenChannel::Forward { listen, socks } => write!(
+                f,
+                "Remote forward data from remote {} (socks: {}) to local",
+                listen,
+                if *socks { "yes" } else { "no" }
+            ),
+            OpenChannel::Forwarded { listen, to } => write!(
+                f,
+                "Forwarded data to remote {} (channel permitted by client Forward channel with token {listen})",
+                to.as_ref()
+                    .map(|to| to.to_string())
+                    .unwrap_or_else(|| "<unknwon address>".to_string())
+            ),
+            OpenChannel::Direct { to } => write!(f, "Local forward data to remote {to}"),
+        }
+    }
+}
+
 pub mod auth {
     use super::*;
 

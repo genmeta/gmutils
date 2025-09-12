@@ -9,7 +9,7 @@ use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
 use qtraversal::iface::traversal_factory;
 use snafu::prelude::*;
 use ssh_config::genmeta::Profile;
-use ssh3_proto::mux;
+use ssh3_proto::v0::mux;
 use tokio::{io, time};
 use tokio_util::{codec, io::StreamReader};
 
@@ -138,7 +138,7 @@ pub async fn connect(
     };
 
     let request = http::Request::builder()
-        .method("PUT")
+        .method(ssh3_proto::v0::METHOD.clone())
         .uri(uri)
         .body(())
         .unwrap();
