@@ -2,8 +2,13 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use bytes::{Buf, BytesMut};
 use clap::Parser;
-use futures::{StreamExt, stream};
-use genmeta_common::{AGENTS, ROOT_CERT, connect::lookup, error::Whatever};
+use futures::StreamExt;
+use genmeta_common::{
+    AGENTS, ROOT_CERT,
+    connect::lookup,
+    error::Whatever,
+    id::{ClientName, expand_id},
+};
 use gm_quic::{ParameterId, ToCertificate};
 use http::{Method, Request, Uri};
 use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
@@ -69,7 +74,7 @@ pub struct Options {
 
     /// Client identity
     #[arg(short = 'i', long, value_name = "client_identity")]
-    id: Option<String>,
+    id: Option<ClientName>,
 
     /// Connection timeout
     #[arg(long, help = "Maximum time allowed for connection in seconds")]
@@ -99,7 +104,7 @@ impl Options {
             whatever!("Missing authority in URI")
         };
 
-        let host = authority.host().replacen("~", ".genmeta.net", 1);
+        let host = expand_id(authority.host());
         uri_parts.authority = Some(
             host.parse()
                 .whatever_context(format!("Failed to parse authority `{host}`"))?,
@@ -149,7 +154,7 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
             "Failed to lookup endpoint addresses for `{server_name}`"
         ))?;
 
-    let server_eps = lookup
+    let (_, server_eps) = lookup
         .next()
         .await
         .expect("lookup never return before lookup successy");
@@ -206,10 +211,11 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
         tokio::spawn({
             let conn = quic_connection.clone();
             async move {
-                let mut server_eps = lookup.map(stream::iter).flatten();
-                while let Some(server_ep) = server_eps.next().await {
-                    if conn.add_peer_endpoint(server_ep.into()).is_err() {
-                        return;
+                while let Some((_, server_eps)) = lookup.next().await {
+                    for server_ep in server_eps {
+                        if conn.add_peer_endpoint(server_ep.into()).is_err() {
+                            return;
+                        }
                     }
                 }
             }

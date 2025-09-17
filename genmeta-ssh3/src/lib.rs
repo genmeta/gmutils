@@ -12,6 +12,7 @@ pub use error::Error;
 use error::*;
 use forward::*;
 use futures::{FutureExt, StreamExt};
+use genmeta_common::id::ClientName;
 use http::Uri;
 use snafu::{Report, ResultExt};
 use ssh3_proto::{
@@ -81,7 +82,7 @@ pub struct Options {
 
     /// Client identity
     #[arg(short = 'i', long, value_name = "client_identity")]
-    id: Option<String>,
+    id: Option<ClientName>,
 
     /// Disable pseudo-terminal allocation.
     #[arg(

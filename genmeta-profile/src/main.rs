@@ -1,5 +1,4 @@
 use clap::Parser;
-use genmeta_common::error::Whatever;
 use genmeta_profile::{Error, Options, run};
 
 #[tokio::main]

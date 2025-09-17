@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod error;
+pub mod path;
 pub mod pattern;
 
 #[cfg(feature = "openssh")]

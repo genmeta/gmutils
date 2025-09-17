@@ -34,11 +34,11 @@ impl Error for DnsErrors {}
 pub async fn lookup(
     resolvers: &Resolvers,
     server_name: &str,
-) -> Result<impl Stream<Item = Vec<SocketEndpointAddr>> + use<>, DnsErrors> {
+) -> Result<impl Stream<Item = (String, Vec<SocketEndpointAddr>)> + use<>, DnsErrors> {
     let mut errors = vec![];
 
     let mut lookup_stream = resolvers.lookup(server_name);
-    let endpoints = loop {
+    let (source, endpoints) = loop {
         match lookup_stream.next().await {
             // 多余？
             Some((source, Ok(endpoints))) if endpoints.is_empty() => {
@@ -50,12 +50,17 @@ pub async fn lookup(
             Some((source, Err(error))) => {
                 errors.push((source, error));
             }
-            Some((_source, Ok(endpoints))) => break endpoints,
+            Some((source, Ok(endpoints))) => break (source, endpoints),
             None => return Err(DnsErrors { errors }),
         }
     };
-    Ok(stream::once(future::ready(endpoints))
-        .chain(lookup_stream.filter_map(|(_, endpoints)| future::ready(endpoints.ok()))))
+    Ok(
+        stream::once(future::ready((source, endpoints))).chain(lookup_stream.filter_map(
+            |(source, endpoints)| {
+                future::ready(endpoints.ok().map(|endpoints| (source, endpoints)))
+            },
+        )),
+    )
 }
 
 #[derive(Clone)]
@@ -121,7 +126,7 @@ impl H3ConnectionPool {
                 .await
                 .whatever_context("DNS lookup failed")?;
 
-            let server_eps = lookup
+            let (_, server_eps) = lookup
                 .next()
                 .await
                 .whatever_context("No endpoint found for server")?;
@@ -131,7 +136,7 @@ impl H3ConnectionPool {
             tokio::spawn({
                 let conn = quic_connection.clone();
                 async move {
-                    while let Some(endpoints) = lookup.next().await {
+                    while let Some((_, endpoints)) = lookup.next().await {
                         for endpoint in endpoints {
                             _ = conn.add_peer_endpoint(endpoint.into());
                         }

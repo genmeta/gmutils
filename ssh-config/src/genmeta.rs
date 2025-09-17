@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use genmeta_common::id::expand_id;
 use peg::str::LineCol;
 use snafu::{OptionExt, ResultExt};
 use tokio::fs;
@@ -10,6 +11,8 @@ use tokio::fs;
 use crate::{
     ast::{ConfigFile, IStr, Pair, PositionedToken},
     error::*,
+    path::expand_path,
+    pattern::SinglePattern,
 };
 
 #[derive(Debug, Clone)]
@@ -39,15 +42,17 @@ pub mod keywords {
 #[allow(clippy::type_complexity)]
 pub fn path_argument_parser<'c, A: AsRef<[PositionedToken<&'c str>]>>(
     keyword: IStr<&'static str>,
-) -> impl AsyncFn(&str, Option<&(LineCol, A)>) -> Result<(&'c str, Vec<u8>), ParseConfigError> {
+) -> impl AsyncFn(&str, Option<&(LineCol, A)>) -> Result<(String, Vec<u8>), ParseConfigError> {
     async move |pattern, arguments: Option<&(LineCol, A)>| match arguments
         .map(|(loc, args)| (loc, args.as_ref()))
     {
         Some((&location, [argument])) => {
-            let path = *argument.deref();
-            let data = fs::read(path).await.context(ReadAssetFileSnafu {
+            let path = expand_path(argument.deref())
+                .context(ExpandAssetPathSnafu { location })?
+                .to_string();
+            let data = fs::read(&path).await.context(ReadAssetFileSnafu {
                 location,
-                path: argument.deref(),
+                path: &path,
             })?;
             Ok((path, data))
         }
@@ -73,7 +78,9 @@ pub async fn parse_cert(
 async fn parse_config(id: &str, path: &Path, data: String) -> Result<Profile, ReadConfigError> {
     let config = ConfigFile::new(&data).context(LexConfigSnafu { path })?;
 
-    let map = config.query(keywords::MATCHERS, id);
+    let map = config.query(keywords::MATCHERS, id, |id| {
+        SinglePattern::new(expand_id(id).to_string())
+    });
 
     let (_, key) = parse_key(id, map.get(&keywords::KEY))
         .await

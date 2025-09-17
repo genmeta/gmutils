@@ -8,6 +8,8 @@ use std::{
 use derive_more::{Deref, DerefMut, From};
 use peg::{Parse, str::LineCol};
 
+use crate::pattern::SinglePattern;
+
 #[derive(Debug, Clone, Copy, From)]
 pub struct IStr<S>(S);
 
@@ -184,11 +186,10 @@ impl<'s> ConfigFile<'s> {
     pub fn query(
         &self,
         matchers: &[IStr<&str>],
-        pattern: &str,
+        target: &str,
+        mut make_pattern: impl FnMut(&str) -> SinglePattern,
     ) -> BTreeMap<IStr<&'s str>, (LineCol, Vec<PositionedToken<&'s str>>)> {
         use std::collections::BTreeSet;
-
-        use crate::pattern::SinglePattern;
 
         let matchers = matchers.iter().collect::<BTreeSet<_>>();
         let mut macthed = false;
@@ -196,10 +197,9 @@ impl<'s> ConfigFile<'s> {
 
         for Pair { keyword, arguments } in self.pairs() {
             if matchers.contains(keyword.deref()) {
-                macthed = arguments.iter().any(|pat| {
-                    pat.split(',')
-                        .any(|pat| SinglePattern::new(pat.to_string()).is_match(pattern))
-                });
+                macthed = arguments
+                    .iter()
+                    .any(|pat| pat.split(',').any(|pat| make_pattern(pat).is_match(target)));
             }
 
             if !macthed {

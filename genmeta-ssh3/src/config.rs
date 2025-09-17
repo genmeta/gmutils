@@ -1,3 +1,4 @@
+use genmeta_common::id::expand_id;
 use http::Uri;
 use snafu::{IntoError, ResultExt, Snafu};
 use ssh_config::{error::ReadConfigError, genmeta::Profile};
@@ -136,10 +137,11 @@ fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {
 
     uri_parts.authority = match uri_parts.authority {
         Some(authority) => {
-            let host = authority.host().replacen("~", ".genmeta.net", 1);
-            Some(host.parse().context(AuthorityParseSnafu {
-                authority: host.clone(),
-            })?)
+            let host = expand_id(authority.host());
+            Some(
+                host.parse()
+                    .context(AuthorityParseSnafu { authority: host })?,
+            )
         }
         None => return Err(MissingAuthoritySnafu {}.build()),
     };

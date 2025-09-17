@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use genmeta_common::id::ClientName;
 use http::Uri;
 use snafu::{OptionExt, ResultExt};
 use tokio::fs;
@@ -7,6 +8,7 @@ use tokio::fs;
 use crate::{
     ast::{self, IStr},
     error::*,
+    pattern::SinglePattern,
 };
 
 pub fn user_config_file_path() -> Option<PathBuf> {
@@ -28,7 +30,7 @@ pub fn system_config_file_path() -> Option<PathBuf> {
 pub struct Host {
     pub user: Option<String>,
     pub hostname: Option<Uri>,
-    pub id: Option<String>,
+    pub id: Option<ClientName>,
 }
 
 pub async fn read_config(host: &str) -> (Host, Vec<(&'static str, ReadConfigError)>) {
@@ -47,7 +49,9 @@ pub async fn read_config(host: &str) -> (Host, Vec<(&'static str, ReadConfigErro
 
         let config_file = ast::ConfigFile::new(&data).context(LexConfigSnafu { path })?;
 
-        let map = config_file.query(&[IStr::new("Host"), IStr::new("Match")], host);
+        let map = config_file.query(&[IStr::new("Host"), IStr::new("Match")], host, |pat| {
+            SinglePattern::new(pat.to_string())
+        });
 
         if result.hostname.is_none() {
             result.hostname = match map
@@ -75,7 +79,7 @@ pub async fn read_config(host: &str) -> (Host, Vec<(&'static str, ReadConfigErro
 
         if result.id.is_none() {
             result.id = match map.get(&IStr::new("id")).map(|(l, v)| (l, v.as_slice())) {
-                Some((&_loc, [value])) => Ok(Some(value.to_string())),
+                Some((&_loc, [value])) => Ok(Some(value.parse().unwrap())),
                 Some((&loc, ..)) => TooManyArgumentsSnafu { location: loc }.fail(),
                 None => Ok(None),
             }

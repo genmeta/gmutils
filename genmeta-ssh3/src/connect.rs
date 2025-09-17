@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use futures::{StreamExt, stream};
+use futures::StreamExt;
 use genmeta_common::{
     connect::{DnsErrors, lookup},
     h3_stream::H3Stream,
@@ -85,7 +85,7 @@ pub async fn connect(
             server: server_name,
         })?;
 
-    let server_eps = dns_lookup.next().await.unwrap();
+    let (_, server_eps) = dns_lookup.next().await.unwrap();
 
     let quic_client = {
         let mut roots = rustls::RootCertStore::empty();
@@ -120,10 +120,11 @@ pub async fn connect(
         tokio::spawn({
             let conn = quic_connection.clone();
             async move {
-                let mut server_eps = dns_lookup.map(stream::iter).flatten();
-                while let Some(server_ep) = server_eps.next().await {
-                    if conn.add_peer_endpoint(server_ep.into()).is_err() {
-                        return;
+                while let Some((_, server_eps)) = dns_lookup.next().await {
+                    for server_ep in server_eps {
+                        if conn.add_peer_endpoint(server_ep.into()).is_err() {
+                            return;
+                        }
                     }
                 }
             }

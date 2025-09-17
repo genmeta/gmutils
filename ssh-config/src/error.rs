@@ -7,6 +7,11 @@ use peg::{error::ParseError, str::LineCol};
 pub enum ParseConfigError {
     #[snafu(display("Too many values at {location}"))]
     TooManyArguments { location: LineCol },
+    #[snafu(display("Failed to expand path at {location}"))]
+    ExpandAssetPath {
+        location: LineCol,
+        source: ExpandError,
+    },
     #[snafu(display("Cannot read file `{}` which specified at {location}", path.display()))]
     ReadAssetFile {
         location: LineCol,
@@ -56,4 +61,11 @@ pub enum CheckConfigError {
     },
     #[snafu(transparent)]
     ReadConfig { source: ReadConfigError },
+}
+
+#[derive(snafu::Snafu, Debug)]
+#[snafu(display("Failed to expand `{chars}`"))]
+#[snafu(visibility(pub))]
+pub struct ExpandError {
+    chars: String,
 }

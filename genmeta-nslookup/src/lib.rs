@@ -2,6 +2,10 @@ use std::{collections::HashSet, fmt::Display, io, sync::Arc};
 
 use clap::{Parser, ValueEnum};
 use futures::StreamExt;
+use genmeta_common::{
+    connect::{DnsErrors, lookup},
+    id::expand_id,
+};
 use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
 use snafu::{ResultExt, Snafu};
 
@@ -48,14 +52,14 @@ impl Display for Schema {
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Failed to bind `{schema}` resolver"))]
-    BindResolverFailed {
+    BindResolver {
         schema: Schema,
         #[snafu(source)]
         source: io::Error,
     },
 
-    #[snafu(display("No DNS records found for domain `{domain}`"))]
-    NoResult { domain: String },
+    #[snafu(display("Failed to lookup DNS records of `{domain}`"))]
+    LookUp { domain: String, source: DnsErrors },
 }
 
 pub async fn run(Options { domain, schema }: Options) -> Result<(), Error> {
@@ -71,45 +75,33 @@ pub async fn run(Options { domain, schema }: Options) -> Result<(), Error> {
     resolvers = match schema {
         Schema::Udp => resolvers.with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER))),
         Schema::Http => resolvers.with(Arc::new(
-            HttpResolver::new(qdns::HTTP_DNS_SERVER).context(BindResolverFailedSnafu { schema })?,
+            HttpResolver::new(qdns::HTTP_DNS_SERVER).context(BindResolverSnafu { schema })?,
         )),
         Schema::Mdns => resolvers.with(Arc::new(
-            MdnsResolver::new(qdns::MDNS_SERVICE).context(BindResolverFailedSnafu { schema })?,
+            MdnsResolver::new(qdns::MDNS_SERVICE).context(BindResolverSnafu { schema })?,
         )),
         Schema::All => resolvers
             .with(Arc::new(
-                MdnsResolver::new(qdns::MDNS_SERVICE)
-                    .context(BindResolverFailedSnafu { schema })?,
+                MdnsResolver::new(qdns::MDNS_SERVICE).context(BindResolverSnafu { schema })?,
             ))
             .with(Arc::new(
-                HttpResolver::new(qdns::HTTP_DNS_SERVER)
-                    .context(BindResolverFailedSnafu { schema })?,
+                HttpResolver::new(qdns::HTTP_DNS_SERVER).context(BindResolverSnafu { schema })?,
             ))
             .with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER))),
     };
 
-    let domain = if domain.ends_with("~") {
-        domain.replacen("~", ".genmeta.net", 1)
-    } else {
-        domain.clone()
-    };
+    let domain = expand_id(&domain);
 
-    let mut results = resolvers.lookup(&domain);
-
-    let first_result = results.next().await.ok_or_else(|| Error::NoResult {
+    let mut lookup = lookup(&resolvers, &domain).await.context(LookUpSnafu {
         domain: domain.clone(),
     })?;
 
-    let mut results = Box::pin(futures::stream::once(async move { first_result }).chain(results));
-
     println!("Name: {domain}:");
 
-    while let Some((src, eps)) = results.next().await {
-        if let Ok(eps) = eps {
-            println!("{src}");
-            for endpoint_addr in eps.into_iter().collect::<HashSet<_>>() {
-                println!("Address: {endpoint_addr}");
-            }
+    while let Some((source, endpoints)) = lookup.next().await {
+        println!("{source}");
+        for endpoint_addr in endpoints.into_iter().collect::<HashSet<_>>() {
+            println!("Address: {endpoint_addr}");
         }
     }
 

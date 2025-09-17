@@ -1,12 +1,16 @@
 use std::{ops::Deref, path::PathBuf};
 
 use clap::Parser;
-use genmeta_common::error::Whatever;
+use genmeta_common::{
+    error::Whatever,
+    id::{ClientName, expand_id},
+};
 use snafu::{OptionExt, ResultExt};
 use ssh_config::{
     ast::{ConfigFile, Pair},
     error::*,
     genmeta::*,
+    pattern::SinglePattern,
 };
 use tokio::fs;
 
@@ -18,7 +22,7 @@ pub struct Options {
     path: Option<PathBuf>,
 
     /// Diagnose possible configuration errors when using a certain ID
-    id: Option<String>,
+    id: Option<ClientName>,
 }
 
 #[derive(snafu::Snafu, Debug)]
@@ -47,7 +51,9 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
     match options.id {
         Some(ref id) => {
-            let map = config.query(keywords::MATCHERS, id);
+            let map = config.query(keywords::MATCHERS, id, |id| {
+                SinglePattern::new(expand_id(id).to_string())
+            });
 
             let (key_path, key) = parse_key(id, map.get(&keywords::KEY))
                 .await
@@ -56,6 +62,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
             let (cert_path, cert) = parse_cert(id, map.get(&keywords::CERT))
                 .await
                 .context(ParseConfigSnafu { path })?;
+            // 暂时不支持验证证书/密钥有效性
             println!("Profile `{id}` configured in `{}`:", path.display());
             // Print in hex format
             println!("    Id: {id}");

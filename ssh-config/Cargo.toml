@@ -12,6 +12,7 @@ derive_more = { workspace = true, features = [
     "deref_mut",
 ] }
 dirs = { workspace = true, optional = true }
+genmeta-common = { workspace = true }
 http = { workspace = true, optional = true }
 peg = { workspace = true }
 regex = { workspace = true }
