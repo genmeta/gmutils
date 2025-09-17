@@ -20,7 +20,7 @@ struct TerminalGuard(());
 
 impl TerminalGuard {
     pub fn new() -> Self {
-        tracing::info!(target: "session", "Enable raw mode");
+        tracing::debug!(target: "session", "Enable raw mode");
         crossterm::terminal::enable_raw_mode().expect("Failed to enable raw mode");
         TerminalGuard(())
     }
@@ -28,7 +28,7 @@ impl TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        tracing::info!(target: "session", "Disable raw mode(RAII)");
+        tracing::debug!(target: "session", "Disable raw mode(RAII)");
         crossterm::terminal::disable_raw_mode().expect("Failed to disable raw mode");
     }
 }

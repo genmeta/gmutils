@@ -2,6 +2,7 @@ use std::{error::Error, net::SocketAddr, sync::Arc};
 
 use derive_more::From;
 use futures::{future::BoxFuture, never::Never};
+use snafu::Report;
 #[cfg(unix)]
 use tokio::net::UnixListener;
 use tokio::{
@@ -21,7 +22,7 @@ pub enum Listener {
 
 impl Listener {
     pub async fn bind(endpoint: BindAddress) -> io::Result<Self> {
-        tracing::debug!(target: "local_forward", "Binding to {endpoint:?}");
+        tracing::debug!(target: "forward_listener", "Binding to {endpoint}");
         Ok(match endpoint {
             BindAddress::Host { host, port } => Self::Tcp({
                 let addr = tokio::net::lookup_host((host.as_str(), port))
@@ -71,17 +72,21 @@ impl Listener {
         E: Error,
     {
         let listen_task = async move {
-            tracing::info!("Listening on {:?}", listener.local_addr()?);
+            tracing::debug!(target: "forward_listener", "Listening on {}", listener.local_addr()?);
             let handler = Arc::new(handler);
             loop {
                 let (incoming, from) = listener.accept().await?;
-                tracing::info!("Accepted connection from {from:?}");
+                tracing::debug!(target: "forward_listener", "Accepted connection from {from}");
                 let (mut reader, mut writer) = incoming.into_split();
                 let handler = handler.clone();
                 tokio::spawn(
                     async move {
-                        if let Err(e) = handler(&mut reader, &mut writer).await {
-                            tracing::error!("Error in forward task: {e:?}");
+                        if let Err(error) = handler(&mut reader, &mut writer).await {
+                            tracing::error!(
+                                target: "forward_listener",
+                                "Error in forward task: {}",
+                                Report::from_error(error)
+                            );
                         }
                     }
                     .in_current_span(),
@@ -105,17 +110,21 @@ impl Listener {
         E: Error,
     {
         let listen_task = async move {
-            tracing::info!("Listening on UNIX {:?}", listener.local_addr()?);
+            tracing::debug!(target: "forward_listener", "Listening on UNIX {:?}", listener.local_addr()?);
             let handler = Arc::new(handler);
             loop {
                 let (incoming, from) = listener.accept().await?;
-                tracing::info!("Accepted connection from {from:?}");
+                tracing::debug!(target: "forward_listener", "Accepted connection from {from:?}");
                 let (mut reader, mut writer) = incoming.into_split();
                 let handler = handler.clone();
                 tokio::spawn(
                     async move {
-                        if let Err(e) = handler(&mut reader, &mut writer).await {
-                            tracing::error!("Error in forward task: {e:?}");
+                        if let Err(error) = handler(&mut reader, &mut writer).await {
+                            tracing::error!(
+                                target: "forward_listener",
+                                "Error in forward task: {}",
+                                Report::from_error(error)
+                            );
                         }
                     }
                     .in_current_span(),
