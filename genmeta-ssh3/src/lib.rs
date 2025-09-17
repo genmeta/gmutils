@@ -13,8 +13,13 @@ use error::*;
 use forward::*;
 use futures::{FutureExt, StreamExt};
 use http::Uri;
-use snafu::ResultExt;
-use ssh3_proto::{listener, messages, mux};
+use snafu::{Report, ResultExt};
+use ssh3_proto::{
+    listener, messages,
+    mux::{self, NewChannel},
+};
+use tokio::task::JoinHandle;
+use tracing::Instrument;
 
 const URI_LONG_HELP: &str = "Example: `my-remote-dev`, `developer@ssh3.test.genmeta.net`
 If this argument matches the ssh configuration file, \
@@ -116,14 +121,14 @@ pub async fn run(options: Options) -> Result<(), Error> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing_subscriber::filter::LevelFilter::WARN.into())
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
                 .from_env_lossy(),
         )
         .with_writer(std::io::stderr)
         .init();
 
     let config = options.config().await?;
-    tracing::info!(target: "config", ?config, "Parsed config");
+    tracing::debug!(target: "config", ?config);
 
     let dynamic_forward_listeners = {
         let mut listeners = Vec::new();
@@ -132,26 +137,27 @@ pub async fn run(options: Options) -> Result<(), Error> {
             .iter()
             .flat_map(|endpoint| endpoint.addresses())
         {
-            listeners.push(listener::Listener::bind(local_addr.into()).await.context(
-                DynamicForwardBindSnafu {
+            let listener = listener::Listener::bind(local_addr.into()).await.context(
+                BindDynamicForwardSnafu {
                     endpoint: local_addr,
                 },
-            )?);
+            )?;
+            listeners.push((local_addr, listener));
         }
         listeners
     };
 
     let local_forwards = {
         let mut forwards = Vec::new();
-        for (local_endpoint, remote_endpoint) in
-            options.local_forwards.iter().flat_map(|rule| rule.pairs())
-        {
-            let listener = listener::Listener::bind(local_endpoint.clone())
-                .await
-                .context(LocalForwardBindSnafu {
-                    endpoint: local_endpoint.clone(),
-                })?;
-            forwards.push((local_endpoint, listener, remote_endpoint));
+        for (local, remote) in options.local_forwards.iter().flat_map(|rule| rule.pairs()) {
+            let listener =
+                listener::Listener::bind(local.clone())
+                    .await
+                    .context(BindLocalForwardSnafu {
+                        local: local.clone(),
+                        remote: remote.clone(),
+                    })?;
+            forwards.push((local, listener, remote));
         }
         forwards
     };
@@ -160,99 +166,128 @@ pub async fn run(options: Options) -> Result<(), Error> {
         connect::connect(&config.uri, config.profile.as_ref()).await?;
 
     let remote_forwarders = Arc::new(forward::RemoteForwardAcceptor::new(mux.clone()));
-
-    let recv_requests = {
-        let remote_forwarders = remote_forwarders.clone();
-        async move {
-            while let Some(new_channel) = incomings.next().await.transpose()? {
-                match new_channel.request {
-                    messages::OpenChannel::Forwarded { listen, to } => {
-                        let accept_forward = remote_forwarders
-                            .accept(listen, to.clone(), new_channel.recver, new_channel.sender)
-                            .await;
-                        let remote_forward_task = match accept_forward {
-                            Ok(Some(forward_task)) => forward_task,
-                            Ok(None) => {
-                                tracing::warn!(target: "remote_forward", "No remote forward request with {listen:?} to {to:?}");
-                                continue;
-                            }
-                            Err(connect_local) => {
-                                tracing::error!(target: "remote_forward", "Failed to accept remote forward connection: {connect_local}");
-                                continue;
-                            }
-                        };
-                        tokio::spawn(async move {
-                            if let Err(e) = remote_forward_task.await {
-                                tracing::error!(target: "remote_forward", "Error in remote forward task: {e:?}");
-                            }
-                        });
+    let handle_request = async |NewChannel {
+                                    token: _token,
+                                    request,
+                                    sender,
+                                    recver,
+                                }| {
+        match request.clone() {
+            messages::OpenChannel::Forwarded { listen, to } => {
+                let accept_forward = remote_forwarders
+                    .accept(listen, to.clone(), recver, sender)
+                    .await;
+                let remote_forward_task = match accept_forward {
+                    Ok(Some(forward_task)) => forward_task,
+                    Ok(None) => {
+                        tracing::debug!(
+                            target: "remote_forward",
+                            "Unknown token {listen}, reject forward request"
+                        );
+                        return Ok(());
                     }
-                    _ => {
-                        return UnexpectedMessageSnafu {
-                            message: format!("{:?}", new_channel.request),
-                        }
-                        .fail();
+                    Err(connect_local) => {
+                        tracing::debug!(
+                            target: "remote_forward",
+                            "Failed to connect to local: {}", Report::from_error(connect_local)
+                        );
+                        return Ok(());
                     }
-                }
+                };
+                let future = async move {
+                    if let Err(e) = remote_forward_task.await {
+                        tracing::debug!(
+                            target: "remote_forward",
+                            "Error in remote forward task: {}", Report::from_error(&e)
+                        );
+                    }
+                };
+                tokio::spawn(future.in_current_span());
+                Ok(())
             }
-            Result::<_, error::Error>::Ok(())
+            _ => UnexpectedMessageSnafu { request }.fail(),
         }
     };
 
-    let run = async move {
+    let recv_requests = async move {
+        while let Some(new_request) = incomings.next().await.transpose()? {
+            let span = tracing::info_span!(
+                target: "session", "handle_request", request=%new_request.request
+            );
+            handle_request(new_request).instrument(span).await?;
+        }
+        Result::<_, error::Error>::Ok(())
+    };
+
+    let run = async {
         let (username, password) = (config.username, config.password);
 
         auth::login(&mux, &username, password.as_deref()).await?;
 
-        let session = tokio::spawn({
+        let session = {
             let mux = mux.clone();
             let command = options.command();
             async move {
                 // 初始化终端。guard自动释放
-                match command.run(&mux, options.pseudo).await {
-                    Ok(code) => std::process::exit(code),
-                    Err(e) => {
-                        tracing::error!(target: "session", "Failed to run command: {e:?}");
-                        Err(e)
-                    }
-                }
+                let code = command.run(&mux, options.pseudo).await?;
+                std::process::exit(code)
             }
-        });
+        };
+        let session: JoinHandle<Result<(), session::Error>> =
+            tokio::spawn(session.in_current_span());
 
         for (local, listener, remote) in local_forwards {
-            let forwarder = forward::LocalForwarder::new(
-                mux.clone(),
-                messages::OpenChannel::Direct { to: remote },
-            );
+            let request = messages::OpenChannel::Direct { to: remote.clone() };
+            let forwarder = forward::LocalForwarder::new(mux.clone(), request);
             let listen_task =
                 listener.listen(move |reader, writer| forwarder.forward(reader, writer).boxed());
-            tokio::spawn(async move {
-                let error = listen_task.await;
-                tracing::error!(target: "local_forward", "Local forward server listen on {local} error: {error:?}");
-            });
+
+            let listen_task = async move {
+                tracing::error!(
+                    target: "local_forward",
+                    "Failed to accept incoming connection to local: {}",
+                    Report::from_error(listen_task.await)
+                );
+            };
+            let span = tracing::info_span!(target: "local_forward", "listen", %local, %remote);
+            tokio::spawn(listen_task.instrument(span));
         }
 
         for (local, remote) in options.remote_forwards.iter().flat_map(|rule| rule.pairs()) {
-            let forward_task = remote_forwarders
-                .initial_forward(local, remote.clone())
+            // 远程转发，本地打开一个channel且不发送任何数据，仅仅保持channel存在
+            // 对端凭借这个channel的token来将数据从远端转发到本地，而不知道本地的地址是啥（除非是动态远程转发）
+            let keep_task = remote_forwarders
+                .initial_forward(local.clone(), remote.clone())
                 .await
-                .context(ForwardChannelOpenSnafu)?;
-            let forward_task = async move {
-                if let Err(error) = forward_task.await {
-                    tracing::error!(target: "remote_forward", "Remote server failed to accept connections from {remote}: {error:?}");
+                .context(OpenRemoteForwardChannelSnafu {
+                    local: local.clone(),
+                    remote: remote.clone(),
+                })?;
+
+            let span = tracing::info_span!(target: "remote_forward", "remote_forward", local = local.map_or("<dynamic address>".to_string(), |addr| addr.to_string()), %remote);
+            let keep_task = async move {
+                if let Err(error) = keep_task.await {
+                    tracing::error!(
+                        target: "remote_forward",
+                        "Channel closed by peer with error: {}",
+                        Report::from_error(&error)
+                    );
                 }
             };
-            tokio::spawn(forward_task);
+            tokio::spawn(keep_task.instrument(span));
         }
 
-        for dynamic_forward_listener in dynamic_forward_listeners {
+        for (local, dynamic_forward_listener) in dynamic_forward_listeners {
             let listen_task = socks::listen_dynamic_forward(mux.clone(), dynamic_forward_listener);
-            tokio::spawn({
-                async move {
-                    let error = listen_task.await;
-                    tracing::error!(target: "socks", "Socks forward server error: {error:?}");
-                }
-            });
+            let listen_task = async move {
+                tracing::error!(
+                    target: "local_forward",
+                    "Failed to accept incoming connection to local: {}",
+                    Report::from_error(listen_task.await)
+                );
+            };
+            let span = tracing::info_span!(target: "socks", "dynamic_forward", %local);
+            tokio::spawn(listen_task.instrument(span));
         }
 
         Ok(session.await.expect("Never panic")?)
@@ -268,7 +303,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     };
 
     // 清理
-    quic_conn.close("Bye bye~", h3::error::Code::H3_NO_ERROR.value());
+    _ = quic_conn.close("Bye bye~", h3::error::Code::H3_NO_ERROR.value());
 
     error.map_or(Ok(()), Err)
 }

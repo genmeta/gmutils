@@ -1,9 +1,14 @@
-use std::path::PathBuf;
+use std::{ops::Deref, path::PathBuf};
 
-use bytes::Bytes;
 use clap::Parser;
-use snafu::{ResultExt, Whatever};
-use ssh_config::genmeta::Profile;
+use genmeta_common::error::Whatever;
+use snafu::{OptionExt, ResultExt};
+use ssh_config::{
+    ast::{ConfigFile, Pair},
+    error::*,
+    genmeta::*,
+};
+use tokio::fs;
 
 #[derive(Parser, Debug, Clone)]
 #[command(version, about)]
@@ -16,26 +21,81 @@ pub struct Options {
     id: Option<String>,
 }
 
-pub async fn run(options: Options) -> Result<(), Whatever> {
+#[derive(snafu::Snafu, Debug)]
+pub enum Error {
+    #[snafu(transparent)]
+    Whatever { source: Whatever },
+    #[snafu(transparent)]
+    ReadConfig { source: ReadConfigError },
+    #[snafu(transparent)]
+    CheckConfig { source: CheckConfigError },
+}
+
+pub async fn run(options: Options) -> Result<(), Error> {
+    let config_path = options.path.or_else(user_config_file_path).context(
+        LocateConfigFileSnafu {
+            message: "No path passed from argument, and user-wide configuration cannot be located",
+        },
+    )?;
+
+    let path = &config_path;
+
+    let data = fs::read_to_string(path)
+        .await
+        .context(ReadConfigFileSnafu { path })?;
+    let config = ConfigFile::new(&data).context(LexConfigSnafu { path })?;
+
     match options.id {
-        Some(id) => {
-            let Profile { id, key, cert } =
-                ssh_config::genmeta::read_config(&id, options.path.as_deref())
-                    .await
-                    .whatever_context(format!("Cannot read profile for `{id}`"))?;
+        Some(ref id) => {
+            let map = config.query(keywords::MATCHERS, id);
+
+            let (key_path, key) = parse_key(id, map.get(&keywords::KEY))
+                .await
+                .context(ParseConfigSnafu { path })?;
+
+            let (cert_path, cert) = parse_cert(id, map.get(&keywords::CERT))
+                .await
+                .context(ParseConfigSnafu { path })?;
+            println!("Profile `{id}` configured in `{}`:", path.display());
             // Print in hex format
-            let key = Bytes::from(key);
-            let cert = Bytes::from(cert);
             println!("    Id: {id}");
             // user x509 format?
-            println!("    Key: {key:x}");
-            println!("    Cert: {cert:x}");
+            println!(
+                "    Key at `{}` ({}B)",
+                cert_path.as_ref().display(),
+                cert.len()
+            );
+            println!(
+                "    Cert at `{}` ({}B)",
+                key_path.as_ref().display(),
+                key.len()
+            );
             Ok(())
         }
         None => {
-            ssh_config::genmeta::check_config(options.path.as_deref())
-                .await
-                .whatever_context("Config file maybe invalid")?;
+            for Pair { keyword, arguments } in config.pairs() {
+                let location = config.locate(keyword);
+                let arguments = Some((location, arguments));
+                match keyword.deref() {
+                    keyword if keyword == &keywords::KEY => {
+                        parse_key("", arguments.as_ref()).await.map(|_| ())
+                    }
+                    keyword if keyword == &keywords::CERT => {
+                        parse_cert("", arguments.as_ref()).await.map(|_| ())
+                    }
+                    keyword if keywords::MATCHERS.contains(keyword) => Ok(()),
+                    _ => {
+                        return UnknownKeywordSnafu {
+                            keyword: keyword.to_string(),
+                            path,
+                            location,
+                        }
+                        .fail()?;
+                    }
+                }
+                .context(ParseConfigSnafu { path })?;
+            }
+            println!("Your profile configuration looks OK!");
             Ok(())
         }
     }

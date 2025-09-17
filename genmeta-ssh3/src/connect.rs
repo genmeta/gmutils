@@ -1,9 +1,13 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use futures::StreamExt;
-use genmeta_common::{h3_stream::H3Stream, *};
-use gm_quic::{ConnectServerError, ParameterId, ToCertificate, handy::client_parameters};
+use futures::{StreamExt, stream};
+use genmeta_common::{
+    connect::{DnsErrors, lookup},
+    h3_stream::H3Stream,
+    *,
+};
+use gm_quic::{BindInterfaceError, ParameterId, ToCertificate, handy::client_parameters};
 use http::Uri;
 use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
 use qtraversal::iface::traversal_factory;
@@ -20,15 +24,16 @@ pub enum Error {
         schema: &'static str,
         source: io::Error,
     },
-    #[snafu(display("Missing host in URI: {uri}"))]
+    #[snafu(display("Missing host in URI {uri}"))]
     MissingServerName { uri: Uri },
-    #[snafu(display("No endpoints found for server '{server}'"))]
-    NoEndpoints { server: String },
+    #[snafu(display("Dns lookup failed for `{server}`"))]
+    DnsLookup { server: String, source: DnsErrors },
     #[snafu(transparent)]
-    PickEndpoint { source: ConnectServerError },
-    #[snafu(display("Connection timed out after {}ms for server '{server}'", duration.as_millis()))]
-    Timedout { duration: Duration, server: String },
-
+    BindInterface { source: BindInterfaceError },
+    #[snafu(display("Connection timed out after {}ms for server `{server}`", duration.as_millis()))]
+    Timedout { server: String, duration: Duration },
+    #[snafu(transparent)]
+    Quic { source: gm_quic::Error },
     #[snafu(display("Failed to initialize H3 connection"))]
     InitialH3 { source: h3::error::ConnectionError },
 
@@ -74,10 +79,13 @@ pub async fn connect(
         .host()
         .context(MissingServerNameSnafu { uri: uri.clone() })?;
 
-    let mut dns_lookup = resolvers.lookup(server_name);
-    let (_source, server_eps) = dns_lookup.next().await.context(NoEndpointsSnafu {
-        server: server_name.to_string(),
-    })?;
+    let mut dns_lookup = lookup(&resolvers, server_name)
+        .await
+        .context(DnsLookupSnafu {
+            server: server_name,
+        })?;
+
+    let server_eps = dns_lookup.next().await.unwrap();
 
     let quic_client = {
         let mut roots = rustls::RootCertStore::empty();
@@ -107,14 +115,12 @@ pub async fn connect(
     };
 
     let (quic_conn, h3_conn, mut h3_client) = {
-        tracing::info!(target: "connect", server_name, ?server_eps, "attempt connect to server");
+        tracing::debug!(target: "connect", server_name, ?server_eps, "Attempt connect to server");
         let quic_connection = quic_client.connect(server_name, server_eps)?;
         tokio::spawn({
             let conn = quic_connection.clone();
             async move {
-                let mut server_eps = dns_lookup
-                    .map(|(_, server_eps)| futures::stream::iter(server_eps))
-                    .flatten();
+                let mut server_eps = dns_lookup.map(stream::iter).flatten();
                 while let Some(server_ep) = server_eps.next().await {
                     if conn.add_peer_endpoint(server_ep.into()).is_err() {
                         return;
@@ -127,7 +133,10 @@ pub async fn connect(
         let (h3_conn, h3_client) = time::timeout(duration, connect)
             .await
             .map_err(|_| {
-                quic_connection.close("connect timeout", 0);
+                if let Err(quic_error) = quic_connection.validate() {
+                    return Error::from(quic_error);
+                }
+                _ = quic_connection.close("connect timeout", 0);
                 TimedoutSnafu::build(TimedoutSnafu {
                     duration,
                     server: server_name.to_string(),
@@ -142,7 +151,7 @@ pub async fn connect(
         .uri(uri)
         .body(())
         .unwrap();
-    tracing::info!(target: "connect", ?request, "request");
+    tracing::debug!(target: "connect", ?request);
 
     // sending request results in a bidirectional stream,
     // which is also used for receiving response
@@ -151,7 +160,7 @@ pub async fn connect(
         .await
         .context(RequestSnafu)?;
     let response = stream.recv_response().await.context(ResponseSnafu)?;
-    tracing::info!(target: "connect", ?response, "Received");
+    tracing::debug!(target: "connect", ?response);
     ensure!(
         response.status() == 200,
         ResponseStatusSnafu {

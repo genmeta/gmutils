@@ -2,13 +2,13 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use bytes::{Buf, BytesMut};
 use clap::Parser;
-use futures::StreamExt;
-use genmeta_common::{AGENTS, ROOT_CERT};
+use futures::{StreamExt, stream};
+use genmeta_common::{AGENTS, ROOT_CERT, connect::lookup, error::Whatever};
 use gm_quic::{ParameterId, ToCertificate};
 use http::{Method, Request, Uri};
 use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
 use qtraversal::iface::traversal_factory;
-use snafu::{OptionExt, ResultExt, Whatever, whatever};
+use snafu::{FromString, OptionExt, ResultExt, whatever};
 use ssh_config::genmeta::Profile;
 use tokio::{
     fs,
@@ -91,10 +91,8 @@ pub struct Options {
     // silent: bool,
 }
 
-pub type Error = Whatever;
-
 impl Options {
-    fn complete_uri(&mut self) -> Result<(), Error> {
+    fn complete_uri(&mut self) -> Result<(), Whatever> {
         let mut uri_parts = self.uri.clone().into_parts();
 
         let Some(authority) = uri_parts.authority else {
@@ -123,11 +121,11 @@ fn parse_header(s: &str) -> Result<(String, String), String> {
     Ok((key, value))
 }
 
-pub async fn run(mut options: Options) -> Result<(), Error> {
+pub async fn run(mut options: Options) -> Result<(), Whatever> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing_subscriber::filter::LevelFilter::WARN.into())
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
                 .from_env_lossy(),
         )
         .with_writer(std::io::stderr)
@@ -145,11 +143,16 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         .with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER)));
     let server_name = options.uri.host().whatever_context("missing host in uri")?;
 
-    let mut dns_lookup = resolvers.lookup(server_name);
-    let (_source, server_eps) = dns_lookup
+    let mut lookup = lookup(&resolvers, server_name)
+        .await
+        .whatever_context(format!(
+            "Failed to lookup endpoint addresses for `{server_name}`"
+        ))?;
+
+    let server_eps = lookup
         .next()
         .await
-        .whatever_context("No endpoints address found for server")?;
+        .expect("lookup never return before lookup successy");
 
     tracing::debug!("resolved {server_name} to address: {server_eps:?}");
     if options.verbose {
@@ -203,9 +206,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         tokio::spawn({
             let conn = quic_connection.clone();
             async move {
-                let mut server_eps = dns_lookup
-                    .map(|(_, server_eps)| futures::stream::iter(server_eps))
-                    .flatten();
+                let mut server_eps = lookup.map(stream::iter).flatten();
                 while let Some(server_ep) = server_eps.next().await {
                     if conn.add_peer_endpoint(server_ep.into()).is_err() {
                         return;
@@ -216,9 +217,15 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         let connect = h3::client::new(h3_shim::QuicConnection::new(quic_connection.clone()));
         let (h3_conn, h3_client) = time::timeout(Duration::from_secs(10), connect)
             .await
-            .with_whatever_context(|_| {
-                quic_connection.close("connect timeout", 0);
-                "Connect timeouted"
+            .map_err(|_| {
+                if let Err(error) = quic_connection
+                    .validate()
+                    .whatever_context("QUIC Connection failed")
+                {
+                    return error;
+                };
+                _ = quic_connection.close("Connect timeouted", 0);
+                Whatever::without_source("Connect timeouted".to_string())
             })?
             .whatever_context("Cannot connect to server")?;
         (quic_connection, h3_conn, h3_client)
@@ -307,7 +314,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             .await
             .whatever_context("Failed to finish request stream")?;
 
-        Result::<_, Error>::Ok(())
+        Result::<_, Whatever>::Ok(())
     };
     let receive_response = async {
         let response = recv_stream
@@ -351,7 +358,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             .await
             .whatever_context("Failed to flush output")?;
 
-        Result::<_, Error>::Ok(())
+        Result::<_, Whatever>::Ok(())
     };
 
     tokio::try_join!(send_request_body, receive_response)?;

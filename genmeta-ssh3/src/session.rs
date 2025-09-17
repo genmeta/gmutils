@@ -40,17 +40,18 @@ pub struct Command {
 }
 
 #[derive(Debug, Snafu)]
-pub enum SessionError {
+pub enum Error {
     #[snafu(display("Failed to open session channel"))]
-    OpenSession { source: mux::ChannelError },
-    #[snafu(display("Session channel was closed unexpectedly"))]
-    ClosedSession {},
-    #[snafu(display("Session is closed with error"))]
-    CloseWithError { source: io::Error },
+    #[snafu(context(false))]
+    SendRequest { source: mux::ChannelError },
+
+    #[snafu(display("Session closed"))]
+    #[snafu(context(false))]
+    ChannelClosed { source: io::Error },
 }
 
 impl Command {
-    pub async fn run(&self, mux: &Arc<Mux>, pseudo: bool) -> Result<i32, SessionError> {
+    pub async fn run(&self, mux: &Arc<Mux>, pseudo: bool) -> Result<i32, Error> {
         let open = match &self.program {
             Some(program) => {
                 if let Some(arguments) = &self.arguments {
@@ -69,7 +70,7 @@ impl Command {
         };
 
         tracing::debug!(target: "session", "Running command: {self:?} with Open {open:?}");
-        let (_token, recver, sender) = mux.open(open).await.context(OpenSessionSnafu)?;
+        let (_token, recver, sender) = mux.open(open).await?;
 
         let _terminal_guard = TerminalGuard::new();
 
@@ -119,7 +120,7 @@ async fn update_winsize(mut message_sender: impl Sink<ClientSessionMessage> + Un
 
     #[cfg(not(unix))]
     let init_winsize_update_listener = || {
-        tracing::warn!(target: "session", "Window size updates listener not available on this platform, using polling pre 10ms fallback");
+        tracing::debug!(target: "session", "Window size updates listener not available on this platform, using polling pre 10ms fallback");
         use tokio::time::{Duration, Interval, interval};
 
         let interval = interval(Duration::from_millis(10));
@@ -200,10 +201,8 @@ async fn send_terminal(mut message_sender: impl Sink<ClientSessionMessage> + Unp
     }
 }
 
-async fn recv_terminal(
-    mut recver: FramedRecver<ServerSessionMessage>,
-) -> Result<i32, SessionError> {
-    while let Some(message) = recver.try_next().await.context(CloseWithSnafu)? {
+async fn recv_terminal(mut recver: FramedRecver<ServerSessionMessage>) -> Result<i32, Error> {
+    while let Some(message) = recver.try_next().await? {
         match message {
             ServerSessionMessage::Sequence(sequence) => {
                 // 不知为何往tokio::stdin写时会缺少一行输出，所以使用stdio
@@ -222,7 +221,7 @@ async fn recv_terminal(
         }
     }
     tracing::debug!(target: "session", "recv_terminal: Recv EOF before received exit code");
-    ClosedSessionSnafu.fail()
+    Err(io::Error::from(io::ErrorKind::UnexpectedEof).into())
 }
 
 impl super::Options {

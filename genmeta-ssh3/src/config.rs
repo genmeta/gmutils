@@ -16,7 +16,7 @@ pub enum Error {
     #[snafu(display("Missing authority in URI"))]
     MissingAuthority {},
 
-    #[snafu(display("Failed to read profile for `{id}`'"))]
+    #[snafu(display("Failed to read profile for `{id}`"))]
     ReadProfile { id: String, source: ReadConfigError },
 }
 
@@ -114,7 +114,7 @@ fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {
     };
     uri_parts.path_and_query = match uri_parts.path_and_query {
         root if root.as_ref().is_none_or(|path| path == "/") => {
-            tracing::warn!(target: "connect", "Path is empty, using `/ssh` as default");
+            tracing::debug!(target: "connect", "Path is empty, using `/ssh` as default");
             Some("/ssh".parse().unwrap())
         }
         path_and_query => path_and_query,

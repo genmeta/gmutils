@@ -62,7 +62,7 @@ pub async fn run(Options { domain, schema }: Options) -> Result<(), Error> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing_subscriber::filter::LevelFilter::WARN.into())
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
                 .from_env_lossy(),
         )
         .with_writer(std::io::stderr)
@@ -105,9 +105,11 @@ pub async fn run(Options { domain, schema }: Options) -> Result<(), Error> {
     println!("Name: {domain}:");
 
     while let Some((src, eps)) = results.next().await {
-        println!("{src}");
-        for endpoint_addr in eps.into_iter().collect::<HashSet<_>>() {
-            println!("Address: {endpoint_addr}");
+        if let Ok(eps) = eps {
+            println!("{src}");
+            for endpoint_addr in eps.into_iter().collect::<HashSet<_>>() {
+                println!("Address: {endpoint_addr}");
+            }
         }
     }
 

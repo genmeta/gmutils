@@ -10,12 +10,16 @@ bytes = { workspace = true }
 dashmap = { workspace = true }
 derive_more = { workspace = true, features = ["from"] }
 futures = { workspace = true }
+gm-quic = { workspace = true }
 h3 = { workspace = true }
 h3-shim = { workspace = true }
 pin-project-lite = { workspace = true }
 qbase = { workspace = true }
+qdns = { workspace = true }
 qtraversal = { workspace = true }
 serde = { workspace = true }
 serde_cbor = { workspace = true }
+snafu = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "io"] }
+tracing = { workspace = true }

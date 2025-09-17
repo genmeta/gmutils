@@ -35,7 +35,6 @@ qevent = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = 
 qinterface = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/v0.3.1" }
 qtraversal = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/v0.3.1" }
 
-
 # http
 http = "1"
 h3 = { version = "0.0.8", features = ["tracing"] }
@@ -94,6 +93,19 @@ genmeta-discover = { path = "genmeta-discover" } # discover
 genmeta-doctor = { path = "genmeta-doctor" }     # doctor
 genmeta-nat = { path = "genmeta-nat" }           # nat doctor
 genmeta-profile = { path = "genmeta-profile" }   # profile doctor
+
+# debug
+# [patch.'ssh://git@github.com/genmeta/gm-quic-traversal.git']
+# gm-quic = { path = "../gm-quic-traversal/gm-quic" }
+# h3-shim = { path = "../gm-quic-traversal/h3-shim" }
+# qbase = { path = "../gm-quic-traversal/qbase" }
+# qdns = { path = "../gm-quic-traversal/qdns" }
+# qevent = { path = "../gm-quic-traversal/qevent" }
+# qinterface = { path = "../gm-quic-traversal/qinterface" }
+# qtraversal = { path = "../gm-quic-traversal/qtraversal" }
+
+# [patch.'ssh://git@github.com/genmeta/gmdns.git']
+# gmdns = { path = "../gmdns" }
 
 [profile.release]
 opt-level = "z"

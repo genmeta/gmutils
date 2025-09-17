@@ -1,10 +1,10 @@
 use clap::Parser;
-use genmeta_profile::{Options, run};
-use snafu::Whatever;
+use genmeta_common::error::Whatever;
+use genmeta_profile::{Error, Options, run};
 
 #[tokio::main]
 #[snafu::report]
-async fn main() -> Result<(), Whatever> {
+async fn main() -> Result<(), Error> {
     run(Options::parse()).await.inspect_err(|error| {
         tracing::debug!(?error, "Exit with error");
     })

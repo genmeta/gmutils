@@ -6,6 +6,7 @@ edition = "2024"
 
 [dependencies]
 clap = { workspace = true }
+genmeta-common = { workspace = true }
 qtraversal = { workspace = true }
 qinterface = { workspace = true }
 snafu = { workspace = true }

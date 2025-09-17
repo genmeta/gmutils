@@ -1,6 +1,6 @@
 use clap::Parser;
+use genmeta_common::error::Whatever;
 use genmeta_nat::{Options, run};
-use snafu::Whatever;
 
 #[tokio::main]
 #[snafu::report]

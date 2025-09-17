@@ -88,9 +88,9 @@ pub async fn accept_tcp_forward(
         Ok(tcp_stream) => tcp_stream,
         Err(connect_error) => {
             _ = sender
-                .cancel(io::Error::other(format!(
+                .cancel(format!(
                     "Peer failed to connect to {host}:{port}: {connect_error:?}"
-                )))
+                ))
                 .await;
 
             return Err(connect_error).context(ConnectLocalSnafu {
@@ -209,19 +209,13 @@ impl RemoteForwardAcceptor {
     > {
         let Some(bind_addr) = self.forwards.get(&token) else {
             _ = sender
-                .cancel(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "Not allowed to forward to this endpoint",
-                ))
+                .cancel("Not allowed to forward to this endpoint")
                 .await;
             return Ok(None);
         };
         let Some(local) = local.or_else(|| bind_addr.value().clone()) else {
             _ = sender
-                .cancel(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "No target address provided(Internal error, this is a bug)",
-                ))
+                .cancel("No target address provided(Internal error, this is a bug)")
                 .await;
             return Ok(None);
         };

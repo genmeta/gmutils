@@ -1,5 +1,7 @@
 pub mod cbor_codec;
+pub mod connect;
 pub mod entry_guard;
+pub mod error;
 pub mod h3_stream;
 
 use std::{net::SocketAddr, sync::LazyLock};

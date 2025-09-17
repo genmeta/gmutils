@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use snafu::Report;
 pub use socks5_proto::Error;
 use socks5_proto::{Address, ProtocolError, Reply, Request, Response, handshake};
 use tokio::io::{self, AsyncRead, AsyncWrite};
@@ -19,7 +20,7 @@ pub async fn accept(
     let handshake_request = match handshake::Request::read_from(reader).await {
         Ok(handshake_request) => handshake_request,
         Err(error) => {
-            tracing::warn!(target: "socks", "Failed to parse handshake request: {error:?}");
+            tracing::debug!(target: "socks", "Failed to parse handshake request: {error:?}");
             return Err(error);
         }
     };
@@ -29,7 +30,7 @@ pub async fn accept(
             .write_to(writer)
             .await?;
     } else {
-        tracing::warn!(target: "socks", "No acceptable method, reject handshake request");
+        tracing::debug!(target: "socks", "No acceptable method, reject handshake request");
         handshake::Response::new(handshake::Method::UNACCEPTABLE)
             .write_to(writer)
             .await?;
@@ -45,7 +46,7 @@ pub async fn accept(
     let request = match Request::read_from(reader).await {
         Ok(request) => request,
         Err(error) => {
-            tracing::warn!(target: "socks", "Failed to parse request: {error:?}");
+            tracing::debug!(target: "socks", "Failed to parse request: {error:?}");
             Response::new(Reply::GeneralFailure, Address::unspecified())
                 .write_to(writer)
                 .await?;
@@ -74,7 +75,10 @@ pub async fn accept(
                         io::ErrorKind::TimedOut => Reply::NetworkUnreachable,
                         _ => Reply::GeneralFailure,
                     };
-                    tracing::warn!(target: "socks", "Failed to connect to {}: {error:?}", request.address);
+                    tracing::debug!(
+                        target: "socks", "Failed to connect to {}: {}",
+                        request.address, Report::from_error(&error)
+                    );
                     Response::new(reply, Address::unspecified())
                         .write_to(writer)
                         .await?;
@@ -92,7 +96,7 @@ pub async fn accept(
             Ok(())
         }
         socks5_proto::Command::Bind | socks5_proto::Command::Associate => {
-            tracing::warn!(target: "socks", "BIND and ASSOCIATE commands are not supported");
+            tracing::debug!(target: "socks", "BIND and ASSOCIATE commands are not supported");
             Response::new(Reply::CommandNotSupported, Address::unspecified())
                 .write_to(writer)
                 .await?;

@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use clap::Parser;
+use futures::StreamExt;
 use qdns::MdnsResolver;
-use snafu::{ResultExt, Whatever};
-use tokio_stream::StreamExt;
+use snafu::ResultExt;
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "discover", version, about)]
@@ -18,13 +18,13 @@ pub struct Options {
     domain: String,
 }
 
-type Error = Whatever;
+type Error = genmeta_common::error::Whatever;
 
 pub async fn run(options: Options) -> Result<(), Error> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing_subscriber::filter::LevelFilter::WARN.into())
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
                 .from_env_lossy(),
         )
         .with_writer(std::io::stderr)

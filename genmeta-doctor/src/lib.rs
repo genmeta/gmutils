@@ -1,4 +1,4 @@
-use snafu::Whatever;
+use genmeta_common::error::Whatever;
 
 #[derive(Debug, Clone, clap::Parser)]
 #[command(name = "doctor", version, about)]
@@ -8,9 +8,18 @@ pub enum Options {
     Profile(genmeta_profile::Options),
 }
 
-pub async fn run(options: Options) -> Result<(), Whatever> {
+#[derive(snafu::Snafu, Debug)]
+pub enum Error {
+    #[snafu(transparent)]
+    Whatever { source: Whatever },
+    #[snafu(transparent)]
+    Profile { source: genmeta_profile::Error },
+}
+
+pub async fn run(options: Options) -> Result<(), Error> {
     match options {
-        Options::Net(options) => genmeta_nat::run(options).await,
-        Options::Profile(options) => genmeta_profile::run(options).await,
-    }
+        Options::Net(options) => genmeta_nat::run(options).await?,
+        Options::Profile(options) => genmeta_profile::run(options).await?,
+    };
+    Ok(())
 }

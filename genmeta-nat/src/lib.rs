@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use clap::Parser;
 use qinterface::{QuicIoExt, factory::ProductQuicIO};
 use qtraversal::{iface::traversal_factory, nat::client::NatType};
-use snafu::{ResultExt, Whatever};
+use snafu::ResultExt;
 use trust_dns_resolver::TokioAsyncResolver;
 
 #[derive(Parser, Debug, Clone)]
@@ -21,7 +21,7 @@ pub struct Options {
     pub verbose: bool,
 }
 
-type Error = Whatever;
+type Error = genmeta_common::error::Whatever;
 
 pub async fn run(options: Options) -> Result<(), Error> {
     tracing_subscriber::fmt()
@@ -29,15 +29,17 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(if options.verbose {
-                    tracing_subscriber::filter::LevelFilter::INFO.into()
-                } else {
-                    tracing_subscriber::filter::LevelFilter::WARN.into()
-                })
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
                 .from_env_lossy(),
         )
         .with_writer(std::io::stderr)
         .init();
+
+    if options.verbose {
+        qtraversal::nat::client::VISUALIZE_NAT_DETECTION
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
     let servers = nslook_up(options.server.as_str(), options.bind.ip().is_ipv6() as u8).await?;
     let factory = traversal_factory(&servers);
     let iface = factory

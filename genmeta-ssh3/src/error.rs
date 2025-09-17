@@ -1,7 +1,10 @@
 use std::{io, net::SocketAddr};
 
 use snafu::prelude::*;
-use ssh3_proto::{messages::BindAddress, mux};
+use ssh3_proto::{
+    messages::{BindAddress, OpenChannel},
+    mux,
+};
 
 use crate::{auth, config, connect, session};
 
@@ -27,27 +30,37 @@ pub enum Error {
 
     // === Session Errors ===
     #[snafu(transparent)]
-    Session { source: session::SessionError },
+    Session { source: session::Error },
 
     // === Forward Errors ===
-    #[snafu(display("Failed to bind to local forward endpoint '{endpoint}'"))]
-    LocalForwardBind {
-        endpoint: BindAddress,
+    #[snafu(display(
+        "Failed to bind to local forward endpoint `{local}` to forward data to remote `{remote}`"
+    ))]
+    BindLocalForward {
+        local: BindAddress,
+        remote: BindAddress,
         source: io::Error,
     },
 
-    #[snafu(display("Failed to bind to dynamic forward endpoint '{endpoint}'"))]
-    DynamicForwardBind {
+    #[snafu(display(
+        "Failed to bind to dynamic forward endpoint `{endpoint}` to forward data to remote"
+    ))]
+    BindDynamicForward {
         endpoint: SocketAddr,
         source: io::Error,
     },
 
-    #[snafu(display("Failed to open forward channel"))]
-    ForwardChannelOpen {
+    #[snafu(display(
+        "Failed to open remote forward channel from remote `{remote}` to local `{}`",
+        local.as_ref().map_or("<dynamic address>".to_string(), |addr| addr.to_string())
+    ))]
+    OpenRemoteForwardChannel {
+        local: Option<BindAddress>,
+        remote: BindAddress,
         source: ssh3_proto::mux::ChannelError,
     },
 
     // === Protocol Errors ===
-    #[snafu(display("Unexpected message from server: {message}"))]
-    UnexpectedMessage { message: String },
+    #[snafu(display("Unexpected request `{request}` from server"))]
+    UnexpectedMessage { request: OpenChannel },
 }

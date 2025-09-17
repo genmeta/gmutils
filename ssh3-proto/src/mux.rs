@@ -1,5 +1,6 @@
 use std::{
     backtrace::Backtrace,
+    error::Error,
     fmt::Debug,
     marker::PhantomData,
     pin::Pin,
@@ -15,7 +16,7 @@ use dashmap::{DashMap, Entry};
 use derive_more::Display;
 use futures::{Sink, SinkExt, Stream, StreamExt, channel::mpsc};
 use serde::{Deserialize, Serialize};
-use snafu::{ResultExt, Snafu, ensure};
+use snafu::{Report, ResultExt, Snafu, ensure};
 use tokio::{io, time};
 use tokio_util::{
     codec,
@@ -87,15 +88,15 @@ impl Debug for Mux {
 #[derive(Debug, Snafu)]
 pub enum ChannelError {
     #[snafu(display("Peer has the same role with local when routing for {token}"))]
-    SameRole { token: Token, backtrace: Backtrace },
+    SameRole { token: Token },
     #[snafu(display("Channel {token} already be opened"))]
-    ChannelAlreadyOpen { token: Token, backtrace: Backtrace },
+    ChannelAlreadyOpen { token: Token },
     #[snafu(display("Channel {token} already be closed"))]
-    ChannelClosed { token: Token, backtrace: Backtrace },
-    #[snafu(display("Failed to send open message for {token}"))]
-    SendOpen { token: Token, backtrace: Backtrace },
+    ChannelClosed { token: Token },
+    #[snafu(display("Failed to send request message for {token}"))]
+    SendRequest { token: Token },
     #[snafu(display("Failed to send close message for {token}"))]
-    SendClose { token: Token, backtrace: Backtrace },
+    SendClose { token: Token },
 }
 
 #[derive(Debug, Snafu)]
@@ -106,7 +107,7 @@ pub enum ForwardError<Oe: snafu::Error + 'static> {
         backtrace: Backtrace,
     },
     #[snafu(display("Message stream closed"))]
-    StreamClosed { source: Oe, backtrace: Backtrace },
+    StreamClosed { source: Oe },
 }
 
 pub type Incomings<StE = io::Error> = mpsc::Receiver<Result<NewChannel, ForwardError<StE>>>;
@@ -116,7 +117,7 @@ impl Mux {
     where
         St: Stream<Item = Result<Message, StE>> + Send + Unpin + 'static,
         StE: snafu::Error + Send,
-        Si: Sink<Message, Error: Debug> + Send + Unpin + 'static,
+        Si: Sink<Message, Error: Error> + Send + Unpin + 'static,
     {
         let (message_sender, mut pending_messages) = mpsc::channel::<Message>(8);
         let mut headrbeat_sender = message_sender.clone();
@@ -152,7 +153,7 @@ impl Mux {
                 while let Some(message) = pending_messages.next().await {
                     tracing::trace!(target: "mux", ?message, "Send message");
                     if let Err(error) = sink.send(message).await {
-                        tracing::warn!(target: "mux", ?error, "Failed to send message");
+                        tracing::debug!(target: "mux", "Failed to send message: {}", Report::from_error(error));
                         return;
                     }
                 }
@@ -239,7 +240,7 @@ impl Mux {
                 if let Entry::Occupied(mut channel) = channel
                     && let Err(error) = channel.get_mut().send(item).await
                 {
-                    tracing::warn!(target: "mux", ?token, "Failed to forward error message to channel: {error:?}");
+                    tracing::debug!(target: "mux", ?token, "Failed to forward error message to channel: {}", Report::from_error(error));
                 }
                 Ok(None)
             }
@@ -247,7 +248,7 @@ impl Mux {
                 if let Some(mut channel) = self.channels.get(&token).map(|entry| entry.clone()) {
                     tracing::debug!(target: "mux", ?token, "Channel closed by peer");
                     if let Err(error) = channel.close().await {
-                        tracing::warn!(target: "mux", ?token, "Failed to close channel: {error:?}");
+                        tracing::debug!(target: "mux", ?token, "Failed to close channel: {}", Report::from_error(error));
                     }
                 }
                 Ok(None)
@@ -278,7 +279,7 @@ impl Mux {
 
         if message_sender.send(open).await.is_err() {
             // unknown reason
-            return SendOpenSnafu { token }.fail();
+            return SendRequestSnafu { token }.fail();
         };
 
         let recver = Recver {
@@ -293,11 +294,16 @@ impl Mux {
         };
         Ok((token, recver, sender))
     }
+
+    fn close(&self) {
+        self.message_sender.clone().close_channel();
+    }
 }
 
 impl Drop for Mux {
     fn drop(&mut self) {
         self.channels.clear();
+        self.close();
     }
 }
 
@@ -440,7 +446,7 @@ pin_project_lite::pin_project! {
 }
 
 impl<T> FramedSender<T> {
-    pub async fn cancel(&mut self, error: io::Error) -> Result<(), ChannelError> {
+    pub async fn cancel(&mut self, error: impl ToString) -> Result<(), ChannelError> {
         self.sender.cancel(error).await
     }
 }
