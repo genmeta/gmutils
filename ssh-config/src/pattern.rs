@@ -31,6 +31,7 @@ impl SinglePattern {
                 c => re.push(c),
             }
         }
+        re.push('$');
         let regex = Regex::new(&re).expect("Valid regex");
         Self {
             original,
@@ -68,8 +69,7 @@ mod tests {
         let pattern = SinglePattern::new("example".to_string());
         assert!(pattern.is_match("example"));
         assert!(!pattern.is_match("Example"));
-        // 注意：由于正则表达式只有 ^ 锚点，没有 $ 锚点，所以前缀匹配也会成功
-        assert!(pattern.is_match("example.com"));
+        assert!(!pattern.is_match("example.com"));
         assert!(!pattern.is_match("test-example"));
     }
 
@@ -118,8 +118,7 @@ mod tests {
     fn test_negative_exact_pattern() {
         let pattern = SinglePattern::new("!localhost".to_string());
         assert!(!pattern.is_match("localhost"));
-        // 由于只有 ^ 锚点，localhost.local 会匹配 localhost 前缀，所以被否定
-        assert!(!pattern.is_match("localhost.local"));
+        assert!(pattern.is_match("localhost.local"));
         assert!(pattern.is_match("my-localhost"));
         assert!(pattern.is_match("example.com"));
     }
@@ -161,8 +160,7 @@ mod tests {
     fn test_empty_pattern() {
         let pattern = SinglePattern::new("".to_string());
         assert!(pattern.is_match(""));
-        // 空模式生成 "^" 正则表达式，匹配任何字符串的开始
-        assert!(pattern.is_match("anything"));
+        assert!(!pattern.is_match("anything"));
     }
 
     #[test]
@@ -176,8 +174,6 @@ mod tests {
         assert!(question_pattern.is_match("a"));
         assert!(question_pattern.is_match("1"));
         assert!(!question_pattern.is_match(""));
-        // 由于只有 ^ 锚点，"ab" 匹配前缀 "a"，所以会成功
-        assert!(question_pattern.is_match("ab"));
     }
 
     #[test]

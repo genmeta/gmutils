@@ -23,7 +23,13 @@ pub struct Profile {
 }
 
 pub fn user_config_file_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|mut path| {
+    // dirs::config_dir().map(|mut path| {
+    //     path.push("genmeta");
+    //     path.push("profile");
+    //     path
+    // })
+    dirs::home_dir().map(|mut path| {
+        path.push(".config");
         path.push("genmeta");
         path.push("profile");
         path

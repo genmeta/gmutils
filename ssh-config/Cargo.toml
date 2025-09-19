@@ -11,7 +11,7 @@ derive_more = { workspace = true, features = [
     "deref",
     "deref_mut",
 ] }
-dirs = { workspace = true, optional = true }
+dirs = { workspace = true }
 genmeta-common = { workspace = true }
 http = { workspace = true, optional = true }
 peg = { workspace = true }
@@ -23,5 +23,5 @@ tokio = { workspace = true, features = ["fs"], optional = true }
 tracing = { workspace = true }
 
 [features]
-openssh = ["dep:dirs", "dep:http", "dep:rustls", "dep:tokio"]
-genmeta = ["dep:dirs", "dep:tokio"]
+openssh = ["dep:http", "dep:rustls", "dep:tokio"]
+genmeta = ["dep:tokio"]
