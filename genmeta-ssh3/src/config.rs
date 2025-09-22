@@ -36,7 +36,8 @@ pub struct Config {
     pub profile: Option<Profile>,
 }
 
-// Host Xxx > Host.XXX > Host.HostName xxx
+// cli参数 > 配置文件 优先级
+// 如-i id -l login_name优先级大于对应的Host的
 // HostName可以提供Uri的host部分
 impl super::Options {
     pub async fn config(&self) -> Result<Config, Error> {
@@ -44,8 +45,10 @@ impl super::Options {
             ssh_config::openssh::read_config(&self.uri.to_string()).await;
 
         for (message, error) in read_config_errors {
-            tracing::error!(target: "config", "{message}: {error}", );
+            tracing::error!(target: "config", "{message}: {}", snafu::Report::from_error(error));
         }
+
+        let id = self.id.as_ref().or(host.id.as_ref());
 
         // user: command line -> config file -> uri -> whoami
         let mut username = self.login_name.clone().or_else(|| host.user.clone());
@@ -69,7 +72,7 @@ impl super::Options {
 
         let uri = complete_uri(uri, &username)?;
 
-        let profile = match &self.id {
+        let profile = match id {
             Some(id) => Some(
                 ssh_config::genmeta::read_config(id, None)
                     .await
