@@ -31,6 +31,24 @@ package.commands = [
     "cp target/$target/debian/*.deb $debs/",
 ]
 
+[[package.metadata.genmeta-buildx.homebrew.formulae]]
+upload.remote = "ubuntu@download.genmeta.net:/data/wwwroot/homebrew"
+download.url = "https://download.genmeta.net/homebrew"
+build.apple = true
+build.intel = true
+
+copy-assets = ["cp $project/target/$target/release/genmeta $formula/"]
+
+content = """
+  def install
+    bin.install "genmeta"
+  end
+
+  test do
+    system "#{bin}/gmutils", "-V"
+  end
+"""
+
 # Package Metadata (Debian)
 [package.metadata.deb]
 name = "gmutils"
