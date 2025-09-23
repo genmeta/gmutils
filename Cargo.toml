@@ -26,14 +26,14 @@ rpassword = "7.3"
 whoami = "1.4"
 
 # genmeta
-gm-quic = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/v0.3.1" }
+gm-quic = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "main" }
 gmdns = { git = "ssh://git@github.com/genmeta/gmdns.git", branch = "main" }
-h3-shim = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/v0.3.1" }
-qbase = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/v0.3.1" }
-qdns = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/v0.3.1" }
-qevent = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/v0.3.1" }
-qinterface = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/v0.3.1" }
-qtraversal = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "feat/v0.3.1" }
+h3-shim = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "main" }
+qbase = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "main" }
+qdns = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "main" }
+qevent = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "main" }
+qinterface = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "main" }
+qtraversal = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "main" }
 
 # http
 http = "1"
