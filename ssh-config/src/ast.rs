@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, btree_map},
+    collections::{BTreeMap, BTreeSet, btree_map},
     fmt::Display,
     ops::Deref,
 };
@@ -182,24 +182,25 @@ peg::parser! {
     }
 }
 
-impl<'s> ConfigFile<'s> {
-    pub fn query(
-        &self,
-        matchers: &[IStr<&str>],
-        target: &str,
-        mut make_pattern: impl FnMut(&str) -> SinglePattern,
-    ) -> BTreeMap<IStr<&'s str>, (LineCol, Vec<PositionedToken<&'s str>>)> {
-        use std::collections::BTreeSet;
+pub type ConfigMap<'k, 'a> = BTreeMap<IStr<&'k str>, (LineCol, Vec<PositionedToken<&'a str>>)>;
 
+impl<'s> ConfigFile<'s> {
+    fn query_to(
+        &self,
+        map: &mut ConfigMap<'s, 's>,
+        matchers: &[IStr<&str>],
+        pattern: &str,
+        mut make_matcher: impl FnMut(&str) -> SinglePattern,
+    ) {
         let matchers = matchers.iter().collect::<BTreeSet<_>>();
-        let mut macthed = false;
-        let mut map = BTreeMap::new();
+        let mut macthed = true;
 
         for Pair { keyword, arguments } in self.pairs() {
             if matchers.contains(keyword.deref()) {
-                macthed = arguments
-                    .iter()
-                    .any(|pat| pat.split(',').any(|pat| make_pattern(pat).is_match(target)));
+                macthed = arguments.iter().any(|pat| {
+                    pat.split(',')
+                        .any(|pat| make_matcher(pat).is_match(pattern))
+                });
             }
 
             if !macthed {
@@ -213,7 +214,16 @@ impl<'s> ConfigFile<'s> {
                 ));
             }
         }
+    }
 
+    pub fn query(
+        &self,
+        matchers: &[IStr<&str>],
+        pattern: &str,
+        mut make_matcher: impl FnMut(&str) -> SinglePattern,
+    ) -> ConfigMap<'s, 's> {
+        let mut map = BTreeMap::new();
+        self.query_to(&mut map, matchers, pattern, &mut make_matcher);
         map
     }
 

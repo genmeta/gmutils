@@ -5,6 +5,8 @@ use peg::{error::ParseError, str::LineCol};
 #[derive(snafu::Snafu, Debug)]
 #[snafu(visibility(pub))]
 pub enum ParseConfigError {
+    #[snafu(transparent)]
+    LexConfig { source: ParseError<LineCol> },
     #[snafu(display("Too many values at {location}"))]
     TooManyArguments { location: LineCol },
     #[snafu(display("Failed to expand path at {location}"))]
@@ -18,11 +20,15 @@ pub enum ParseConfigError {
         path: PathBuf,
         source: std::io::Error,
     },
-    #[cfg(feature = "openssh")]
     #[snafu(display("Cannot parse URI at {location}"))]
     ParseUri {
         location: LineCol,
         source: <http::Uri as std::str::FromStr>::Err,
+    },
+    #[snafu(display("Cannot parse Integer at {location}"))]
+    ParseInteger {
+        location: LineCol,
+        source: std::num::ParseIntError,
     },
     #[snafu(display("Missing parameter `{keyword}` for `{pattern}`"))]
     MissingParameter {
@@ -39,13 +45,13 @@ pub enum ReadConfigError {
     #[snafu(display("Cannot read config file at `{}`", path.display()))]
     ReadConfigFile { path: PathBuf, source: io::Error },
     #[snafu(display("Cannot parse config file `{}`", path.display()))]
-    LexConfig {
+    ParseConfigFile {
         path: PathBuf,
-        source: ParseError<LineCol>,
+        source: ParseConfigError,
     },
-    #[snafu(display("Cannot parse config file `{}`", path.display()))]
-    ParseConfig {
-        path: PathBuf,
+    #[snafu(display("Cannot parse config content `{content}`"))]
+    ParseConfigContent {
+        content: String,
         source: ParseConfigError,
     },
 }

@@ -1,21 +1,31 @@
+use std::time::Duration;
+
 use genmeta_common::id::expand_id;
 use http::Uri;
 use snafu::{IntoError, ResultExt, Snafu};
-use ssh_config::{error::ReadConfigError, genmeta::Profile};
+use ssh_config::{error::ReadConfigError, genmeta};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Failed to parse authority '{authority}' as URI authority"))]
+    #[snafu(display("Failed to parse URI `{uri}`"))]
+    UriParse {
+        uri: String,
+        source: http::uri::InvalidUri,
+    },
+    #[snafu(display("Failed to parse `{authority}` as URI authority"))]
     AuthorityParse {
         authority: String,
         source: http::uri::InvalidUri,
     },
 
-    #[snafu(display("Unsupported URI scheme '{scheme}', only 'ssh3' is supported"))]
+    #[snafu(display("Unsupported URI scheme `{scheme}`, only `ssh3` is supported"))]
     UnsupportedScheme { scheme: String },
 
     #[snafu(display("Missing authority in URI"))]
     MissingAuthority {},
+
+    #[snafu(display("Failed to read ssh configuration"))]
+    ReadConfig { source: ReadConfigError },
 
     #[snafu(display("Failed to read profile for `{id}`"))]
     ReadProfile { id: String, source: ReadConfigError },
@@ -33,7 +43,8 @@ pub struct Config {
     pub username: String,
     pub password: Option<String>,
     pub uri: Uri,
-    pub profile: Option<Profile>,
+    pub profile: Option<genmeta::Profile>,
+    pub connect_timeout: Duration,
 }
 
 // cli参数 > 配置文件 优先级
@@ -41,23 +52,25 @@ pub struct Config {
 // HostName可以提供Uri的host部分
 impl super::Options {
     pub async fn config(&self) -> Result<Config, Error> {
-        let (host, read_config_errors) =
-            ssh_config::openssh::read_config(&self.uri.to_string()).await;
+        let (ssh_config, read_config_errors) =
+            ssh_config::openssh::read_config(&self.options, &self.host)
+                .await
+                .context(ReadConfigSnafu {})?;
 
         for (message, error) in read_config_errors {
             tracing::error!(target: "config", "{message}: {}", snafu::Report::from_error(error));
         }
 
-        let id = self.id.as_ref().or(host.id.as_ref());
-
         // user: command line -> config file -> uri -> whoami
-        let mut username = self.login_name.clone().or_else(|| host.user.clone());
+        let mut username = self.login_name.clone().or_else(|| ssh_config.user.clone());
         let mut password = None;
 
         // uri: ssh_config(if present) -> command line
-        let uri = match host.hostname {
-            Some(uri) => uri,
-            None => self.uri.clone(),
+        let uri = match &ssh_config.hostname {
+            Some(uri) => uri.clone(),
+            None => self.host.parse().context(UriParseSnafu {
+                uri: self.host.clone(),
+            })?,
         };
 
         if username.is_none() {
@@ -67,11 +80,15 @@ impl super::Options {
 
         let (username, password) = match username {
             Some(username) => (username, password),
-            None => (whoami::username(), None),
+            None => {
+                tracing::debug!(target: "config", "User not found in URI, use current user");
+                (whoami::username(), None)
+            }
         };
 
         let uri = complete_uri(uri, &username)?;
 
+        let id = self.id.as_ref().or(ssh_config.id.as_ref());
         let profile = match id {
             Some(id) => Some(
                 ssh_config::genmeta::read_config(id, None)
@@ -81,11 +98,14 @@ impl super::Options {
             None => None,
         };
 
+        let connect_timeout = ssh_config.connect_timeout.unwrap_or(Duration::MAX);
+
         Ok(Config {
             username,
             password,
             uri,
             profile,
+            connect_timeout,
         })
     }
 }

@@ -17,6 +17,8 @@ use ssh3_proto::v0::mux;
 use tokio::{io, time};
 use tokio_util::{codec, io::StreamReader};
 
+use crate::config::Config;
+
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Failed to create DNS resolver"))]
@@ -30,8 +32,11 @@ pub enum Error {
     DnsLookup { server: String, source: DnsErrors },
     #[snafu(transparent)]
     BindInterface { source: BindInterfaceError },
-    #[snafu(display("Connection timed out after {}ms for server `{server}`", duration.as_millis()))]
-    Timedout { server: String, duration: Duration },
+    #[snafu(display("Connection timed out after {}ms for server `{server}`", connect_timeout.as_millis()))]
+    Timedout {
+        server: String,
+        connect_timeout: Duration,
+    },
     #[snafu(transparent)]
     Quic { source: gm_quic::Error },
     #[snafu(display("Failed to initialize H3 connection"))]
@@ -52,8 +57,7 @@ pub type H3Connection = h3::client::Connection<h3_shim::QuicConnection, Bytes>;
 pub type H3Client = h3::client::SendRequest<h3_shim::OpenStreams, Bytes>;
 
 pub async fn connect(
-    uri: &Uri,
-    profile: Option<&Profile>,
+    config: &Config,
 ) -> Result<
     (
         QuicConnection,
@@ -75,9 +79,9 @@ pub async fn connect(
         ))
         .with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER)));
 
-    let server_name = uri
-        .host()
-        .context(MissingServerNameSnafu { uri: uri.clone() })?;
+    let server_name = config.uri.host().context(MissingServerNameSnafu {
+        uri: config.uri.clone(),
+    })?;
 
     let mut dns_lookup = lookup(&resolvers, server_name)
         .await
@@ -94,7 +98,7 @@ pub async fn connect(
         let factory = traversal_factory(&AGENTS);
         let mut parameters = client_parameters();
 
-        match profile {
+        match &config.profile {
             Some(Profile { id, key, cert }) => {
                 parameters
                     .set(ParameterId::ClientName, id.to_owned())
@@ -130,8 +134,7 @@ pub async fn connect(
             }
         });
         let connect = h3::client::new(h3_shim::QuicConnection::new(quic_connection.clone()));
-        let duration = Duration::from_secs(10);
-        let (h3_conn, h3_client) = time::timeout(duration, connect)
+        let (h3_conn, h3_client) = time::timeout(config.connect_timeout, connect)
             .await
             .map_err(|_| {
                 if let Err(quic_error) = quic_connection.validate() {
@@ -139,7 +142,7 @@ pub async fn connect(
                 }
                 _ = quic_connection.close("connect timeout", 0);
                 TimedoutSnafu::build(TimedoutSnafu {
-                    duration,
+                    connect_timeout: config.connect_timeout,
                     server: server_name.to_string(),
                 })
             })?
@@ -149,7 +152,7 @@ pub async fn connect(
 
     let request = http::Request::builder()
         .method(ssh3_proto::v0::METHOD.clone())
-        .uri(uri)
+        .uri(config.uri.clone())
         .body(())
         .unwrap();
     tracing::debug!(target: "connect", ?request);

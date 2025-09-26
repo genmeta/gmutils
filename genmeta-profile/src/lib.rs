@@ -47,7 +47,9 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let data = fs::read_to_string(path)
         .await
         .context(ReadConfigFileSnafu { path })?;
-    let config = ConfigFile::new(&data).context(LexConfigSnafu { path })?;
+    let config = ConfigFile::new(&data)
+        .map_err(ParseConfigError::from)
+        .context(ParseConfigFileSnafu { path })?;
 
     match options.id {
         Some(ref id) => {
@@ -57,11 +59,11 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
             let (key_path, key) = parse_key(id, map.get(&keywords::KEY))
                 .await
-                .context(ParseConfigSnafu { path })?;
+                .context(ParseConfigFileSnafu { path })?;
 
             let (cert_path, cert) = parse_cert(id, map.get(&keywords::CERT))
                 .await
-                .context(ParseConfigSnafu { path })?;
+                .context(ParseConfigFileSnafu { path })?;
             // 暂时不支持验证证书/密钥有效性
             println!("Profile `{id}` configured in `{}`:", path.display());
             // Print in hex format
@@ -100,7 +102,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
                         .fail()?;
                     }
                 }
-                .context(ParseConfigSnafu { path })?;
+                .context(ParseConfigFileSnafu { path })?;
             }
             println!("Your profile configuration looks OK!");
             Ok(())

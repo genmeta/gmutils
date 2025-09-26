@@ -13,7 +13,6 @@ use error::*;
 use forward::*;
 use futures::{FutureExt, StreamExt};
 use genmeta_common::id::ClientName;
-use http::Uri;
 use snafu::{Report, ResultExt};
 use ssh3_proto::{
     listener, messages,
@@ -70,7 +69,7 @@ SOCKS client.";
 #[command(version, about)]
 pub struct Options {
     #[arg(value_name = "HOST/URI", long_help = URI_LONG_HELP)]
-    uri: Uri,
+    host: String,
 
     #[arg(
         short = 'o',
@@ -164,7 +163,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     };
 
     let (quic_conn, mut h3_conn, _h3_client, mux, mut incomings) =
-        connect::connect(&config.uri, config.profile.as_ref()).await?;
+        connect::connect(&config).await?;
 
     let remote_forwarders = Arc::new(forward::RemoteForwardAcceptor::new(mux.clone()));
     let handle_request = async |NewChannel {

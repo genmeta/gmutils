@@ -11,7 +11,7 @@ use tokio::fs;
 use crate::{
     ast::{ConfigFile, IStr, Pair, PositionedToken},
     error::*,
-    path::expand_path,
+    parse::single_path_parser,
     pattern::SinglePattern,
 };
 
@@ -45,56 +45,27 @@ pub mod keywords {
     pub const CERT: IStr<&str> = IStr::new("cert");
 }
 
-#[allow(clippy::type_complexity)]
-pub fn path_argument_parser<'c, A: AsRef<[PositionedToken<&'c str>]>>(
-    keyword: IStr<&'static str>,
-) -> impl AsyncFn(&str, Option<&(LineCol, A)>) -> Result<(String, Vec<u8>), ParseConfigError> {
-    async move |pattern, arguments: Option<&(LineCol, A)>| match arguments
-        .map(|(loc, args)| (loc, args.as_ref()))
-    {
-        Some((&location, [argument])) => {
-            let path = expand_path(argument.deref())
-                .context(ExpandAssetPathSnafu { location })?
-                .to_string();
-            let data = fs::read(&path).await.context(ReadAssetFileSnafu {
-                location,
-                path: &path,
-            })?;
-            Ok((path, data))
-        }
-        Some((&loc, ..)) => TooManyArgumentsSnafu { location: loc }.fail(),
-        None => MissingParameterSnafu { pattern, keyword }.fail(),
-    }
-}
-
 pub async fn parse_key(
     id: &str,
     arguments: Option<&(LineCol, impl AsRef<[PositionedToken<&str>]>)>,
 ) -> Result<(impl AsRef<Path>, Vec<u8>), ParseConfigError> {
-    path_argument_parser(keywords::KEY)(id, arguments).await
+    single_path_parser(keywords::KEY)(id, arguments).await
 }
 
 pub async fn parse_cert(
     id: &str,
     arguments: Option<&(LineCol, impl AsRef<[PositionedToken<&str>]>)>,
 ) -> Result<(impl AsRef<Path>, Vec<u8>), ParseConfigError> {
-    path_argument_parser(keywords::CERT)(id, arguments).await
+    single_path_parser(keywords::CERT)(id, arguments).await
 }
 
-async fn parse_config(id: &str, path: &Path, data: String) -> Result<Profile, ReadConfigError> {
-    let config = ConfigFile::new(&data).context(LexConfigSnafu { path })?;
-
+pub async fn parse_config(id: &str, config: String) -> Result<Profile, ParseConfigError> {
+    let config = ConfigFile::new(&config)?;
     let map = config.query(keywords::MATCHERS, id, |id| {
         SinglePattern::new(expand_id(id).to_string())
     });
-
-    let (_, key) = parse_key(id, map.get(&keywords::KEY))
-        .await
-        .context(ParseConfigSnafu { path })?;
-
-    let (_, cert) = parse_cert(id, map.get(&keywords::CERT))
-        .await
-        .context(ParseConfigSnafu { path })?;
+    let (_, key) = parse_key(id, map.get(&keywords::KEY)).await?;
+    let (_, cert) = parse_cert(id, map.get(&keywords::CERT)).await?;
 
     Ok(Profile {
         id: id.to_string(),
@@ -114,7 +85,9 @@ pub async fn read_config(id: &str, path: Option<&Path>) -> Result<Profile, ReadC
     let data = fs::read_to_string(path)
         .await
         .context(ReadConfigFileSnafu { path })?;
-    parse_config(id, path, data).await
+    parse_config(id, data)
+        .await
+        .context(ParseConfigFileSnafu { path })
 }
 
 pub async fn check_config(path: Option<&Path>) -> Result<(), CheckConfigError> {
@@ -128,7 +101,9 @@ pub async fn check_config(path: Option<&Path>) -> Result<(), CheckConfigError> {
     let data = fs::read_to_string(path)
         .await
         .context(ReadConfigFileSnafu { path })?;
-    let config = ConfigFile::new(&data).context(LexConfigSnafu { path })?;
+    let config = ConfigFile::new(&data)
+        .map_err(ParseConfigError::from)
+        .context(ParseConfigFileSnafu { path })?;
 
     for Pair { keyword, arguments } in config.pairs() {
         let location = config.locate(keyword);
@@ -150,7 +125,7 @@ pub async fn check_config(path: Option<&Path>) -> Result<(), CheckConfigError> {
                 .fail();
             }
         }
-        .context(ParseConfigSnafu { path })?;
+        .context(ParseConfigFileSnafu { path })?;
     }
 
     Ok(())
