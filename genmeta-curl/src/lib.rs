@@ -28,63 +28,58 @@ pub struct Options {
     uri: Uri,
 
     /// HTTP POST data
-    #[arg(short, long, help = "HTTP POST data", conflicts_with("upload_file"))]
+    #[arg(short, long, conflicts_with("upload_file"))]
     data: Option<String>,
 
-    /// Upload file
-    #[arg(
-        short = 'T',
-        long,
-        help = "Transfer local FILE to destination",
-        conflicts_with("data")
-    )]
+    /// Transfer local FILE to destination
+    #[arg(short = 'T', long, conflicts_with("data"))]
     upload_file: Option<PathBuf>,
 
-    /// Output file
-    #[arg(short, long, help = "Write to file instead of stdout")]
+    /// Write to file instead of stdout
+    #[arg(short, long)]
     output: Option<PathBuf>,
 
-    /// HTTP Method
-    #[arg(short = 'X', long, help = "Specify request method to use")]
+    /// Specify request method to use
+    #[arg(short = 'X', long)]
     request: Option<Method>,
     //
     // /// Follow redirects
     // #[arg(short = 'L', long, help = "Follow redirects")]
     // location: bool,
     //
-    /// Custom headers
-    #[arg(short = 'H', long, help = "Pass custom header(s) to server", value_parser = parse_header)]
+    /// Pass custom header(s) to server
+    #[arg(short = 'H', long, value_parser = parse_header)]
     header: Vec<(String, String)>,
-
-    /// User agent
+    //
+    // /// User agent
     // #[arg(
     //     short = 'A',
     //     long = "user-agent",
     //     help = "User Agent to send to server"
     // )]
     // user_agent: Option<String>,
-
-    /// Basic auth
+    //
+    // /// Basic auth
     // #[arg(
     //     short = 'u',
     //     long = "user",
     //     help = "Server user and password (user:password)"
     // )]
     // user: Option<String>,
-
+    //
     /// Client identity
-    #[arg(short = 'i', long, value_name = "client_identity")]
+    #[arg(long, value_name = "client_identity")]
     id: Option<ClientName>,
 
-    /// Connection timeout
-    #[arg(long, help = "Maximum time allowed for connection in seconds")]
+    /// Maximum time allowed for connection in seconds
+    #[arg(long)]
     connect_timeout: Option<u64>,
     // /// Request timeout
     // #[arg(long, help = "Maximum time allowed for the transfer in seconds")]
     // max_time: Option<u64>,
     //
-    /// Verbose output
-    #[arg(short, long, help = "Make the operation more talkative")]
+    /// Make the operation more talkative
+    #[arg(short, long)]
     verbose: bool,
     //
     // /// Silent mode
@@ -179,9 +174,7 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
 
         let factory = traversal_factory(&AGENTS);
 
-        let mut parameters = client_parameters(Duration::from_secs(
-            options.connect_timeout.unwrap_or_default(),
-        ));
+        let mut parameters = gm_quic::handy::client_parameters();
 
         match profile {
             Some(Profile { id, key, cert }) => {
@@ -221,7 +214,10 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
             }
         });
         let connect = h3::client::new(h3_shim::QuicConnection::new(quic_connection.clone()));
-        let (h3_conn, h3_client) = time::timeout(Duration::from_secs(10), connect)
+        let connect_timeout = options
+            .connect_timeout
+            .map_or(Duration::MAX, Duration::from_secs);
+        let (h3_conn, h3_client) = time::timeout(connect_timeout, connect)
             .await
             .map_err(|_| {
                 if let Err(error) = quic_connection
@@ -370,10 +366,4 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
     tokio::try_join!(send_request_body, receive_response)?;
 
     Ok(())
-}
-
-fn client_parameters(timeout: Duration) -> gm_quic::ClientParameters {
-    let mut params = gm_quic::handy::client_parameters();
-    _ = params.set(gm_quic::ParameterId::MaxIdleTimeout, timeout);
-    params
 }
