@@ -3,15 +3,18 @@ use std::{ops::Deref, path::PathBuf};
 use clap::Parser;
 use genmeta_common::{
     error::Whatever,
-    id::{ClientName, expand_id},
+    id::{
+        ClientName,
+        config::{
+            ast::{ConfigFile, Pair},
+            error::*,
+            pattern::SinglePattern,
+            *,
+        },
+        expand_id,
+    },
 };
 use snafu::{OptionExt, ResultExt};
-use ssh_config::{
-    ast::{ConfigFile, Pair},
-    error::*,
-    genmeta::*,
-    pattern::SinglePattern,
-};
 use tokio::fs;
 
 #[derive(Parser, Debug, Clone)]

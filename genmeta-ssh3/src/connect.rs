@@ -4,18 +4,17 @@ use bytes::Bytes;
 use futures::StreamExt;
 use genmeta_common::{
     connect::{DnsErrors, lookup},
-    h3_stream::H3Stream,
+    h3_stream::{H3Sink, H3Stream},
     *,
 };
+use genmeta_ssh3_client as ssh3;
 use gm_quic::{BindInterfaceError, ParameterId, ToCertificate, handy::client_parameters};
 use http::Uri;
 use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
 use qtraversal::iface::traversal_factory;
 use snafu::prelude::*;
-use ssh_config::genmeta::Profile;
-use ssh3_proto::v0::mux;
 use tokio::{io, time};
-use tokio_util::{codec, io::StreamReader};
+use tokio_util::io::StreamReader;
 
 use crate::config::Config;
 
@@ -63,8 +62,9 @@ pub async fn connect(
         QuicConnection,
         H3Connection,
         H3Client,
-        Arc<mux::Mux>,
-        mux::Incomings,
+        StreamReader<H3Stream, Bytes>,
+        H3Sink, // Arc<mux::Mux>,
+                // mux::Incomings,
     ),
     Error,
 > {
@@ -99,7 +99,7 @@ pub async fn connect(
         let mut parameters = client_parameters();
 
         match &config.profile {
-            Some(Profile { id, key, cert }) => {
+            Some(id::config::Profile { id, key, cert }) => {
                 parameters
                     .set(ParameterId::ClientName, id.to_owned())
                     .unwrap();
@@ -151,7 +151,7 @@ pub async fn connect(
     };
 
     let request = http::Request::builder()
-        .method(ssh3_proto::v0::METHOD.clone())
+        .method(ssh3::proto::v0::METHOD.clone())
         .uri(config.uri.clone())
         .body(())
         .unwrap();
@@ -173,17 +173,11 @@ pub async fn connect(
     );
 
     let (sender, recver) = stream.split();
-    let (mux, incomings) = mux::Mux::new(
-        mux::Role::Client,
-        codec::FramedRead::new(
-            StreamReader::new(H3Stream::new(recver)),
-            cbor_codec::CborDecoder::default(),
-        ),
-        codec::FramedWrite::new(
-            h3_stream::H3Sink::new(sender),
-            cbor_codec::CborEncoder::default(),
-        ),
-    );
-
-    Ok((quic_conn, h3_conn, h3_client, mux, incomings))
+    Ok((
+        quic_conn,
+        h3_conn,
+        h3_client,
+        StreamReader::new(H3Stream::new(recver)),
+        h3_stream::H3Sink::new(sender),
+    ))
 }

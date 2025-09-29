@@ -14,7 +14,6 @@ use http::{Method, Request, Uri};
 use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
 use qtraversal::iface::traversal_factory;
 use snafu::{FromString, OptionExt, ResultExt, whatever};
-use ssh_config::genmeta::Profile;
 use tokio::{
     fs,
     io::{self, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -161,7 +160,7 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
 
     let profile = match &options.id {
         Some(id) => Some(
-            ssh_config::genmeta::read_config(id, None)
+            genmeta_common::id::config::read_config(id, None)
                 .await
                 .whatever_context(format!("Failed to read profile for `{id}`"))?,
         ),
@@ -177,7 +176,7 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
         let mut parameters = gm_quic::handy::client_parameters();
 
         match profile {
-            Some(Profile { id, key, cert }) => {
+            Some(genmeta_common::id::config::Profile { id, key, cert }) => {
                 parameters
                     .set(ParameterId::ClientName, id.to_owned())
                     .unwrap();

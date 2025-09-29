@@ -1,8 +1,10 @@
-pub mod cbor_codec;
+#[cfg(feature = "connect")]
 pub mod connect;
-pub mod entry_guard;
+#[cfg(feature = "error")]
 pub mod error;
+#[cfg(feature = "h3_stream")]
 pub mod h3_stream;
+#[cfg(feature = "id")]
 pub mod id;
 
 use std::{net::SocketAddr, sync::LazyLock};

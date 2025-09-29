@@ -520,7 +520,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.1",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -612,7 +612,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.1",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -754,32 +754,27 @@ dependencies = [
  "genmeta-doctor",
  "genmeta-nslookup",
  "genmeta-ssh3",
- "http",
  "snafu",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
 name = "genmeta-common"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "bytes",
  "dashmap",
  "derive_more",
+ "dirs",
  "futures",
  "gm-quic",
  "h3",
  "h3-shim",
- "pin-project-lite",
- "qbase",
+ "peg",
  "qdns",
- "qtraversal",
- "serde",
- "serde_cbor",
  "snafu",
+ "ssh-config",
  "tokio",
  "tokio-util",
  "tracing",
@@ -801,7 +796,6 @@ dependencies = [
  "qtraversal",
  "rustls",
  "snafu",
- "ssh-config",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -856,12 +850,10 @@ dependencies = [
  "clap",
  "futures",
  "genmeta-common",
- "gmdns",
  "qbase",
  "qdns",
  "snafu",
  "tokio",
- "tokio-stream",
  "tracing",
  "tracing-subscriber",
 ]
@@ -873,7 +865,6 @@ dependencies = [
  "clap",
  "genmeta-common",
  "snafu",
- "ssh-config",
  "tokio",
  "tracing",
 ]
@@ -882,33 +873,64 @@ dependencies = [
 name = "genmeta-ssh3"
 version = "0.4.1"
 dependencies = [
- "base64",
  "bytes",
  "clap",
- "crossterm",
- "dashmap",
  "futures",
  "genmeta-common",
+ "genmeta-ssh3-client",
  "gm-quic",
  "h3",
  "h3-shim",
  "http",
- "peg",
  "qdns",
  "qtraversal",
- "regex",
- "rpassword",
  "rustls",
- "serde",
- "serde_cbor",
  "snafu",
  "ssh-config",
- "ssh3-proto",
  "tokio",
  "tokio-util",
  "tracing",
  "tracing-subscriber",
  "whoami",
+]
+
+[[package]]
+name = "genmeta-ssh3-client"
+version = "0.3.0"
+source = "git+ssh://git@github.com/genmeta/genmeta-ssh3.git#710fcb11b854dc5591ca38f8413ff846f6035b7a"
+dependencies = [
+ "bytes",
+ "crossterm",
+ "futures",
+ "genmeta-ssh3-proto",
+ "peg",
+ "rpassword",
+ "snafu",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "genmeta-ssh3-proto"
+version = "0.3.0"
+source = "git+ssh://git@github.com/genmeta/genmeta-ssh3.git#710fcb11b854dc5591ca38f8413ff846f6035b7a"
+dependencies = [
+ "bytes",
+ "dashmap",
+ "derive_more",
+ "either",
+ "futures",
+ "http",
+ "pin-project-lite",
+ "serde",
+ "serde_cbor",
+ "snafu",
+ "socket2 0.5.10",
+ "socks5-proto",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -2609,7 +2631,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.61.1",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2936,41 +2958,17 @@ dependencies = [
 [[package]]
 name = "ssh-config"
 version = "0.1.0"
+source = "git+ssh://git@github.com/genmeta/genmeta-ssh3.git#710fcb11b854dc5591ca38f8413ff846f6035b7a"
 dependencies = [
  "derive_more",
  "dirs",
  "either",
- "genmeta-common",
  "http",
  "peg",
  "regex",
  "regex-syntax",
- "rustls",
  "snafu",
  "tokio",
- "tracing",
-]
-
-[[package]]
-name = "ssh3-proto"
-version = "0.2.0"
-dependencies = [
- "bytes",
- "dashmap",
- "derive_more",
- "either",
- "futures",
- "genmeta-common",
- "http",
- "pin-project-lite",
- "serde",
- "serde_cbor",
- "snafu",
- "socket2 0.5.10",
- "socks5-proto",
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]
@@ -3771,15 +3769,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2f500e4d28234f72040990ec9d39e3a6b950f9f22d3dba18416c35882612bcb"
 dependencies = [
  "windows-targets 0.53.4",
-]
-
-[[package]]
-name = "windows-sys"
-version = "0.61.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f109e41dd4a3c848907eb83d5a42ea98b3769495597450cf6d153507b166f0f"
-dependencies = [
- "windows-link 0.2.0",
 ]
 
 [[package]]

@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use genmeta_common::id::expand_id;
+use genmeta_common::id;
 use http::Uri;
-use snafu::{IntoError, ResultExt, Snafu};
-use ssh_config::{error::ReadConfigError, genmeta};
+use snafu::{ResultExt, Snafu};
+use ssh_config::error::ReadConfigError;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -31,19 +31,12 @@ pub enum Error {
     ReadProfile { id: String, source: ReadConfigError },
 }
 
-// 为主 Error 提供 From 转换
-impl From<Error> for crate::error::Error {
-    fn from(err: Error) -> Self {
-        crate::error::ConfigSnafu {}.into_error(err)
-    }
-}
-
 #[derive(Debug)]
 pub struct Config {
     pub username: String,
     pub password: Option<String>,
     pub uri: Uri,
-    pub profile: Option<genmeta::Profile>,
+    pub profile: Option<id::config::Profile>,
     pub connect_timeout: Duration,
 }
 
@@ -88,10 +81,12 @@ impl super::Options {
 
         let uri = complete_uri(uri, &username)?;
 
-        let id = self.id.as_ref().or(ssh_config.id.as_ref());
+        let ssh_config_id = ssh_config.id.as_ref().map(|id| id::ClientName::new(id));
+        let id = self.id.as_ref().or(ssh_config_id.as_ref());
+
         let profile = match id {
             Some(id) => Some(
-                ssh_config::genmeta::read_config(id, None)
+                id::config::read_config(id, None)
                     .await
                     .context(ReadProfileSnafu { id })?,
             ),
@@ -160,7 +155,7 @@ fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {
 
     uri_parts.authority = match uri_parts.authority {
         Some(authority) => {
-            let host = expand_id(authority.host());
+            let host = id::expand_id(authority.host());
             Some(
                 host.parse()
                     .context(AuthorityParseSnafu { authority: host })?,

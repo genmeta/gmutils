@@ -6,7 +6,7 @@ edition = "2024"
 
 [dependencies]
 clap = { workspace = true }
-genmeta-common = { workspace = true }
+genmeta-common = { workspace = true, features = ["error"] }
 genmeta-nat = { workspace = true }
 genmeta-profile = { workspace = true }
 snafu = { workspace = true }

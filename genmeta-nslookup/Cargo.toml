@@ -5,13 +5,11 @@ version = "0.1.3"
 edition = "2024"
 
 [dependencies]
-tokio-stream = "0.1.17"
 clap = { workspace = true }
 futures = { workspace = true }
-genmeta-common = { workspace = true }
-qdns = { workspace = true }
+genmeta-common = { workspace = true, features = ["connect", "id"] }
 qbase = { workspace = true }
-gmdns = { workspace = true }
+qdns = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

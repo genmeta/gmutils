@@ -3,17 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use genmeta_common::id::expand_id;
-use peg::str::LineCol;
-use snafu::{OptionExt, ResultExt};
-use tokio::fs;
-
-use crate::{
-    ast::{ConfigFile, IStr, Pair, PositionedToken},
-    error::*,
-    parse::single_path_parser,
-    pattern::SinglePattern,
-};
+pub use ssh_config::*;
 
 #[derive(Debug, Clone)]
 pub struct Profile {
@@ -21,6 +11,14 @@ pub struct Profile {
     pub key: Vec<u8>,
     pub cert: Vec<u8>,
 }
+
+use ast::{ConfigFile, IStr, Pair, PositionedToken};
+use error::*;
+use parse::single_path_parser;
+use pattern::SinglePattern;
+use peg::str::LineCol;
+use snafu::{OptionExt, ResultExt};
+use tokio::fs;
 
 pub fn user_config_file_path() -> Option<PathBuf> {
     // dirs::config_dir().map(|mut path| {
@@ -62,7 +60,7 @@ pub async fn parse_cert(
 pub async fn parse_config(id: &str, config: String) -> Result<Profile, ParseConfigError> {
     let config = ConfigFile::new(&config)?;
     let map = config.query(keywords::MATCHERS, id, |id| {
-        SinglePattern::new(expand_id(id).to_string())
+        SinglePattern::new(super::expand_id(id).to_string())
     });
     let (_, key) = parse_key(id, map.get(&keywords::KEY)).await?;
     let (_, cert) = parse_cert(id, map.get(&keywords::CERT)).await?;

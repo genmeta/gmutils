@@ -6,6 +6,8 @@ use std::{
     str::FromStr,
 };
 
+pub mod config;
+
 pub const SUFFIX: &str = ".genmeta.net";
 
 pub fn expand_id(name: &str) -> Cow<'_, str> {
@@ -17,6 +19,14 @@ pub fn expand_id(name: &str) -> Cow<'_, str> {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ClientName(String);
+
+impl ClientName {
+    pub fn new(s: &str) -> Self {
+        match s.parse() {
+            Ok(clientname) => clientname,
+        }
+    }
+}
 
 impl From<&ClientName> for String {
     fn from(name: &ClientName) -> Self {
