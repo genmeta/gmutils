@@ -6,12 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [0.4.1] - 2025-9-26
+## [0.4.1] - 2025-9-30
 
 ### Changed
 - 使用genmeta-buildx构建系统自动打包
 - genmeta-ssh3和genmeta-curl支持connect timeout参数
 - genmeta-ssh3解析命令行-o选项，优先级高于配置文件
+- genmeta-ssh3协议更新（客户端传递环境变量，重命名）
+- ssh3相关代码移动到单独仓库
 - 其他诸多琐碎问题...
 
 ### Components
