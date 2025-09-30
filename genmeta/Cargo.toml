@@ -1,6 +1,8 @@
 [package]
 name = "genmeta"
+homepage = "www.genmeta.net"
 description = "Genmeta Binary Utilities"
+license = "Shareware"
 version = "0.4.1"
 edition = "2024"
 
@@ -35,17 +37,37 @@ download.url = "https://download.genmeta.net/homebrew"
 build.apple = true
 build.intel = true
 
-copy-assets = ["cp $project/target/$target/release/genmeta $formula/"]
+copy-assets = [
+  "cp $project/target/$target/release/genmeta $formula/",
+  "cp $project/genmeta-ssh3.sh $formula/",
+]
 
 content = """
   def install
     bin.install "genmeta"
+    bin.install "genmeta-ssh3.sh"
   end
 
   test do
     system "#{bin}/gmutils", "-V"
   end
 """
+
+[[package.metadata.genmeta-buildx.scoop.packages]]
+upload.remote = "ubuntu@download.genmeta.net:/data/wwwroot/scoop"
+download.url = "https://download.genmeta.net/scoop"
+
+build.builder = "xwin build"
+build.32bit = true
+build.64bit = true
+# build.arm64 = true
+
+
+bin = ["genmeta.exe", "genmeta-ssh3.bat"]
+copy-assets = [
+  "cp $project/target/$target/release/genmeta.exe $package/",
+  "cp $project/genmeta-ssh3.bat $package/",
+]
 
 # Package Metadata (Debian)
 [package.metadata.deb]
