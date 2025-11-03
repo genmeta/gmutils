@@ -3,7 +3,7 @@ name = "genmeta"
 homepage = "www.genmeta.net"
 description = "Genmeta Binary Utilities"
 license = "Shareware"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 
 [dependencies]
