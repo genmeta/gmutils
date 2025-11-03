@@ -8,7 +8,9 @@ edition = "2024"
 clap = { workspace = true }
 futures = { workspace = true }
 genmeta-common = { workspace = true, features = ["error"] }
+qbase = { workspace = true }
 qdns = { workspace = true }
+qinterface = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

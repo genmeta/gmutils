@@ -2,11 +2,8 @@ use std::{collections::HashSet, fmt::Display, io, sync::Arc};
 
 use clap::{Parser, ValueEnum};
 use futures::StreamExt;
-use genmeta_common::{
-    connect::{DnsErrors, lookup},
-    id::expand_id,
-};
-use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
+use genmeta_common::id::expand_id;
+use qdns::{DnsErrors, HttpResolver, Resolvers};
 use snafu::{ResultExt, Snafu};
 
 #[derive(Parser, Debug, Clone)]
@@ -32,7 +29,6 @@ pub struct Options {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Schema {
-    Udp,
     Http,
     Mdns,
     All,
@@ -41,7 +37,6 @@ pub enum Schema {
 impl Display for Schema {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Schema::Udp => write!(f, "udp"),
             Schema::Http => write!(f, "https"),
             Schema::Mdns => write!(f, "mdns"),
             Schema::All => write!(f, "all"),
@@ -73,26 +68,23 @@ pub async fn run(Options { domain, schema }: Options) -> Result<(), Error> {
         .init();
     let mut resolvers = Resolvers::new();
     resolvers = match schema {
-        Schema::Udp => resolvers.with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER))),
         Schema::Http => resolvers.with(Arc::new(
             HttpResolver::new(qdns::HTTP_DNS_SERVER).context(BindResolverSnafu { schema })?,
         )),
-        Schema::Mdns => resolvers.with(Arc::new(
-            MdnsResolver::new(qdns::MDNS_SERVICE).context(BindResolverSnafu { schema })?,
-        )),
-        Schema::All => resolvers
-            .with(Arc::new(
-                MdnsResolver::new(qdns::MDNS_SERVICE).context(BindResolverSnafu { schema })?,
-            ))
-            .with(Arc::new(
-                HttpResolver::new(qdns::HTTP_DNS_SERVER).context(BindResolverSnafu { schema })?,
-            ))
-            .with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER))),
+        Schema::Mdns => resolvers.with_mdns(qdns::MDNS_SERVICE).0,
+        Schema::All => {
+            resolvers
+                .with(Arc::new(
+                    HttpResolver::new(qdns::HTTP_DNS_SERVER)
+                        .context(BindResolverSnafu { schema })?,
+                ))
+                .with_mdns(qdns::MDNS_SERVICE)
+                .0
+        }
     };
 
     let domain = expand_id(&domain);
-
-    let mut lookup = lookup(&resolvers, &domain).await.context(LookUpSnafu {
+    let mut lookup = resolvers.lookup(&domain).await.context(LookUpSnafu {
         domain: domain.clone(),
     })?;
 

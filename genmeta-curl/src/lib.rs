@@ -1,23 +1,21 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use bytes::{Buf, BytesMut};
 use clap::Parser;
-use futures::StreamExt;
 use genmeta_common::{
-    AGENTS, ROOT_CERT,
-    connect::lookup,
+    connect::{
+        H3ConnectionPool,
+        prelude::handy,
+        qdns::{self, HttpResolver, Resolvers},
+    },
     error::Whatever,
     id::{ClientName, expand_id},
 };
-use gm_quic::{ParameterId, ToCertificate};
-use http::{Method, Request, Uri};
-use qdns::{HttpResolver, MdnsResolver, Resolvers, UdpResolver};
-use qtraversal::iface::traversal_factory;
-use snafu::{FromString, OptionExt, ResultExt, whatever};
+use http::{Method, Request, Uri, header::USER_AGENT};
+use snafu::{OptionExt, ResultExt, whatever};
 use tokio::{
     fs,
     io::{self, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    time,
 };
 
 #[derive(Parser, Debug, Clone)]
@@ -135,28 +133,9 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
             HttpResolver::new(qdns::HTTP_DNS_SERVER)
                 .whatever_context("Cannot create HTTP resolver")?,
         ))
-        .with(Arc::new(
-            MdnsResolver::new(qdns::MDNS_SERVICE)
-                .whatever_context("Cannot create mDNS resolver")?,
-        ))
-        .with(Arc::new(UdpResolver::new(qdns::UDP_DNS_SERVER)));
+        .with_mdns(qdns::MDNS_SERVICE)
+        .0;
     let server_name = options.uri.host().whatever_context("missing host in uri")?;
-
-    let mut lookup = lookup(&resolvers, server_name)
-        .await
-        .whatever_context(format!(
-            "Failed to lookup endpoint addresses for `{server_name}`"
-        ))?;
-
-    let (_, server_eps) = lookup
-        .next()
-        .await
-        .expect("lookup never return before lookup successy");
-
-    tracing::debug!("resolved {server_name} to address: {server_eps:?}");
-    if options.verbose {
-        eprintln!("* resolved {server_name} to address: {server_eps:?}");
-    }
 
     let profile = match &options.id {
         Some(id) => Some(
@@ -167,84 +146,25 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
         None => None,
     };
 
-    let quic_client = {
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add_parsable_certificates(ROOT_CERT.to_certificate());
-
-        let factory = traversal_factory(&AGENTS);
-
-        let mut parameters = gm_quic::handy::client_parameters();
-
-        match profile {
-            Some(genmeta_common::id::config::Profile { id, key, cert }) => {
-                parameters
-                    .set(ParameterId::ClientName, id.to_owned())
-                    .unwrap();
-                gm_quic::QuicClient::builder()
-                    .with_root_certificates(roots)
-                    .with_cert(cert.as_slice(), key.as_slice())
-            }
-            None => gm_quic::QuicClient::builder()
-                .with_root_certificates(roots)
-                .without_cert(),
-        }
-        .with_parameters(parameters)
-        .with_iface_factory(factory.as_ref().clone())
-        .bind(factory.devices().keys().map(|ip| SocketAddr::new(*ip, 0)))
-        .enable_sslkeylog()
-        .build()
-    };
-
-    let (_quic_conn, mut h3_conn, mut h3_client) = {
-        tracing::debug!(target: "connect", server_name, ?server_eps, "Attempt connect to server");
-        let quic_connection = quic_client
-            .connect(server_name, server_eps)
-            .whatever_context("Cannot connect to server")?;
-        tokio::spawn({
-            let conn = quic_connection.clone();
-            async move {
-                while let Some((_, server_eps)) = lookup.next().await {
-                    for server_ep in server_eps {
-                        if conn.add_peer_endpoint(server_ep.into()).is_err() {
-                            return;
-                        }
-                    }
-                }
-            }
-        });
-        let connect = h3::client::new(h3_shim::QuicConnection::new(quic_connection.clone()));
-        let connect_timeout = options
-            .connect_timeout
-            .map_or(Duration::MAX, Duration::from_secs);
-        let (h3_conn, h3_client) = time::timeout(connect_timeout, connect)
-            .await
-            .map_err(|_| {
-                if let Err(error) = quic_connection
-                    .validate()
-                    .whatever_context("QUIC Connection failed")
-                {
-                    return error;
-                };
-                _ = quic_connection.close("Connect timeouted", 0);
-                Whatever::without_source("Connect timeouted".to_string())
-            })?
-            .whatever_context("Cannot connect to server")?;
-        (quic_connection, h3_conn, h3_client)
-    };
+    let parameters = handy::client_parameters();
+    let qlogger = Arc::new(handy::NoopLogger);
+    let mut h3_pool = H3ConnectionPool::new(profile.as_ref(), parameters, qlogger);
     if options.verbose {
-        eprintln!("* establish http3 connection to {server_name}");
+        h3_pool = h3_pool.verbose();
     }
-    tracing::debug!(target: "connect", "http3 connection established");
-    tokio::spawn(async move { h3_conn.wait_idle().await });
 
+    let timeout = options
+        .connect_timeout
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::MAX);
+    let mut h3_client = h3_pool.connect(server_name, &resolvers, timeout).await?.h3;
+
+    let user_agent = format!("genmeta-curl/{}", env!("CARGO_PKG_VERSION"));
     let mut request_builder = Request::builder()
         .uri(options.uri.clone())
         .version(http::Version::HTTP_3)
         .header("Host", server_name)
-        .header(
-            "User-Agent",
-            format!("genmeta-curl/{}", env!("CARGO_PKG_VERSION")),
-        )
+        .header(USER_AGENT, user_agent)
         .header("Accept", "*/*");
 
     let method = options.request.as_ref().unwrap_or(match &options {

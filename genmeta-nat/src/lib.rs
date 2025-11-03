@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use clap::Parser;
 use qinterface::{QuicIoExt, factory::ProductQuicIO};
-use qtraversal::{iface::traversal_factory, nat::client::NatType};
+use qtraversal::{iface::TraversalFactory, nat::client::NatType};
 use snafu::ResultExt;
 use trust_dns_resolver::TokioAsyncResolver;
 
@@ -35,13 +35,17 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .with_writer(std::io::stderr)
         .init();
 
+    diagnose_nat(&options).await
+}
+
+async fn diagnose_nat(options: &Options) -> Result<(), Error> {
     if options.verbose {
         qtraversal::nat::client::VISUALIZE_NAT_DETECTION
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     let servers = nslook_up(options.server.as_str(), options.bind.ip().is_ipv6() as u8).await?;
-    let factory = traversal_factory(&servers);
+    let factory = TraversalFactory::initialize_global(servers).unwrap();
     let iface = factory
         .bind(options.bind.into())
         .whatever_context("Failed to bind to the specified bind uri")?;

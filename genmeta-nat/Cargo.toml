@@ -1,6 +1,6 @@
 [package]
 name = "genmeta-nat"
-description = "nat detect tool"
+description = "Diagnose network and environment issues"
 version = "0.1.0"
 edition = "2024"
 

@@ -3,7 +3,6 @@ use genmeta_common::error::Whatever;
 #[derive(Debug, Clone, clap::Parser)]
 #[command(name = "doctor", version, about)]
 pub enum Options {
-    /// Diagnose network and environment issues
     Net(genmeta_nat::Options),
     Profile(genmeta_profile::Options),
 }

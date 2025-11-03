@@ -4,7 +4,7 @@ use std::fmt::Debug;
 mod config;
 mod connect;
 use clap::Parser;
-use genmeta_common::id::ClientName;
+use genmeta_common::{connect::h3, id::ClientName};
 use genmeta_ssh3_client as ssh3;
 use snafu::Snafu;
 use ssh3::forward::*;
@@ -141,19 +141,19 @@ pub async fn run(options: Options) -> Result<(), Error> {
         remote_forwards: &options.remote_forwards,
     };
 
-    let (quic_conn, mut h3_conn, _h3_client, reader, writer) = connect::connect(&config).await?;
+    let (_h3_pool, connection, reader, writer) = connect::connect(&config).await?;
 
     let error = tokio::select! {
         // send heartbeat messages to keep ssh connection alive
         result = ssh3::run(options, reader, writer) => result.err(),
         // wait for the quic connection to be terminated
-        _ = quic_conn.terminated() => None,
-        // wait for the h3 connection to be closed
-        _ = h3_conn.wait_idle() => None,
+        _ = connection.quic.terminated() => None,
     };
 
     // 清理
-    _ = quic_conn.close("Bye bye~", h3::error::Code::H3_NO_ERROR.value());
+    _ = connection
+        .quic
+        .close("Bye bye~", h3::error::Code::H3_NO_ERROR.value());
 
     error.map_or(Ok(()), |e| Err(e.into()))
 }

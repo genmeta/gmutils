@@ -9,13 +9,7 @@ bytes = { workspace = true }
 clap = { workspace = true }
 futures = { workspace = true }
 genmeta-common = { workspace = true, features = ["connect", "error", "id"] }
-gm-quic = { workspace = true }
-h3 = { workspace = true }
-h3-shim = { workspace = true }
 http = { workspace = true }
-qdns = { workspace = true }
-qtraversal = { workspace = true }
-rustls = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
