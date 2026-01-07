@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use genmeta_common::id;
+use genmeta_common::identity;
 use http::Uri;
 use snafu::{ResultExt, Snafu};
 use ssh_config::error::ReadConfigError;
@@ -36,7 +36,7 @@ pub struct Config {
     pub username: String,
     pub password: Option<String>,
     pub uri: Uri,
-    pub profile: Option<id::config::Profile>,
+    pub profile: Option<identity::config::Profile>,
     pub connect_timeout: Duration,
 }
 
@@ -81,12 +81,15 @@ impl super::Options {
 
         let uri = complete_uri(uri, &username)?;
 
-        let ssh_config_id = ssh_config.id.as_ref().map(|id| id::ClientName::new(id));
+        let ssh_config_id = ssh_config
+            .id
+            .as_ref()
+            .map(|id| identity::ClientName::new(id));
         let id = self.id.as_ref().or(ssh_config_id.as_ref());
 
         let profile = match id {
             Some(id) => Some(
-                id::config::read_config(id, None)
+                identity::config::read_config(id, None)
                     .await
                     .context(ReadProfileSnafu { id })?,
             ),
@@ -155,7 +158,7 @@ fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {
 
     uri_parts.authority = match uri_parts.authority {
         Some(authority) => {
-            let host = id::expand_id(authority.host());
+            let host = identity::expand_id(authority.host());
             Some(
                 host.parse()
                     .context(AuthorityParseSnafu { authority: host })?,

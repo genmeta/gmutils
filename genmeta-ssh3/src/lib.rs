@@ -4,7 +4,7 @@ use std::fmt::Debug;
 mod config;
 mod connect;
 use clap::Parser;
-use genmeta_common::{connect::h3, id::ClientName};
+use genmeta_common::{connect::h3, identity::ClientName};
 use genmeta_ssh3_client as ssh3;
 use snafu::Snafu;
 use ssh3::forward::*;

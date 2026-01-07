@@ -2,7 +2,7 @@ use std::{collections::HashSet, fmt::Display, io, sync::Arc};
 
 use clap::{Parser, ValueEnum};
 use futures::StreamExt;
-use genmeta_common::id::expand_id;
+use genmeta_common::identity::expand_id;
 use qdns::{DnsErrors, HttpResolver, Resolvers};
 use snafu::{ResultExt, Snafu};
 

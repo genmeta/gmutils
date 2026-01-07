@@ -8,7 +8,11 @@ edition = "2024"
 bytes = { workspace = true, features = ["serde"] }
 clap = { workspace = true }
 futures = { workspace = true }
-genmeta-common = { workspace = true, features = ["connect", "h3_stream", "id"] }
+genmeta-common = { workspace = true, features = [
+    "connect",
+    "h3_stream",
+    "identity",
+] }
 ssh-config = { workspace = true, features = ["openssh"] }
 genmeta-ssh3-client = { workspace = true }
 http = { workspace = true }

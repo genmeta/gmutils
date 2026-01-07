@@ -9,7 +9,7 @@ use genmeta_common::{
         qdns::{self, HttpResolver, Resolvers},
     },
     error::Whatever,
-    id::{ClientName, expand_id},
+    identity::{ClientName, expand_id},
 };
 use http::{Method, Request, Uri, header::USER_AGENT};
 use snafu::{OptionExt, ResultExt, whatever};
@@ -139,7 +139,7 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
 
     let profile = match &options.id {
         Some(id) => Some(
-            genmeta_common::id::config::read_config(id, None)
+            genmeta_common::identity::config::read_config(id, None)
                 .await
                 .whatever_context(format!("Failed to read profile for `{id}`"))?,
         ),

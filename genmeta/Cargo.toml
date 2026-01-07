@@ -12,6 +12,7 @@ genmeta-common = { workspace = true, features = ["error"] }
 genmeta-curl = { workspace = true }
 genmeta-discover = { workspace = true }
 genmeta-doctor = { workspace = true }
+genmeta-identity = { workspace = true }
 genmeta-nslookup = { workspace = true }
 genmeta-ssh3 = { workspace = true }
 snafu = { workspace = true }

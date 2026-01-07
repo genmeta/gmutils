@@ -8,7 +8,11 @@ edition = "2024"
 bytes = { workspace = true }
 clap = { workspace = true }
 futures = { workspace = true }
-genmeta-common = { workspace = true, features = ["connect", "error", "id"] }
+genmeta-common = { workspace = true, features = [
+    "connect",
+    "error",
+    "identity",
+] }
 http = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }

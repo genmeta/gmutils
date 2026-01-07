@@ -26,7 +26,7 @@ use snafu::ResultExt;
 use tokio::{sync::Mutex, time};
 use tokio_util::task::AbortOnDropHandle;
 
-use crate::{error::Whatever, id::config::Profile};
+use crate::{error::Whatever, identity::config::Profile};
 pub static AGENTS: LazyLock<Vec<SocketAddr>> = LazyLock::new(|| {
     vec![
         "1.12.74.4:20004".parse().unwrap(),

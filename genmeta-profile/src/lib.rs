@@ -3,7 +3,7 @@ use std::{ops::Deref, path::PathBuf};
 use clap::Parser;
 use genmeta_common::{
     error::Whatever,
-    id::{
+    identity::{
         ClientName,
         config::{
             ast::{ConfigFile, Pair},
