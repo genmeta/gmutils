@@ -13,7 +13,8 @@ tracing-indicatif = { workspace = true, optional = true }
 
 base64 = { workspace = true }
 bytes = { workspace = true }
-genmeta-common = { workspace = true, features = ["error", "identity2"] }
+genmeta-common = { workspace = true, features = ["error"] }
+genmeta-home = { workspace = true }
 rankey = { workspace = true }
 reqwest = { workspace = true }
 rustls = { workspace = true }

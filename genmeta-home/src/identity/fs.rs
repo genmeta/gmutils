@@ -8,7 +8,7 @@ use tokio::{
 };
 use x509_parser::prelude::Pem;
 
-use crate::home::identity::{Identities, Identity, Name};
+use crate::identity::{Identities, Identity, Name};
 
 #[derive(Snafu, Debug)]
 #[snafu(module)]

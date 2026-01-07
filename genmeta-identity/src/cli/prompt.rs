@@ -1,6 +1,6 @@
 use std::{borrow::Cow, fmt::Display};
 
-use genmeta_common::home::identity::{Identities, Name, fs::LoadIdentityError};
+use genmeta_home::identity::{Identities, Name, fs::LoadIdentityError};
 use snafu::{AsErrorSource, Report};
 
 use crate::{

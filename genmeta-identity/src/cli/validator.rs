@@ -1,6 +1,6 @@
 use std::{borrow::Cow, fmt::Debug, sync::Arc};
 
-use genmeta_common::home::identity::Name;
+use genmeta_home::identity::Name;
 use inquire::validator::{StringValidator, Validation};
 use snafu::Report;
 use tokio::sync::mpsc;

@@ -16,14 +16,11 @@ h3-shim = { workspace = true, optional = true }
 peg = { workspace = true, optional = true }
 qdns = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
 snafu = { workspace = true, optional = true }
 ssh-config = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 tokio-util = { workspace = true, features = ["codec", "io"], optional = true }
-toml = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
-x509-parser = { workspace = true, optional = true }
 
 [features]
 connect = [
@@ -53,12 +50,3 @@ h3_stream = [
     "dep:tokio-util",
 ]
 identity = ["dep:dirs", "dep:peg", "dep:snafu", "dep:ssh-config", "dep:tokio"]
-identity2 = [
-    "dep:dirs",
-    "dep:rustls",
-    "dep:snafu",
-    "dep:serde",
-    "dep:tokio",
-    "dep:toml",
-    "dep:x509-parser",
-]

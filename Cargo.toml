@@ -11,6 +11,7 @@ members = [
     "genmeta-profile",
     "genmeta-doctor",
     "genmeta-identity",
+    "genmeta-home",
 ]
 
 [workspace.dependencies]
@@ -87,6 +88,7 @@ trust-dns-resolver = "0.23.2"
 
 # workspace
 genmeta-common = { path = "genmeta-common" }
+genmeta-home = { path = "genmeta-home" }
 genmeta-curl = { path = "genmeta-curl" }
 genmeta-discover = { path = "genmeta-discover" }
 genmeta-doctor = { path = "genmeta-doctor" }

@@ -8,7 +8,7 @@ use std::{
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use snafu::Snafu;
 
-use crate::home::GenmetaHome;
+use crate::GenmetaHome;
 
 pub mod default;
 pub mod fs;

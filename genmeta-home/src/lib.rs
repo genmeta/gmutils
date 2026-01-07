@@ -2,7 +2,7 @@ pub mod identity;
 
 use std::path::{Path, PathBuf};
 
-use crate::home::identity::Identities;
+use crate::identity::Identities;
 
 #[derive(Debug, Clone)]
 pub struct GenmetaHome {

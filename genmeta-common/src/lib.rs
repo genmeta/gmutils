@@ -4,7 +4,5 @@ pub mod connect;
 pub mod error;
 #[cfg(feature = "h3_stream")]
 pub mod h3_stream;
-#[cfg(feature = "identity2")]
-pub mod home;
 #[cfg(feature = "identity")]
 pub mod identity;

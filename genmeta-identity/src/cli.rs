@@ -4,15 +4,13 @@ pub mod validator;
 use std::{borrow::Cow, fmt::Debug, ops::Deref};
 
 use clap::Parser;
-use genmeta_common::{
-    error::Whatever,
-    home::{
-        GenmetaHome,
-        identity::{
-            Identities, Name,
-            default::{DefaultConfigFile, LoadDefaultConfigError, SaveDefaultConfigError},
-            fs::{ListIdentitiesError, SaveIdentityError},
-        },
+use genmeta_common::error::Whatever;
+use genmeta_home::{
+    GenmetaHome,
+    identity::{
+        Identities, Name,
+        default::{DefaultConfigFile, LoadDefaultConfigError, SaveDefaultConfigError},
+        fs::{ListIdentitiesError, SaveIdentityError},
     },
 };
 use indicatif::ProgressStyle;

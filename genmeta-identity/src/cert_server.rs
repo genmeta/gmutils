@@ -42,7 +42,8 @@ use std::sync::Arc;
 
 use base64::Engine;
 use bytes::Bytes;
-use genmeta_common::{error::Whatever, home::identity::Name};
+use genmeta_common::error::Whatever;
+use genmeta_home::identity::Name;
 use reqwest::header;
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;

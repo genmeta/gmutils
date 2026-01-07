@@ -9,7 +9,7 @@ use snafu::{ResultExt, Snafu};
 use tokio::fs;
 use toml::Spanned;
 
-use crate::home::identity::{self, Identities, Identity, Name};
+use crate::identity::{self, Identities, Identity, Name};
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct DefaultConfig {
