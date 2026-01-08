@@ -15,7 +15,7 @@ use genmeta_home::{
 };
 use indicatif::ProgressStyle;
 use rankey::EncodePem;
-use snafu::{OptionExt, Report, ResultExt, Snafu, whatever};
+use snafu::{OptionExt, ResultExt, Snafu, whatever};
 use tokio::io;
 use tracing::{Instrument, info_span};
 use tracing_indicatif::{IndicatifLayer, span_ext::IndicatifSpanExt};
@@ -28,7 +28,7 @@ use crate::{
     DEFAULT_CERT_SERVER_BASE_URL, REGISTERABLE_DOMAINS,
     cert_server::{self, CertServer, LoginResponse, RegisterResponse, ResignResponse},
     cli::prompt::{
-        prompt_available_email, prompt_available_username,
+        prompt_available_email, prompt_available_username, prompt_confim_update_default_name,
         prompt_confirm_select_default_name_not_exist, prompt_confirm_set_as_default_name,
         prompt_domain, prompt_login_catpcha, prompt_register_catpcha, prompt_select_default_name,
         prompt_select_resign_domains,
@@ -170,14 +170,15 @@ async fn load_current_default_config(
         path.display()
     ));
     let (message, result) = match identities.load_default_config().await {
+        Ok(default_config) => ("Default configuration loaded.", Ok(Some(default_config))),
         Err(LoadDefaultConfigError::Io { source, .. })
             if source.kind() == io::ErrorKind::NotFound =>
         {
             ("No default configuration found.", Ok(None))
         }
-        result => (
-            "Default configuration loaded.",
-            result.map(Some).map_err(Error::from),
+        Err(error) => (
+            "Error loading default configuration.",
+            Err(Error::from(error)),
         ),
     };
     tracing::Span::current().pb_set_finish_message(message);
@@ -197,13 +198,17 @@ async fn save_default_config(default_config: &DefaultConfigFile) -> Result<(), E
 #[tracing::instrument()]
 async fn query_exist_names_list(identities: &Identities) -> Result<Vec<Name<'static>>, Error> {
     tracing::Span::current().pb_set_message("Querying existing identities...");
-    let result = identities.list().await;
-    let message = match result.as_ref() {
-        Ok(list) => format!("Found {} existing identities.", list.len()),
-        Err(error) => format!(
-            "Error querying existing identities: {}",
-            Report::from_error(error)
+    let (message, result) = match identities.list().await {
+        Ok(list) => (
+            format!("Found {} existing identities.", list.len()),
+            Ok(list),
         ),
+        Err(ListIdentitiesError::ReadDir { source, .. })
+            if source.kind() == io::ErrorKind::NotFound =>
+        {
+            ("No existing identities found.".to_string(), Ok(vec![]))
+        }
+        Err(error) => ("Error querying existing identities".to_string(), Err(error)),
     };
     tracing::Span::current().pb_set_finish_message(&message);
     Ok(result?)
@@ -256,11 +261,16 @@ impl Create {
             .await?;
 
         let default_config = load_current_default_config(&identities).await?;
-        let default_name_exist = default_config
+        let current_default_name = default_config
             .as_ref()
-            .is_some_and(|config| config.config().name().is_some());
+            .and_then(|config| config.config().name());
 
-        if !default_name_exist && prompt_confirm_set_as_default_name(domain.borrow()).await? {
+        let update_default_name = match current_default_name.map(|name| name.borrow()) {
+            Some(current) => prompt_confim_update_default_name(current, domain.borrow()).await?,
+            None => prompt_confirm_set_as_default_name(domain.borrow()).await?,
+        };
+
+        if update_default_name {
             let mut default_config =
                 default_config.unwrap_or_else(|| identities.new_default_config());
             default_config.config_mut().set_name(domain.to_owned());
@@ -337,6 +347,9 @@ impl Default {
                     .as_ref()
                     .and_then(|file| file.config().name().cloned());
                 let exist_names = query_exist_names_list(&identities).await?;
+                if exist_names.is_empty() {
+                    whatever!("No existing identities found.");
+                }
                 prompt_select_default_name(current_default_name, exist_names).await?
             }
         };

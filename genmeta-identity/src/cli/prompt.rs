@@ -1,7 +1,7 @@
 use std::{borrow::Cow, fmt::Display};
 
 use genmeta_home::identity::{Identities, Name, fs::LoadIdentityError};
-use snafu::{AsErrorSource, Report};
+use snafu::Report;
 
 use crate::{
     REGISTERABLE_DOMAINS,
@@ -36,7 +36,7 @@ impl std::error::Error for Error {
         match &self.source {
             inquire::InquireError::IO(error) => error.source(),
             inquire::InquireError::Custom(error) => error.source(),
-            source => Some(source.as_error_source()),
+            _ => None,
         }
     }
 }
@@ -140,11 +140,11 @@ pub(crate) async fn prompt_login_catpcha(
     Ok(get_response.await)
 }
 
-pub(crate) async fn prompt_select_one_domain(
+pub(crate) async fn prompt_select_one_name(
     message: impl Into<Cow<'static, str>> + Send + 'static,
-    domains: Vec<Name<'static>>,
+    names: Vec<Name<'static>>,
 ) -> Result<Name<'static>, inquire::InquireError> {
-    sync!(inquire::Select::new(&message.into(), domains.to_vec()).prompt())
+    sync!(inquire::Select::new(&message.into(), names).prompt())
 }
 
 pub(crate) async fn prompt_select_resign_domains(
@@ -158,17 +158,25 @@ pub(crate) async fn prompt_select_default_name(
     names: Vec<Name<'static>>,
 ) -> Result<Name<'static>, inquire::InquireError> {
     let message: Cow<'static, str> = match current {
-        Some(ref domain) => format!("Select default identity (current: {domain}):").into(),
+        Some(ref domain) => format!("Select default identity (current: {domain}):",).into(),
         None => "Select default identity:".into(),
     };
-    prompt_select_one_domain(message, names).await
+    prompt_select_one_name(message, names).await
 }
 
 pub(crate) async fn prompt_confirm_set_as_default_name(
     name: Name<'_>,
 ) -> Result<bool, inquire::InquireError> {
-    let message = format!("Set {} as the default identity?", name);
+    let message = format!("Set {name} as the default identity? (default: yes)");
     sync!(inquire::Confirm::new(&message).with_default(true).prompt())
+}
+
+pub(crate) async fn prompt_confim_update_default_name(
+    current: Name<'_>,
+    new: Name<'_>,
+) -> Result<bool, inquire::InquireError> {
+    let message = format!("Current default identity is {current}, change to {new}? (default: no)");
+    sync!(inquire::Confirm::new(&message).with_default(false).prompt())
 }
 
 pub(crate) async fn prompt_confirm_select_default_name_not_exist(
@@ -177,7 +185,7 @@ pub(crate) async fn prompt_confirm_select_default_name_not_exist(
     load_error: LoadIdentityError,
 ) -> Result<bool, inquire::InquireError> {
     let message = format!(
-        "Selected identity {selected} could not be loaded from {}: {}.\nProceed anyway?",
+        "Selected identity {selected} could not be loaded from {}: {}.\nProceed anyway? (default: no)",
         identities.as_path().display(),
         Report::from_error(load_error)
     );

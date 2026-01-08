@@ -19,7 +19,7 @@ pub enum LoadIdentityError {
     #[snafu(display("Provided name is not a valid DNS name"))]
     InvalidDnsName,
 
-    #[snafu(display("Failed to load identity certificates"))]
+    #[snafu(display("Failed to load identity certificates at {}", path.display()))]
     LoadCerts {
         path: PathBuf,
         source: LoadCertError,
