@@ -57,8 +57,10 @@ pub enum LoadCertError {
 pub enum LoadKeyError {
     #[snafu(transparent)]
     Io { source: io::Error },
-    #[snafu(display("Private key file permissions are too open (expected to be 600 or stricter)"))]
-    PermissionsTooOpen {},
+    #[snafu(display(
+        "Private key file permissions are too open (current {current:o}, expected to be 400)"
+    ))]
+    PermissionsTooOpen { current: u32 },
     #[snafu(display("Failed to parse certificate"))]
     Parse {
         source: rustls::pki_types::pem::Error,
@@ -69,7 +71,7 @@ pub enum LoadKeyError {
 #[snafu(module)]
 pub enum SaveIdentityError {
     #[snafu(display("Failed to create identity directory at {}", path.display()))]
-    CreateIdentityIo { path: PathBuf, source: io::Error },
+    CreateIdentityDir { path: PathBuf, source: io::Error },
     #[snafu(display("Failed to get metadata for path {}", path.display()))]
     Metadata { path: PathBuf, source: io::Error },
     #[snafu(display("Failed to delete old file at {}", path.display()))]
@@ -90,8 +92,8 @@ pub enum ListIdentitiesError {
 }
 
 impl<'i> Identity<'i> {
-    pub(crate) const CERT_FILE_NAME: &'static str = "certs.pem";
-    pub(crate) const KEY_FILE_NAME: &'static str = "key.pem";
+    pub(crate) const CERT_FILE_NAME: &'static str = "fullchain.crt";
+    pub(crate) const KEY_FILE_NAME: &'static str = "privkey.pem";
 
     async fn valid_cert_for_name(pem: &Pem, name: &str) -> Result<(), LoadCertError> {
         let cert = pem.parse_x509().context(load_cert_error::NomSnafu)?;
@@ -139,9 +141,12 @@ impl<'i> Identity<'i> {
             use std::os::unix::fs::MetadataExt;
 
             use snafu::ensure;
+            let permissions = metadata.mode() & 0o777;
             ensure!(
-                metadata.mode() & 0o077 == 0,
-                load_key_error::PermissionsTooOpenSnafu
+                permissions == 0o400,
+                load_key_error::PermissionsTooOpenSnafu {
+                    current: permissions
+                }
             )
         }
 
@@ -183,7 +188,7 @@ impl Identities {
     pub async fn locate_wildcard(&self, name: Name<'_>) -> io::Result<PathBuf> {
         let wildcard_name = name.to_wildcard_name();
 
-        let identity_io = self.path.join(wildcard_name.as_partial_name());
+        let identity_io = self.path.join(wildcard_name.as_partial());
         fs::metadata(identity_io.as_path())
             .await
             .map(|_| identity_io)
@@ -274,11 +279,11 @@ impl Identities {
         cert: &[u8],
         key: &[u8],
     ) -> Result<(), SaveIdentityError> {
-        // create identity io
-        let identity_io = self.join_name(name);
-        fs::create_dir_all(identity_io.as_path()).await.context(
-            save_identity_error::CreateIdentityIoSnafu {
-                path: identity_io.clone(),
+        // create identity dir
+        let identity_dir = self.join_name(name);
+        fs::create_dir_all(identity_dir.as_path()).await.context(
+            save_identity_error::CreateIdentityDirSnafu {
+                path: identity_dir.clone(),
             },
         )?;
 
@@ -286,10 +291,11 @@ impl Identities {
         let mut open_options = fs::OpenOptions::new();
         open_options.create_new(true).write(true);
         #[cfg(unix)]
-        open_options.mode(0o600);
+        // TODO: 测试400权限
+        open_options.mode(0o400);
 
         // remove old file if any
-        let path = identity_io.join(Identity::CERT_FILE_NAME);
+        let path = identity_dir.join(Identity::CERT_FILE_NAME);
         if let Err(error) = fs::remove_file(path.as_path()).await
             && error.kind() != io::ErrorKind::NotFound
         {
@@ -306,7 +312,7 @@ impl Identities {
             .context(save_identity_error::WriteSnafu { path: path.clone() })?;
 
         // remove old file if any
-        let path = identity_io.join(Identity::KEY_FILE_NAME);
+        let path = identity_dir.join(Identity::KEY_FILE_NAME);
         if let Err(error) = fs::remove_file(path.as_path()).await
             && error.kind() != io::ErrorKind::NotFound
         {

@@ -64,13 +64,13 @@ pub(crate) async fn prompt_domain() -> Result<&'static str, inquire::InquireErro
     )
 }
 
-pub(crate) async fn prompt_available_username(
+pub(crate) async fn prompt_available_name(
     cert_server: CertServer,
     domain: impl Into<Cow<'static, str>> + Send + 'static,
 ) -> Result<String, inquire::InquireError> {
     sync!(
-        inquire::Text::new("Enter your desired username:")
-            .with_validator(inquire::required!("Username cannot be empty."))
+        inquire::Text::new("Enter your desired name:")
+            .with_validator(inquire::required!("Name cannot be empty."))
             .with_validator(validator::UsernameValidator::new(domain))
             .with_validator(validator::OnlineAvailableUsernameValidator::new(
                 cert_server
@@ -167,7 +167,7 @@ pub(crate) async fn prompt_select_default_name(
 pub(crate) async fn prompt_confirm_set_as_default_name(
     name: Name<'_>,
 ) -> Result<bool, inquire::InquireError> {
-    let message = format!("Set {name} as the default identity? (default: yes)");
+    let message = format!("Set {name} as the default identity?");
     sync!(inquire::Confirm::new(&message).with_default(true).prompt())
 }
 
@@ -175,7 +175,7 @@ pub(crate) async fn prompt_confim_update_default_name(
     current: Name<'_>,
     new: Name<'_>,
 ) -> Result<bool, inquire::InquireError> {
-    let message = format!("Current default identity is {current}, change to {new}? (default: no)");
+    let message = format!("Current default identity is {current}, change to {new}?");
     sync!(inquire::Confirm::new(&message).with_default(false).prompt())
 }
 
@@ -185,7 +185,7 @@ pub(crate) async fn prompt_confirm_select_default_name_not_exist(
     load_error: LoadIdentityError,
 ) -> Result<bool, inquire::InquireError> {
     let message = format!(
-        "Selected identity {selected} could not be loaded from {}: {}.\nProceed anyway? (default: no)",
+        "Selected identity {selected} could not be loaded from {}: {}.\nProceed anyway?",
         identities.as_path().display(),
         Report::from_error(load_error)
     );

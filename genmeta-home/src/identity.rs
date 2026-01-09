@@ -26,7 +26,7 @@ impl Name<'_> {
     /// https://devblogs.microsoft.com/oldnewthing/20120412-00/?p=7873
     pub const MAX_LENGTH: usize = 253;
 
-    pub fn as_partial_name(&self) -> &str {
+    pub fn as_partial(&self) -> &str {
         debug_assert!(self.0.ends_with(Self::SUFFIX));
         &self.0.as_ref()[..self.0.len() - Self::SUFFIX.len()]
     }
@@ -62,7 +62,7 @@ impl<'a> From<Name<'a>> for Cow<'a, str> {
 
 impl Display for Name<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.as_partial_name().fmt(f)
+        self.as_partial().fmt(f)
     }
 }
 
@@ -71,7 +71,7 @@ impl serde::Serialize for Name<'_> {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(self.as_partial_name())
+        serializer.serialize_str(self.as_partial())
     }
 }
 
@@ -265,6 +265,6 @@ impl Identities {
     }
 
     pub fn join_name(&self, name: Name<'_>) -> PathBuf {
-        self.path.join(name.as_partial_name())
+        self.path.join(name.as_partial())
     }
 }

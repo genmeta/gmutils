@@ -9,6 +9,8 @@ pub struct GenmetaHome {
     path: PathBuf,
 }
 
+// AsRef<Path>
+
 impl GenmetaHome {
     pub fn new(pathbuf: PathBuf) -> Self {
         Self { path: pathbuf }

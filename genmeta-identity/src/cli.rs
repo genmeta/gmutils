@@ -28,7 +28,7 @@ use crate::{
     DEFAULT_CERT_SERVER_BASE_URL, REGISTERABLE_DOMAINS,
     cert_server::{self, CertServer, LoginResponse, RegisterResponse, ResignResponse},
     cli::prompt::{
-        prompt_available_email, prompt_available_username, prompt_confim_update_default_name,
+        prompt_available_email, prompt_available_name, prompt_confim_update_default_name,
         prompt_confirm_select_default_name_not_exist, prompt_confirm_set_as_default_name,
         prompt_domain, prompt_login_catpcha, prompt_register_catpcha, prompt_select_default_name,
         prompt_select_resign_domains,
@@ -218,7 +218,7 @@ async fn query_exist_names_list(identities: &Identities) -> Result<Vec<Name<'sta
 #[derive(Parser, Debug, Clone)]
 pub struct Create {
     #[arg(short, long)]
-    pub username: Option<String>,
+    pub name: Option<String>,
     #[arg(short, long)]
     pub domain: Option<String>,
     #[arg(short, long)]
@@ -239,21 +239,23 @@ impl Create {
             Some(domain) => domain.into(),
             None => prompt_domain().await?.into(),
         };
-        let username = match self.username.clone() {
-            Some(username) => username,
-            None => prompt_available_username(cert_server.clone(), domain.clone()).await?,
+        let name = match self.name.clone() {
+            Some(name) => name,
+            None => prompt_available_name(cert_server.clone(), domain.clone()).await?,
         };
         let email: String = match self.email.clone() {
             Some(email) => email,
             None => prompt_available_email(cert_server.clone()).await?,
         };
-        let domain = Name::try_from_str_full(format!("{username}.{domain}{}", Name::SUFFIX))
+        let domain = Name::try_from_str_full(format!("{name}.{domain}{}", Name::SUFFIX))
             .whatever_context::<_, Error>("Invalid domain name format")?;
         let (key_pem, csr_pem) = generate_private_key_and_csr(&domain)?;
+
         acquire_captcha(cert_server, &email).await?;
 
+        // TODO: cert server返回DER格式，避免双重base64编码
         let RegisterResponse { cert_pem } =
-            prompt_register_catpcha(cert_server.clone(), username, email, csr_pem).await?;
+            prompt_register_catpcha(cert_server.clone(), name, email, csr_pem).await?;
 
         let identities = genmeta_home.identities();
         save_identity(&identities, &domain, key_pem.as_bytes(), &cert_pem)
