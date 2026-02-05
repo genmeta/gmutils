@@ -7,27 +7,27 @@ use ssh_config::error::ReadConfigError;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Failed to parse URI `{uri}`"))]
+    #[snafu(display("failed to parse URI `{uri}`"))]
     UriParse {
         uri: String,
         source: http::uri::InvalidUri,
     },
-    #[snafu(display("Failed to parse `{authority}` as URI authority"))]
+    #[snafu(display("failed to parse `{authority}` as URI authority"))]
     AuthorityParse {
         authority: String,
         source: http::uri::InvalidUri,
     },
 
-    #[snafu(display("Unsupported URI scheme `{scheme}`, only `ssh3` is supported"))]
+    #[snafu(display("unsupported URI scheme `{scheme}`, only `ssh3` is supported"))]
     UnsupportedScheme { scheme: String },
 
-    #[snafu(display("Missing authority in URI"))]
+    #[snafu(display("missing authority in URI"))]
     MissingAuthority {},
 
-    #[snafu(display("Failed to read ssh configuration"))]
+    #[snafu(display("failed to read ssh configuration"))]
     ReadConfig { source: ReadConfigError },
 
-    #[snafu(display("Failed to read profile for `{id}`"))]
+    #[snafu(display("failed to read profile for `{id}`"))]
     ReadProfile { id: String, source: ReadConfigError },
 }
 
@@ -40,9 +40,9 @@ pub struct Config {
     pub connect_timeout: Duration,
 }
 
-// cli参数 > 配置文件 优先级
-// 如-i id -l login_name优先级大于对应的Host的
-// HostName可以提供Uri的host部分
+// CLI args > config file priority
+// e.g., -i id -l login_name priority higher than corresponding Host
+// HostName can provide the host part of URI
 impl super::Options {
     pub async fn config(&self) -> Result<Config, Error> {
         let (ssh_config, read_config_errors) =

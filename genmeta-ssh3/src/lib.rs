@@ -150,7 +150,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         _ = connection.quic.terminated() => None,
     };
 
-    // 清理
+    // cleanup
     _ = connection
         .quic
         .close("Bye bye~", h3::error::Code::H3_NO_ERROR.value());

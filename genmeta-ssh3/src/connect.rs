@@ -21,14 +21,14 @@ use crate::config::Config;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Failed to create DNS resolver"))]
+    #[snafu(display("failed to create DNS resolver"))]
     CreateDnsResolver {
         schema: &'static str,
         source: io::Error,
     },
-    #[snafu(display("Missing host in URI {uri}"))]
+    #[snafu(display("missing host in URI `{uri}`"))]
     MissingServerName { uri: Uri },
-    #[snafu(display("Connection timed out after {}ms for server `{server}`", connect_timeout.as_millis()))]
+    #[snafu(display("connection timed out after {}ms for server `{server}`", connect_timeout.as_millis()))]
     Timedout {
         server: String,
         connect_timeout: Duration,
@@ -36,13 +36,13 @@ pub enum Error {
     #[snafu(transparent)]
     Connect { source: Whatever },
 
-    #[snafu(display("H3 request failed"))]
+    #[snafu(display("h3 request failed"))]
     Request { source: h3::error::StreamError },
 
-    #[snafu(display("H3 response failed"))]
+    #[snafu(display("h3 response failed"))]
     Response { source: h3::error::StreamError },
 
-    #[snafu(display("Server returned error status: {status}"))]
+    #[snafu(display("server returned error status: `{status}`"))]
     ResponseStatus { status: http::StatusCode },
 }
 
