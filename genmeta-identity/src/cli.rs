@@ -76,15 +76,15 @@ fn generate_private_key_and_csr(
 ) -> Result<(impl Deref<Target = String> + use<>, String), Error> {
     tracing::Span::current().pb_set_message(&format!("Generating private key for {domain}..."));
     let key_pem = rankey::generate_secp384r1_key()
-        .whatever_context::<_, Error>("Failed to generate private_key")?;
+        .whatever_context::<_, Error>("failed to generate private_key")?;
     tracing::Span::current().pb_set_message(&format!(
         "Generating Certificate Signing Request (CSR) for {domain}..."
     ));
     let csr = rankey::generate_csr(&key_pem, "CN", domain.as_ref(), &[domain.as_ref()])
-        .whatever_context::<_, Error>("Failed to generate CSR")?;
+        .whatever_context::<_, Error>("failed to generate CSR")?;
     let csr_pem = csr
         .to_pem(rankey::LineEnding::LF)
-        .whatever_context::<_, Error>("Failed to convert CSR to pem")?;
+        .whatever_context::<_, Error>("failed to convert CSR to pem")?;
     tracing::Span::current().pb_set_message(&format!(
         "Successfully generated private key and CSR for {domain}."
     ));
@@ -232,9 +232,9 @@ impl Create {
         cert_server: &CertServer,
     ) -> Result<(), Error> {
         let domain: String = match self.domain.as_ref() {
-            // TODO: 等待未来cert server限制域
+            // TODO: wait for future cert server domain restrictions
             Some(domain) if !REGISTERABLE_DOMAINS.contains(&domain.as_str()) => {
-                whatever!("Domain {domain} is not registerable.")
+                whatever!("domain `{domain}` is not registerable")
             }
             Some(domain) => domain.into(),
             None => prompt_domain().await?.into(),
@@ -248,12 +248,12 @@ impl Create {
             None => prompt_available_email(cert_server.clone()).await?,
         };
         let domain = Name::try_from_str_full(format!("{name}.{domain}{}", Name::SUFFIX))
-            .whatever_context::<_, Error>("Invalid domain name format")?;
+            .whatever_context::<_, Error>("invalid domain name format")?;
         let (key_pem, csr_pem) = generate_private_key_and_csr(&domain)?;
 
         acquire_captcha(cert_server, &email).await?;
 
-        // TODO: cert server返回DER格式，避免双重base64编码
+        // TODO: cert server returns DER format, avoid double base64 encoding
         let RegisterResponse { cert_pem } =
             prompt_register_catpcha(cert_server.clone(), name, email, csr_pem).await?;
 
@@ -350,7 +350,7 @@ impl Default {
                     .and_then(|file| file.config().name().cloned());
                 let exist_names = query_exist_names_list(&identities).await?;
                 if exist_names.is_empty() {
-                    whatever!("No existing identities found.");
+                    whatever!("no existing identities found");
                 }
                 prompt_select_default_name(current_default_name, exist_names).await?
             }
@@ -360,7 +360,7 @@ impl Default {
             && !prompt_confirm_select_default_name_not_exist(&identities, name.to_owned(), error)
                 .await?
         {
-            whatever!("Operation cancelled by user.");
+            whatever!("operation cancelled by user");
         }
 
         let mut current_config = current_config
@@ -410,7 +410,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     init_tracing();
 
     let genmeta_home = GenmetaHome::load_from_environment()
-        .whatever_context::<_, Error>("Failed to locate GENMETA_HOME directory")?;
+        .whatever_context::<_, Error>("failed to locate GENMETA_HOME directory")?;
 
     _ = rustls::crypto::ring::default_provider().install_default();
     let cert_server = CertServer::new(DEFAULT_CERT_SERVER_BASE_URL)?;

@@ -22,7 +22,7 @@ impl From<inquire::InquireError> for Error {
 
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Inquire 的错误打印太垃圾了，自己实现一下
+        // Inquire error output is too messy, implement custom display
         match &self.source {
             inquire::InquireError::IO(error) => error.fmt(f),
             inquire::InquireError::Custom(error) => error.fmt(f),

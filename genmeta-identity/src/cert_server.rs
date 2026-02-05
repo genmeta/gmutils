@@ -15,9 +15,9 @@ pub enum Error {
         message.as_ref().map_or(String::new(), |m| format!(": {}", m))
     ))]
     Code { code: i32, message: Option<String> },
-    #[snafu(display("Failed to parse JSON response from cert server",))]
+    #[snafu(display("failed to parse JSON response from cert server",))]
     Json { source: serde_json::Error },
-    #[snafu(display("Server responsed invalid Base64 data {data:?}",))]
+    #[snafu(display("server responsed invalid Base64 data {data:?}",))]
     Base64 {
         data: Bytes,
         source: base64::DecodeError,
@@ -69,7 +69,7 @@ impl<T> Response<T> {
             0 => match self.body {
                 ResponseBody::Data { data } => Ok(data),
                 ResponseBody::Msg { msg } => {
-                    whatever!("Bad response: expected data but got message: {}", msg)
+                    whatever!("bad response: expected data but got message: {msg}")
                 }
             },
             code => {
@@ -148,7 +148,7 @@ impl CertServer {
             .gzip(true)
             .zstd(true)
             .build()
-            .whatever_context("Failed to build HTTP client")?;
+            .whatever_context("failed to build HTTP client")?;
         Ok(Self {
             base_url: base_url.into(),
             http_client,
