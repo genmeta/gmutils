@@ -93,16 +93,16 @@ impl Options {
         let mut uri_parts = self.uri.clone().into_parts();
 
         let Some(authority) = uri_parts.authority else {
-            whatever!("Missing authority in URI")
+            whatever!("missing authority in URI")
         };
 
         let host = expand_id(authority.host());
         uri_parts.authority = Some(
             host.parse()
-                .whatever_context(format!("Failed to parse authority `{host}`"))?,
+                .whatever_context(format!("failed to parse authority `{host}`"))?,
         );
 
-        self.uri = Uri::from_parts(uri_parts).whatever_context("Failed to complete URI")?;
+        self.uri = Uri::from_parts(uri_parts).whatever_context("failed to complete URI")?;
         Ok(())
     }
 }
@@ -131,7 +131,7 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
     let resolvers = Resolvers::new()
         .with(Arc::new(
             HttpResolver::new(qdns::HTTP_DNS_SERVER)
-                .whatever_context("Cannot create HTTP resolver")?,
+                .whatever_context("cannot create HTTP resolver")?,
         ))
         .with_mdns(qdns::MDNS_SERVICE)
         .0;
@@ -141,7 +141,7 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
         Some(id) => Some(
             genmeta_common::identity::config::read_config(id, None)
                 .await
-                .whatever_context(format!("Failed to read profile for `{id}`"))?,
+                .whatever_context(format!("failed to read profile for `{id}`"))?,
         ),
         None => None,
     };
@@ -181,24 +181,12 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
 
     let request = request_builder
         .body(())
-        .whatever_context("Failed to build request")?;
-
-    // Host and User Agent header
-
-    if options.verbose {
-        let output = format!("> send request: {request:#?}")
-            .lines()
-            .collect::<Vec<_>>()
-            .join("\n> ");
-        println!("{output}",)
-    }
-
-    tracing::debug!(target: "request", "build request: {request:?}");
+        .whatever_context("failed to build request")?;
 
     let request_stream = h3_client
         .send_request(request)
         .await
-        .whatever_context("Failed to send request")?;
+        .whatever_context("failed to send request")?;
 
     let (mut send_stream, mut recv_stream) = request_stream.split();
 
@@ -207,17 +195,17 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
             send_stream
                 .send_data(Vec::from(data).into())
                 .await
-                .whatever_context("Failed to send request body")?;
+                .whatever_context("failed to send request body")?;
         }
 
         if let Some(path) = options.upload_file {
             let mut file = fs::File::open(&path)
                 .await
-                .whatever_context(format!("Failed to open file {} to upload", path.display()))?;
+                .whatever_context(format!("failed to open file {} to upload", path.display()))?;
             loop {
                 let mut buf = BytesMut::with_capacity(1 << 20);
                 file.read_buf(&mut buf).await.whatever_context(format!(
-                    "Failed to read file {} to upload",
+                    "failed to read file {} to upload",
                     path.display()
                 ))?;
                 if buf.is_empty() {
@@ -226,14 +214,14 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
                 send_stream
                     .send_data(buf.freeze())
                     .await
-                    .whatever_context("Failed to send request body")?;
+                    .whatever_context("failed to send request body")?;
             }
         }
 
         send_stream
             .finish()
             .await
-            .whatever_context("Failed to finish request stream")?;
+            .whatever_context("failed to finish request stream")?;
 
         Result::<_, Whatever>::Ok(())
     };
@@ -241,7 +229,7 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
         let response = recv_stream
             .recv_response()
             .await
-            .whatever_context("Failed to receive response")?;
+            .whatever_context("failed to receive response")?;
 
         tracing::debug!(target: "request", "response: {response:#?}");
         if options.verbose {
@@ -256,7 +244,7 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
             tracing::debug!(target: "request", "dump output to {}", output.display());
             &mut fs::File::create(output)
                 .await
-                .whatever_context("Failed to create output file")?
+                .whatever_context("failed to create output file")?
         } else {
             tracing::debug!(target: "request", "dump output to stdio");
             &mut io::stdout()
@@ -265,19 +253,19 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
         while let Some(mut data) = recv_stream
             .recv_data()
             .await
-            .whatever_context("Failed to receive data")?
+            .whatever_context("failed to receive data")?
         {
             while data.has_remaining() {
                 let chunk = data.chunk();
                 dst.write_all(chunk)
                     .await
-                    .whatever_context("Failed to write data to output")?;
+                    .whatever_context("failed to write data to output")?;
                 data.advance(chunk.len());
             }
         }
         dst.flush()
             .await
-            .whatever_context("Failed to flush output")?;
+            .whatever_context("failed to flush output")?;
 
         Result::<_, Whatever>::Ok(())
     };

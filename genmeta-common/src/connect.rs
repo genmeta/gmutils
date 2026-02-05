@@ -178,7 +178,7 @@ impl H3ConnectionPool {
             let mut lookup = resolvers
                 .lookup(server_name)
                 .await
-                .whatever_context("DNS lookup failed")?;
+                .whatever_context("dns lookup failed")?;
 
             let (resolver, server_eps) = lookup.next().await.unwrap();
             if self.verbose {
@@ -209,8 +209,8 @@ impl H3ConnectionPool {
                 h3::client::new(h3_shim::QuicConnection::new(quic_connection.clone())),
             )
             .await
-            .whatever_context("Connect timed out")?
-            .whatever_context("Failed to establish h3 connection")?;
+            .whatever_context("connect timed out")?
+            .whatever_context("failed to establish h3 connection")?;
 
             if self.verbose {
                 eprintln!("* establish http3 connection to {server_name}");
