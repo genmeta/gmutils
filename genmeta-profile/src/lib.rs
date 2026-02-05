@@ -67,7 +67,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
             let (cert_path, cert) = parse_cert(id, map.get(&keywords::CERT))
                 .await
                 .context(ParseConfigFileSnafu { path })?;
-            // 暂时不支持验证证书/密钥有效性
+            // certificate/key validity check not yet supported
             println!("Profile `{id}` configured in `{}`:", path.display());
             // Print in hex format
             println!("    Id: {id}");

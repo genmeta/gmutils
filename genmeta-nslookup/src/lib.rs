@@ -46,14 +46,14 @@ impl Display for Schema {
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Failed to bind `{schema}` resolver"))]
+    #[snafu(display("failed to bind `{schema}` resolver"))]
     BindResolver {
         schema: Schema,
         #[snafu(source)]
         source: io::Error,
     },
 
-    #[snafu(display("Failed to lookup DNS records of `{domain}`"))]
+    #[snafu(display("failed to lookup DNS records of `{domain}`"))]
     LookUp { domain: String, source: DnsErrors },
 }
 

@@ -13,19 +13,19 @@ use crate::identity::{Identities, Identity, Name};
 #[derive(Snafu, Debug)]
 #[snafu(module)]
 pub enum LoadIdentityError {
-    #[snafu(display("Identity not found in directory {}", io.display()))]
+    #[snafu(display("identity not found in directory {}", io.display()))]
     NotFound { io: PathBuf, source: io::Error },
 
-    #[snafu(display("Provided name is not a valid DNS name"))]
+    #[snafu(display("provided name is not a valid DNS name"))]
     InvalidDnsName,
 
-    #[snafu(display("Failed to load identity certificates at {}", path.display()))]
+    #[snafu(display("failed to load identity certificates at {}", path.display()))]
     LoadCerts {
         path: PathBuf,
         source: LoadCertError,
     },
 
-    #[snafu(display("Failed to load identity private key at {}", path.display()))]
+    #[snafu(display("failed to load identity private key at {}", path.display()))]
     LoadKey { path: PathBuf, source: LoadKeyError },
 }
 
@@ -34,21 +34,21 @@ pub enum LoadIdentityError {
 pub enum LoadCertError {
     #[snafu(transparent)]
     Io { source: io::Error },
-    #[snafu(display("Failed to parse pem block"))]
+    #[snafu(display("failed to parse pem block"))]
     Pem {
         source: x509_parser::error::PEMError,
     },
-    #[snafu(display("Failed to parse certificate"))]
+    #[snafu(display("failed to parse certificate"))]
     Nom {
         source: x509_parser::nom::Err<x509_parser::error::X509Error>,
     },
-    #[snafu(display("Failed to parse certificate SAN extension"))]
+    #[snafu(display("failed to parse certificate SAN extension"))]
     Ext {
         source: x509_parser::error::X509Error,
     },
-    #[snafu(display("Certificate does not contain SAN extension"))]
+    #[snafu(display("certificate does not contain SAN extension"))]
     MissingSan {},
-    #[snafu(display("Certificate SAN does not contain expected DNS name"))]
+    #[snafu(display("certificate SAN does not contain expected DNS name"))]
     NotExistInSan {},
 }
 
@@ -61,7 +61,7 @@ pub enum LoadKeyError {
         "Private key file permissions are too open (current {current:o}, expected to be 400)"
     ))]
     PermissionsTooOpen { current: u32 },
-    #[snafu(display("Failed to parse certificate"))]
+    #[snafu(display("failed to parse certificate"))]
     Parse {
         source: rustls::pki_types::pem::Error,
     },
@@ -70,24 +70,24 @@ pub enum LoadKeyError {
 #[derive(Snafu, Debug)]
 #[snafu(module)]
 pub enum SaveIdentityError {
-    #[snafu(display("Failed to create identity directory at {}", path.display()))]
+    #[snafu(display("failed to create identity directory at {}", path.display()))]
     CreateIdentityDir { path: PathBuf, source: io::Error },
-    #[snafu(display("Failed to get metadata for path {}", path.display()))]
+    #[snafu(display("failed to get metadata for path {}", path.display()))]
     Metadata { path: PathBuf, source: io::Error },
-    #[snafu(display("Failed to delete old file at {}", path.display()))]
+    #[snafu(display("failed to delete old file at {}", path.display()))]
     Delete { path: PathBuf, source: io::Error },
-    #[snafu(display("Failed to create file at {}", path.display()))]
+    #[snafu(display("failed to create file at {}", path.display()))]
     Create { path: PathBuf, source: io::Error },
-    #[snafu(display("Failed to write to file at {}", path.display()))]
+    #[snafu(display("failed to write to file at {}", path.display()))]
     Write { path: PathBuf, source: io::Error },
 }
 
 #[derive(Snafu, Debug)]
 #[snafu(module)]
 pub enum ListIdentitiesError {
-    #[snafu(display("Failed to list identities in directory {}", path.display()))]
+    #[snafu(display("failed to list identities in directory {}", path.display()))]
     ReadDir { path: PathBuf, source: io::Error },
-    #[snafu(display("Failed to read filetype of  {}", path.display()))]
+    #[snafu(display("failed to read filetype of  {}", path.display()))]
     ReadFty { path: PathBuf, source: io::Error },
 }
 
@@ -291,7 +291,7 @@ impl Identities {
         let mut open_options = fs::OpenOptions::new();
         open_options.create_new(true).write(true);
         #[cfg(unix)]
-        // TODO: 测试400权限
+        // TODO: test 400 permission
         open_options.mode(0o400);
 
         // remove old file if any

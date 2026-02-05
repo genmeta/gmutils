@@ -77,15 +77,15 @@ impl serde::Serialize for Name<'_> {
 
 #[derive(Snafu, Debug)]
 pub enum InvalidName {
-    #[snafu(display("Name too long (max {} characters)", Name::MAX_LENGTH))]
+    #[snafu(display("name too long (max {} characters)", Name::MAX_LENGTH))]
     TooLong {},
-    #[snafu(display("Label too long (max {} characters)", Name::MAX_LABEL_LENGTH))]
+    #[snafu(display("label too long (max {} characters)", Name::MAX_LABEL_LENGTH))]
     LabelTooLong {},
-    #[snafu(display("Name contains empty or numberic / hyphen only label"))]
+    #[snafu(display("name contains empty or numberic / hyphen only label"))]
     EmptyLabel {},
-    #[snafu(display("Name contains invalid characters"))]
+    #[snafu(display("name contains invalid characters"))]
     InvalidCharacter {},
-    #[snafu(display("Name is missing required suffix {}", Name::SUFFIX))]
+    #[snafu(display("name is missing required suffix {}", Name::SUFFIX))]
     MissingSuffix {},
 }
 

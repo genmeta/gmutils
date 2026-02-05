@@ -92,7 +92,7 @@ impl Display for FileLineCol {
 
 #[derive(Snafu, Debug)]
 #[snafu(module, display(
-    "Failed to load identity specified{}",
+    "failed to load identity specified{}",
     config.as_ref().map_or(String::new(), |loc| format!(" at {loc}"))
 ))]
 pub struct LoadIdentityError {
@@ -103,12 +103,12 @@ pub struct LoadIdentityError {
 #[derive(Snafu, Debug)]
 #[snafu(module)]
 pub enum LoadDefaultConfigError {
-    #[snafu(display("Failed to read default config file {}", path.display()))]
+    #[snafu(display("failed to read default config file {}", path.display()))]
     Io {
         path: PathBuf,
         source: std::io::Error,
     },
-    #[snafu(display("Failed to deserialize default config file {}", path.display()))]
+    #[snafu(display("failed to deserialize default config file {}", path.display()))]
     Deserialize {
         path: PathBuf,
         source: toml::de::Error,
