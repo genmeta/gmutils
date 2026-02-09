@@ -5,7 +5,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use snafu::{ResultExt, Snafu};
+use snafu::{OptionExt, ResultExt, Snafu};
 use tokio::fs;
 use toml::Spanned;
 
@@ -191,6 +191,17 @@ impl DefaultConfigFile {
     }
 }
 
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+pub enum LoadDefaultIdentityError {
+    #[snafu(transparent)]
+    LoadDefaultConfig { source: LoadDefaultConfigError },
+    #[snafu(display("no default identity configured"))]
+    NoDefaultIdentity,
+    #[snafu(transparent)]
+    LoadIdentity { source: LoadIdentityError },
+}
+
 impl Identities {
     pub fn default_config_path(&self) -> PathBuf {
         self.path.join(DefaultConfig::FILE_NAME)
@@ -198,6 +209,17 @@ impl Identities {
 
     pub async fn load_default_config(&self) -> Result<DefaultConfigFile, LoadDefaultConfigError> {
         DefaultConfigFile::load(self.default_config_path()).await
+    }
+
+    pub async fn load_default_identity(
+        &self,
+    ) -> Result<Identity<'static>, LoadDefaultIdentityError> {
+        Ok(self
+            .load_default_config()
+            .await?
+            .load_default_identity(self)
+            .await
+            .context(load_default_identity_error::NoDefaultIdentitySnafu)??)
     }
 
     pub fn new_default_config(&self) -> DefaultConfigFile {

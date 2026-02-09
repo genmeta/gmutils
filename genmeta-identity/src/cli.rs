@@ -15,7 +15,7 @@ use genmeta_home::{
 };
 use indicatif::ProgressStyle;
 use rankey::EncodePem;
-use snafu::{OptionExt, ResultExt, Snafu, whatever};
+use snafu::{ResultExt, Snafu, whatever};
 use tokio::io;
 use tracing::{Instrument, info_span};
 use tracing_indicatif::{IndicatifLayer, span_ext::IndicatifSpanExt};
@@ -80,7 +80,7 @@ fn generate_private_key_and_csr(
     tracing::Span::current().pb_set_message(&format!(
         "Generating Certificate Signing Request (CSR) for {domain}..."
     ));
-    let csr = rankey::generate_csr(&key_pem, "CN", domain.as_ref(), &[domain.as_ref()])
+    let csr = rankey::generate_csr(&key_pem, "CN", domain.as_full(), &[domain.as_full()])
         .whatever_context::<_, Error>("failed to generate CSR")?;
     let csr_pem = csr
         .to_pem(rankey::LineEnding::LF)
@@ -130,7 +130,7 @@ async fn resign_domain(
 
     tracing::Span::current().pb_set_message(&format!("Resigning certificate for {domain}..."));
     let ResignResponse { cert_pem } = cert_server
-        .resign_cert(access_token, domain.as_str(), &csr_pem)
+        .resign_cert(access_token, domain.as_full(), &csr_pem)
         .await?;
 
     // 4. save identity
@@ -410,7 +410,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     init_tracing();
 
     let genmeta_home = GenmetaHome::load_from_environment()
-        .whatever_context::<_, Error>("failed to locate GENMETA_HOME directory")?;
+        .whatever_context::<_, Error>("failed to locate GENMETA_HOME")?;
 
     _ = rustls::crypto::ring::default_provider().install_default();
     let cert_server = CertServer::new(DEFAULT_CERT_SERVER_BASE_URL)?;

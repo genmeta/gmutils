@@ -243,7 +243,7 @@ impl Identities {
             .locate_exactly(name.borrow())
             .await
             .context(load_identity_error::NotFoundSnafu { io: self.as_path() })?;
-        let (certs, key) = Identity::load_from_io(identity_io.as_path(), name.as_ref()).await?;
+        let (certs, key) = Identity::load_from_io(identity_io.as_path(), name.as_full()).await?;
         let name = name.to_owned();
         Ok(Identity { name, certs, key })
     }
@@ -258,7 +258,7 @@ impl Identities {
             .await
             .context(load_identity_error::NotFoundSnafu { io: self.as_path() })?;
         let (certs, key) =
-            Identity::load_from_io(identity_io.as_path(), wildcard_name.as_ref()).await?;
+            Identity::load_from_io(identity_io.as_path(), wildcard_name.as_full()).await?;
         let name = wildcard_name.to_owned();
         Ok(Identity { name, certs, key })
     }
@@ -268,7 +268,7 @@ impl Identities {
             .locate(name)
             .await
             .context(load_identity_error::NotFoundSnafu { io: self.as_path() })?;
-        let (certs, key) = Identity::load_from_io(identity_io.as_path(), name.as_ref()).await?;
+        let (certs, key) = Identity::load_from_io(identity_io.as_path(), name.as_full()).await?;
         let name = name.to_owned();
         Ok(Identity { name, certs, key })
     }

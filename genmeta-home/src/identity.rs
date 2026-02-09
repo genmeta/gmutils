@@ -31,6 +31,10 @@ impl Name<'_> {
         &self.0.as_ref()[..self.0.len() - Self::SUFFIX.len()]
     }
 
+    pub fn as_full(&self) -> &str {
+        self.0.as_ref()
+    }
+
     pub fn to_owned(&self) -> Name<'static> {
         Name(Cow::Owned(self.0.to_string()))
     }
@@ -41,16 +45,6 @@ impl Name<'_> {
 
     pub fn borrow(&self) -> Name<'_> {
         Name(Cow::Borrowed(self.0.as_ref()))
-    }
-
-    pub fn as_str(&self) -> &str {
-        self.0.as_ref()
-    }
-}
-
-impl AsRef<str> for Name<'_> {
-    fn as_ref(&self) -> &str {
-        self.as_str()
     }
 }
 
