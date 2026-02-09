@@ -27,16 +27,12 @@ indicatif = "0.18"
 rpassword = "7.3"
 whoami = "1.4"
 
-# genmeta
-gm-quic = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "main" }
-h3-shim = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "main" }
-qbase = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "main" }
-qdns = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "main" }
-qinterface = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "main" }
-qtraversal = { git = "ssh://git@github.com/genmeta/gm-quic-traversal.git", branch = "main" }
+# debug
+console-subscriber = "0.5"
 
-# http
-h3 = { version = "0.0.8", features = ["tracing"] }
+# network
+gmdns = { path = "../gmdns" }
+h3x = { path = "../h3x" }
 http = "1"
 reqwest = { version = "0.13", default-features = false, features = [
     "charset",
@@ -65,6 +61,7 @@ tracing = { version = "0.1", default-features = false, features = [
     "std",
     "attributes",
 ] }
+tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "env-filter",
     "fmt",

@@ -7,8 +7,7 @@ edition = "2024"
 [dependencies]
 clap = { workspace = true }
 genmeta-common = { workspace = true, features = ["error"] }
-qtraversal = { workspace = true }
-qinterface = { workspace = true }
+h3x = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

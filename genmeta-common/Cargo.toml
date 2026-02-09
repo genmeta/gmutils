@@ -10,11 +10,8 @@ dashmap = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["from"], optional = true }
 dirs = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
-gm-quic = { workspace = true, optional = true }
-h3 = { workspace = true, optional = true }
-h3-shim = { workspace = true, optional = true }
+h3x = { workspace = true, optional = true }
 peg = { workspace = true, optional = true }
-qdns = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 snafu = { workspace = true, optional = true }
 ssh-config = { workspace = true, optional = true }
@@ -29,10 +26,7 @@ connect = [
     "dep:bytes",
     "dep:dashmap",
     "dep:futures",
-    "dep:gm-quic",
-    "dep:h3",
-    "dep:h3-shim",
-    "dep:qdns",
+    "dep:h3x",
     "dep:rustls",
     "dep:snafu",
     "dep:tokio",
@@ -40,13 +34,4 @@ connect = [
     "dep:tracing",
 ]
 error = ["dep:snafu"]
-h3_stream = [
-    "dep:bytes",
-    "dep:derive_more",
-    "dep:futures",
-    "dep:h3",
-    "dep:h3-shim",
-    "dep:tokio",
-    "dep:tokio-util",
-]
 identity = ["dep:dirs", "dep:peg", "dep:snafu", "dep:ssh-config", "dep:tokio"]
