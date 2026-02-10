@@ -3,11 +3,6 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use bytes::{Buf, BytesMut};
 use clap::Parser;
 use genmeta_common::{
-    connect::{
-        H3ConnectionPool,
-        prelude::handy,
-        qdns::{self, HttpResolver, Resolvers},
-    },
     error::Whatever,
     identity::{ClientName, expand_id},
 };
