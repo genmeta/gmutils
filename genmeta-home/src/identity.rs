@@ -218,6 +218,7 @@ impl<'n> Name<'n> {
     }
 }
 
+#[derive(Debug)]
 pub struct Identity<'i> {
     pub(crate) name: Name<'i>,
     pub(crate) certs: Vec<CertificateDer<'i>>,
