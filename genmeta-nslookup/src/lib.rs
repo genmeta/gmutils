@@ -26,7 +26,7 @@ pub struct Options {
 
     /// Schema of DNS to query eg. mdns system http
     #[arg(index = 2, default_value = "all")]
-    schemas: Vec<Schema>,
+    schemas: Vec<DnsSchema>,
 
     /// Identity to use for connections to H3 DNS server (load from $GENMETA_HOME)
     #[arg(short, long)]
@@ -36,13 +36,14 @@ pub struct Options {
     #[arg(short, long, default_value = "true")]
     streaming: bool,
 
+    // TODO: remove this option
     /// Timeout for the whole lookup process, in seconds
     #[arg(short, long, default_value = "10")]
     timeout: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum Schema {
+pub enum DnsSchema {
     Http,
     Mdns,
     All,
@@ -50,19 +51,19 @@ pub enum Schema {
     H3,
 }
 
-impl Schema {
+impl DnsSchema {
     pub const fn as_str(&self) -> &'static str {
         match self {
-            Schema::Http => "http",
-            Schema::Mdns => "mdns",
-            Schema::All => "all",
-            Schema::Systme => "system",
-            Schema::H3 => "h3",
+            DnsSchema::Http => "http",
+            DnsSchema::Mdns => "mdns",
+            DnsSchema::All => "all",
+            DnsSchema::Systme => "system",
+            DnsSchema::H3 => "h3",
         }
     }
 }
 
-impl Display for Schema {
+impl Display for DnsSchema {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.as_str().fmt(f)
     }
@@ -71,7 +72,10 @@ impl Display for Schema {
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("failed to build `{schema}` resolver"))]
-    BuildResolver { schema: Schema, source: io::Error },
+    BuildResolver {
+        schema: DnsSchema,
+        source: io::Error,
+    },
 
     #[snafu(transparent)]
     LocateGenmetaHome {
@@ -121,8 +125,13 @@ pub async fn run(
         // .with(console_subscriber::spawn())
         .init();
 
-    if schemas.contains(&Schema::All) {
-        schemas = vec![Schema::Systme, Schema::Http, Schema::H3, Schema::Mdns];
+    if schemas.contains(&DnsSchema::All) {
+        schemas = vec![
+            DnsSchema::Systme,
+            DnsSchema::Http,
+            DnsSchema::H3,
+            DnsSchema::Mdns,
+        ];
     } else {
         schemas.dedup();
     };
@@ -133,10 +142,10 @@ pub async fn run(
         tracing::debug!(?schema, "Enabled resolver schema");
 
         resolvers = match schema {
-            Schema::Http => resolvers.with(Arc::new(
+            DnsSchema::Http => resolvers.with(Arc::new(
                 HttpResolver::new(HTTP_DNS_SERVER).context(BuildResolverSnafu { schema })?,
             )),
-            Schema::H3 => {
+            DnsSchema::H3 => {
                 let genmeta_home = GenmetaHome::load_from_environment()?;
                 let identity = match id.clone() {
                     Some(id) => genmeta_home
@@ -160,9 +169,9 @@ pub async fn run(
                     .context(BuildResolverSnafu { schema })?;
                 resolvers.with(Arc::new(h3_resolver))
             }
-            Schema::Systme => resolvers.with(Arc::new(SystemResolver)),
-            Schema::Mdns => resolvers.with_mdns_resolvers(MDNS_SERVICE, |_, _| true),
-            Schema::All => unreachable!("Handled above"),
+            DnsSchema::Systme => resolvers.with(Arc::new(SystemResolver)),
+            DnsSchema::Mdns => resolvers.with_mdns_resolvers(MDNS_SERVICE, |_, _| true),
+            DnsSchema::All => unreachable!("Handled above"),
         };
     }
 
