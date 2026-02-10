@@ -1,34 +1,42 @@
-use std::time::Duration;
+use std::{str::FromStr, time::Duration};
 
-use genmeta_common::identity;
-use http::Uri;
-use snafu::{ResultExt, Snafu};
+use genmeta_home::{
+    GenmetaHome, LocateGenmetaHomeError,
+    identity::{Identity, InvalidName, Name, fs::LoadIdentityError},
+};
+use http::{Uri, uri::Authority};
+use snafu::{Report, ResultExt, Snafu};
 use ssh_config::error::ReadConfigError;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("failed to parse URI `{uri}`"))]
-    UriParse {
+    InvalidUri {
         uri: String,
         source: http::uri::InvalidUri,
     },
+    #[snafu(display("failed to parse identity `{id}` as peer authority"))]
+    InvalidPeerName { id: String, source: InvalidName },
     #[snafu(display("failed to parse `{authority}` as URI authority"))]
-    AuthorityParse {
+    InvalidAuthority {
         authority: String,
         source: http::uri::InvalidUri,
     },
-
     #[snafu(display("unsupported URI scheme `{scheme}`, only `ssh3` is supported"))]
     UnsupportedScheme { scheme: String },
-
     #[snafu(display("missing authority in URI"))]
     MissingAuthority {},
-
     #[snafu(display("failed to read ssh configuration"))]
     ReadConfig { source: ReadConfigError },
-
-    #[snafu(display("failed to read profile for `{id}`"))]
-    ReadProfile { id: String, source: ReadConfigError },
+    #[snafu(transparent)]
+    LocateGenmetaHome { source: LocateGenmetaHomeError },
+    #[snafu(display("identity `{id}` in ssh config is invalid"))]
+    InvalidId { id: String, source: InvalidName },
+    #[snafu(display("failed to read identity for `{id}`"))]
+    LoadIdentity {
+        id: Name<'static>,
+        source: LoadIdentityError,
+    },
 }
 
 #[derive(Debug)]
@@ -36,8 +44,10 @@ pub struct Config {
     pub username: String,
     pub password: Option<String>,
     pub uri: Uri,
-    pub profile: Option<identity::config::Profile>,
+    pub id: Option<Identity<'static>>,
     pub connect_timeout: Duration,
+    // TODO
+    // pub dns_schemes: Vec<DnsSchema>,
 }
 
 // CLI args > config file priority
@@ -51,7 +61,7 @@ impl super::Options {
                 .context(ReadConfigSnafu {})?;
 
         for (message, error) in read_config_errors {
-            tracing::error!(target: "config", "{message}: {}", snafu::Report::from_error(error));
+            tracing::error!("{message}: {}", snafu::Report::from_error(error));
         }
 
         // user: command line -> config file -> uri -> whoami
@@ -61,39 +71,70 @@ impl super::Options {
         // uri: ssh_config(if present) -> command line
         let uri = match &ssh_config.hostname {
             Some(uri) => uri.clone(),
-            None => self.host.parse().context(UriParseSnafu {
+            None => self.host.parse().context(InvalidUriSnafu {
                 uri: self.host.clone(),
             })?,
         };
 
         if username.is_none() {
-            tracing::debug!(target: "config", "User not found in ssh_config, Try parse it from hostname");
+            tracing::debug!("User not found in ssh_config, Try parse it from hostname");
             (username, password) = parse_username_password_from_uri(&uri);
         }
 
         let (username, password) = match username {
             Some(username) => (username, password),
             None => {
-                tracing::debug!(target: "config", "User not found in URI, use current user");
+                tracing::debug!("User not found in URI, use current user");
                 (whoami::username(), None)
             }
         };
 
         let uri = complete_uri(uri, &username)?;
 
-        let ssh_config_id = ssh_config
-            .id
-            .as_ref()
-            .map(|id| identity::ClientName::new(id));
-        let id = self.id.as_ref().or(ssh_config_id.as_ref());
+        let try_load_default_identity = || async {
+            let genmeta_home = match GenmetaHome::load_from_environment() {
+                Ok(genmeta_home) => genmeta_home,
+                Err(error) => {
+                    tracing::warn!(
+                        "No identity specified in CLI or ssh config, and default identity cannot be load as {}",
+                        Report::from_error(error)
+                    );
+                    return None;
+                }
+            };
+            let id = match genmeta_home.identities().load_default_identity().await {
+                Ok(id) => id,
+                Err(error) => {
+                    tracing::warn!(
+                        "No identity specified in CLI or ssh config, and default identity cannot be load as {}",
+                        Report::from_error(error)
+                    );
+                    return None;
+                }
+            };
+            Some(id)
+        };
 
-        let profile = match id {
-            Some(id) => Some(
-                identity::config::read_config(id, None)
-                    .await
-                    .context(ReadProfileSnafu { id })?,
-            ),
-            None => None,
+        let id = match self.id.as_ref() {
+            Some(id) => Some(id.borrow()),
+            None => match &ssh_config.id {
+                Some(id) => Some(Name::from_str(id).context(InvalidIdSnafu { id })?),
+                None => None,
+            },
+        };
+
+        let id = match id {
+            Some(id) => {
+                let genmeta_home = GenmetaHome::load_from_environment()?;
+                Some(
+                    genmeta_home
+                        .identities()
+                        .load(id.to_owned())
+                        .await
+                        .context(LoadIdentitySnafu { id: id.to_owned() })?,
+                )
+            }
+            None => try_load_default_identity().await,
         };
 
         let connect_timeout = ssh_config.connect_timeout.unwrap_or(Duration::MAX);
@@ -102,7 +143,7 @@ impl super::Options {
             username,
             password,
             uri,
-            profile,
+            id,
             connect_timeout,
         })
     }
@@ -158,11 +199,14 @@ fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {
 
     uri_parts.authority = match uri_parts.authority {
         Some(authority) => {
-            let host = identity::expand_id(authority.host());
-            Some(
-                host.parse()
-                    .context(AuthorityParseSnafu { authority: host })?,
-            )
+            let peer_name = Name::from_str(authority.host()).context(InvalidPeerNameSnafu {
+                id: authority.host().to_string(),
+            })?;
+            let authority =
+                Authority::from_str(peer_name.as_full()).context(InvalidAuthoritySnafu {
+                    authority: peer_name.as_full().to_string(),
+                })?;
+            Some(authority)
         }
         None => return Err(MissingAuthoritySnafu {}.build()),
     };
