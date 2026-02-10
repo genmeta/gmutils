@@ -8,15 +8,22 @@ edition = "2024"
 bytes = { workspace = true, features = ["serde"] }
 clap = { workspace = true }
 futures = { workspace = true }
-genmeta-common = { workspace = true, features = ["identity"] }
+genmeta-common = { workspace = true, features = ["error"] }
+genmeta-home = { workspace = true }
 ssh-config = { workspace = true, features = ["openssh"] }
 genmeta-ssh3-client = { workspace = true }
+gmdns = { workspace = true }
 http = { workspace = true }
+h3x = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "rt"] }
 tracing = { workspace = true }
+tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }
 whoami = { workspace = true }
+
+
+qevent = { path = "../../gm-quic/qevent", features = ["telemetry"] }
 
 # console-subscriber = { workspace = true }
