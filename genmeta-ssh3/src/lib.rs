@@ -4,10 +4,15 @@ use std::fmt::Debug;
 mod config;
 mod connect;
 use clap::Parser;
-use genmeta_common::{connect::h3, identity::ClientName};
+use genmeta_home::identity::Name;
 use genmeta_ssh3_client as ssh3;
+use h3x::{
+    codec::{SinkWriter, StreamReader},
+    error::Code,
+};
 use snafu::Snafu;
 use ssh3::forward::*;
+use tracing_subscriber::prelude::*;
 
 const URI_LONG_HELP: &str = "Example: `my-remote-dev`, `developer@ssh3.test.genmeta.net`
 If this argument matches the ssh configuration file, \
@@ -69,7 +74,7 @@ pub struct Options {
 
     /// Client identity
     #[arg(short = 'i', long, value_name = "client_identity")]
-    id: Option<ClientName>,
+    id: Option<Name<'static>>,
 
     /// Disable pseudo-terminal allocation.
     #[arg(
@@ -116,13 +121,15 @@ pub enum Error {
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
+    // todo: enable ASNI with `atty` crate
+    let (stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_writer(stderr))
+        .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
                 .from_env_lossy(),
         )
-        .with_writer(std::io::stderr)
         .init();
 
     let config = options.config().await?;
@@ -141,19 +148,12 @@ pub async fn run(options: Options) -> Result<(), Error> {
         remote_forwards: &options.remote_forwards,
     };
 
-    let (_h3_pool, connection, reader, writer) = connect::connect(&config).await?;
+    let (connection, reader, writer) = connect::connect(&config).await?;
+    let reader = Box::pin(StreamReader::new(reader.into_bytes_stream()));
+    let writer = Box::pin(SinkWriter::new(writer.into_bytes_sink()));
 
-    let error = tokio::select! {
-        // send heartbeat messages to keep ssh connection alive
-        result = ssh3::run(options, reader, writer) => result.err(),
-        // wait for the quic connection to be terminated
-        _ = connection.quic.terminated() => None,
-    };
+    let result = ssh3::run(options, reader, writer).await;
+    connection.close(&Code::H3_NO_ERROR);
 
-    // cleanup
-    _ = connection
-        .quic
-        .close("Bye bye~", h3::error::Code::H3_NO_ERROR.value());
-
-    error.map_or(Ok(()), |e| Err(e.into()))
+    Ok(result?)
 }
