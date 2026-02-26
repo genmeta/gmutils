@@ -7,7 +7,7 @@ edition = "2024"
 [dependencies]
 clap = { workspace = true }
 futures = { workspace = true }
-genmeta-common = { workspace = true, features = ["identity"] }
+genmeta-common = { workspace = true, features = ["bind", "dns", "id"] }
 genmeta-home = { workspace = true }
 gmdns = { workspace = true }
 h3x = { workspace = true }

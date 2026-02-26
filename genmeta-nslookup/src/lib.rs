@@ -1,18 +1,24 @@
 use std::{
-    collections::{HashMap, HashSet},
-    fmt::Display,
-    io,
+    collections::{BTreeSet, HashMap, HashSet},
+    fmt,
+    str::FromStr,
     sync::Arc,
 };
 
-use clap::{Parser, ValueEnum};
-use futures::StreamExt;
-use genmeta_home::{GenmetaHome, identity::Name};
-use gmdns::{
-    H3_DNS_SERVER, HTTP_DNS_SERVER, MDNS_SERVICE,
-    resolvers::{DnsErrors, H3Resolver, HttpResolver, Resolvers},
+use clap::Parser;
+use futures::{StreamExt, stream::FuturesUnordered};
+use genmeta_common::{
+    bind::Bind,
+    dns::{self, DnsScheme},
+    id,
 };
-use h3x::gm_quic::{H3Client, qdns::SystemResolver};
+use genmeta_home::{GenmetaHome, identity::Name};
+use gmdns::resolvers::{DnsErrors, Resolvers};
+use h3x::gm_quic::{
+    BuildClientError,
+    prelude::handy::DEFAULT_IO_FACTORY,
+    qinterface::{device::Devices, manager::InterfaceManager},
+};
 use snafu::{ResultExt, Snafu, ensure};
 use tokio::time;
 use tracing_subscriber::prelude::*;
@@ -24,9 +30,9 @@ pub struct Options {
     #[arg(index = 1)]
     name: Name<'static>,
 
-    /// Schema of DNS to query eg. mdns system http
+    /// Scheme of DNS to query eg. mdns system http
     #[arg(index = 2, default_value = "all")]
-    schemas: Vec<DnsSchema>,
+    schemes: Vec<DnsScheme>,
 
     /// Identity to use for connections to H3 DNS server (load from $GENMETA_HOME)
     #[arg(short, long)]
@@ -42,59 +48,14 @@ pub struct Options {
     timeout: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum DnsSchema {
-    Http,
-    Mdns,
-    All,
-    Systme,
-    H3,
-}
-
-impl DnsSchema {
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            DnsSchema::Http => "http",
-            DnsSchema::Mdns => "mdns",
-            DnsSchema::All => "all",
-            DnsSchema::Systme => "system",
-            DnsSchema::H3 => "h3",
-        }
-    }
-}
-
-impl Display for DnsSchema {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.as_str().fmt(f)
-    }
-}
-
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("failed to build `{schema}` resolver"))]
-    BuildResolver {
-        schema: DnsSchema,
-        source: io::Error,
-    },
-
     #[snafu(transparent)]
     LocateGenmetaHome {
         source: genmeta_home::LocateGenmetaHomeError,
     },
-
-    #[snafu(display("failed to load identity `{id}`"))]
-    LoadIdentity {
-        id: Name<'static>,
-        source: genmeta_home::identity::fs::LoadIdentityError,
-    },
-
-    #[snafu(display(
-        "failed to load default identity(since h3 resolver enabled but identity not specified)"
-    ))]
-    LoadDefaultIdentity {
-        source: genmeta_home::identity::default::LoadDefaultIdentityError,
-    },
-
+    #[snafu(display("failed to build h3 DNS client"))]
+    BuildH3DnsClient { source: BuildClientError },
     #[snafu(display("failed to lookup DNS records of `{name}`"))]
     LookUp {
         name: Name<'static>,
@@ -105,15 +66,7 @@ pub enum Error {
     Timedout { timeout: u64 },
 }
 
-pub async fn run(
-    Options {
-        name,
-        mut schemas,
-        id,
-        streaming,
-        timeout,
-    }: Options,
-) -> Result<(), Error> {
+pub async fn run(options: Options) -> Result<(), Error> {
     let (stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(stderr))
@@ -125,67 +78,58 @@ pub async fn run(
         // .with(console_subscriber::spawn())
         .init();
 
-    if schemas.contains(&DnsSchema::All) {
-        schemas = vec![
-            DnsSchema::Systme,
-            DnsSchema::Http,
-            DnsSchema::H3,
-            DnsSchema::Mdns,
-        ];
-    } else {
-        schemas.dedup();
-    };
+    let genmeta_home = GenmetaHome::load_from_environment();
+    let mut id = None;
+    if genmeta_home.is_ok() || options.id.is_some() {
+        let source = &"command line option" as &dyn fmt::Display;
+        id = id::load_id(&genmeta_home?, options.id.map(|id| (source, id))).await;
+    }
+
+    let iface_manager = Arc::new(InterfaceManager::new());
+    let io_factory = Arc::new(DEFAULT_IO_FACTORY);
+    let bind_interfaces = Bind::from_str("*")
+        .expect("Genmeta supports `*` as bind to indicate all interfaces")
+        .to_bind_uris(Devices::global().interfaces().keys().map(String::as_str))
+        .map(|bind_uri| iface_manager.bind(bind_uri.clone(), io_factory.clone()))
+        .collect::<FuturesUnordered<_>>()
+        .collect::<Vec<_>>()
+        .await;
 
     let mut resolvers = Resolvers::new();
-
-    for schema in schemas {
-        tracing::debug!(?schema, "Enabled resolver schema");
-
-        resolvers = match schema {
-            DnsSchema::Http => resolvers.with(Arc::new(
-                HttpResolver::new(HTTP_DNS_SERVER).context(BuildResolverSnafu { schema })?,
-            )),
-            DnsSchema::H3 => {
-                let genmeta_home = GenmetaHome::load_from_environment()?;
-                let identity = match id.clone() {
-                    Some(id) => genmeta_home
-                        .identities()
-                        .load(id.clone())
-                        .await
-                        .context(LoadIdentitySnafu { id: id.clone() })?,
-                    None => genmeta_home
-                        .identities()
-                        .load_default_identity()
-                        .await
-                        .context(LoadDefaultIdentitySnafu)?,
-                };
-
-                let h3_client = H3Client::builder()
-                    .with_identity(identity.name().as_full(), identity.certs(), identity.key())
-                    .map_err(io::Error::other)
-                    .context(BuildResolverSnafu { schema })?
-                    .build();
-                let h3_resolver = H3Resolver::new(H3_DNS_SERVER, h3_client)
-                    .context(BuildResolverSnafu { schema })?;
-                resolvers.with(Arc::new(h3_resolver))
+    for dns_scheme in options.schemes.into_iter().collect::<BTreeSet<_>>() {
+        match dns_scheme {
+            DnsScheme::System => {
+                resolvers = resolvers.with(Arc::new(dns::handy::system_resolver()))
             }
-            DnsSchema::Systme => resolvers.with(Arc::new(SystemResolver)),
-            DnsSchema::Mdns => resolvers.with_mdns_resolvers(MDNS_SERVICE, |_, _| true),
-            DnsSchema::All => unreachable!("Handled above"),
-        };
+            DnsScheme::Mdns => {
+                let mdns_resolvers = dns::handy::mdns_resolvers(bind_interfaces.iter().cloned());
+                resolvers = resolvers.with(Arc::new(mdns_resolvers));
+            }
+            DnsScheme::Http => {
+                resolvers = resolvers.with(Arc::new(dns::handy::http_resolver()));
+            }
+            DnsScheme::H3 => {
+                let resolver = Arc::new(resolvers.clone());
+                let resolver = dns::handy::h3_resolver(resolver, id.as_ref());
+                resolvers = resolvers.with(Arc::new(resolver.context(BuildH3DnsClientSnafu)?));
+            }
+            DnsScheme::Dht => {
+                unimplemented!("DHT resolver is not implemented yet");
+            }
+        }
     }
 
     tracing::debug!(%resolvers);
 
     let mut lookup = resolvers
-        .lookup(name.as_full())
+        .lookup(options.name.as_full())
         .await
         .context(LookUpSnafu {
-            name: name.to_owned(),
+            name: options.name.to_owned(),
         })?;
 
-    if streaming {
-        println!("Name: {name}:");
+    if options.streaming {
+        println!("Name: {}:", options.name);
         let mut last_source = None;
         while let Some((source, endpoint_addr)) = lookup.next().await {
             if !last_source.is_some_and(|last| last == source) {
@@ -204,6 +148,7 @@ pub async fn run(
                 .insert(endpoint);
             async {}
         });
+        let timeout = options.timeout;
         let collect = time::timeout(time::Duration::from_secs(timeout), collect);
 
         ensure!(
@@ -211,7 +156,7 @@ pub async fn run(
             TimedoutSnafu { timeout }
         );
 
-        println!("Name: {name}:");
+        println!("Name: {}:", options.name);
         for (source, endpoint_addrs) in endpoint_addrs.into_iter() {
             println!("{source}:");
             for endpoint_addr in endpoint_addrs.into_iter().collect::<HashSet<_>>() {
