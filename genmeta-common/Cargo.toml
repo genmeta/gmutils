@@ -10,6 +10,10 @@ snafu = { workspace = true, optional = true }
 
 # feature bind, dns and id
 clap = { workspace = true, optional = true }
+
+#feature http and id
+http = { workspace = true, optional = true }
+
 # feature dns and id
 gmdns = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
@@ -24,7 +28,6 @@ derive_more = { workspace = true, optional = true, features = [
 ] }
 either = { workspace = true, optional = true }
 globset = { workspace = true, optional = true }
-http = { workspace = true, optional = true }
 h3x = { workspace = true, optional = true }
 peg = { workspace = true, optional = true }
 
@@ -42,5 +45,5 @@ bind = [
     "dep:peg",
     "dep:snafu",
 ]
-id = ["error", "dep:clap", "dep:genmeta-home", "dep:tracing"]
+id = ["error", "dep:clap", "dep:genmeta-home", "dep:http", "dep:tracing"]
 dns = ["bind", "dep:clap", "dep:gmdns", "dep:genmeta-home", "dep:tracing"]

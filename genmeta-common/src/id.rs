@@ -2,12 +2,13 @@ use std::fmt;
 
 use genmeta_home::{
     GenmetaHome,
-    identity::{Identity, Name},
+    identity::{Identity, InvalidName, Name},
 };
+use http::Uri;
 use snafu::Report;
 
 /// Load identity by a list of (source, name) pairs, and fallback to default identity if all specified identities failed to load.
-pub async fn load_id<'n>(
+pub async fn load_identity<'n>(
     genmeta_home: &GenmetaHome,
     load_list: impl IntoIterator<Item = (&dyn fmt::Display, Name<'_>)>,
 ) -> Option<Identity<'static>> {
@@ -65,4 +66,34 @@ pub async fn load_id<'n>(
             None
         }
     }
+}
+
+pub fn expand_uri(uri: Uri) -> Result<Uri, InvalidName> {
+    let mut uri_parts = uri.into_parts();
+
+    if let Some(authority) = &uri_parts.authority
+        && let Some(peer_name) = Name::try_expand_from(authority.host())?
+        && peer_name.as_full() != authority.host()
+    {
+        let user_info_len = authority
+            .as_str()
+            .split_once('@')
+            .map(|(user_info, ..)| user_info.len() + 1)
+            .unwrap_or(0);
+        let host_len = authority.host().len();
+
+        let authority = format!(
+            "{user_info}{host}{port}",
+            user_info = &authority.as_str()[..user_info_len],
+            host = peer_name,
+            port = &authority.as_str()[user_info_len + host_len..]
+        );
+        uri_parts.authority = Some(
+            authority
+                .parse()
+                .expect("failed to parse authority with expanded identity name"),
+        );
+    }
+
+    Ok(Uri::from_parts(uri_parts).expect("failed to construct URI with expanded identity name"))
 }
