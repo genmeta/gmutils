@@ -1,3 +1,5 @@
+use std::fmt;
+
 use clap::ValueEnum;
 
 pub const HTTP_DNS_SERVER: &str = "https://dns.genmeta.net/";
@@ -11,6 +13,24 @@ pub enum DnsScheme {
     Http,
     H3,
     Dht,
+}
+
+impl DnsScheme {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            DnsScheme::System => "system",
+            DnsScheme::Mdns => "mdns",
+            DnsScheme::Http => "http",
+            DnsScheme::H3 => "h3",
+            DnsScheme::Dht => "dht",
+        }
+    }
+}
+
+impl fmt::Display for DnsScheme {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_str().fmt(f)
+    }
 }
 
 pub mod handy {
