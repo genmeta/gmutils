@@ -21,6 +21,7 @@ use h3x::{
     pool::ConnectError,
 };
 use http::Uri;
+use qevent::telemetry::handy::NoopLogger;
 use snafu::prelude::*;
 use tokio::io;
 
@@ -114,10 +115,11 @@ pub async fn connect(
         None => H3Client::builder().without_identity(),
     }
     .context(BuildClientSnafu)?
+    .with_iface_manager(iface_manager)
     .with_resolver(Arc::new(resolvers))
     .bind(&bind_uris)
     .await
-    .with_qlog(Arc::new(TracingLogger))
+    .with_qlog(Arc::new(NoopLogger))
     .build();
 
     let server = config.uri.authority().expect("missing authority in URI");

@@ -110,7 +110,7 @@ impl super::Options {
                         .map(|name| (&"ssh config" as &dyn fmt::Display, name))
                 })
                 .transpose()?;
-            id = genmeta_common::id::load_id(
+            id = genmeta_common::id::load_identity(
                 &GenmetaHome::load_from_environment()?,
                 Option::into_iter(cli_id).chain(ssh_config_id),
             )
@@ -120,7 +120,7 @@ impl super::Options {
         let connect_timeout = ssh_config.connect_timeout.unwrap_or(Duration::MAX);
 
         Ok(Config {
-            binds: Binds::new(self.bind.clone()),
+            binds: Binds::new(self.binds.clone()),
             dns: self.dns.iter().cloned().collect(),
             username,
             password,

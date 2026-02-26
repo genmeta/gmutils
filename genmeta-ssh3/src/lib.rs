@@ -65,8 +65,8 @@ pub struct Options {
     id: Option<Name<'static>>,
 
     /// Bind patterns to specify which local interfaces and ports to bind for DHTTP/3 connections.
-    #[arg(long, default_value = "*")]
-    bind: Vec<bind::Bind>,
+    #[arg(long = "interface", value_name = "bind", default_value = "*")]
+    binds: Vec<bind::Bind>,
 
     /// DNS resolution schemes to connect to the remote.
     #[arg(long, value_name = "scheme", default_value = "system, mdns, http")]
