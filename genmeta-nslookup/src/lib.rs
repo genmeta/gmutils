@@ -1,25 +1,19 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    fmt,
     str::FromStr,
-    sync::Arc,
 };
 
 use clap::Parser;
-use futures::{StreamExt, stream::FuturesUnordered};
+use futures::StreamExt;
 use genmeta_common::{
-    bind::Bind,
+    bind::{self, Bind},
     dns::{self, DnsScheme},
     id,
 };
-use genmeta_home::{GenmetaHome, identity::Name};
-use gmdns::resolvers::{DnsErrors, Resolvers};
-use h3x::gm_quic::{
-    BuildClientError,
-    prelude::handy::DEFAULT_IO_FACTORY,
-    qinterface::{device::Devices, manager::InterfaceManager},
-};
-use snafu::{Report, ResultExt, Snafu, ensure};
+use genmeta_home::identity::Name;
+use gmdns::resolvers::DnsErrors;
+use h3x::gm_quic::BuildClientError;
+use snafu::{ResultExt, Snafu, ensure};
 use tokio::time;
 use tracing_subscriber::prelude::*;
 
@@ -78,61 +72,32 @@ pub async fn run(options: Options) -> Result<(), Error> {
         // .with(console_subscriber::spawn())
         .init();
 
-    let genmeta_home_required = options.id.is_some();
+    let id = id::load_home_and_identity(
+        options.id.is_some(),
+        options
+            .id
+            .as_ref()
+            .map(|id| (&"command line option" as &dyn std::fmt::Display, id.clone())),
+    )
+    .await?;
 
-    let genmeta_home = match GenmetaHome::load_from_environment() {
-        Ok(genmeta_home) => Some(genmeta_home),
-        Err(error) if !genmeta_home_required => {
-            tracing::warn!(error = %Report::from_error(error), "Failed to locate GENMETA_HOME, some features may not work");
-            None
-        }
-        Err(error) => return Err(error.into()),
-    };
+    let bind_setup = bind::setup_bind_interfaces(bind::Binds::new(vec![
+        Bind::from_str("*").expect("wildcard bind pattern is always valid"),
+    ]))
+    .await
+    .expect("wildcard bind should not conflict");
 
-    let mut id = None;
-    if let Some(genmeta_home) = &genmeta_home {
-        let cli_id = (options.id.as_ref())
-            .map(|id| (&"command line option" as &dyn fmt::Display, id.clone()));
-        id = id::load_identity(genmeta_home, cli_id).await
-    }
+    let dns_setup = dns::handy::build_resolvers(
+        options.schemes.into_iter().collect::<BTreeSet<_>>(),
+        &bind_setup.bind_interfaces,
+        id.as_ref(),
+    )
+    .context(BuildH3DnsClientSnafu)?;
 
-    let iface_manager = Arc::new(InterfaceManager::new());
-    let io_factory = Arc::new(DEFAULT_IO_FACTORY);
-    let bind_interfaces = Bind::from_str("*")
-        .expect("Genmeta supports `*` as bind to indicate all interfaces")
-        .to_bind_uris(Devices::global().interfaces().keys().map(String::as_str))
-        .map(|bind_uri| iface_manager.bind(bind_uri.clone(), io_factory.clone()))
-        .collect::<FuturesUnordered<_>>()
-        .collect::<Vec<_>>()
-        .await;
+    tracing::debug!(%dns_setup.resolvers);
 
-    let mut resolvers = Resolvers::new();
-    for dns_scheme in options.schemes.into_iter().collect::<BTreeSet<_>>() {
-        match dns_scheme {
-            DnsScheme::System => {
-                resolvers = resolvers.with(Arc::new(dns::handy::system_resolver()))
-            }
-            DnsScheme::Mdns => {
-                let mdns_resolvers = dns::handy::mdns_resolvers(bind_interfaces.iter().cloned());
-                resolvers = resolvers.with(Arc::new(mdns_resolvers));
-            }
-            DnsScheme::Http => {
-                resolvers = resolvers.with(Arc::new(dns::handy::http_resolver()));
-            }
-            DnsScheme::H3 => {
-                let resolver = Arc::new(resolvers.clone());
-                let resolver = dns::handy::h3_resolver(resolver, id.as_ref());
-                resolvers = resolvers.with(Arc::new(resolver.context(BuildH3DnsClientSnafu)?));
-            }
-            DnsScheme::Dht => {
-                unimplemented!("DHT resolver is not implemented yet");
-            }
-        }
-    }
-
-    tracing::debug!(%resolvers);
-
-    let mut lookup = resolvers
+    let mut lookup = dns_setup
+        .resolvers
         .lookup(options.name.as_full())
         .await
         .context(LookUpSnafu {

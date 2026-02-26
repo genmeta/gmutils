@@ -1184,6 +1184,7 @@ dependencies = [
  "clap",
  "derive_more",
  "either",
+ "futures",
  "genmeta-home",
  "globset",
  "gmdns",
@@ -1198,12 +1199,9 @@ dependencies = [
 name = "genmeta-curl"
 version = "0.3.1"
 dependencies = [
- "bytes",
  "clap",
- "futures",
  "genmeta-common",
  "genmeta-home",
- "gmdns",
  "h3x",
  "http",
  "snafu",
@@ -1322,13 +1320,10 @@ dependencies = [
 name = "genmeta-ssh3"
 version = "0.4.1"
 dependencies = [
- "bytes",
  "clap",
- "futures",
  "genmeta-common",
  "genmeta-home",
  "genmeta-ssh3-client",
- "gmdns",
  "h3x",
  "http",
  "qevent",

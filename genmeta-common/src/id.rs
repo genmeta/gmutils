@@ -68,6 +68,34 @@ pub async fn load_identity<'n>(
     }
 }
 
+/// Load [`GenmetaHome`] and then attempt to load an [`Identity`] through
+/// [`load_identity`].
+///
+/// When `genmeta_home_required` is `true`, a failure to locate `GENMETA_HOME`
+/// is a hard error.  When `false`, the failure is logged as a warning and
+/// `Ok(None)` is returned — the caller can still function without an identity.
+///
+/// Even when no explicit identity is listed in `load_list`, [`load_identity`]
+/// will attempt to fall back to the default identity.
+pub async fn load_home_and_identity<'n>(
+    genmeta_home_required: bool,
+    load_list: impl IntoIterator<Item = (&dyn fmt::Display, Name<'n>)>,
+) -> Result<Option<Identity<'static>>, genmeta_home::LocateGenmetaHomeError> {
+    let genmeta_home = match GenmetaHome::load_from_environment() {
+        Ok(home) => home,
+        Err(error) if !genmeta_home_required => {
+            tracing::warn!(
+                error = %Report::from_error(error),
+                "Failed to locate GENMETA_HOME, some features may not work"
+            );
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+
+    Ok(load_identity(&genmeta_home, load_list).await)
+}
+
 pub fn expand_uri(uri: Uri) -> Result<Uri, InvalidName> {
     let mut uri_parts = uri.into_parts();
 

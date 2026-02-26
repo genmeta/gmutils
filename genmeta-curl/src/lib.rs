@@ -1,22 +1,16 @@
-use std::{fmt, mem, path::PathBuf, pin::pin, sync::Arc, time::Duration};
+use std::{mem, path::PathBuf, pin::pin, sync::Arc, time::Duration};
 
 use clap::Parser;
-use futures::{StreamExt, stream::FuturesUnordered};
 use genmeta_common::{
     bind,
-    dns::{self, DnsScheme},
+    dns::{self},
     error::Whatever,
     id,
 };
-use genmeta_home::{GenmetaHome, identity::Name};
-use gmdns::resolvers::{MdnsResolvers, Resolvers};
-use h3x::gm_quic::{
-    H3Client,
-    prelude::handy::{DEFAULT_IO_FACTORY, NoopLogger},
-    qinterface::{device::Devices, manager::InterfaceManager},
-};
+use genmeta_home::identity::Name;
+use h3x::gm_quic::{H3Client, prelude::handy::NoopLogger};
 use http::{Method, Request, Uri, header::USER_AGENT};
-use snafu::{Report, ResultExt, whatever};
+use snafu::{ResultExt, whatever};
 use tokio::{
     fs,
     io::{self, AsyncWrite, AsyncWriteExt},
@@ -134,78 +128,35 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
         .init();
     options.expand_uri()?;
 
-    let genmeta_home_required = options.id.is_some();
+    let id = id::load_home_and_identity(
+        options.id.is_some(),
+        options
+            .id
+            .as_ref()
+            .map(|id| (&"command line option" as &dyn std::fmt::Display, id.clone())),
+    )
+    .await
+    .whatever_context("failed to locate GENMETA_HOME while it's required")?;
 
-    let genmeta_home = match GenmetaHome::load_from_environment() {
-        Ok(genmeta_home) => Some(genmeta_home),
-        Err(error) if !genmeta_home_required => {
-            tracing::warn!(error = %Report::from_error(error), "Failed to locate GENMETA_HOME, some features may not work");
-            None
-        }
-        Err(error) => {
-            return whatever!(
-                Err(error),
-                "Failed to locate GENMETA_HOME while it's required"
-            );
-        }
-    };
-
-    let mut id = None;
-    if let Some(genmeta_home) = &genmeta_home {
-        let cli_id = (options.id.as_ref())
-            .map(|id| (&"command line option" as &dyn fmt::Display, id.clone()));
-        id = id::load_identity(genmeta_home, cli_id).await
-    }
-
-    let interfaces_monitor = Devices::global().monitor();
-    let bind_uris = bind::Binds::new(mem::take(&mut options.binds))
-        .to_bind_uris(interfaces_monitor.interfaces().keys().map(String::as_str))
+    let bind_setup = bind::setup_bind_interfaces(bind::Binds::new(mem::take(&mut options.binds)))
+        .await
         .whatever_context("failed to resolve bind interfaces to bind uris")?;
 
-    let iface_manager = Arc::new(InterfaceManager::new());
-    let io_factory = Arc::new(DEFAULT_IO_FACTORY);
-    let bind_interfaces = bind_uris
-        .iter()
-        .map(|bind_uri| iface_manager.bind(bind_uri.clone(), io_factory.clone()))
-        .collect::<FuturesUnordered<_>>()
-        .collect::<Vec<_>>()
-        .await;
-
-    let mut resolvers = Resolvers::new();
-    let mdns_resolvers = Arc::new(MdnsResolvers::new());
-    for dns_scheme in options.dns.iter() {
-        match dns_scheme {
-            DnsScheme::System => {
-                resolvers = resolvers.with(Arc::new(dns::handy::system_resolver()))
-            }
-            DnsScheme::Mdns => {
-                mdns_resolvers.merge(&dns::handy::mdns_resolvers(bind_interfaces.iter().cloned()));
-                resolvers = resolvers.with(mdns_resolvers.clone());
-            }
-            DnsScheme::Http => {
-                resolvers = resolvers.with(Arc::new(dns::handy::http_resolver()));
-            }
-            DnsScheme::H3 => {
-                let resolver = Arc::new(resolvers.clone());
-                let resolver = dns::handy::h3_resolver(resolver, id.as_ref());
-                resolvers = resolvers.with(Arc::new(
-                    resolver.whatever_context("failed to build H3 DNS resolver")?,
-                ));
-            }
-            DnsScheme::Dht => {
-                unimplemented!("DHT resolver is not implemented yet");
-            }
-        }
-    }
+    let dns_setup = dns::handy::build_resolvers(
+        options.dns.iter().copied(),
+        &bind_setup.bind_interfaces,
+        id.as_ref(),
+    )
+    .whatever_context("failed to build DNS resolvers")?;
 
     let client = match &id {
         Some(id) => H3Client::builder().with_identity(id.name().as_full(), id.certs(), id.key()),
         None => H3Client::builder().without_identity(),
     }
     .whatever_context("failed to build DHTTP/3 client")?
-    .with_iface_manager(iface_manager)
-    .with_resolver(Arc::new(resolvers))
-    .bind(&bind_uris)
+    .with_iface_manager(bind_setup.iface_manager)
+    .with_resolver(Arc::new(dns_setup.resolvers))
+    .bind(&bind_setup.bind_uris)
     .await
     .with_qlog(Arc::new(NoopLogger))
     .build();

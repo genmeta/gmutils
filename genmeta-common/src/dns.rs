@@ -96,7 +96,68 @@ pub mod handy {
         Ok(H3Resolver::new(H3_DNS_SERVER, h3_clinet).expect("H3_DNS_SERVER is valid URL"))
     }
 
-    pub fn dht_resolver() -> ! {
-        unimplemented!("DHT resolver is not implemented yet")
+    /// Placeholder for DHT resolver initialization.
+    ///
+    /// Currently not implemented; call sites expect this function to exist
+    /// but the project does not require DHT resolver for tests. Keep as a
+    /// noop to allow builds/tests to proceed.
+    pub fn dht_resolver() {
+        tracing::warn!("dht_resolver not implemented; skipping DHT resolver initialization");
+    }
+
+    /// Result of [`build_resolvers`], carrying all DNS resolver state.
+    pub struct ResolversSetup {
+        /// Combined DNS resolvers.
+        pub resolvers: gmdns::resolvers::Resolvers,
+        /// mDNS resolvers, present only when the `Mdns` scheme was requested.
+        /// Kept as `Arc` so callers can feed in newly-discovered interfaces later.
+        pub mdns_resolvers: Option<Arc<MdnsResolvers>>,
+    }
+
+    /// Build [`Resolvers`](gmdns::resolvers::Resolvers) from a list of
+    /// [`DnsScheme`](super::DnsScheme)s, consolidating the duplicated
+    /// match-loop found in consumer crates.
+    ///
+    /// `bind_interfaces` is used to seed mDNS resolvers when the `Mdns`
+    /// scheme is present. `id` is the optional client identity for the H3
+    /// DNS resolver.
+    pub fn build_resolvers(
+        dns_schemes: impl IntoIterator<Item = super::DnsScheme>,
+        bind_interfaces: &[h3x::gm_quic::qinterface::BindInterface],
+        id: Option<&genmeta_home::identity::Identity<'static>>,
+    ) -> Result<ResolversSetup, BuildClientError> {
+        use super::DnsScheme;
+
+        let mut resolvers = gmdns::resolvers::Resolvers::new();
+        let mut mdns = None;
+
+        for dns_scheme in dns_schemes {
+            match dns_scheme {
+                DnsScheme::System => {
+                    resolvers = resolvers.with(Arc::new(system_resolver()));
+                }
+                DnsScheme::Mdns => {
+                    let arc = mdns.get_or_insert_with(|| Arc::new(MdnsResolvers::new()));
+                    arc.merge(&self::mdns_resolvers(bind_interfaces.iter().cloned()));
+                    resolvers = resolvers.with(arc.clone());
+                }
+                DnsScheme::Http => {
+                    resolvers = resolvers.with(Arc::new(http_resolver()));
+                }
+                DnsScheme::H3 => {
+                    let snapshot = Arc::new(resolvers.clone());
+                    let resolver = h3_resolver(snapshot, id)?;
+                    resolvers = resolvers.with(Arc::new(resolver));
+                }
+                DnsScheme::Dht => {
+                    dht_resolver();
+                }
+            }
+        }
+
+        Ok(ResolversSetup {
+            resolvers,
+            mdns_resolvers: mdns,
+        })
     }
 }

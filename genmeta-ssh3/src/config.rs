@@ -3,11 +3,11 @@ use std::{collections::BTreeSet, str::FromStr, time::Duration};
 
 use genmeta_common::{
     bind::{self, Binds},
-    dns,
+    dns, id,
 };
 use genmeta_home::{
-    GenmetaHome, LocateGenmetaHomeError,
-    identity::{Identity, InvalidName, Name, fs::LoadIdentityError},
+    LocateGenmetaHomeError,
+    identity::{Identity, InvalidName, Name},
 };
 use http::{Uri, uri::Authority};
 use snafu::{ResultExt, Snafu};
@@ -37,11 +37,6 @@ pub enum Error {
     LocateGenmetaHome { source: LocateGenmetaHomeError },
     #[snafu(display("identity `{id}` in ssh config is invalid"))]
     InvalidIdInSshConfig { id: String, source: InvalidName },
-    #[snafu(display("failed to read identity for `{id}`"))]
-    LoadIdentity {
-        id: Name<'static>,
-        source: LoadIdentityError,
-    },
 }
 
 #[derive(Debug)]
@@ -96,26 +91,22 @@ impl super::Options {
 
         let uri = complete_uri(uri, &username)?;
 
-        let mut id = None;
-        if self.id.is_some() || ssh_config.id.is_some() {
-            tracing::debug!("Try to load identity specified in CLI or ssh config");
+        let cli_id = (self.id.as_ref())
+            .map(|id| (&"command line options" as &dyn fmt::Display, id.borrow()));
+        // TODO: better source with file path and line number
+        let ssh_config_id = (ssh_config.id.as_ref())
+            .map(|id| {
+                Name::from_str(id)
+                    .context(InvalidIdInSshConfigSnafu { id })
+                    .map(|name| (&"ssh config" as &dyn fmt::Display, name))
+            })
+            .transpose()?;
 
-            let cli_id = (self.id.as_ref())
-                .map(|id| (&"command line options" as &dyn fmt::Display, id.borrow()));
-            // TODO: better source with file path and line number
-            let ssh_config_id = (ssh_config.id.as_ref())
-                .map(|id| {
-                    Name::from_str(id)
-                        .context(InvalidIdInSshConfigSnafu { id })
-                        .map(|name| (&"ssh config" as &dyn fmt::Display, name))
-                })
-                .transpose()?;
-            id = genmeta_common::id::load_identity(
-                &GenmetaHome::load_from_environment()?,
-                Option::into_iter(cli_id).chain(ssh_config_id),
-            )
-            .await;
-        }
+        let id = id::load_home_and_identity(
+            cli_id.is_some() || ssh_config_id.is_some(),
+            Option::into_iter(cli_id).chain(ssh_config_id),
+        )
+        .await?;
 
         let connect_timeout = ssh_config.connect_timeout.unwrap_or(Duration::MAX);
 

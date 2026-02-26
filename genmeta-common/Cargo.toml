@@ -30,6 +30,7 @@ either = { workspace = true, optional = true }
 globset = { workspace = true, optional = true }
 h3x = { workspace = true, optional = true }
 peg = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
 
 [features]
 # dev
@@ -39,6 +40,7 @@ bind = [
     "dep:clap",
     "dep:derive_more",
     "dep:either",
+    "dep:futures",
     "dep:globset",
     "dep:http",
     "dep:h3x",

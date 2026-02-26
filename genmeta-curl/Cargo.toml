@@ -5,12 +5,9 @@ version = "0.3.1"
 edition = "2024"
 
 [dependencies]
-bytes = { workspace = true }
 clap = { workspace = true }
-futures = { workspace = true }
 genmeta-common = { workspace = true, features = ["bind", "dns", "id", "error"] }
 genmeta-home = { workspace = true }
-gmdns = { workspace = true }
 h3x = { workspace = true }
 http = { workspace = true }
 snafu = { workspace = true }
