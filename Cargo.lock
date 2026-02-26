@@ -1202,6 +1202,9 @@ dependencies = [
  "clap",
  "futures",
  "genmeta-common",
+ "genmeta-home",
+ "gmdns",
+ "h3x",
  "http",
  "snafu",
  "tokio",
@@ -1342,7 +1345,6 @@ dependencies = [
 [[package]]
 name = "genmeta-ssh3-client"
 version = "0.3.0"
-source = "git+ssh://git@github.com/genmeta/genmeta-ssh3.git#c2b7d7d20ae7ba7a7846c59db37fff38d77f303c"
 dependencies = [
  "bytes",
  "crossterm",
@@ -1359,7 +1361,6 @@ dependencies = [
 [[package]]
 name = "genmeta-ssh3-proto"
 version = "0.3.0"
-source = "git+ssh://git@github.com/genmeta/genmeta-ssh3.git#c2b7d7d20ae7ba7a7846c59db37fff38d77f303c"
 dependencies = [
  "bytes",
  "dashmap",
@@ -2664,6 +2665,7 @@ dependencies = [
  "futures",
  "qbase",
  "qcongestion",
+ "qdns",
  "qevent",
  "qinterface",
  "qrecovery",
