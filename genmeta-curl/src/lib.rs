@@ -136,7 +136,7 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
             .map(|id| (&"command line option" as &dyn std::fmt::Display, id.clone())),
     )
     .await
-    .whatever_context("failed to locate GENMETA_HOME while it's required")?;
+    .whatever_context("failed to locate `GENMETA_HOME` while it's required")?;
 
     let bind_setup = bind::setup_bind_interfaces(bind::Binds::new(mem::take(&mut options.binds)))
         .await
@@ -174,7 +174,7 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
     };
     let connection = match tokio::time::timeout(timeout, connect).await {
         Ok(result) => result?,
-        Err(_) => whatever!("connection timed out "),
+        Err(_) => whatever!("connection timed out"),
     };
 
     let (mut response_stream, mut request_stream) = connection
@@ -214,16 +214,16 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
             let mut stream_writer = pin!(request_stream.as_writer());
             let mut file = fs::File::open(&path)
                 .await
-                .whatever_context(format!("failed to open file {} to upload", path.display()))?;
+                .whatever_context(format!("failed to open file `{}` to upload", path.display()))?;
 
             io::copy(&mut file, &mut stream_writer)
                 .await
                 .whatever_context(format!(
-                    "failed to upload file {} to server",
+                    "failed to upload file `{}` to server",
                     path.display()
                 ))?;
             stream_writer.flush().await.whatever_context(format!(
-                "failed to upload file {} to server",
+                "failed to upload file `{}` to server",
                 path.display()
             ))?;
         }
@@ -241,7 +241,7 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
             .await
             .whatever_context("failed to receive response")?;
 
-        tracing::debug!(target: "request", "response: {response:#?}");
+        tracing::debug!(target: "request", "Response: {response:#?}");
         if options.verbose {
             let output = format!("< received response: {response:#?}")
                 .lines()
@@ -251,12 +251,12 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
         }
 
         let dst: &mut (dyn AsyncWrite + Unpin) = if let Some(output) = options.output {
-            tracing::debug!(target: "request", "dump output to {}", output.display());
+            tracing::debug!(target: "request", "Dump output to {}", output.display());
             &mut fs::File::create(output)
                 .await
                 .whatever_context("failed to create output file")?
         } else {
-            tracing::debug!(target: "request", "dump output to stdio");
+            tracing::debug!(target: "request", "Dump output to stdio");
             &mut io::stdout()
         };
 
