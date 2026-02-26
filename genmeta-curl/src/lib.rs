@@ -1,16 +1,25 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{fmt, mem, path::PathBuf, pin::pin, sync::Arc, time::Duration};
 
-use bytes::{Buf, BytesMut};
 use clap::Parser;
+use futures::{StreamExt, stream::FuturesUnordered};
 use genmeta_common::{
+    bind,
+    dns::{self, DnsScheme},
     error::Whatever,
-    identity::{ClientName, expand_id},
+    id,
+};
+use genmeta_home::{GenmetaHome, identity::Name};
+use gmdns::resolvers::{MdnsResolvers, Resolvers};
+use h3x::gm_quic::{
+    H3Client,
+    prelude::handy::{DEFAULT_IO_FACTORY, NoopLogger},
+    qinterface::{device::Devices, manager::InterfaceManager},
 };
 use http::{Method, Request, Uri, header::USER_AGENT};
-use snafu::{OptionExt, ResultExt, whatever};
+use snafu::{Report, ResultExt, whatever};
 use tokio::{
     fs,
-    io::{self, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{self, AsyncWrite, AsyncWriteExt},
 };
 
 #[derive(Parser, Debug, Clone)]
@@ -61,7 +70,15 @@ pub struct Options {
     //
     /// Client identity
     #[arg(long, value_name = "client_identity")]
-    id: Option<ClientName>,
+    id: Option<Name<'static>>,
+
+    /// DNS resolution schemes to connect to the remote.
+    #[arg(long, value_name = "scheme", default_value = "system, mdns, http")]
+    dns: Vec<dns::DnsScheme>,
+
+    /// Bind patterns to specify which local interfaces and ports to bind for DHTTP/3 connections.
+    #[arg(long = "interface", value_name = "bind", default_value = "*")]
+    binds: Vec<bind::Bind>,
 
     /// Maximum time allowed for connection in seconds
     #[arg(long)]
@@ -84,20 +101,13 @@ pub struct Options {
 }
 
 impl Options {
-    fn complete_uri(&mut self) -> Result<(), Whatever> {
-        let mut uri_parts = self.uri.clone().into_parts();
-
-        let Some(authority) = uri_parts.authority else {
+    fn expand_uri(&mut self) -> Result<(), Whatever> {
+        if self.uri.authority().is_none() {
             whatever!("missing authority in URI")
-        };
+        }
 
-        let host = expand_id(authority.host());
-        uri_parts.authority = Some(
-            host.parse()
-                .whatever_context(format!("failed to parse authority `{host}`"))?,
-        );
-
-        self.uri = Uri::from_parts(uri_parts).whatever_context("failed to complete URI")?;
+        self.uri = id::expand_uri(self.uri.clone())
+            .whatever_context("expanded identity name in URI is invalid")?;
         Ok(())
     }
 }
@@ -122,43 +132,109 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
         )
         .with_writer(std::io::stderr)
         .init();
-    options.complete_uri()?;
-    let resolvers = Resolvers::new()
-        .with(Arc::new(
-            HttpResolver::new(qdns::HTTP_DNS_SERVER)
-                .whatever_context("cannot create HTTP resolver")?,
-        ))
-        .with_mdns(qdns::MDNS_SERVICE)
-        .0;
-    let server_name = options.uri.host().whatever_context("missing host in uri")?;
+    options.expand_uri()?;
 
-    let profile = match &options.id {
-        Some(id) => Some(
-            genmeta_common::identity::config::read_config(id, None)
-                .await
-                .whatever_context(format!("failed to read profile for `{id}`"))?,
-        ),
-        None => None,
+    let genmeta_home_required = options.id.is_some();
+
+    let genmeta_home = match GenmetaHome::load_from_environment() {
+        Ok(genmeta_home) => Some(genmeta_home),
+        Err(error) if !genmeta_home_required => {
+            tracing::warn!(error = %Report::from_error(error), "Failed to locate GENMETA_HOME, some features may not work");
+            None
+        }
+        Err(error) => {
+            return whatever!(
+                Err(error),
+                "Failed to locate GENMETA_HOME while it's required"
+            );
+        }
     };
 
-    let parameters = handy::client_parameters();
-    let qlogger = Arc::new(handy::NoopLogger);
-    let mut h3_pool = H3ConnectionPool::new(profile.as_ref(), parameters, qlogger);
-    if options.verbose {
-        h3_pool = h3_pool.verbose();
+    let mut id = None;
+    if let Some(genmeta_home) = &genmeta_home {
+        let cli_id = (options.id.as_ref())
+            .map(|id| (&"command line option" as &dyn fmt::Display, id.clone()));
+        id = id::load_identity(genmeta_home, cli_id).await
     }
+
+    let interfaces_monitor = Devices::global().monitor();
+    let bind_uris = bind::Binds::new(mem::take(&mut options.binds))
+        .to_bind_uris(interfaces_monitor.interfaces().keys().map(String::as_str))
+        .whatever_context("failed to resolve bind interfaces to bind uris")?;
+
+    let iface_manager = Arc::new(InterfaceManager::new());
+    let io_factory = Arc::new(DEFAULT_IO_FACTORY);
+    let bind_interfaces = bind_uris
+        .iter()
+        .map(|bind_uri| iface_manager.bind(bind_uri.clone(), io_factory.clone()))
+        .collect::<FuturesUnordered<_>>()
+        .collect::<Vec<_>>()
+        .await;
+
+    let mut resolvers = Resolvers::new();
+    let mdns_resolvers = Arc::new(MdnsResolvers::new());
+    for dns_scheme in options.dns.iter() {
+        match dns_scheme {
+            DnsScheme::System => {
+                resolvers = resolvers.with(Arc::new(dns::handy::system_resolver()))
+            }
+            DnsScheme::Mdns => {
+                mdns_resolvers.merge(&dns::handy::mdns_resolvers(bind_interfaces.iter().cloned()));
+                resolvers = resolvers.with(mdns_resolvers.clone());
+            }
+            DnsScheme::Http => {
+                resolvers = resolvers.with(Arc::new(dns::handy::http_resolver()));
+            }
+            DnsScheme::H3 => {
+                let resolver = Arc::new(resolvers.clone());
+                let resolver = dns::handy::h3_resolver(resolver, id.as_ref());
+                resolvers = resolvers.with(Arc::new(
+                    resolver.whatever_context("failed to build H3 DNS resolver")?,
+                ));
+            }
+            DnsScheme::Dht => {
+                unimplemented!("DHT resolver is not implemented yet");
+            }
+        }
+    }
+
+    let client = match &id {
+        Some(id) => H3Client::builder().with_identity(id.name().as_full(), id.certs(), id.key()),
+        None => H3Client::builder().without_identity(),
+    }
+    .whatever_context("failed to build DHTTP/3 client")?
+    .with_iface_manager(iface_manager)
+    .with_resolver(Arc::new(resolvers))
+    .bind(&bind_uris)
+    .await
+    .with_qlog(Arc::new(NoopLogger))
+    .build();
 
     let timeout = options
         .connect_timeout
         .map(Duration::from_secs)
         .unwrap_or(Duration::MAX);
-    let mut h3_client = h3_pool.connect(server_name, &resolvers, timeout).await?.h3;
+
+    let connect = async {
+        client
+            .connect(options.uri.authority().expect("checked").clone())
+            .await
+            .whatever_context("failed to connect to server")
+    };
+    let connection = match tokio::time::timeout(timeout, connect).await {
+        Ok(result) => result?,
+        Err(_) => whatever!("connection timed out "),
+    };
+
+    let (mut response_stream, mut request_stream) = connection
+        .open_request_stream()
+        .await
+        .whatever_context("failed to open request stream")?;
 
     let user_agent = format!("genmeta-curl/{}", env!("CARGO_PKG_VERSION"));
     let mut request_builder = Request::builder()
         .uri(options.uri.clone())
         .version(http::Version::HTTP_3)
-        .header("Host", server_name)
         .header(USER_AGENT, user_agent)
         .header("Accept", "*/*");
 
@@ -174,55 +250,43 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
         request_builder = request_builder.header(k, v);
     }
 
-    let request = request_builder
-        .body(())
-        .whatever_context("failed to build request")?;
-
-    let request_stream = h3_client
-        .send_request(request)
-        .await
-        .whatever_context("failed to send request")?;
-
-    let (mut send_stream, mut recv_stream) = request_stream.split();
-
     let send_request_body = async {
         if let Some(data) = options.data {
-            send_stream
-                .send_data(Vec::from(data).into())
+            let request = request_builder
+                .body(data)
+                .whatever_context("failed to build http request")?;
+            request_stream
+                .send_hyper_request(request)
                 .await
-                .whatever_context("failed to send request body")?;
-        }
-
-        if let Some(path) = options.upload_file {
+                .whatever_context("failed to send http request")?;
+        } else if let Some(path) = options.upload_file {
+            let mut stream_writer = pin!(request_stream.as_writer());
             let mut file = fs::File::open(&path)
                 .await
                 .whatever_context(format!("failed to open file {} to upload", path.display()))?;
-            loop {
-                let mut buf = BytesMut::with_capacity(1 << 20);
-                file.read_buf(&mut buf).await.whatever_context(format!(
-                    "failed to read file {} to upload",
+
+            io::copy(&mut file, &mut stream_writer)
+                .await
+                .whatever_context(format!(
+                    "failed to upload file {} to server",
                     path.display()
                 ))?;
-                if buf.is_empty() {
-                    break;
-                }
-                send_stream
-                    .send_data(buf.freeze())
-                    .await
-                    .whatever_context("failed to send request body")?;
-            }
+            stream_writer.flush().await.whatever_context(format!(
+                "failed to upload file {} to server",
+                path.display()
+            ))?;
         }
 
-        send_stream
-            .finish()
+        request_stream
+            .close()
             .await
-            .whatever_context("failed to finish request stream")?;
+            .whatever_context("failed to close request stream")?;
 
         Result::<_, Whatever>::Ok(())
     };
     let receive_response = async {
-        let response = recv_stream
-            .recv_response()
+        let response = response_stream
+            .read_hyper_response_parts()
             .await
             .whatever_context("failed to receive response")?;
 
@@ -245,19 +309,10 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
             &mut io::stdout()
         };
 
-        while let Some(mut data) = recv_stream
-            .recv_data()
+        let mut stream_reader = pin!(response_stream.as_reader());
+        io::copy(&mut stream_reader, dst)
             .await
-            .whatever_context("failed to receive data")?
-        {
-            while data.has_remaining() {
-                let chunk = data.chunk();
-                dst.write_all(chunk)
-                    .await
-                    .whatever_context("failed to write data to output")?;
-                data.advance(chunk.len());
-            }
-        }
+            .whatever_context("failed to read response body or write to output")?;
         dst.flush()
             .await
             .whatever_context("failed to flush output")?;
