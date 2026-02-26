@@ -80,7 +80,7 @@ pub mod handy {
         id: Option<&Identity<'static>>,
     ) -> Result<H3Resolver, BuildClientError> {
         tracing::debug!("Initializing H3 DNS resolver with server {H3_DNS_SERVER}");
-        let h3_clinet = match id {
+        let h3_client = match id {
             Some(id) => {
                 tracing::debug!("Using client identity {} for H3 DNS resolver", id.name());
                 H3Client::builder().with_identity(id.name().as_full(), id.certs(), id.key())?
@@ -93,7 +93,7 @@ pub mod handy {
         .with_resolver(resolver)
         .build();
 
-        Ok(H3Resolver::new(H3_DNS_SERVER, h3_clinet).expect("H3_DNS_SERVER is valid URL"))
+        Ok(H3Resolver::new(H3_DNS_SERVER, h3_client).expect("H3_DNS_SERVER is valid URL"))
     }
 
     /// Placeholder for DHT resolver initialization.
@@ -102,7 +102,7 @@ pub mod handy {
     /// but the project does not require DHT resolver for tests. Keep as a
     /// noop to allow builds/tests to proceed.
     pub fn dht_resolver() {
-        tracing::warn!("dht_resolver not implemented; skipping DHT resolver initialization");
+        tracing::warn!("DHT resolver not implemented; skipping initialization");
     }
 
     /// Result of [`build_resolvers`], carrying all DNS resolver state.

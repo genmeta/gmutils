@@ -12,13 +12,13 @@ pub async fn load_identity<'n>(
     genmeta_home: &GenmetaHome,
     load_list: impl IntoIterator<Item = (&dyn fmt::Display, Name<'_>)>,
 ) -> Option<Identity<'static>> {
-    let mut tried_sepcified = false;
+    let mut tried_specified = false;
     for (source, name) in load_list {
-        tried_sepcified = true;
-        tracing::debug!("Try to load identity `{name}` sepcified by `{source}`");
+        tried_specified = true;
+        tracing::debug!("Trying to load identity `{name}` specified by `{source}`");
         match genmeta_home.identities().load(name.borrow()).await {
             Ok(identity) => {
-                if tried_sepcified {
+                if tried_specified {
                     tracing::warn!("Identity `{name}` specified by `{source}` loaded");
                 } else {
                     tracing::debug!("Identity `{name}` specified by `{source}` loaded");
@@ -37,23 +37,23 @@ pub async fn load_identity<'n>(
 
     // all specified identities failed to load, try to load the default identity
     match genmeta_home.identities().load_default_identity().await {
-        Ok(identity) if tried_sepcified => {
+        Ok(identity) if tried_specified => {
             tracing::warn!(
-                "All specified identities failed to load, use default identity `{}`",
+                "All specified identities failed to load, using default identity `{}`",
                 identity.name()
             );
             Some(identity)
         }
         Ok(identity) => {
             tracing::debug!(
-                "No identity specified, use default identity `{}`",
+                "No identity specified, using default identity `{}`",
                 identity.name()
             );
             Some(identity)
         }
-        Err(error) if tried_sepcified => {
+        Err(error) if tried_specified => {
             tracing::warn!(
-                "All specified identities failed to load, and default identity failed to load: {}",
+                "All specified identities failed to load, and default identity also failed to load: {}",
                 Report::from_error(error)
             );
             None
