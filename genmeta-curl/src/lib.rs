@@ -241,7 +241,7 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
             .await
             .whatever_context("failed to receive response")?;
 
-        tracing::debug!(target: "request", "Response: {response:#?}");
+        tracing::debug!("Response: {response:#?}");
         if options.verbose {
             let output = format!("< received response: {response:#?}")
                 .lines()
@@ -251,12 +251,12 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
         }
 
         let dst: &mut (dyn AsyncWrite + Unpin) = if let Some(output) = options.output {
-            tracing::debug!(target: "request", "Dump output to {}", output.display());
+            tracing::debug!("Dump output to {}", output.display());
             &mut fs::File::create(output)
                 .await
                 .whatever_context("failed to create output file")?
         } else {
-            tracing::debug!(target: "request", "Dump output to stdio");
+            tracing::debug!("Dump output to stdio");
             &mut io::stdout()
         };
 

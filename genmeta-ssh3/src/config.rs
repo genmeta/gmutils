@@ -150,7 +150,7 @@ fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {
     };
     uri_parts.path_and_query = match uri_parts.path_and_query {
         root if root.as_ref().is_none_or(|path| path == "/") => {
-            tracing::debug!(target: "connect", "Path is empty, using `/ssh` as default");
+            tracing::debug!("Path is empty, using `/ssh` as default");
             Some("/ssh".parse().unwrap())
         }
         path_and_query => path_and_query,

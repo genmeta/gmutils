@@ -140,7 +140,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .init();
 
     let config = options.config().await?;
-    tracing::debug!(target: "config", ?config);
+    tracing::debug!(?config);
 
     let commands = match options.commands.as_slice() {
         [] => None,

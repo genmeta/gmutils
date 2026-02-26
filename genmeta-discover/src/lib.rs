@@ -65,7 +65,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .filter_map(|device| {
             bind_mdns_resolver(&interfaces, device)
                 .inspect_err(
-                    |error| tracing::debug!(target: "discover", "{}", Report::from_error(error)),
+                    |error| tracing::debug!("{}", Report::from_error(error)),
                 )
                 .ok()
         })
