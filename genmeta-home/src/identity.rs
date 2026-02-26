@@ -216,6 +216,25 @@ impl<'n> Name<'n> {
         let name = Cow::Owned(name.into().into_owned() + Self::SUFFIX);
         Name::try_from_str_full(name)
     }
+
+    pub fn try_expand_from(str: impl Into<Cow<'n, str>>) -> Result<Option<Name<'n>>, InvalidName> {
+        let str = str.into();
+        if str.ends_with(Self::SUFFIX) {
+            return Self::try_from_str_full(str).map(Some);
+        }
+        if str.ends_with('~') {
+            let partial = match str {
+                Cow::Borrowed(str) => Cow::Borrowed(&str[..str.len() - 1]),
+                Cow::Owned(mut str) => {
+                    str.pop();
+                    Cow::Owned(str)
+                }
+            };
+            return Self::try_from_str_partial(partial).map(Some);
+        }
+
+        Ok(None)
+    }
 }
 
 #[derive(Debug)]

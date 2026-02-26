@@ -18,9 +18,12 @@ pub struct GenmetaHome {
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 pub enum LocateGenmetaHomeError {
-    #[snafu(display("failed to locate GENMETA_HOME: no home directory found"))]
+    #[cfg(any(unix, windows))]
+    #[snafu(display("cannot locate home directory"))]
     NoHome {},
-    #[snafu(display("GENMETA_HOME cannot be auto located on this platform"))]
+    #[snafu(display(
+        "GENMETA_HOME cannot be automatically located on this platform, try setting GENMETA_HOME environment variable"
+    ))]
     UnsupportedPlatform {},
 }
 
@@ -30,6 +33,10 @@ impl GenmetaHome {
     }
 
     pub fn load_from_environment() -> Result<Self, LocateGenmetaHomeError> {
+        if let Some(path) = std::env::var_os("GENMETA_HOME") {
+            return Ok(Self::new(PathBuf::from(path)));
+        }
+
         #[cfg(any(unix, windows))]
         return Ok(Self::new(
             dirs::home_dir()
