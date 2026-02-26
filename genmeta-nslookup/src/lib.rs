@@ -19,7 +19,7 @@ use h3x::gm_quic::{
     prelude::handy::DEFAULT_IO_FACTORY,
     qinterface::{device::Devices, manager::InterfaceManager},
 };
-use snafu::{ResultExt, Snafu, ensure};
+use snafu::{Report, ResultExt, Snafu, ensure};
 use tokio::time;
 use tracing_subscriber::prelude::*;
 
@@ -78,11 +78,22 @@ pub async fn run(options: Options) -> Result<(), Error> {
         // .with(console_subscriber::spawn())
         .init();
 
-    let genmeta_home = GenmetaHome::load_from_environment();
+    let genmeta_home_required = options.id.is_some();
+
+    let genmeta_home = match GenmetaHome::load_from_environment() {
+        Ok(genmeta_home) => Some(genmeta_home),
+        Err(error) if !genmeta_home_required => {
+            tracing::warn!(error = %Report::from_error(error), "Failed to locate GENMETA_HOME, some features may not work");
+            None
+        }
+        Err(error) => return Err(error.into()),
+    };
+
     let mut id = None;
-    if genmeta_home.is_ok() || options.id.is_some() {
-        let source = &"command line option" as &dyn fmt::Display;
-        id = id::load_id(&genmeta_home?, options.id.map(|id| (source, id))).await;
+    if let Some(genmeta_home) = &genmeta_home {
+        let cli_id = (options.id.as_ref())
+            .map(|id| (&"command line option" as &dyn fmt::Display, id.clone()));
+        id = id::load_identity(genmeta_home, cli_id).await
     }
 
     let iface_manager = Arc::new(InterfaceManager::new());
