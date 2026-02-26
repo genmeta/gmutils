@@ -1,8 +1,8 @@
-#[cfg(feature = "connect")]
-pub mod connect;
+#[cfg(feature = "bind")]
+pub mod bind;
+#[cfg(feature = "dns")]
+pub mod dns;
 #[cfg(feature = "error")]
 pub mod error;
-// #[cfg(feature = "h3_stream")]
-// pub mod h3_stream;
-#[cfg(feature = "identity")]
-pub mod identity;
+#[cfg(feature = "id")]
+pub mod id;
