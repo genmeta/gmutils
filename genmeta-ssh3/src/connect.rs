@@ -1,18 +1,21 @@
 use std::{sync::Arc, time::Duration};
 
-use futures::{StreamExt, future, stream::FuturesUnordered};
-use genmeta_ssh3_client as ssh3;
-use gmdns::{
-    H3_DNS_SERVER, HTTP_DNS_SERVER, MDNS_SERVICE,
-    resolvers::{H3Resolver, HttpResolver, MdnsInterfaces, MdnsResolver, Resolvers},
+use futures::{StreamExt, stream::FuturesUnordered};
+use genmeta_common::{
+    bind::BindConflictError,
+    dns::{self, DnsScheme},
 };
+use genmeta_ssh3_client as ssh3;
+use gmdns::resolvers::{MdnsResolvers, Resolvers};
 use h3x::{
     connection::{Connection, OpenRequestStreamError},
     gm_quic::{
         self, BuildClientError, H3Client,
-        prelude::{BindUri, ConnectServerError, handy::TracingLogger},
-        qdns::SystemResolver,
-        qinterface::device::Devices,
+        prelude::{
+            ConnectServerError,
+            handy::{DEFAULT_IO_FACTORY, TracingLogger},
+        },
+        qinterface::{device::Devices, manager::InterfaceManager},
     },
     message::stream::{ReadStream, StreamError, WriteStream},
     pool::ConnectError,
@@ -25,8 +28,10 @@ use crate::config::Config;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(transparent)]
+    BindConflict { source: BindConflictError },
     #[snafu(display("failed to build H3 DNS client"))]
-    BuildDnsClient { source: BuildClientError },
+    BuildH3DnsClient { source: BuildClientError },
     #[snafu(display("failed to build H3 client"))]
     BuildClient { source: BuildClientError },
     #[snafu(display("failed to connect to server"))]
@@ -41,7 +46,7 @@ pub enum Error {
     OpenRequestStream { source: OpenRequestStreamError },
     #[snafu(display("failed to create DNS resolver"))]
     CreateDnsResolver {
-        schema: &'static str,
+        scheme: &'static str,
         source: io::Error,
     },
     #[snafu(display("missing host in URI `{uri}`"))]
@@ -65,31 +70,44 @@ pub async fn connect(
     ),
     Error,
 > {
-    let mdns_interfaces = Arc::new(MdnsInterfaces::new());
-    let mut resolvers = Resolvers::new()
-        .with(mdns_interfaces.clone())
-        .with(Arc::new(SystemResolver))
-        .with(Arc::new(
-            HttpResolver::new(HTTP_DNS_SERVER)
-                .context(CreateDnsResolverSnafu { schema: "http" })?,
-        ));
+    let interfaces_monitor = Devices::global().monitor();
 
-    match &config.id {
-        Some(id) => {
-            let h3_clinet = H3Client::builder()
-                .with_identity(id.name().as_full(), id.certs(), id.key())
-                .context(BuildDnsClientSnafu)?
-                .build();
-            // TODO: h3 connect will hang if the server doesn't respond, which will block the client client from starting
-            // resolvers = resolvers.with(Arc::new(
-            //     H3Resolver::new(H3_DNS_SERVER, h3_clinet)
-            //         .context(CreateDnsResolverSnafu { schema: "h3" })?,
-            // ));
+    let bind_uris = config
+        .binds
+        .to_bind_uris(interfaces_monitor.interfaces().keys().map(String::as_str))?;
+    let iface_manager = Arc::new(InterfaceManager::new());
+    let io_factory = Arc::new(DEFAULT_IO_FACTORY);
+    let bind_interfaces = bind_uris
+        .iter()
+        .map(|bind_uri| iface_manager.bind(bind_uri.clone(), io_factory.clone()))
+        .collect::<FuturesUnordered<_>>()
+        .collect::<Vec<_>>()
+        .await;
+
+    let mut resolvers = Resolvers::new();
+    let mdns_resolvers = Arc::new(MdnsResolvers::new());
+    for dns_scheme in config.dns.iter() {
+        match dns_scheme {
+            DnsScheme::System => {
+                resolvers = resolvers.with(Arc::new(dns::handy::system_resolver()))
+            }
+            DnsScheme::Mdns => {
+                mdns_resolvers.merge(&dns::handy::mdns_resolvers(bind_interfaces.iter().cloned()));
+                resolvers = resolvers.with(mdns_resolvers.clone());
+            }
+            DnsScheme::Http => {
+                resolvers = resolvers.with(Arc::new(dns::handy::http_resolver()));
+            }
+            DnsScheme::H3 => {
+                let resolver = Arc::new(resolvers.clone());
+                let resolver = dns::handy::h3_resolver(resolver, config.id.as_ref());
+                resolvers = resolvers.with(Arc::new(resolver.context(BuildH3DnsClientSnafu)?));
+            }
+            DnsScheme::Dht => {
+                unimplemented!("DHT resolver is not implemented yet");
+            }
         }
-        None => {
-            tracing::warn!("No client identity provided, H3 DNS resolver wll not work")
-        }
-    };
+    }
 
     let client = match &config.id {
         Some(id) => H3Client::builder().with_identity(id.name().as_full(), id.certs(), id.key()),
@@ -97,48 +115,12 @@ pub async fn connect(
     }
     .context(BuildClientSnafu)?
     .with_resolver(Arc::new(resolvers))
+    .bind(&bind_uris)
+    .await
     .with_qlog(Arc::new(TracingLogger))
     .build();
 
-    let interfaces = Devices::global().interfaces();
-
-    future::join_all(
-        interfaces
-            .iter()
-            .filter(|(_, iface)| {
-                iface.is_up() && (iface.is_physical() || iface.is_tun() || iface.is_loopback())
-            })
-            .flat_map(|(name, iface)| {
-                [
-                    iface.has_ipv4().then(|| format!("iface://v4.{name}:0")),
-                    iface.has_ipv4().then(|| format!("iface://v6.{name}:0")),
-                ]
-            })
-            .flatten()
-            .map(|bind_uri| {
-                BindUri::from(bind_uri)
-                    .alloc_port()
-                    .with_stun_server("1.12.74.4:20004")
-            })
-            .map(async |bind_uri| {
-                let bind_interface = client.quic_clinet().bind(bind_uri.clone()).await;
-                match bind_interface.with_components_mut(|components, iface| {
-                    components
-                        .try_init_with(|| MdnsResolver::from_iface(MDNS_SERVICE, iface))
-                        .map(|_| ())
-                }) {
-                    Ok(()) => {
-                        client.quic_clinet().bind(bind_uri).await;
-                        mdns_interfaces.insert(bind_interface);
-                    },
-                    Err(error) => {
-                        tracing::debug!(%error, %bind_uri, "Failed to create MDNS resolver for bind interface, skipping")
-                    }
-                };
-            }),
-    )
-    .await;
-
+    let server = config.uri.authority().expect("missing authority in URI");
     let connection = client.connect(server.clone()).await.context(ConnectSnafu)?;
 
     let (mut read_stream, mut write_stream) = connection

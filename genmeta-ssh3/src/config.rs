@@ -1,11 +1,16 @@
-use std::{str::FromStr, time::Duration};
+use core::fmt;
+use std::{collections::BTreeSet, str::FromStr, time::Duration};
 
+use genmeta_common::{
+    bind::{self, Binds},
+    dns,
+};
 use genmeta_home::{
     GenmetaHome, LocateGenmetaHomeError,
     identity::{Identity, InvalidName, Name, fs::LoadIdentityError},
 };
 use http::{Uri, uri::Authority};
-use snafu::{Report, ResultExt, Snafu};
+use snafu::{ResultExt, Snafu};
 use ssh_config::error::ReadConfigError;
 
 #[derive(Debug, Snafu)]
@@ -31,7 +36,7 @@ pub enum Error {
     #[snafu(transparent)]
     LocateGenmetaHome { source: LocateGenmetaHomeError },
     #[snafu(display("identity `{id}` in ssh config is invalid"))]
-    InvalidId { id: String, source: InvalidName },
+    InvalidIdInSshConfig { id: String, source: InvalidName },
     #[snafu(display("failed to read identity for `{id}`"))]
     LoadIdentity {
         id: Name<'static>,
@@ -41,13 +46,13 @@ pub enum Error {
 
 #[derive(Debug)]
 pub struct Config {
+    pub binds: bind::Binds,
+    pub dns: BTreeSet<dns::DnsScheme>,
     pub username: String,
     pub password: Option<String>,
     pub uri: Uri,
     pub id: Option<Identity<'static>>,
     pub connect_timeout: Duration,
-    // TODO
-    // pub dns_schemes: Vec<DnsSchema>,
 }
 
 // CLI args > config file priority
@@ -91,55 +96,32 @@ impl super::Options {
 
         let uri = complete_uri(uri, &username)?;
 
-        let try_load_default_identity = || async {
-            let genmeta_home = match GenmetaHome::load_from_environment() {
-                Ok(genmeta_home) => genmeta_home,
-                Err(error) => {
-                    tracing::warn!(
-                        "No identity specified in CLI or ssh config, and default identity cannot be load as {}",
-                        Report::from_error(error)
-                    );
-                    return None;
-                }
-            };
-            let id = match genmeta_home.identities().load_default_identity().await {
-                Ok(id) => id,
-                Err(error) => {
-                    tracing::warn!(
-                        "No identity specified in CLI or ssh config, and default identity cannot be load as {}",
-                        Report::from_error(error)
-                    );
-                    return None;
-                }
-            };
-            Some(id)
-        };
+        let mut id = None;
+        if self.id.is_some() || ssh_config.id.is_some() {
+            tracing::debug!("Try to load identity specified in CLI or ssh config");
 
-        let id = match self.id.as_ref() {
-            Some(id) => Some(id.borrow()),
-            None => match &ssh_config.id {
-                Some(id) => Some(Name::from_str(id).context(InvalidIdSnafu { id })?),
-                None => None,
-            },
-        };
-
-        let id = match id {
-            Some(id) => {
-                let genmeta_home = GenmetaHome::load_from_environment()?;
-                Some(
-                    genmeta_home
-                        .identities()
-                        .load(id.to_owned())
-                        .await
-                        .context(LoadIdentitySnafu { id: id.to_owned() })?,
-                )
-            }
-            None => try_load_default_identity().await,
-        };
+            let cli_id = (self.id.as_ref())
+                .map(|id| (&"command line options" as &dyn fmt::Display, id.borrow()));
+            // TODO: better source with file path and line number
+            let ssh_config_id = (ssh_config.id.as_ref())
+                .map(|id| {
+                    Name::from_str(id)
+                        .context(InvalidIdInSshConfigSnafu { id })
+                        .map(|name| (&"ssh config" as &dyn fmt::Display, name))
+                })
+                .transpose()?;
+            id = genmeta_common::id::load_id(
+                &GenmetaHome::load_from_environment()?,
+                Option::into_iter(cli_id).chain(ssh_config_id),
+            )
+            .await;
+        }
 
         let connect_timeout = ssh_config.connect_timeout.unwrap_or(Duration::MAX);
 
         Ok(Config {
+            binds: Binds::new(self.bind.clone()),
+            dns: self.dns.iter().cloned().collect(),
             username,
             password,
             uri,

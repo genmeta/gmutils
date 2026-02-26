@@ -4,6 +4,7 @@ use std::fmt::Debug;
 mod config;
 mod connect;
 use clap::Parser;
+use genmeta_common::{bind, dns};
 use genmeta_home::identity::Name;
 use genmeta_ssh3_client as ssh3;
 use h3x::{
@@ -14,8 +15,7 @@ use snafu::Snafu;
 use ssh3::forward::*;
 use tracing_subscriber::prelude::*;
 
-const URI_LONG_HELP: &str = "Example: `my-remote-dev`, `developer@ssh3.test.genmeta.net`
-If this argument matches the ssh configuration file, \
+const URI_LONG_HELP: &str = "If this argument matches the ssh configuration file, \
 the HostName and User of the matched Host will be used. \
 Otherwise the argument will be parsed as a URI. URIs follow these rules: \
 Scheme is optional, only `ssh3` is accepted. \
@@ -26,13 +26,12 @@ Path is optional, if not present, use `/ssh` as default.";
 const OPTIONS_LONG_HELP: &str =
     "Set options for the SSH connection, currently all options are ignored.";
 
-const DYNAMIC_FORWARD_LONG_HELP: &str = "Example: `12345`, `127.0.0.1:12335`
-Start a Socks server on the specified local port, forward the connection to the server and decide which address \
+const DYNAMIC_FORWARD_LONG_HELP: &str = "Start a Socks server on the specified local port, forward the connection to the server and decide which address \
 the server should connect to based on the application protocol.\
 You can specify just the port, while an empty address or `*` indicates that the port should be available from all interfaces.";
 
-const LOCAL_FORWARDING_LONG_HELP: &str = "
-Specifies that connections to the given TCP port or Unix \
+const LOCAL_FORWARDING_LONG_HELP: &str =
+    "Specifies that connections to the given TCP port or Unix \
 socket on the local (client) host are to be forwarded to \
 the given host and port, or Unix socket, on the remote \
 side.
@@ -44,8 +43,8 @@ connection is forwarded over the secure channel, and a \
 connection is made to either host port hostport, or the \
 Unix socket remote_socket, from the remote machine.";
 
-const REMOTE_FORWARDING_LONG_HELP: &str = "
-Specifies that connections to the given TCP port or Unix socket on the remote (server) host \
+const REMOTE_FORWARDING_LONG_HELP: &str =
+    "Specifies that connections to the given TCP port or Unix socket on the remote (server) host \
 are to be forwarded to the local side.
 This works by allocating a socket to listen to either a \
 TCP port or to a Unix socket on the remote side.  Whenever \
@@ -61,8 +60,17 @@ SOCKS client.";
 #[derive(Parser, Debug, Clone)]
 #[command(version, about)]
 pub struct Options {
-    #[arg(value_name = "HOST/URI", long_help = URI_LONG_HELP)]
-    host: String,
+    /// Client identity in GENMETA HOME
+    #[arg(short = 'i', long, value_name = "client_identity")]
+    id: Option<Name<'static>>,
+
+    /// Bind patterns to specify which local interfaces and ports to bind for DHTTP/3 connections.
+    #[arg(long, default_value = "*")]
+    bind: Vec<bind::Bind>,
+
+    /// DNS resolution schemes to connect to the remote.
+    #[arg(long, value_name = "scheme", default_value = "system, mdns, http")]
+    dns: Vec<dns::DnsScheme>,
 
     #[arg(
         short = 'o',
@@ -71,10 +79,6 @@ pub struct Options {
         long_help = OPTIONS_LONG_HELP
     )]
     options: Vec<String>,
-
-    /// Client identity
-    #[arg(short = 'i', long, value_name = "client_identity")]
-    id: Option<Name<'static>>,
 
     /// Disable pseudo-terminal allocation.
     #[arg(
@@ -104,6 +108,9 @@ pub struct Options {
         long_help = REMOTE_FORWARDING_LONG_HELP
     )]
     remote_forwards: Vec<RemoteForwardRule>,
+
+    #[arg(value_name = "HOST/URI", long_help = URI_LONG_HELP)]
+    host: String,
 
     /// Command to execute on the remote server.
     #[arg(trailing_var_arg = true, value_name = "command [argument ...]")]
