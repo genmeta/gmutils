@@ -77,14 +77,14 @@ impl super::Options {
         };
 
         if username.is_none() {
-            tracing::debug!("User not found in ssh_config, Try parse it from hostname");
+            tracing::debug!("User not found in ssh_config, trying to parse from hostname");
             (username, password) = parse_username_password_from_uri(&uri);
         }
 
         let (username, password) = match username {
             Some(username) => (username, password),
             None => {
-                tracing::debug!("User not found in URI, use current user");
+                tracing::debug!("User not found in URI, using current user");
                 (whoami::username(), None)
             }
         };
@@ -184,5 +184,5 @@ fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {
         None => return Err(MissingAuthoritySnafu {}.build()),
     };
 
-    Ok(Uri::from_parts(uri_parts).expect("Failed to construct URI from parts"))
+    Ok(Uri::from_parts(uri_parts).expect("failed to construct URI from parts"))
 }

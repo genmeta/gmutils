@@ -30,9 +30,9 @@ pub enum Error {
         source: ConnectError<ConnectServerError>,
     },
     #[snafu(display("request stream failed"))]
-    RequestSteam { source: StreamError },
+    RequestStream { source: StreamError },
     #[snafu(display("response stream failed"))]
-    ResponseSteam { source: StreamError },
+    ResponseStream { source: StreamError },
     #[snafu(display("failed to send request"))]
     OpenRequestStream { source: OpenRequestStreamError },
     #[snafu(display("missing host in URI `{uri}`"))]
@@ -94,12 +94,12 @@ pub async fn connect(
     write_stream
         .send_hyper_request_parts(request.into_parts().0)
         .await
-        .context(RequestSteamSnafu)?;
+        .context(RequestStreamSnafu)?;
 
     let response = read_stream
         .read_hyper_response_parts()
         .await
-        .context(ResponseSteamSnafu)?;
+        .context(ResponseStreamSnafu)?;
     tracing::debug!(?response);
     ensure!(
         response.status == 200,
