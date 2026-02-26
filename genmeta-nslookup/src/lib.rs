@@ -48,7 +48,7 @@ pub enum Error {
     LocateGenmetaHome {
         source: genmeta_home::LocateGenmetaHomeError,
     },
-    #[snafu(display("failed to build h3 DNS client"))]
+    #[snafu(display("failed to build H3 DNS client"))]
     BuildH3DnsClient { source: BuildClientError },
     #[snafu(display("failed to lookup DNS records of `{name}`"))]
     LookUp {
