@@ -1,38 +1,11 @@
-    Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
-warning: unused variable: `client`
-   --> genmeta-proxy/src/lib.rs:114:9
-    |
-114 |     let client = match &id {
-    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_client`
-    |
-    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+Run: cargo test -p genmeta-proxy -- route
 
-   Compiling genmeta-proxy v0.1.0 (/home/yiyue/code/reimu/gmutils/genmeta-proxy)
-warning: `genmeta-proxy` (lib) generated 1 warning (run `cargo fix --lib -p genmeta-proxy` to apply 1 suggestion)
-warning: `genmeta-proxy` (lib test) generated 1 warning (1 duplicate)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.44s
-     Running unittests src/lib.rs (target/debug/deps/genmeta_proxy-3083c06b0ac93918)
+Output:
 
 running 4 tests
+test route::tests::test_is_genmeta_bare_domain ... ok
+test route::tests::test_is_genmeta_non_match ... ok
 test route::tests::test_is_genmeta_exact_suffix ... ok
 test route::tests::test_is_genmeta_with_port ... ok
-test route::tests::test_is_genmeta_non_match ... ok
-test route::tests::test_is_genmeta_bare_domain ... FAILED
 
-failures:
-
----- route::tests::test_is_genmeta_bare_domain stdout ----
-
-thread 'route::tests::test_is_genmeta_bare_domain' (427336) panicked at genmeta-proxy/src/route.rs:115:9:
-assertion failed: !r.is_genmeta("genmeta.net")
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-
-
-failures:
-    route::tests::test_is_genmeta_bare_domain
-
-test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-
-error: test failed, to rerun pass `-p genmeta-proxy --lib`
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
