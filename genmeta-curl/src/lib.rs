@@ -1,20 +1,29 @@
-use std::{mem, path::PathBuf, pin::pin, sync::Arc, time::Duration};
+use std::{convert::Infallible, mem, path::PathBuf, pin::pin, sync::Arc, time::Duration};
 
 use clap::Parser;
 use genmeta_common::{
     bind,
     dns::{self},
-    error::Whatever,
     id,
 };
 use genmeta_home::identity::Name;
-use h3x::gm_quic::{H3Client, prelude::handy::NoopLogger};
+use h3x::{
+    connection::OpenRequestStreamError,
+    gm_quic::{
+        BuildClientError, H3Client,
+        prelude::{ConnectServerError, handy::NoopLogger},
+    },
+    hyper::SendMesageError,
+    message::stream::StreamError,
+    pool::ConnectError,
+};
 use http::{Method, Request, Uri, header::USER_AGENT};
-use snafu::{ResultExt, whatever};
+use snafu::{ResultExt, Snafu, ensure};
 use tokio::{
     fs,
     io::{self, AsyncWrite, AsyncWriteExt},
 };
+use tracing_subscriber::prelude::*;
 
 #[derive(Parser, Debug, Clone)]
 #[command(version, about)]
@@ -94,14 +103,80 @@ pub struct Options {
     // silent: bool,
 }
 
-impl Options {
-    fn expand_uri(&mut self) -> Result<(), Whatever> {
-        if self.uri.authority().is_none() {
-            whatever!("missing authority in URI")
-        }
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("missing authority in URI"))]
+    MissingAuthority {},
 
-        self.uri = id::expand_uri(self.uri.clone())
-            .whatever_context("expanded identity name in URI is invalid")?;
+    #[snafu(display("failed to expand identity in URI"))]
+    ExpandUri {
+        source: genmeta_home::identity::InvalidName,
+    },
+
+    #[snafu(transparent)]
+    LocateGenmetaHome {
+        source: genmeta_home::LocateGenmetaHomeError,
+    },
+
+    #[snafu(transparent)]
+    BindConflict { source: bind::BindConflictError },
+
+    #[snafu(display("failed to build DNS resolvers"))]
+    BuildDnsResolvers { source: BuildClientError },
+
+    #[snafu(display("failed to build HTTP/3 client"))]
+    BuildClient { source: BuildClientError },
+
+    #[snafu(display("failed to connect to server"))]
+    Connect {
+        source: ConnectError<ConnectServerError>,
+    },
+
+    #[snafu(display("connection timed out"))]
+    Timedout {},
+
+    #[snafu(display("failed to open request stream"))]
+    OpenRequestStream { source: OpenRequestStreamError },
+
+    #[snafu(display("failed to build HTTP request"))]
+    BuildRequest { source: http::Error },
+
+    #[snafu(display("failed to send HTTP request"))]
+    SendRequest { source: SendMesageError<Infallible> },
+
+    #[snafu(display("failed to open file `{}` to upload", path.display()))]
+    OpenUploadFile {
+        path: PathBuf,
+        source: io::Error,
+    },
+
+    #[snafu(display("failed to upload file `{}` to server", path.display()))]
+    UploadFile {
+        path: PathBuf,
+        source: io::Error,
+    },
+
+    #[snafu(display("failed to close request stream"))]
+    CloseRequestStream { source: StreamError },
+
+    #[snafu(display("failed to receive response"))]
+    ReceiveResponse { source: StreamError },
+
+    #[snafu(display("failed to create output file"))]
+    CreateOutputFile { source: io::Error },
+
+    #[snafu(display("failed to read response body or write to output"))]
+    ReadResponse { source: io::Error },
+
+    #[snafu(display("failed to flush output"))]
+    FlushOutput { source: io::Error },
+}
+
+impl Options {
+    fn expand_uri(&mut self) -> Result<(), Error> {
+        ensure!(self.uri.authority().is_some(), MissingAuthoritySnafu);
+
+        self.uri = id::expand_uri(self.uri.clone()).context(ExpandUriSnafu)?;
         Ok(())
     }
 }
@@ -117,14 +192,20 @@ fn parse_header(s: &str) -> Result<(String, String), String> {
     Ok((key, value))
 }
 
-pub async fn run(mut options: Options) -> Result<(), Whatever> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
+pub async fn run(mut options: Options) -> Result<(), Error> {
+    let (stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
+                .with_writer(stderr),
+        )
+        .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
                 .from_env_lossy(),
         )
-        .with_writer(std::io::stderr)
         .init();
     options.expand_uri()?;
 
@@ -135,28 +216,26 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
             .as_ref()
             .map(|id| (&"command line option" as &dyn std::fmt::Display, id.clone())),
     )
-    .await
-    .whatever_context("failed to locate `GENMETA_HOME` while it's required")?;
+    .await?;
 
     let bind_setup = bind::setup_bind_interfaces_with(
         bind::Binds::new(mem::take(&mut options.binds)),
         dns::handy::ensure_default_mdns_prop,
     )
-    .await
-    .whatever_context("failed to resolve bind interfaces to bind uris")?;
+    .await?;
 
     let dns_setup = dns::handy::build_resolvers(
         options.dns.iter().copied(),
         &bind_setup.bind_interfaces,
         id.as_ref(),
     )
-    .whatever_context("failed to build DNS resolvers")?;
+    .context(BuildDnsResolversSnafu)?;
 
     let client = match &id {
         Some(id) => H3Client::builder().with_identity(id.name().as_full(), id.certs(), id.key()),
         None => H3Client::builder().without_identity(),
     }
-    .whatever_context("failed to build DHTTP/3 client")?
+    .context(BuildClientSnafu)?
     .with_iface_manager(bind_setup.iface_manager)
     .with_resolver(Arc::new(dns_setup.resolvers))
     .bind(&bind_setup.bind_uris)
@@ -173,17 +252,17 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
         client
             .connect(options.uri.authority().expect("checked").clone())
             .await
-            .whatever_context("failed to connect to server")
+            .context(ConnectSnafu)
     };
     let connection = match tokio::time::timeout(timeout, connect).await {
         Ok(result) => result?,
-        Err(_) => whatever!("connection timed out"),
+        Err(_) => return TimedoutSnafu.fail(),
     };
 
     let (mut response_stream, mut request_stream) = connection
         .open_request_stream()
         .await
-        .whatever_context("failed to open request stream")?;
+        .context(OpenRequestStreamSnafu)?;
 
     let user_agent = format!("genmeta-curl/{}", env!("CARGO_PKG_VERSION"));
     let mut request_builder = Request::builder()
@@ -206,44 +285,38 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
 
     let send_request_body = async {
         if let Some(data) = options.data {
-            let request = request_builder
-                .body(data)
-                .whatever_context("failed to build http request")?;
+            let request = request_builder.body(data).context(BuildRequestSnafu)?;
             request_stream
                 .send_hyper_request(request)
                 .await
-                .whatever_context("failed to send http request")?;
+                .context(SendRequestSnafu)?;
         } else if let Some(path) = options.upload_file {
             let mut stream_writer = pin!(request_stream.as_writer());
-            let mut file = fs::File::open(&path).await.whatever_context(format!(
-                "failed to open file `{}` to upload",
-                path.display()
-            ))?;
+            let mut file = fs::File::open(&path)
+                .await
+                .context(OpenUploadFileSnafu { path: path.clone() })?;
 
             io::copy(&mut file, &mut stream_writer)
                 .await
-                .whatever_context(format!(
-                    "failed to upload file `{}` to server",
-                    path.display()
-                ))?;
-            stream_writer.flush().await.whatever_context(format!(
-                "failed to upload file `{}` to server",
-                path.display()
-            ))?;
+                .context(UploadFileSnafu { path: path.clone() })?;
+            stream_writer
+                .flush()
+                .await
+                .context(UploadFileSnafu { path })?;
         }
 
         request_stream
             .close()
             .await
-            .whatever_context("failed to close request stream")?;
+            .context(CloseRequestStreamSnafu)?;
 
-        Result::<_, Whatever>::Ok(())
+        Result::<_, Error>::Ok(())
     };
     let receive_response = async {
         let response = response_stream
             .read_hyper_response_parts()
             .await
-            .whatever_context("failed to receive response")?;
+            .context(ReceiveResponseSnafu)?;
 
         tracing::debug!("Response: {response:#?}");
         if options.verbose {
@@ -258,7 +331,7 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
             tracing::debug!("Dump output to {}", output.display());
             &mut fs::File::create(output)
                 .await
-                .whatever_context("failed to create output file")?
+                .context(CreateOutputFileSnafu)?
         } else {
             tracing::debug!("Dump output to stdio");
             &mut io::stdout()
@@ -267,12 +340,10 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
         let mut stream_reader = pin!(response_stream.as_reader());
         io::copy(&mut stream_reader, dst)
             .await
-            .whatever_context("failed to read response body or write to output")?;
-        dst.flush()
-            .await
-            .whatever_context("failed to flush output")?;
+            .context(ReadResponseSnafu)?;
+        dst.flush().await.context(FlushOutputSnafu)?;
 
-        Result::<_, Whatever>::Ok(())
+        Result::<_, Error>::Ok(())
     };
 
     tokio::try_join!(send_request_body, receive_response)?;

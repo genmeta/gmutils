@@ -29,6 +29,9 @@ enum Error {
     #[snafu(transparent)]
     Ssh3 { source: genmeta_ssh3::Error },
     #[snafu(transparent)]
+    Curl { source: genmeta_curl::Error },
+    #[snafu(transparent)
+    #[snafu(transparent)]
     Whatever { source: Whatever },
 }
 
