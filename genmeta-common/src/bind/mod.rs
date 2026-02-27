@@ -30,7 +30,7 @@ pub use h3x::gm_quic::qinterface::bind_uri::BindUriScheme;
 pub use host::BindHost;
 pub use http::uri::Scheme;
 pub use pattern::Bind;
-pub use setup::{BindSetup, setup_bind_interfaces};
+pub use setup::{BindSetup, setup_bind_interfaces, setup_bind_interfaces_with};
 
 #[cfg(test)]
 mod tests;

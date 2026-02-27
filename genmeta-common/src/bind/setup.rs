@@ -31,21 +31,16 @@ pub struct BindSetup {
     pub monitor: InterfacesMonitor,
 }
 
-/// Expand [`Binds`] patterns into concrete network bindings.
-///
-/// This performs the full bind-setup pipeline that was previously duplicated in
-/// every consumer crate:
-///
-/// 1. Obtain the current set of network interfaces via [`Devices::global`].
-/// 2. Expand [`Binds`] patterns into concrete [`BindUri`]s.
-/// 3. Create an [`InterfaceManager`] and bind each URI.
-///
-/// The returned [`BindSetup`] owns all state; callers decide which parts to
-/// keep (e.g. `nslookup` ignores the monitor).
-pub async fn setup_bind_interfaces(binds: Binds) -> Result<BindSetup, BindConflictError> {
+/// Like [`setup_bind_interfaces`], but calls `f` on the expanded bind URIs
+/// before binding, allowing callers to mutate them (e.g. inject properties).
+pub async fn setup_bind_interfaces_with(
+    binds: Binds,
+    f: impl FnOnce(&mut Vec<BindUri>),
+) -> Result<BindSetup, BindConflictError> {
     let monitor = Devices::global().monitor();
 
-    let bind_uris = binds.to_bind_uris(monitor.interfaces().keys().map(String::as_str))?;
+    let mut bind_uris = binds.to_bind_uris(monitor.interfaces().keys().map(String::as_str))?;
+    f(&mut bind_uris);
 
     let iface_manager = Arc::new(InterfaceManager::new());
     let io_factory = Arc::new(DEFAULT_IO_FACTORY);
@@ -63,4 +58,19 @@ pub async fn setup_bind_interfaces(binds: Binds) -> Result<BindSetup, BindConfli
         bind_interfaces,
         monitor,
     })
+}
+
+/// Expand [`Binds`] patterns into concrete network bindings.
+///
+/// This performs the full bind-setup pipeline that was previously duplicated in
+/// every consumer crate:
+///
+/// 1. Obtain the current set of network interfaces via [`Devices::global`].
+/// 2. Expand [`Binds`] patterns into concrete [`BindUri`]s.
+/// 3. Create an [`InterfaceManager`] and bind each URI.
+///
+/// The returned [`BindSetup`] owns all state; callers decide which parts to
+/// keep (e.g. `nslookup` ignores the monitor).
+pub async fn setup_bind_interfaces(binds: Binds) -> Result<BindSetup, BindConflictError> {
+    setup_bind_interfaces_with(binds, |_| {}).await
 }

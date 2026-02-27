@@ -70,6 +70,19 @@ pub mod handy {
         resolvers
     }
 
+    /// Ensure all bind URIs default to `mdns=true` when none explicitly
+    /// specifies the `mdns` prop. Designed to be passed directly to
+    /// [`setup_bind_interfaces_with`](crate::bind::setup_bind_interfaces_with).
+    pub fn ensure_default_mdns_prop(
+        bind_uris: &mut Vec<h3x::gm_quic::qinterface::bind_uri::BindUri>,
+    ) {
+        if !bind_uris.iter().any(|uri| uri.prop("mdns").is_some()) {
+            for uri in bind_uris {
+                uri.add_prop("mdns", "true");
+            }
+        }
+    }
+
     pub fn http_resolver() -> HttpResolver {
         tracing::debug!("Initializing HTTP DNS resolver with server {HTTP_DNS_SERVER}");
         HttpResolver::new(HTTP_DNS_SERVER).expect("HTTP_DNS_SERVER is valid URL")
