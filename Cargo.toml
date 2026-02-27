@@ -11,6 +11,7 @@ members = [
     "genmeta-doctor",
     "genmeta-identity",
     "genmeta-home",
+    "genmeta-proxy",
 ]
 
 [workspace.dependencies]
@@ -96,6 +97,7 @@ genmeta-identity = { path = "genmeta-identity" }
 genmeta-nat = { path = "genmeta-nat" }
 genmeta-nslookup = { path = "genmeta-nslookup" }
 genmeta-ssh3 = { path = "genmeta-ssh3" }
+genmeta-proxy = { path = "genmeta-proxy" }
 
 # ssh
 ssh-config = { git = "ssh://git@github.com/genmeta/genmeta-ssh3.git" }

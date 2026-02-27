@@ -1,0 +1,16 @@
+[package]
+name = "genmeta-proxy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { workspace = true }
+genmeta-common = { workspace = true, features = ["bind", "dns", "id", "error"] }
+genmeta-home = { workspace = true }
+h3x = { workspace = true }
+http = { workspace = true }
+snafu = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }

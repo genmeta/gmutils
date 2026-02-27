@@ -1294,6 +1294,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "genmeta-proxy"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "genmeta-common",
+ "genmeta-home",
+ "h3x",
+ "http",
+ "snafu",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "genmeta-ssh3"
 version = "0.4.1"
 dependencies = [
