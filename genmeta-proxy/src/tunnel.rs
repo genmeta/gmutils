@@ -42,5 +42,8 @@ pub async fn tunnel_connect(
         }
     });
 
-    Ok(Response::builder().status(200).body(Empty::new()).unwrap())
+    Ok(Response::builder()
+        .status(200)
+        .body(Empty::new())
+        .expect("valid static response"))
 }

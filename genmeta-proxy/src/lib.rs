@@ -82,22 +82,23 @@ pub enum Error {
 
     #[snafu(transparent)]
     Whatever {
-        source: genmeta_common::error::Whatever,
+        source: Box<genmeta_common::error::Whatever>,
     },
 }
-
 impl snafu::FromString for Error {
     type Source = <genmeta_common::error::Whatever as snafu::FromString>::Source;
 
     fn without_source(message: String) -> Self {
-        genmeta_common::error::Whatever::without_source(message).into()
+        Box::new(genmeta_common::error::Whatever::without_source(message)).into()
     }
 
     fn with_source(source: Self::Source, message: String) -> Self {
-        genmeta_common::error::Whatever::with_source(source, message).into()
+        Box::new(genmeta_common::error::Whatever::with_source(
+            source, message,
+        ))
+        .into()
     }
 }
-
 type BoxBody = http_body_util::combinators::UnsyncBoxBody<
     bytes::Bytes,
     Box<dyn std::error::Error + Send + Sync>,
@@ -143,7 +144,7 @@ async fn handle_request(
                         Ok(hyper::Response::builder()
                             .status(502)
                             .body(full_body("Bad Gateway"))
-                            .unwrap())
+                            .expect("valid static response"))
                     }
                 }
             }
@@ -152,13 +153,13 @@ async fn handle_request(
                 Ok(hyper::Response::builder()
                     .status(502)
                     .body(full_body("Bad Gateway"))
-                    .unwrap())
+                    .expect("valid static response"))
             }
         },
         route::Route::GenmetaConnect { .. } => Ok(hyper::Response::builder()
             .status(502)
             .body(full_body("HTTPS proxy to .genmeta.net not supported"))
-            .unwrap()),
+            .expect("valid static response")),
         route::Route::TunnelConnect { authority } => {
             match tunnel::tunnel_connect(req, authority.as_str()).await {
                 Ok(resp) => Ok(resp.map(box_body)),
@@ -167,7 +168,7 @@ async fn handle_request(
                     Ok(hyper::Response::builder()
                         .status(502)
                         .body(full_body("Bad Gateway"))
-                        .unwrap())
+                        .expect("valid static response"))
                 }
             }
         }
@@ -178,7 +179,7 @@ async fn handle_request(
                 Ok(hyper::Response::builder()
                     .status(502)
                     .body(full_body("Bad Gateway"))
-                    .unwrap())
+                    .expect("valid static response"))
             }
         },
     }

@@ -68,13 +68,13 @@ impl Router {
         }
 
         // Plain HTTP: URI is absolute form (http://host/path)
-        if let Some(authority) = uri.authority() {
-            if self.is_genmeta(authority.host()) {
-                return Route::GenmetaPlainHttp {
-                    authority: authority.clone(),
-                    uri: uri.clone(),
-                };
-            }
+        if let Some(authority) = uri.authority()
+            && self.is_genmeta(authority.host())
+        {
+            return Route::GenmetaPlainHttp {
+                authority: authority.clone(),
+                uri: uri.clone(),
+            };
         }
 
         Route::StandardForward { uri: uri.clone() }

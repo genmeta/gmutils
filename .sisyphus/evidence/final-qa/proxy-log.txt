@@ -1,0 +1,24 @@
+=== PROXY SERVER LOG (complete run) ===
+Date: 2026-02-27
+Binary: target/debug/genmeta-proxy --listen 127.0.0.1:18080
+
+--- FULL LOG ---
+2026-02-27T17:59:17 INFO  Proxy listening addr=127.0.0.1:18080
+2026-02-27T17:59:30 INFO  proxy request method=GET uri=http://httpbin.org/get route=StandardForward { uri: http://httpbin.org/get }
+2026-02-27T17:59:44 INFO  proxy request method=CONNECT uri=example.com:443 route=TunnelConnect { authority: example.com:443 }
+[multiple TunnelConnect attempts for example.com:443]
+2026-02-27T18:00:17 INFO  proxy request method=CONNECT uri=any.genmeta.net:443 route=GenmetaConnect { authority: any.genmeta.net:443 }
+2026-02-27T18:00:29 INFO  proxy request method=GET uri=http://any.genmeta.net/ route=GenmetaPlainHttp { authority: any.genmeta.net, uri: http://any.genmeta.net/ }
+2026-02-27T18:00:30 ERROR error=failed to initial QUIC connection
+2026-02-27T18:00:30 ERROR H3 forward failed error=failed to connect to H3 server `any.genmeta.net`: failed to initial QUIC connection
+2026-02-27T18:00:44 ERROR connection error=connection closed before message completed addr=127.0.0.1:45966  [S5: malformed request]
+2026-02-27T18:00:45 INFO  proxy request method=GET uri=http://httpbin.org/status/200 route=StandardForward [S5 liveness check]
+2026-02-27T18:00:50 INFO  proxy request method=GET uri=/ route=StandardForward { uri: / }
+2026-02-27T18:00:50 ERROR HTTP forward failed error=failed to connect to `:80`  [S5: malformed Host → route as StandardForward with empty host]
+
+--- NOTE ---
+All 4 routing branches observed in logs:
+  StandardForward      → S1, S5 (liveness), malformed
+  TunnelConnect        → S2
+  GenmetaConnect       → S3
+  GenmetaPlainHttp     → S4

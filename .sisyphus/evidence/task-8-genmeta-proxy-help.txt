@@ -1,0 +1,19 @@
+Usage: genmeta proxy [OPTIONS]
+
+Options:
+      --listen <LISTEN>
+          Proxy listen address [default: 127.0.0.1:8080]
+      --id <client_identity>
+          Client identity
+      --dns <scheme>
+          DNS resolution schemes [default: system mdns http] [possible values: system, mdns, http, h3, dht]
+      --interface <bind>
+          Bind patterns for DHTTP/3 connections [default: *]
+  -v, --verbose
+          Verbose output
+      --domain-suffix <DOMAIN_SUFFIXES>
+          Domain suffixes for H3 routing [default: .genmeta.net]
+  -h, --help
+          Print help
+  -V, --version
+          Print version

@@ -19,21 +19,23 @@ pub async fn forward_h3(
         .uri()
         .authority()
         .ok_or_else(|| {
-            crate::Error::from(genmeta_common::error::Whatever::without_source(
+            crate::Error::from(Box::new(genmeta_common::error::Whatever::without_source(
                 "missing authority in H3 request URI".to_string(),
-            ))
+            )))
         })?
         .clone();
 
     let connection = client.connect(authority.clone()).await.map_err(|e| {
-        crate::Error::from(genmeta_common::error::Whatever::without_source(format!(
-            "failed to connect to H3 server `{authority}`: {e}"
+        crate::Error::from(Box::new(genmeta_common::error::Whatever::with_source(
+            Box::new(e),
+            format!("failed to connect to H3 server `{authority}`"),
         )))
     })?;
 
     let response = connection.execute_hyper_request(req).await.map_err(|e| {
-        crate::Error::from(genmeta_common::error::Whatever::without_source(format!(
-            "failed to execute H3 request: {e}"
+        crate::Error::from(Box::new(genmeta_common::error::Whatever::with_source(
+            Box::new(e),
+            "failed to execute H3 request".to_string(),
         )))
     })?;
 
