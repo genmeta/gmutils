@@ -92,14 +92,17 @@ pub mod handy {
         resolver: Arc<dyn Resolve>,
         id: Option<&Identity<'static>>,
     ) -> Result<H3Resolver, BuildClientError> {
-        tracing::debug!("Initializing H3 DNS resolver with server {H3_DNS_SERVER}");
+        tracing::debug!("Initializing DHTTP/3 DNS resolver with server {H3_DNS_SERVER}");
         let h3_client = match id {
             Some(id) => {
-                tracing::debug!("Using client identity {} for H3 DNS resolver", id.name());
+                tracing::debug!(
+                    "Using client identity {} for DHTTP/3 DNS resolver",
+                    id.name()
+                );
                 H3Client::builder().with_identity(id.name().as_full(), id.certs(), id.key())?
             }
             None => {
-                tracing::warn!("No client identity provided, H3 DNS resolver may not work");
+                tracing::warn!("No client identity provided, DHTTP/3 DNS resolver may not work");
                 H3Client::builder().without_identity()?
             }
         }
@@ -132,7 +135,7 @@ pub mod handy {
     /// match-loop found in consumer crates.
     ///
     /// `bind_interfaces` is used to seed mDNS resolvers when the `Mdns`
-    /// scheme is present. `id` is the optional client identity for the H3
+    /// scheme is present. `id` is the optional client identity for the DHTTP/3
     /// DNS resolver.
     pub fn build_resolvers(
         dns_schemes: impl IntoIterator<Item = super::DnsScheme>,

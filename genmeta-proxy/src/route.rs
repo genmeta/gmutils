@@ -5,7 +5,7 @@ use hyper::body::Incoming;
 /// Classification of an incoming proxy request.
 #[derive(Debug)]
 pub enum Route {
-    /// Plain HTTP request to a genmeta domain — forward via H3
+    /// Plain HTTP request to a genmeta domain — forward via DHTTP/3
     GenmetaPlainHttp {
         authority: http::uri::Authority,
         uri: Uri,

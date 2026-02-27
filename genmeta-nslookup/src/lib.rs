@@ -28,7 +28,7 @@ pub struct Options {
     #[arg(index = 2, default_value = "all")]
     schemes: Vec<DnsScheme>,
 
-    /// Identity to use for connections to H3 DNS server (load from $GENMETA_HOME)
+    /// Identity to use for connections to DHTTP/3 DNS server (load from $GENMETA_HOME)
     #[arg(short, long)]
     id: Option<Name<'static>>,
 

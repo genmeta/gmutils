@@ -31,7 +31,6 @@ pub struct Options {
     /// Verbose output
     #[arg(short, long)]
     pub verbose: bool,
-
 }
 
 #[derive(Debug, Snafu)]

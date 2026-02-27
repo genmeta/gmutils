@@ -7,7 +7,7 @@ use snafu::FromString;
 
 use crate::Error;
 
-/// Forward a plain HTTP request to a genmeta domain via HTTP/3.
+/// Forward a plain HTTP request to a genmeta domain via DHTTP/3.
 pub async fn forward_h3(
     req: Request<Incoming>,
     client: &H3Client,
@@ -20,7 +20,7 @@ pub async fn forward_h3(
         .authority()
         .ok_or_else(|| {
             crate::Error::from(Box::new(genmeta_common::error::Whatever::without_source(
-                "missing authority in H3 request URI".to_string(),
+                "missing authority in DHTTP/3 request URI".to_string(),
             )))
         })?
         .clone();
@@ -28,14 +28,14 @@ pub async fn forward_h3(
     let connection = client.connect(authority.clone()).await.map_err(|e| {
         crate::Error::from(Box::new(genmeta_common::error::Whatever::with_source(
             Box::new(e),
-            format!("failed to connect to H3 server `{authority}`"),
+            format!("failed to connect to DHTTP/3 server `{authority}`"),
         )))
     })?;
 
     let response = connection.execute_hyper_request(req).await.map_err(|e| {
         crate::Error::from(Box::new(genmeta_common::error::Whatever::with_source(
             Box::new(e),
-            "failed to execute H3 request".to_string(),
+            "failed to execute DHTTP/3 request".to_string(),
         )))
     })?;
 

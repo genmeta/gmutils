@@ -1,5 +1,6 @@
 [package]
 name = "genmeta-proxy"
+description = "forward proxy routing .genmeta.net requests over DHTTP/3"
 version = "0.1.0"
 edition = "2024"
 
