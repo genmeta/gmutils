@@ -33,6 +33,8 @@ console-subscriber = "0.5"
 # network
 gmdns = { path = "../gmdns" }
 h3x = { path = "../h3x" }
+qinterface = { path = "../gm-quic/qinterface", features = ["qudp"] }
+qtraversal = { path = "../gm-quic/qtraversal" }
 http = "1"
 reqwest = { version = "0.13", default-features = false, features = [
     "charset",
@@ -99,7 +101,8 @@ genmeta-ssh3 = { path = "genmeta-ssh3" }
 
 # ssh
 ssh-config = { git = "ssh://git@github.com/genmeta/genmeta-ssh3.git" }
-genmeta-ssh3-client = { git = "ssh://git@github.com/genmeta/genmeta-ssh3.git" }
+# genmeta-ssh3-client = { git = "ssh://git@github.com/genmeta/genmeta-ssh3.git" }
+genmeta-ssh3-client = { path = "../genmeta-ssh3/genmeta-ssh3-client" }
 
 # debug
 # [patch.'ssh://git@github.com/genmeta/gm-quic-traversal.git']
