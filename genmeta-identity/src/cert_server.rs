@@ -17,7 +17,7 @@ pub enum Error {
     Code { code: i32, message: Option<String> },
     #[snafu(display("failed to parse JSON response from cert server",))]
     Json { source: serde_json::Error },
-    #[snafu(display("server responsed invalid Base64 data {data:?}",))]
+    #[snafu(display("server responded invalid Base64 data {data:?}",))]
     Base64 {
         data: Bytes,
         source: base64::DecodeError,

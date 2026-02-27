@@ -49,6 +49,27 @@ pub enum Error {
     SaveDefaultConfig { source: SaveDefaultConfigError },
     #[snafu(transparent)]
     ListIdentities { source: ListIdentitiesError },
+
+    #[snafu(display("failed to generate private key"))]
+    GenerateKey {
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    #[snafu(display("failed to generate CSR"))]
+    GenerateCsr {
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    #[snafu(display("failed to encode CSR to PEM"))]
+    EncodeCsr {
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    #[snafu(transparent)]
+    LocateGenmetaHome {
+        source: genmeta_home::LocateGenmetaHomeError,
+    },
+
     #[snafu(transparent)]
     Whatever { source: Whatever },
 }
@@ -76,15 +97,18 @@ fn generate_private_key_and_csr(
 ) -> Result<(impl Deref<Target = String> + use<>, String), Error> {
     tracing::Span::current().pb_set_message(&format!("Generating private key for {domain}..."));
     let key_pem = rankey::generate_secp384r1_key()
-        .whatever_context::<_, Error>("failed to generate private_key")?;
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        .context(GenerateKeySnafu)?;
     tracing::Span::current().pb_set_message(&format!(
         "Generating Certificate Signing Request (CSR) for {domain}..."
     ));
     let csr = rankey::generate_csr(&key_pem, "CN", domain.as_full(), &[domain.as_full()])
-        .whatever_context::<_, Error>("failed to generate CSR")?;
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        .context(GenerateCsrSnafu)?;
     let csr_pem = csr
         .to_pem(rankey::LineEnding::LF)
-        .whatever_context::<_, Error>("failed to convert CSR to pem")?;
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        .context(EncodeCsrSnafu)?;
     tracing::Span::current().pb_set_message(&format!(
         "Successfully generated private key and CSR for {domain}."
     ));
@@ -396,7 +420,12 @@ fn init_tracing() {
         ProgressStyle::with_template("{span_child_prefix}{spinner} {msg}").unwrap(),
     );
     tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(indicatif_layer.get_stderr_writer()))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
+                .with_writer(indicatif_layer.get_stderr_writer()),
+        )
         .with(indicatif_layer)
         .with(
             EnvFilter::builder()
@@ -409,8 +438,7 @@ fn init_tracing() {
 pub async fn run(options: Options) -> Result<(), Error> {
     init_tracing();
 
-    let genmeta_home = GenmetaHome::load_from_environment()
-        .whatever_context::<_, Error>("failed to locate GENMETA_HOME")?;
+    let genmeta_home = GenmetaHome::load_from_environment()?;
 
     _ = rustls::crypto::ring::default_provider().install_default();
     let cert_server = CertServer::new(DEFAULT_CERT_SERVER_BASE_URL)?;
