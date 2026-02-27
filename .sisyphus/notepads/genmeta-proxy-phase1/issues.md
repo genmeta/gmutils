@@ -1,2 +1,0 @@
-- route.rs referenced `hyper` crate; workspace needed explicit hyper dependency. Added hyper, hyper-util, http-body-util, bytes to genmeta-proxy/Cargo.toml and workspace dependencies.
-- Left a warning for unused `client` variable; it's intentional until request handling is implemented.
