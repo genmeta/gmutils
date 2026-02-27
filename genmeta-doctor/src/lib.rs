@@ -1,4 +1,3 @@
-use genmeta_common::error::Whatever;
 
 #[derive(Debug, Clone, clap::Parser)]
 #[command(name = "doctor", version, about)]
@@ -9,7 +8,7 @@ pub enum Options {
 #[derive(snafu::Snafu, Debug)]
 pub enum Error {
     #[snafu(transparent)]
-    Whatever { source: Whatever },
+    Nat { source: genmeta_nat::Error },
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
