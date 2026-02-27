@@ -55,6 +55,30 @@ pub enum Error {
     #[snafu(display("failed to bind proxy listener"))]
     BindListener { source: std::io::Error },
 
+    #[snafu(display("failed to connect to tunnel target `{addr}`"))]
+    TunnelConnect {
+        addr: String,
+        source: std::io::Error,
+    },
+
+    #[snafu(display("failed to upgrade tunnel connection"))]
+    TunnelUpgrade { source: hyper::Error },
+
+    #[snafu(display("failed to connect to `{addr}`"))]
+    ForwardConnect {
+        addr: String,
+        source: std::io::Error,
+    },
+
+    #[snafu(display("failed to perform HTTP handshake with `{addr}`"))]
+    ForwardHandshake { addr: String, source: hyper::Error },
+
+    #[snafu(display("failed to send HTTP request"))]
+    ForwardSendRequest { source: hyper::Error },
+
+    #[snafu(display("missing host in request"))]
+    ForwardMissingHost {},
+
     #[snafu(transparent)]
     Whatever {
         source: genmeta_common::error::Whatever,
@@ -139,4 +163,6 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     }
 }
 
+pub mod forward;
 pub mod route;
+pub mod tunnel;
