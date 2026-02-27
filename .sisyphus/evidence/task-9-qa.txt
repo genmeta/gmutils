@@ -1,0 +1,69 @@
+genmeta-proxy Integration QA Evidence
+Date: 2026-02-27
+========================================
+
+## Build
+cargo build -p genmeta-proxy
+Result: SUCCESS (exit 0)
+
+## Bug Found & Fixed
+Default value for --dns option was "system, mdns, http" (single string with spaces)
+causing "invalid value" parse error when starting proxy with no arguments.
+Fixed: changed `default_value = "system, mdns, http"` to `default_values = ["system", "mdns", "http"]`
+in genmeta-proxy/src/lib.rs line 24.
+
+## Test Results
+
+=== Branch 1: Plain HTTP to non-genmeta ===
+Command: curl -x http://127.0.0.1:18080 http://httpbin.org/get -s --max-time 10
+Route: StandardForward
+Result: PASS — got JSON response from httpbin.org with "url": "http://httpbin.org/get"
+{
+  "args": {},
+  "headers": { "Host": "httpbin.org", ... },
+  "url": "http://httpbin.org/get"
+}
+
+=== Branch 2: CONNECT tunnel to non-genmeta (HTTPS) ===
+Command: curl -x http://127.0.0.1:18080 https://example.com/ -sk --max-time 10
+Route: TunnelConnect
+Result: PASS — proxy returned 200 for CONNECT, TLS negotiated, HTML received from example.com
+"HTTP/1.1 200 OK" for CONNECT, then full HTML from example.com
+
+=== Branch 3: CONNECT to .genmeta.net → 502 ===
+Command: curl -x http://127.0.0.1:18080 https://test.genmeta.net/ -v --max-time 10
+Route: GenmetaConnect
+Result: PASS — proxy returned 502 Bad Gateway as expected
+< HTTP/1.1 502 Bad Gateway
+* CONNECT tunnel failed, response 502
+
+=== Branch 4: Plain HTTP to .genmeta.net → H3 attempt ===
+Command: curl -x http://127.0.0.1:18080 http://test.genmeta.net/ -v --max-time 10
+Route: GenmetaPlainHttp
+Result: PASS — proxy attempted H3 connection, failed gracefully, returned 502
+< HTTP/1.1 502 Bad Gateway
+(proxy log: "failed to connect to H3 server `test.genmeta.net`: failed to initial QUIC connection")
+
+=== Malformed Request Robustness ===
+Command: printf "GET / HTTP/1.1\r\nHost: \r\n\r\n" | nc 127.0.0.1 18080
+Result: PASS — proxy returned 502, did NOT crash
+HTTP/1.1 502 Bad Gateway (proxy still running afterwards)
+
+=== Proxy Lifecycle ===
+Proxy started: OK (after fix)
+Proxy survived all tests: YES
+Final status: Proxy still running after all tests
+
+## Summary
+All 4 routing branches verified:
+✅ Branch 1: Plain HTTP → non-genmeta → standard HTTP forward (got response)
+✅ Branch 2: CONNECT → non-genmeta → TCP tunnel (TLS established)
+✅ Branch 3: CONNECT → .genmeta.net → 502 (not supported)
+✅ Branch 4: Plain HTTP → .genmeta.net → H3 attempt → graceful 502
+✅ Malformed request: proxy returned 502, no crash
+✅ Proxy never crashed during testing
+
+## Fix Applied
+File: genmeta-proxy/src/lib.rs
+Line 24: changed `default_value = "system, mdns, http"` to `default_values = ["system", "mdns", "http"]`
+This ensures the proxy can start without --dns flags (using sensible defaults).

@@ -43,3 +43,23 @@
 ### hyper server serve_connection + with_upgrades
 - Must call `.with_upgrades()` for CONNECT tunnel support (HTTP upgrade protocol).
 - Use `hyper::service::service_fn(move |req| { ... })` with cloned Arcs inside.
+
+## Integration QA Results (2026-02-27)
+
+### All 4 Routing Branches Verified
+- Branch 1 (Plain HTTP → non-genmeta): Standard HTTP forward works; httpbin.org returns JSON ✅
+- Branch 2 (CONNECT → non-genmeta): TCP tunnel works; example.com TLS established ✅
+- Branch 3 (CONNECT → .genmeta.net): Returns 502 as designed (Phase 1 unsupported) ✅
+- Branch 4 (Plain HTTP → .genmeta.net): H3 forward attempted, QUIC fails gracefully → 502 ✅
+- Malformed request (empty Host): Returns 502, no crash ✅
+
+### Bug Fixed: clap `default_value` with spaces
+The `--dns` option used `default_value = "system, mdns, http"` (single comma-separated string).
+Clap treats this as ONE invalid value, causing parse failure with no args.
+Fix: use `default_values = ["system", "mdns", "http"]` for Vec<T> args with multiple defaults.
+This pattern also exists in `genmeta-curl/src/lib.rs` (same bug, same fix needed).
+
+### Proxy Robustness
+- Never panics on bad input — all errors return 502 via error propagation path
+- `tokio::spawn` in tunnel_connect correctly handles upgrade errors without crashing main loop
+- H3 QUIC failures are caught and converted to 502 gracefully
