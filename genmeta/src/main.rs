@@ -30,7 +30,8 @@ enum Error {
     Ssh3 { source: genmeta_ssh3::Error },
     #[snafu(transparent)]
     Curl { source: genmeta_curl::Error },
-    #[snafu(transparent)
+    #[snafu(transparent)]
+    Discover { source: genmeta_discover::Error },
     #[snafu(transparent)]
     Whatever { source: Whatever },
 }

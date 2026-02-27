@@ -8,8 +8,9 @@ edition = "2024"
 clap = { workspace = true }
 futures = { workspace = true }
 gmdns = { workspace = true }
-genmeta-common = { workspace = true, features = ["dns", "error"] }
+genmeta-common = { workspace = true, features = ["dns"] }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }

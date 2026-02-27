@@ -7,7 +7,7 @@ use genmeta_common::{
     dns,
 };
 use gmdns::parser::record::RData;
-use snafu::ResultExt;
+use tracing_subscriber::prelude::*;
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "discover", version, about)]
@@ -25,16 +25,26 @@ pub struct Options {
     binds: Vec<bind::Bind>,
 }
 
-type Error = genmeta_common::error::Whatever;
+#[derive(Debug, snafu::Snafu)]
+pub enum Error {
+    #[snafu(transparent)]
+    BindConflict { source: bind::BindConflictError },
+}
 
 pub async fn run(mut options: Options) -> Result<(), Error> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
+    let (stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
+                .with_writer(stderr),
+        )
+        .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
                 .from_env_lossy(),
         )
-        .with_writer(std::io::stderr)
         .init();
 
     let bind_setup = bind::setup_bind_interfaces_with(
@@ -47,8 +57,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             }
         },
     )
-    .await
-    .whatever_context("failed to resolve bind patterns")?;
+    .await?;
 
     // Build mDNS resolvers using the shared helper
     let resolvers = dns::handy::mdns_resolvers(bind_setup.bind_interfaces);
