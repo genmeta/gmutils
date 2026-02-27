@@ -1,19 +1,12 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet};
 
 use clap::Parser;
-use futures::{StreamExt, stream::FuturesUnordered};
+use futures::StreamExt;
 use genmeta_common::{
     bind::{self, Binds},
     dns,
 };
 use gmdns::parser::record::RData;
-use h3x::gm_quic::{
-    prelude::handy::DEFAULT_IO_FACTORY,
-    qinterface::{device::Devices, manager::InterfaceManager},
-};
 use snafu::ResultExt;
 
 #[derive(Parser, Debug, Clone)]
@@ -44,32 +37,21 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         .with_writer(std::io::stderr)
         .init();
 
-    // Expand bind patterns into concrete bind URIs
-    let monitor = Devices::global().monitor();
-    let binds = Binds::new(std::mem::take(&mut options.binds));
-    let mut bind_uris = binds
-        .to_bind_uris(monitor.interfaces().keys().map(String::as_str))
-        .whatever_context("failed to resolve bind patterns")?;
-
-    // Ensure every bind URI has mdns=true so dns::handy::mdns_resolvers() picks it up
-    for uri in &mut bind_uris {
-        if uri.prop("mdns").is_none() {
-            uri.add_prop("mdns", "true");
-        }
-    }
-
-    // Bind interfaces
-    let iface_manager = Arc::new(InterfaceManager::new());
-    let io_factory = Arc::new(DEFAULT_IO_FACTORY);
-    let bind_interfaces: Vec<_> = bind_uris
-        .iter()
-        .map(|uri| iface_manager.bind(uri.clone(), io_factory.clone()))
-        .collect::<FuturesUnordered<_>>()
-        .collect()
-        .await;
+    let bind_setup = bind::setup_bind_interfaces_with(
+        Binds::new(std::mem::take(&mut options.binds)),
+        |bind_uris| {
+            for uri in bind_uris.iter_mut() {
+                if uri.prop("mdns").is_none() {
+                    uri.add_prop("mdns", "true");
+                }
+            }
+        },
+    )
+    .await
+    .whatever_context("failed to resolve bind patterns")?;
 
     // Build mDNS resolvers using the shared helper
-    let resolvers = dns::handy::mdns_resolvers(bind_interfaces);
+    let resolvers = dns::handy::mdns_resolvers(bind_setup.bind_interfaces);
 
     let mut stream = resolvers.discover();
 
