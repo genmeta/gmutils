@@ -1,3 +1,4 @@
+use genmeta_home::identity::Name;
 use http::{Method, Uri};
 use hyper::body::Incoming;
 
@@ -17,17 +18,21 @@ pub enum Route {
     StandardForward { uri: Uri },
 }
 
-/// Routes incoming requests based on configured domain suffixes.
+/// Routes incoming requests based on the genmeta domain suffix.
 pub struct Router {
-    domain_suffixes: Vec<String>,
     /// Reserved for future blacklist filtering (Phase 2+)
     _blacklist: Vec<String>,
 }
 
+impl Default for Router {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Router {
-    pub fn new(suffixes: Vec<String>) -> Self {
+    pub fn new() -> Self {
         Self {
-            domain_suffixes: suffixes,
             _blacklist: Vec::new(),
         }
     }
@@ -36,15 +41,7 @@ impl Router {
     pub fn is_genmeta(&self, host: &str) -> bool {
         // strip port if present
         let host = host.split(':').next().unwrap_or(host);
-        self.domain_suffixes.iter().any(|suffix| {
-            if suffix.starts_with('.') {
-                // leading dot means match subdomains only
-                host.ends_with(suffix.as_str())
-            } else {
-                // no leading dot: match exact or subdomains
-                host == suffix || host.ends_with(&format!(".{}", suffix))
-            }
-        })
+        host.ends_with(Name::SUFFIX)
     }
 
     /// Classify an incoming request into a Route variant.
@@ -86,7 +83,7 @@ mod tests {
     use super::*;
 
     fn router() -> Router {
-        Router::new(vec![".genmeta.net".to_string()])
+        Router::new()
     }
 
     #[test]

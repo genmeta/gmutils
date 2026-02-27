@@ -32,9 +32,6 @@ pub struct Options {
     #[arg(short, long)]
     pub verbose: bool,
 
-    /// Domain suffixes for H3 routing
-    #[arg(long = "domain-suffix", default_value = ".genmeta.net")]
-    pub domain_suffixes: Vec<String>,
 }
 
 #[derive(Debug, Snafu)]
@@ -241,7 +238,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
 
     tracing::info!(addr = %options.listen, "Proxy listening");
 
-    let router = Arc::new(route::Router::new(options.domain_suffixes.clone()));
+    let router = Arc::new(route::Router::new());
     let client = Arc::new(client);
 
     loop {
