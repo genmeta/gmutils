@@ -48,8 +48,8 @@ pub enum Error {
     LocateGenmetaHome {
         source: genmeta_home::LocateGenmetaHomeError,
     },
-    #[snafu(display("failed to build H3 DNS client"))]
-    BuildH3DnsClient { source: BuildClientError },
+    #[snafu(display("failed to build DNS resolvers"))]
+    BuildDnsResolvers { source: BuildClientError },
     #[snafu(display("failed to lookup DNS records of `{name}`"))]
     LookUp {
         name: Name<'static>,
@@ -63,7 +63,12 @@ pub enum Error {
 pub async fn run(options: Options) -> Result<(), Error> {
     let (stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
     tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(stderr))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
+                .with_writer(stderr),
+        )
         .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
@@ -95,7 +100,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         &bind_setup.bind_interfaces,
         id.as_ref(),
     )
-    .context(BuildH3DnsClientSnafu)?;
+    .context(BuildDnsResolversSnafu)?;
 
     tracing::debug!(%dns_setup.resolvers);
 
