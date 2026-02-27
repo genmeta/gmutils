@@ -1219,7 +1219,6 @@ dependencies = [
  "clap",
  "genmeta-common",
  "genmeta-nat",
- "genmeta-profile",
  "snafu",
  "tokio",
  "tracing",
@@ -1291,17 +1290,6 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "genmeta-profile"
-version = "0.1.0"
-dependencies = [
- "clap",
- "genmeta-common",
- "snafu",
- "tokio",
- "tracing",
 ]
 
 [[package]]

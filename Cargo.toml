@@ -8,7 +8,6 @@ members = [
     "genmeta-nslookup",
     "genmeta-discover",
     "genmeta-nat",
-    "genmeta-profile",
     "genmeta-doctor",
     "genmeta-identity",
     "genmeta-home",
@@ -96,7 +95,6 @@ genmeta-doctor = { path = "genmeta-doctor" }
 genmeta-identity = { path = "genmeta-identity" }
 genmeta-nat = { path = "genmeta-nat" }
 genmeta-nslookup = { path = "genmeta-nslookup" }
-genmeta-profile = { path = "genmeta-profile" }
 genmeta-ssh3 = { path = "genmeta-ssh3" }
 
 # ssh

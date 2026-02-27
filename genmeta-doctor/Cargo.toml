@@ -8,7 +8,6 @@ edition = "2024"
 clap = { workspace = true }
 genmeta-common = { workspace = true, features = ["error"] }
 genmeta-nat = { workspace = true }
-genmeta-profile = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
