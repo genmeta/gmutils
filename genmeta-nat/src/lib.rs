@@ -1,10 +1,12 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use clap::Parser;
-use qinterface::{QuicIoExt, factory::ProductQuicIO};
-use qtraversal::{iface::TraversalFactory, nat::client::NatType};
-use snafu::ResultExt;
-use trust_dns_resolver::TokioAsyncResolver;
+use qinterface::io::{IO, ProductIO, handy::DEFAULT_IO_FACTORY};
+use qtraversal::{
+    nat::{client::StunClient, router::StunRouter},
+    route::ReceiveAndDeliverPacket,
+};
+use snafu::{ResultExt, whatever};
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "nat-detect", version, about)]
@@ -15,7 +17,11 @@ pub struct Options {
         default_value = "0.0.0.0:5379"
     )]
     pub bind: SocketAddr,
-    #[arg(short, default_value = "nat.genmeta.net", help = "STUN server address")]
+    #[arg(
+        short,
+        default_value = "nat.genmeta.net:20004",
+        help = "STUN server address"
+    )]
     pub server: String,
     #[arg(short, help = "Verbose mode")]
     pub verbose: bool,
@@ -44,46 +50,40 @@ async fn diagnose_nat(options: &Options) -> Result<(), Error> {
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
-    let servers = nslook_up(options.server.as_str(), options.bind.ip().is_ipv6() as u8).await?;
-    let factory = TraversalFactory::initialize_global(servers).unwrap();
-    let iface = factory
-        .bind(options.bind.into())
-        .whatever_context("Failed to bind to the specified bind uri")?;
+    let stun_server = resolve_stun_server(&options.server, options.bind.is_ipv4()).await?;
 
-    let external_addr = iface
-        .endpoint_addr()
+    let bind_uri = format!("inet://{}", options.bind).into();
+    let iface: Arc<dyn IO> = Arc::from(DEFAULT_IO_FACTORY.bind(bind_uri));
+
+    let stun_router = StunRouter::new();
+    let stun_client = StunClient::new(iface.clone(), stun_router.clone(), stun_server, None);
+
+    let _recv_task = ReceiveAndDeliverPacket::task()
+        .stun_router(stun_router)
+        .iface_ref(iface.clone())
+        .spawn();
+
+    let external_addr = stun_client
+        .outer_addr()
         .await
-        .whatever_context("Failed to get external address")?;
+        .whatever_context("failed to detect external address")?;
 
-    let nat_type: NatType = iface
+    let nat_type = stun_client
         .nat_type()
         .await
-        .whatever_context("Failed to detect NAT type")?
-        .try_into()
-        .unwrap();
+        .whatever_context("failed to detect NAT type")?;
 
     println!("NAT type: {nat_type:?}");
-    println!("External IP: {}", external_addr.addr().ip());
+    println!("External IP: {}", external_addr.ip());
     Ok(())
 }
 
-async fn nslook_up(domain: &str, family: u8) -> Result<Vec<SocketAddr>, Error> {
-    let resolver = TokioAsyncResolver::tokio_from_system_conf()
-        .whatever_context("Failed to create standard DNS resolver")?;
-    let port = 20004;
-    let addrs = if family == 1 {
-        resolver.ipv6_lookup(domain).await.map(|ips| {
-            ips.iter()
-                .map(|ip| SocketAddr::new(ip.0.into(), port))
-                .collect::<Vec<_>>()
-        })
-    } else {
-        resolver.ipv4_lookup(domain).await.map(|ips| {
-            ips.iter()
-                .map(|ip| SocketAddr::new(ip.0.into(), port))
-                .collect::<Vec<_>>()
-        })
+async fn resolve_stun_server(domain: &str, is_ipv4: bool) -> Result<SocketAddr, Error> {
+    let mut addrs = tokio::net::lookup_host(domain)
+        .await
+        .whatever_context(format!("failed to resolve STUN server `{domain}`"))?;
+    match addrs.find(|addr| addr.is_ipv4() == is_ipv4) {
+        Some(addr) => Ok(addr),
+        None => whatever!("no matching address found for STUN server `{domain}`"),
     }
-    .whatever_context(format!("Failed to lookup domain `{domain}`"))?;
-    Ok(addrs)
 }
