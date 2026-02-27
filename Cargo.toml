@@ -37,8 +37,8 @@ h3x = { path = "../h3x" }
 qinterface = { path = "../gm-quic/qinterface", features = ["qudp"] }
 qtraversal = { path = "../gm-quic/qtraversal" }
 http = "1"
-hyper = "1"
-hyper-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["server", "tokio"] }
 http-body-util = "0.1"
 reqwest = { version = "0.13", default-features = false, features = [
     "charset",
