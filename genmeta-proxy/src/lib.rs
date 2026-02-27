@@ -164,5 +164,6 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
 }
 
 pub mod forward;
+pub mod h3_forward;
 pub mod route;
 pub mod tunnel;
