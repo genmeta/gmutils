@@ -138,9 +138,12 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
     .await
     .whatever_context("failed to locate `GENMETA_HOME` while it's required")?;
 
-    let bind_setup = bind::setup_bind_interfaces(bind::Binds::new(mem::take(&mut options.binds)))
-        .await
-        .whatever_context("failed to resolve bind interfaces to bind uris")?;
+    let bind_setup = bind::setup_bind_interfaces_with(
+        bind::Binds::new(mem::take(&mut options.binds)),
+        dns::handy::ensure_default_mdns_prop,
+    )
+    .await
+    .whatever_context("failed to resolve bind interfaces to bind uris")?;
 
     let dns_setup = dns::handy::build_resolvers(
         options.dns.iter().copied(),
@@ -212,9 +215,10 @@ pub async fn run(mut options: Options) -> Result<(), Whatever> {
                 .whatever_context("failed to send http request")?;
         } else if let Some(path) = options.upload_file {
             let mut stream_writer = pin!(request_stream.as_writer());
-            let mut file = fs::File::open(&path)
-                .await
-                .whatever_context(format!("failed to open file `{}` to upload", path.display()))?;
+            let mut file = fs::File::open(&path).await.whatever_context(format!(
+                "failed to open file `{}` to upload",
+                path.display()
+            ))?;
 
             io::copy(&mut file, &mut stream_writer)
                 .await

@@ -81,9 +81,12 @@ pub async fn run(options: Options) -> Result<(), Error> {
     )
     .await?;
 
-    let bind_setup = bind::setup_bind_interfaces(bind::Binds::new(vec![
-        Bind::from_str("*").expect("wildcard bind pattern is always valid"),
-    ]))
+    let bind_setup = bind::setup_bind_interfaces_with(
+        bind::Binds::new(vec![
+            Bind::from_str("*").expect("wildcard bind pattern is always valid"),
+        ]),
+        dns::handy::ensure_default_mdns_prop,
+    )
     .await
     .expect("wildcard bind should not conflict");
 

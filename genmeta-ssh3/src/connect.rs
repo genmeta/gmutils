@@ -56,7 +56,11 @@ pub async fn connect(
     ),
     Error,
 > {
-    let bind_setup = bind::setup_bind_interfaces(config.binds.clone()).await?;
+    let bind_setup = bind::setup_bind_interfaces_with(
+        config.binds.clone(),
+        dns::handy::ensure_default_mdns_prop,
+    )
+    .await?;
 
     let dns_setup = dns::handy::build_resolvers(
         config.dns.iter().copied(),
