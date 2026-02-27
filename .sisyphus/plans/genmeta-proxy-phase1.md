@@ -125,7 +125,7 @@ Wave FINAL (Review — after ALL tasks):
 ## TODOs
 
 
-- [ ] 1. Crate scaffolding + workspace registration
+- [x] 1. Crate scaffolding + workspace registration
 
   **What to do**:
   - Create `genmeta-proxy/Cargo.toml` with dependencies: clap, genmeta-common (features: bind, dns, id, error), genmeta-home, h3x, http, hyper (features: http1, server), hyper-util (features: tokio), http-body-util, bytes, snafu, tokio, tracing, tracing-subscriber, tracing-appender

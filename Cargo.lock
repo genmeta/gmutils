@@ -1297,11 +1297,15 @@ dependencies = [
 name = "genmeta-proxy"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "clap",
  "genmeta-common",
  "genmeta-home",
  "h3x",
  "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "snafu",
  "tokio",
  "tracing",
