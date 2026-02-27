@@ -131,7 +131,12 @@ pub async fn run(options: Options) -> Result<(), Error> {
     // todo: enable ASNI with `atty` crate
     let (stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
     tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(stderr))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
+                .with_writer(stderr),
+        )
         .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())

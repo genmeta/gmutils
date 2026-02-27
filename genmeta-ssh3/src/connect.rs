@@ -21,9 +21,9 @@ use crate::config::Config;
 pub enum Error {
     #[snafu(transparent)]
     BindConflict { source: BindConflictError },
-    #[snafu(display("failed to build H3 DNS client"))]
-    BuildH3DnsClient { source: BuildClientError },
-    #[snafu(display("failed to build H3 client"))]
+    #[snafu(display("failed to build DNS resolvers"))]
+    BuildDnsResolvers { source: BuildClientError },
+    #[snafu(display("failed to build HTTP/3 client"))]
     BuildClient { source: BuildClientError },
     #[snafu(display("failed to connect to server"))]
     Connect {
@@ -67,7 +67,7 @@ pub async fn connect(
         &bind_setup.bind_interfaces,
         config.id.as_ref(),
     )
-    .context(BuildH3DnsClientSnafu)?;
+    .context(BuildDnsResolversSnafu)?;
 
     let client = match &config.id {
         Some(id) => H3Client::builder().with_identity(id.name().as_full(), id.certs(), id.key()),
