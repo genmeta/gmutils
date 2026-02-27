@@ -1,51 +1,40 @@
 use std::{
     collections::{HashMap, HashSet},
-    net::SocketAddr,
     sync::Arc,
 };
 
 use clap::Parser;
-use futures::{StreamExt, stream};
-use genmeta_common::error::Whatever;
-use qbase::net::addr::BindUri;
-use qdns::{MDNS_SERVICE, MdnsResolver};
-use qinterface::iface::physical::{Interface, PhysicalInterfaces};
-use snafu::{Report, ResultExt};
+use futures::{StreamExt, stream::FuturesUnordered};
+use genmeta_common::{
+    bind::{self, Binds},
+    dns,
+};
+use gmdns::parser::record::RData;
+use h3x::gm_quic::{
+    prelude::handy::DEFAULT_IO_FACTORY,
+    qinterface::{device::Devices, manager::InterfaceManager},
+};
+use snafu::ResultExt;
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "discover", version, about)]
 pub struct Options {
     /// Domain name to discover eg. _genmeta.local, default is empty (all services)
     #[arg(
-        value_name = "DOMAIn",
+        value_name = "DOMAIN",
         default_value = "",
         help = "Domain name to discover eg. _genmeta.local, default is empty"
     )]
     domain: String,
 
-    #[arg(value_name = "DEVICES", value_delimiter = ',')]
-    devices: Vec<String>,
+    /// Bind patterns to specify which local interfaces to discover on.
+    #[arg(long = "interface", value_name = "bind", default_value = "*")]
+    binds: Vec<bind::Bind>,
 }
 
 type Error = genmeta_common::error::Whatever;
 
-fn bind_mdns_resolver(
-    interfaces: &HashMap<String, Interface>,
-    device: &str,
-) -> Result<MdnsResolver, Whatever> {
-    let socket_addr = BindUri::from(format!("iface://v4.{device}:5353"))
-        .resolve(interfaces.get(device))
-        .whatever_context(format!("Failed to create mDNS resolver for {device}"))?;
-    let SocketAddr::V4(socket_addr) = socket_addr else {
-        unreachable!()
-    };
-
-    let mdns_resolver = MdnsResolver::new(MDNS_SERVICE, *socket_addr.ip(), device)
-        .whatever_context(format!("Failed to create mDNS resolver for {device}"))?;
-    Result::<_, Whatever>::Ok(mdns_resolver)
-}
-
-pub async fn run(options: Options) -> Result<(), Error> {
+pub async fn run(mut options: Options) -> Result<(), Error> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()
@@ -55,31 +44,37 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .with_writer(std::io::stderr)
         .init();
 
-    let interfaces = PhysicalInterfaces::global().interfaces();
-    let devices: &mut dyn Iterator<Item = &String> = match options.devices.as_slice() {
-        [] => &mut interfaces.keys(),
-        devices => &mut devices.iter(),
-    };
+    // Expand bind patterns into concrete bind URIs
+    let monitor = Devices::global().monitor();
+    let binds = Binds::new(std::mem::take(&mut options.binds));
+    let mut bind_uris = binds
+        .to_bind_uris(monitor.interfaces().keys().map(String::as_str))
+        .whatever_context("failed to resolve bind patterns")?;
 
-    let mdns_resolvers = devices
-        .filter_map(|device| {
-            bind_mdns_resolver(&interfaces, device)
-                .inspect_err(
-                    |error| tracing::debug!("{}", Report::from_error(error)),
-                )
-                .ok()
-        })
-        .map(Arc::new)
-        .collect::<Vec<_>>();
+    // Ensure every bind URI has mdns=true so dns::handy::mdns_resolvers() picks it up
+    for uri in &mut bind_uris {
+        if uri.prop("mdns").is_none() {
+            uri.add_prop("mdns", "true");
+        }
+    }
 
-    let mut stream = stream::iter(&mdns_resolvers).flat_map_unordered(None, |resolver| {
-        resolver
-            .discover()
-            .map(move |discover| (resolver.clone(), discover))
-    });
+    // Bind interfaces
+    let iface_manager = Arc::new(InterfaceManager::new());
+    let io_factory = Arc::new(DEFAULT_IO_FACTORY);
+    let bind_interfaces: Vec<_> = bind_uris
+        .iter()
+        .map(|uri| iface_manager.bind(uri.clone(), io_factory.clone()))
+        .collect::<FuturesUnordered<_>>()
+        .collect()
+        .await;
+
+    // Build mDNS resolvers using the shared helper
+    let resolvers = dns::handy::mdns_resolvers(bind_interfaces);
+
+    let mut stream = resolvers.discover();
 
     let mut domain_set = HashSet::new();
-    while let Some((_resolver, (_source, packet))) = stream.next().await {
+    while let Some((_source, packet)) = stream.next().await {
         let records: HashMap<_, HashSet<_>> = packet
             .answers
             .iter()
@@ -97,14 +92,9 @@ pub async fn run(options: Options) -> Result<(), Error> {
             println!("Name: {name}");
             for rdata in rdata_set {
                 match rdata {
-                    qdns::RData::A(ip) => println!("{ip}"),
-                    qdns::RData::AAAA(ip) => println!("{ip}"),
-                    qdns::RData::E(ep)
-                    | qdns::RData::EE(ep)
-                    | qdns::RData::E6(ep)
-                    | qdns::RData::EE6(ep) => {
-                        println!("{ep}")
-                    }
+                    RData::A(ip) => println!("{ip}"),
+                    RData::AAAA(ip) => println!("{ip}"),
+                    RData::E(ep) => println!("{ep}"),
                     _ => continue,
                 }
             }
