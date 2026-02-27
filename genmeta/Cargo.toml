@@ -15,6 +15,7 @@ genmeta-doctor = { workspace = true }
 genmeta-identity = { workspace = true }
 genmeta-nslookup = { workspace = true }
 genmeta-ssh3 = { workspace = true }
+genmeta-proxy = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

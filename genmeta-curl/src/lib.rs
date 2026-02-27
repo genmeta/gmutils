@@ -145,16 +145,10 @@ pub enum Error {
     SendRequest { source: SendMesageError<Infallible> },
 
     #[snafu(display("failed to open file `{}` to upload", path.display()))]
-    OpenUploadFile {
-        path: PathBuf,
-        source: io::Error,
-    },
+    OpenUploadFile { path: PathBuf, source: io::Error },
 
     #[snafu(display("failed to upload file `{}` to server", path.display()))]
-    UploadFile {
-        path: PathBuf,
-        source: io::Error,
-    },
+    UploadFile { path: PathBuf, source: io::Error },
 
     #[snafu(display("failed to close request stream"))]
     CloseRequestStream { source: StreamError },

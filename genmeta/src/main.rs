@@ -16,6 +16,7 @@ enum Options {
         options: genmeta_identity::Options,
     },
     Nslookup(genmeta_nslookup::Options),
+    Proxy(genmeta_proxy::Options),
 }
 
 #[derive(snafu::Snafu, Debug)]
@@ -33,6 +34,8 @@ enum Error {
     #[snafu(transparent)]
     Discover { source: genmeta_discover::Error },
     #[snafu(transparent)]
+    Proxy { source: genmeta_proxy::Error },
+    #[snafu(transparent)]
     Whatever { source: Whatever },
 }
 
@@ -49,6 +52,7 @@ async fn run(options: Options) -> Result<(), Error> {
         Options::Curl(options) => genmeta_curl::run(options).await?,
         Options::Discover(options) => genmeta_discover::run(options).await?,
         Options::Doctor { options } => genmeta_doctor::run(options).await?,
+        Options::Proxy(options) => genmeta_proxy::run(options).await?,
         Options::Identity { options } => genmeta_identity::run(options).await?,
         Options::Nslookup(options) => genmeta_nslookup::run(options).await?,
         Options::Ssh3(options) => genmeta_ssh3::run(options).await?,

@@ -21,7 +21,7 @@ pub struct Options {
     pub id: Option<Name<'static>>,
 
     /// DNS resolution schemes
-    #[arg(long, value_name = "scheme", default_value = "system, mdns, http")]
+    #[arg(long, value_name = "scheme", default_values = ["system", "mdns", "http"])]
     pub dns: Vec<dns::DnsScheme>,
 
     /// Bind patterns for DHTTP/3 connections

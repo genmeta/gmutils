@@ -1,4 +1,3 @@
-
 #[derive(Debug, Clone, clap::Parser)]
 #[command(name = "doctor", version, about)]
 pub enum Options {
