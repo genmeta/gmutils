@@ -45,21 +45,17 @@ pub struct Options {
     /// URL to request
     uri: Uri,
 
-    /// HTTP POST data
-    #[arg(short, long, conflicts_with("upload_file"))]
-    data: Option<String>,
-
-    /// Transfer local FILE to destination
-    #[arg(short = 'T', long, conflicts_with("data"))]
-    upload_file: Option<PathBuf>,
-
-    /// Write to file instead of stdout
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-
     /// Specify request method to use
     #[arg(short = 'X', long)]
     request: Option<Method>,
+
+    /// Send data in a POST request
+    #[arg(short, long, conflicts_with("upload_file"))]
+    data: Option<String>,
+
+    /// Transfer local file to destination
+    #[arg(short = 'T', long, conflicts_with("data"))]
+    upload_file: Option<PathBuf>,
 
     /// Pass custom header(s) to server
     #[arg(short = 'H', long, value_parser = parse_header)]
@@ -73,15 +69,11 @@ pub struct Options {
     #[arg(long, default_value_t = MAX_REDIRS_DEFAULT)]
     max_redirs: u32,
 
-    /// Request compressed response and decompress it
-    #[arg(long)]
-    compressed: bool,
+    /// Write output to file instead of stdout
+    #[arg(short, long)]
+    output: Option<PathBuf>,
 
-    /// Disable all content decoding; pass raw bytes through
-    #[arg(long, conflicts_with("compressed"))]
-    raw: bool,
-
-    /// Define output variable format to print after response body.
+    /// Define output format for response metadata
     ///
     /// Supported: %{response_code}, %{http_code}, %{url}, %{method},
     /// %{scheme}, %{http_version}, %{time_total}, %{time_connect},
@@ -89,33 +81,41 @@ pub struct Options {
     #[arg(short = 'w', long = "write-out")]
     write_out: Option<String>,
 
-    /// Silent mode, suppress progress and error messages
+    /// Request compressed response and decompress it
+    #[arg(long)]
+    compressed: bool,
+
+    /// Disable content decoding; pass raw bytes through
+    #[arg(long, conflicts_with("compressed"))]
+    raw: bool,
+
+    /// Maximum time allowed for connection in seconds
+    #[arg(long)]
+    connect_timeout: Option<u64>,
+
+    /// Client identity for DHTTP/3 connections
+    #[arg(long, value_name = "client_identity")]
+    id: Option<Name<'static>>,
+
+    /// DNS resolution schemes
+    #[arg(long, value_name = "scheme", default_value = "system, mdns, http")]
+    dns: Vec<dns::DnsScheme>,
+
+    /// Bind patterns for DHTTP/3 connections
+    #[arg(long = "interface", value_name = "bind", default_value = "*")]
+    binds: Vec<bind::Bind>,
+
+    /// Make the operation more talkative
+    #[arg(short, long)]
+    verbose: bool,
+
+    /// Suppress progress and error messages
     #[arg(short = 's', long)]
     silent: bool,
 
     /// Show error messages even when --silent is active
     #[arg(short = 'S', long = "show-error")]
     show_error: bool,
-
-    /// Client identity
-    #[arg(long, value_name = "client_identity")]
-    id: Option<Name<'static>>,
-
-    /// DNS resolution schemes to connect to the remote.
-    #[arg(long, value_name = "scheme", default_value = "system, mdns, http")]
-    dns: Vec<dns::DnsScheme>,
-
-    /// Bind patterns to specify which local interfaces and ports to bind for DHTTP/3 connections.
-    #[arg(long = "interface", value_name = "bind", default_value = "*")]
-    binds: Vec<bind::Bind>,
-
-    /// Maximum time allowed for connection in seconds
-    #[arg(long)]
-    connect_timeout: Option<u64>,
-
-    /// Make the operation more talkative
-    #[arg(short, long)]
-    verbose: bool,
 }
 
 #[derive(Debug, Snafu)]
@@ -479,8 +479,8 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         // Send request body
         let send_body: Result<_, Error> = async {
             // After a redirect to GET/HEAD, skip sending a body
-            let skip_body = redirect_count > 0
-                && matches!(current_method, Method::GET | Method::HEAD);
+            let skip_body =
+                redirect_count > 0 && matches!(current_method, Method::GET | Method::HEAD);
 
             if skip_body || options.data.is_none() && options.upload_file.is_none() {
                 let request = request_builder
@@ -553,10 +553,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         let http_version = response.version;
 
         // Redirect handling
-        if options.location
-            && status.is_redirection()
-            && status != http::StatusCode::NOT_MODIFIED
-        {
+        if options.location && status.is_redirection() && status != http::StatusCode::NOT_MODIFIED {
             if redirect_count >= options.max_redirs {
                 return TooManyRedirectsSnafu.fail();
             }
@@ -572,10 +569,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
                         .authority()
                         .map(|a| a.as_str())
                         .unwrap_or_default();
-                    let path_q = parsed
-                        .path_and_query()
-                        .map(|pq| pq.as_str())
-                        .unwrap_or("/");
+                    let path_q = parsed.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
                     format!("{scheme}://{authority}{path_q}")
                         .parse()
                         .context(InvalidRedirectLocationSnafu)?
@@ -593,9 +587,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
 
                 // Drain response body so the QUIC stream is cleanly closed
                 let mut body_reader = pin!(response_stream.as_reader());
-                io::copy(&mut body_reader, &mut io::sink())
-                    .await
-                    .ok();
+                io::copy(&mut body_reader, &mut io::sink()).await.ok();
 
                 tracing::debug!(
                     redirect_count,
@@ -663,10 +655,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
                 &response_headers,
             );
             print!("{expanded}");
-            io::stdout()
-                .flush()
-                .await
-                .context(FlushOutputSnafu)?;
+            io::stdout().flush().await.context(FlushOutputSnafu)?;
         }
 
         break;
