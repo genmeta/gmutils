@@ -60,18 +60,23 @@ SOCKS client.";
 #[derive(Parser, Debug, Clone)]
 #[command(version, about)]
 pub struct Options {
-    /// Client identity in GENMETA HOME
+    /// User to log in as on the remote machine
+    #[arg(short = 'l', value_name = "login_name")]
+    login_name: Option<String>,
+
+    /// Client identity
     #[arg(short = 'i', long, value_name = "client_identity")]
     id: Option<Name<'static>>,
 
-    /// Bind patterns to specify which local interfaces and ports to bind for DHTTP/3 connections.
-    #[arg(long = "interface", value_name = "bind", default_value = "*")]
-    binds: Vec<bind::Bind>,
+    /// Disable pseudo-terminal allocation
+    #[arg(
+        short = 'T',
+        default_value_t = true,
+        action = clap::ArgAction::SetFalse,
+    )]
+    pseudo: bool,
 
-    /// DNS resolution schemes to connect to the remote.
-    #[arg(long, value_name = "scheme", default_value = "system, mdns, http")]
-    dns: Vec<dns::DnsScheme>,
-
+    /// Set SSH options
     #[arg(
         short = 'o',
         value_name = "option",
@@ -80,21 +85,11 @@ pub struct Options {
     )]
     options: Vec<String>,
 
-    /// Disable pseudo-terminal allocation.
-    #[arg(
-        short = 'T',
-        default_value_t = true,
-        action = clap::ArgAction::SetFalse,
-    )]
-    pseudo: bool,
-
-    /// Specifies the user to log in as on the remote machine.
-    #[arg(short = 'l', value_name = "login_name")]
-    login_name: Option<String>,
-
+    /// Dynamic port forwarding (SOCKS proxy)
     #[arg(short = 'D', value_name = "[bind_address:]port", long_help = DYNAMIC_FORWARD_LONG_HELP)]
     dynamic_forward: Vec<DynamicForwardEndpoint>,
 
+    /// Local port forwarding
     #[arg(
         short = 'L',
         value_name = "[bind_address:]port:host:hostport / [bind_address:]port:remote_socket / local_socket:host:hostport / local_socket:remote_socket",
@@ -102,6 +97,7 @@ pub struct Options {
     )]
     local_forwards: Vec<LocalForwardRule>,
 
+    /// Remote port forwarding
     #[arg(
         short = 'R',
         value_name = "[bind_address:]port:host:hostport / [bind_address:]port:local_socket / remote_socket:host:hostport / remote_socket:local_socket / [bind_address:]port",
@@ -109,10 +105,18 @@ pub struct Options {
     )]
     remote_forwards: Vec<RemoteForwardRule>,
 
+    /// DNS resolution schemes
+    #[arg(long, value_name = "scheme", default_value = "system, mdns, http")]
+    dns: Vec<dns::DnsScheme>,
+
+    /// Bind patterns for DHTTP/3 connections
+    #[arg(long = "interface", value_name = "bind", default_value = "*")]
+    binds: Vec<bind::Bind>,
+
     #[arg(value_name = "HOST/URI", long_help = URI_LONG_HELP)]
     host: String,
 
-    /// Command to execute on the remote server.
+    /// Command to execute on the remote server
     #[arg(trailing_var_arg = true, value_name = "command [argument ...]")]
     commands: Vec<String>,
 }
