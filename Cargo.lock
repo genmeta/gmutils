@@ -1186,15 +1186,19 @@ dependencies = [
 
 [[package]]
 name = "genmeta-curl"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
+ "async-compression",
+ "bytes",
  "clap",
  "genmeta-common",
  "genmeta-home",
  "h3x",
  "http",
+ "http-body-util",
  "snafu",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -1241,7 +1245,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-identity"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1261,6 +1265,7 @@ dependencies = [
  "tracing",
  "tracing-indicatif",
  "tracing-subscriber",
+ "x509-parser 0.14.0",
 ]
 
 [[package]]

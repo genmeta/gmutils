@@ -10,7 +10,7 @@ use genmeta_home::{
     identity::{
         Identities, Name,
         default::{DefaultConfigFile, LoadDefaultConfigError, SaveDefaultConfigError},
-        fs::{ListIdentitiesError, SaveIdentityError},
+        fs::{ListIdentitiesError, LoadIdentityError, SaveIdentityError},
     },
 };
 use indicatif::ProgressStyle;
@@ -49,6 +49,8 @@ pub enum Error {
     SaveDefaultConfig { source: SaveDefaultConfigError },
     #[snafu(transparent)]
     ListIdentities { source: ListIdentitiesError },
+    #[snafu(transparent)]
+    LoadIdentity { source: LoadIdentityError },
 
     #[snafu(display("failed to generate private key"))]
     GenerateKey {
@@ -394,11 +396,100 @@ impl Default {
     }
 }
 
+/// List all local identities
+#[derive(Parser, Debug, Clone)]
+pub struct List {}
+
+impl List {
+    pub async fn run(
+        &self,
+        genmeta_home: &GenmetaHome,
+        _cert_server: &CertServer,
+    ) -> Result<(), Error> {
+        let identities = genmeta_home.identities();
+        let names = query_exist_names_list(&identities).await?;
+        let default_config = load_current_default_config(&identities).await?;
+        let default_name = default_config
+            .as_ref()
+            .and_then(|c| c.config().name().cloned());
+        if names.is_empty() {
+            println!("No identities found.");
+        } else {
+            for name in &names {
+                let marker = if default_name
+                    .as_ref()
+                    .map(|d| d.borrow() == name.borrow())
+                    .unwrap_or(false)
+                {
+                    "* "
+                } else {
+                    "  "
+                };
+                println!("{marker}{}", name.as_full());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Show details for an identity
+#[derive(Parser, Debug, Clone)]
+pub struct Info {
+    /// Identity name (defaults to current default)
+    pub name: Option<Name<'static>>,
+}
+
+impl Info {
+    pub async fn run(
+        &self,
+        genmeta_home: &GenmetaHome,
+        _cert_server: &CertServer,
+    ) -> Result<(), Error> {
+        let identities = genmeta_home.identities();
+        let name: Name<'static> = match self.name.as_ref() {
+            Some(n) => n.to_owned(),
+            None => {
+                let cfg = load_current_default_config(&identities).await?;
+                match cfg.and_then(|c| c.config().name().cloned()) {
+                    Some(n) => n,
+                    None => whatever!("no default identity configured"),
+                }
+            }
+        };
+        let identity = identities.load(name.borrow()).await?;
+        let der = identity.certs()[0].as_ref();
+        let (_, cert) = x509_parser::parse_x509_certificate(der)
+            .whatever_context::<_, Error>("failed to parse certificate")?;
+        println!("Name:       {}", identity.name().as_full());
+        println!("Serial:     {}", cert.serial);
+        println!("Subject:    {}", cert.subject());
+        println!("Not Before: {}", cert.validity().not_before);
+        println!("Not After:  {}", cert.validity().not_after);
+        if let Ok(Some(san)) = cert.subject_alternative_name() {
+            let dns_names: Vec<_> = san
+                .value
+                .general_names
+                .iter()
+                .filter_map(|gn| match gn {
+                    x509_parser::prelude::GeneralName::DNSName(n) => Some(*n),
+                    _ => None,
+                })
+                .collect();
+            if !dns_names.is_empty() {
+                println!("SANs:       {}", dns_names.join(", "));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Parser, Debug, Clone)]
 pub enum Options {
     Create(Create),
     Apply(Apply),
     Default(Default),
+    Info(Info),
+    List(List),
 }
 
 impl Options {
@@ -411,6 +502,8 @@ impl Options {
             Options::Create(cmd) => cmd.run(genmeta_home, cert_server).await,
             Options::Apply(cmd) => cmd.run(genmeta_home, cert_server).await,
             Options::Default(cmd) => cmd.run(genmeta_home, cert_server).await,
+            Options::Info(cmd) => cmd.run(genmeta_home, cert_server).await,
+            Options::List(cmd) => cmd.run(genmeta_home, cert_server).await,
         }
     }
 }

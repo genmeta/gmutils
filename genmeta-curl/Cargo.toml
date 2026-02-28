@@ -1,17 +1,21 @@
 [package]
 name = "genmeta-curl"
 description = "curl-like DHTTP/3 client"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 
 [dependencies]
+async-compression = { version = "0.4", features = ["tokio", "gzip", "deflate", "zstd"] }
+bytes = { workspace = true }
 clap = { workspace = true }
 genmeta-common = { workspace = true, features = ["bind", "dns", "id", "error"] }
 genmeta-home = { workspace = true }
 h3x = { workspace = true }
 http = { workspace = true }
+http-body-util = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
