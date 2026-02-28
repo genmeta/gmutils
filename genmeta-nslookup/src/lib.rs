@@ -24,20 +24,20 @@ pub struct Options {
     #[arg(index = 1)]
     name: Name<'static>,
 
-    /// Scheme of DNS to query eg. mdns system http
+    /// DNS resolution scheme (e.g. system, mdns, http)
     #[arg(index = 2, default_value = "all")]
     schemes: Vec<DnsScheme>,
 
-    /// Identity to use for connections to DHTTP/3 DNS server (load from $GENMETA_HOME)
+    /// Client identity
     #[arg(short, long)]
     id: Option<Name<'static>>,
 
-    /// Enable streaming output: print records as they are resolved
+    /// Print records as they are resolved
     #[arg(short, long, default_value = "true")]
     streaming: bool,
 
     // TODO: remove this option
-    /// Timeout for the whole lookup process, in seconds
+    /// Timeout in seconds
     #[arg(short, long, default_value = "10")]
     timeout: u64,
 }

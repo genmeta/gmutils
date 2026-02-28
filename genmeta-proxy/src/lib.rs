@@ -16,7 +16,7 @@ pub struct Options {
     #[arg(long, default_value = "127.0.0.1:8080")]
     pub listen: std::net::SocketAddr,
 
-    /// Client identity
+    /// Client identity for DHTTP/3 connections
     #[arg(long, value_name = "client_identity")]
     pub id: Option<Name<'static>>,
 
@@ -28,7 +28,7 @@ pub struct Options {
     #[arg(long = "interface", value_name = "bind", default_value = "*")]
     pub binds: Vec<bind::Bind>,
 
-    /// Verbose output
+    /// Show detailed request logging
     #[arg(short, long)]
     pub verbose: bool,
 }

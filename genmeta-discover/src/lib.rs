@@ -12,15 +12,11 @@ use tracing_subscriber::prelude::*;
 #[derive(Parser, Debug, Clone)]
 #[command(name = "discover", version, about)]
 pub struct Options {
-    /// Domain name to discover eg. _genmeta.local, default is empty (all services)
-    #[arg(
-        value_name = "DOMAIN",
-        default_value = "",
-        help = "Domain name to discover eg. _genmeta.local, default is empty"
-    )]
+    /// Domain name to discover (e.g. _genmeta.local)
+    #[arg(value_name = "DOMAIN", default_value = "")]
     domain: String,
 
-    /// Bind patterns to specify which local interfaces to discover on.
+    /// Bind patterns for local network interfaces
     #[arg(long = "interface", value_name = "bind", default_value = "*")]
     binds: Vec<bind::Bind>,
 }
