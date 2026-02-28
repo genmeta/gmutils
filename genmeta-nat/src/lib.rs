@@ -12,19 +12,16 @@ use tracing_subscriber::prelude::*;
 #[derive(Parser, Debug, Clone)]
 #[command(name = "nat-detect", version, about)]
 pub struct Options {
-    #[arg(
-        short,
-        help = "Bind address to detect NAT type",
-        default_value = "0.0.0.0:5379"
-    )]
-    pub bind: SocketAddr,
-    #[arg(
-        short,
-        default_value = "nat.genmeta.net:20004",
-        help = "STUN server address"
-    )]
+    /// STUN server address
+    #[arg(short, long, default_value = "nat.genmeta.net:20004")]
     pub server: String,
-    #[arg(short, help = "Verbose mode")]
+
+    /// Local bind address for NAT detection
+    #[arg(short, long, default_value = "0.0.0.0:5379")]
+    pub bind: SocketAddr,
+
+    /// Show detailed output
+    #[arg(short, long)]
     pub verbose: bool,
 }
 
