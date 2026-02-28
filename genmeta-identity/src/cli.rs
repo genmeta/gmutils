@@ -398,7 +398,11 @@ impl Default {
 
 /// List all local identities
 #[derive(Parser, Debug, Clone)]
-pub struct List {}
+pub struct List {
+    /// Show certificate details for each identity
+    #[arg(short, long)]
+    pub verbose: bool,
+}
 
 impl List {
     pub async fn run(
@@ -426,6 +430,30 @@ impl List {
                     "  "
                 };
                 println!("{marker}{}", name.as_full());
+                if self.verbose {
+                    let identity = identities.load(name.borrow()).await?;
+                    let der = identity.certs()[0].as_ref();
+                    let (_, cert) = x509_parser::parse_x509_certificate(der)
+                        .whatever_context::<_, Error>("failed to parse certificate")?;
+                    println!("    Serial:     {}", cert.serial);
+                    println!("    Subject:    {}", cert.subject());
+                    println!("    Not Before: {}", cert.validity().not_before);
+                    println!("    Not After:  {}", cert.validity().not_after);
+                    if let Ok(Some(san)) = cert.subject_alternative_name() {
+                        let dns_names: Vec<_> = san
+                            .value
+                            .general_names
+                            .iter()
+                            .filter_map(|gn| match gn {
+                                x509_parser::prelude::GeneralName::DNSName(n) => Some(*n),
+                                _ => None,
+                            })
+                            .collect();
+                        if !dns_names.is_empty() {
+                            println!("    SANs:       {}", dns_names.join(", "));
+                        }
+                    }
+                }
             }
         }
         Ok(())
@@ -460,11 +488,11 @@ impl Info {
         let der = identity.certs()[0].as_ref();
         let (_, cert) = x509_parser::parse_x509_certificate(der)
             .whatever_context::<_, Error>("failed to parse certificate")?;
-        println!("Name:       {}", identity.name().as_full());
-        println!("Serial:     {}", cert.serial);
-        println!("Subject:    {}", cert.subject());
-        println!("Not Before: {}", cert.validity().not_before);
-        println!("Not After:  {}", cert.validity().not_after);
+        println!("{}", identity.name().as_full());
+        println!("  Serial:     {}", cert.serial);
+        println!("  Subject:    {}", cert.subject());
+        println!("  Not Before: {}", cert.validity().not_before);
+        println!("  Not After:  {}", cert.validity().not_after);
         if let Ok(Some(san)) = cert.subject_alternative_name() {
             let dns_names: Vec<_> = san
                 .value
@@ -476,7 +504,7 @@ impl Info {
                 })
                 .collect();
             if !dns_names.is_empty() {
-                println!("SANs:       {}", dns_names.join(", "));
+                println!("  SANs:       {}", dns_names.join(", "));
             }
         }
         Ok(())
