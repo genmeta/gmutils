@@ -106,11 +106,11 @@ pub struct Options {
     remote_forwards: Vec<RemoteForwardRule>,
 
     /// DNS resolution schemes
-    #[arg(long, value_name = "scheme", default_value = "mdns, http")]
+    #[arg(long, value_name = "scheme", default_value = "mdns, http", value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
     dns: Vec<dns::DnsScheme>,
 
     /// Bind patterns for DHTTP/3 connections
-    #[arg(long = "interface", value_name = "bind", default_value = "*")]
+    #[arg(long = "interface", value_name = "bind", default_value = "*", hide = cfg!(not(debug_assertions)))]
     binds: Vec<bind::Bind>,
 
     #[arg(value_name = "HOST/URI", long_help = URI_LONG_HELP)]

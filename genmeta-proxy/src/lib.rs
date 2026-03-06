@@ -21,11 +21,11 @@ pub struct Options {
     pub id: Option<Name<'static>>,
 
     /// DNS resolution schemes
-    #[arg(long, value_name = "scheme", default_values = ["mdns", "http"])]
+    #[arg(long, value_name = "scheme", default_values = ["mdns", "http"], value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
     pub dns: Vec<dns::DnsScheme>,
 
     /// Bind patterns for DHTTP/3 connections
-    #[arg(long = "interface", value_name = "bind", default_value = "*")]
+    #[arg(long = "interface", value_name = "bind", default_value = "*", hide = cfg!(not(debug_assertions)))]
     pub binds: Vec<bind::Bind>,
 
     /// Show detailed request logging
