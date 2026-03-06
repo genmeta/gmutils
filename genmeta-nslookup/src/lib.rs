@@ -32,6 +32,10 @@ pub struct Options {
     #[arg(short, long)]
     id: Option<Name<'static>>,
 
+    /// Skip identity loading and use anonymous mode
+    #[arg(long, conflicts_with = "id")]
+    anonymous: bool,
+
     /// Print records as they are resolved
     #[arg(short, long, default_value = "true")]
     streaming: bool,
@@ -78,14 +82,18 @@ pub async fn run(options: Options) -> Result<(), Error> {
         // .with(console_subscriber::spawn())
         .init();
 
-    let id = id::load_home_and_identity(
-        options.id.is_some(),
-        options
-            .id
-            .as_ref()
-            .map(|id| (&"command line option" as &dyn std::fmt::Display, id.clone())),
-    )
-    .await?;
+    let id = if options.anonymous {
+        None
+    } else {
+        id::load_home_and_identity(
+            options.id.is_some(),
+            options
+                .id
+                .as_ref()
+                .map(|id| (&"command line option" as &dyn std::fmt::Display, id.clone())),
+        )
+        .await?
+    };
 
     let bind_setup = bind::setup_bind_interfaces_with(
         bind::Binds::new(vec![

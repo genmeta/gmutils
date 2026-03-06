@@ -96,6 +96,10 @@ pub struct Options {
     #[arg(long, value_name = "client_identity")]
     id: Option<Name<'static>>,
 
+    /// Skip identity loading and use anonymous mode
+    #[arg(long, conflicts_with = "id")]
+    anonymous: bool,
+
     /// DNS resolution schemes
     #[arg(long, value_name = "scheme", default_value = "mdns, http", value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
     dns: Vec<dns::DnsScheme>,
@@ -388,14 +392,18 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
 
     options.expand_uri()?;
 
-    let id = id::load_home_and_identity(
-        options.id.is_some(),
-        options
-            .id
-            .as_ref()
-            .map(|id| (&"command line option" as &dyn std::fmt::Display, id.clone())),
-    )
-    .await?;
+    let id = if options.anonymous {
+        None
+    } else {
+        id::load_home_and_identity(
+            options.id.is_some(),
+            options
+                .id
+                .as_ref()
+                .map(|id| (&"command line option" as &dyn std::fmt::Display, id.clone())),
+        )
+        .await?
+    };
 
     let bind_setup = bind::setup_bind_interfaces_with(
         bind::Binds::new(mem::take(&mut options.binds)),

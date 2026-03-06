@@ -68,6 +68,10 @@ pub struct Options {
     #[arg(short = 'i', long, value_name = "client_identity")]
     id: Option<Name<'static>>,
 
+    /// Skip identity loading and use anonymous mode
+    #[arg(long, conflicts_with = "id")]
+    anonymous: bool,
+
     /// Disable pseudo-terminal allocation
     #[arg(
         short = 'T',

@@ -104,11 +104,15 @@ impl super::Options {
             })
             .transpose()?;
 
-        let id = id::load_home_and_identity(
-            cli_id.is_some() || ssh_config_id.is_some(),
-            Option::into_iter(cli_id).chain(ssh_config_id),
-        )
-        .await?;
+        let id = if self.anonymous {
+            None
+        } else {
+            id::load_home_and_identity(
+                cli_id.is_some() || ssh_config_id.is_some(),
+                Option::into_iter(cli_id).chain(ssh_config_id),
+            )
+            .await?
+        };
 
         let connect_timeout = ssh_config.connect_timeout.unwrap_or(Duration::MAX);
 
