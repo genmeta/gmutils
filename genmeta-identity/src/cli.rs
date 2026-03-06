@@ -396,6 +396,29 @@ impl Apply {
             Some(domains) => domains.into(),
             None => prompt_select_resign_domains(domains).await?.into(),
         };
+        fn display_cert_info(cert_der: &[u8], indent: &str) -> Result<(), Error> {
+            let (_, cert) = x509_parser::parse_x509_certificate(cert_der)
+                .whatever_context::<_, Error>("failed to parse certificate")?;
+            println!("{indent}Serial:     {}", cert.serial);
+            println!("{indent}Subject:    {}", cert.subject());
+            println!("{indent}Not Before: {}", cert.validity().not_before);
+            println!("{indent}Not After:  {}", cert.validity().not_after);
+            if let Ok(Some(san)) = cert.subject_alternative_name() {
+                let dns_names: Vec<_> = san
+                    .value
+                    .general_names
+                    .iter()
+                    .filter_map(|gn| match gn {
+                        x509_parser::prelude::GeneralName::DNSName(n) => Some(*n),
+                        _ => None,
+                    })
+                    .collect();
+                if !dns_names.is_empty() {
+                    println!("{indent}SANs:       {}", dns_names.join(", "));
+                }
+            }
+            Ok(())
+        }
 
         resign_domains(
             &genmeta_home.identities(),
