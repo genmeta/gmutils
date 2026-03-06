@@ -73,7 +73,9 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         let records: HashMap<_, HashSet<_>> = packet
             .answers
             .iter()
-            .filter(|a| a.name().contains(&options.domain) || a.name().contains(with_suffix.as_str()))
+            .filter(|a| {
+                a.name().contains(&options.domain) || a.name().contains(with_suffix.as_str())
+            })
             .fold(HashMap::new(), |mut map, record| {
                 map.entry(record.name().to_string())
                     .or_default()

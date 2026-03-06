@@ -5,9 +5,7 @@ use genmeta_common::{
     bind::{self, Binds},
     dns, id,
 };
-use genmeta_home::{
-    identity::{Identity, InvalidName, Name},
-};
+use genmeta_home::identity::{Identity, InvalidName, Name};
 use http::{Uri, uri::Authority};
 use snafu::{ResultExt, Snafu};
 use ssh_config::error::ReadConfigError;
@@ -33,7 +31,9 @@ pub enum Error {
     #[snafu(display("failed to read ssh configuration"))]
     ReadConfig { source: ReadConfigError },
     #[snafu(transparent)]
-    LoadHomeAndIdentity { source: id::LoadHomeAndIdentityError },
+    LoadHomeAndIdentity {
+        source: id::LoadHomeAndIdentityError,
+    },
     #[snafu(display("identity `{id}` in ssh config is invalid"))]
     InvalidIdInSshConfig { id: String, source: InvalidName },
 }

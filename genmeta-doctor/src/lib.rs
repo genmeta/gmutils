@@ -1,5 +1,10 @@
 #[derive(Debug, Clone, clap::Parser)]
-#[command(name = "doctor", about, disable_help_flag = true, disable_version_flag = true)]
+#[command(
+    name = "doctor",
+    about,
+    disable_help_flag = true,
+    disable_version_flag = true
+)]
 pub enum Options {
     Net(genmeta_nat::Options),
     Version {},

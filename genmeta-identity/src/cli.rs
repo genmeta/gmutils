@@ -28,9 +28,8 @@ use crate::{
     cert_server::{self, CertServer, LoginResponse, RegisterResponse, ResignResponse},
     cli::prompt::{
         prompt_available_email, prompt_available_name, prompt_confim_update_default_name,
-        prompt_confirm_set_as_default_name,
-        prompt_domain, prompt_login_catpcha, prompt_register_catpcha,
-        prompt_select_resign_domains,
+        prompt_confirm_set_as_default_name, prompt_domain, prompt_login_catpcha,
+        prompt_register_catpcha, prompt_select_resign_domains,
     },
 };
 

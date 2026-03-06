@@ -2,7 +2,6 @@ use std::{borrow::Cow, fmt::Display};
 
 use genmeta_home::identity::Name;
 
-
 use crate::{
     REGISTERABLE_DOMAINS,
     cert_server::{CertServer, LoginResponse, RegisterResponse},
@@ -139,7 +138,6 @@ pub(crate) async fn prompt_login_catpcha(
     )?;
     Ok(get_response.await)
 }
-
 
 pub(crate) async fn prompt_select_resign_domains(
     domains: Vec<Name<'static>>,
