@@ -531,12 +531,14 @@ impl Info {
     }
 }
 #[derive(Parser, Debug, Clone)]
+#[command(disable_help_flag = true, disable_version_flag = true)]
 pub enum Options {
     Create(Create),
     Apply(Apply),
     Default(Default),
     Info(Info),
     List(List),
+    Version {},
 }
 
 impl Options {
@@ -551,6 +553,10 @@ impl Options {
             Options::Default(cmd) => cmd.run(genmeta_home, cert_server).await,
             Options::Info(cmd) => cmd.run(genmeta_home, cert_server).await,
             Options::List(cmd) => cmd.run(genmeta_home, cert_server).await,
+            Options::Version {} => {
+                println!("{}", env!("CARGO_PKG_VERSION"));
+                Ok(())
+            }
         }
     }
 }

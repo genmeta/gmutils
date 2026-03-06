@@ -2,7 +2,7 @@ use clap::Parser;
 use snafu::Whatever;
 
 #[derive(Parser, Debug, Clone)]
-#[command(version)]
+#[command(disable_help_flag = true, disable_version_flag = true)]
 enum Options {
     Curl(genmeta_curl::Options),
     Discover(genmeta_discover::Options),
@@ -17,6 +17,7 @@ enum Options {
     Nslookup(genmeta_nslookup::Options),
     Proxy(genmeta_proxy::Options),
     Ssh3(genmeta_ssh3::Options),
+    Version {},
 }
 
 #[derive(snafu::Snafu, Debug)]
@@ -56,6 +57,7 @@ async fn run(options: Options) -> Result<(), Error> {
         Options::Nslookup(options) => genmeta_nslookup::run(options).await?,
         Options::Proxy(options) => genmeta_proxy::run(options).await?,
         Options::Ssh3(options) => genmeta_ssh3::run(options).await?,
+        Options::Version {} => println!("{}", env!("CARGO_PKG_VERSION")),
     };
     Ok(())
 }
