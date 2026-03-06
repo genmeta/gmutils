@@ -8,7 +8,6 @@ pub const MDNS_SERVICE: &str = "_genmeta.local";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 pub enum DnsScheme {
-    System,
     Mdns,
     Http,
     H3,
@@ -18,7 +17,6 @@ pub enum DnsScheme {
 impl DnsScheme {
     pub const fn as_str(&self) -> &'static str {
         match self {
-            DnsScheme::System => "system",
             DnsScheme::Mdns => "mdns",
             DnsScheme::Http => "http",
             DnsScheme::H3 => "h3",
@@ -38,17 +36,9 @@ pub mod handy {
 
     use genmeta_home::identity::Identity;
     use gmdns::resolvers::{H3Resolver, HttpResolver, MdnsResolver, MdnsResolvers};
-    use h3x::gm_quic::{
-        BuildClientError, H3Client, prelude::Resolve, qdns::SystemResolver,
-        qinterface::BindInterface,
-    };
+    use h3x::gm_quic::{BuildClientError, H3Client, prelude::Resolve, qinterface::BindInterface};
 
     use super::{H3_DNS_SERVER, HTTP_DNS_SERVER, MDNS_SERVICE};
-
-    pub fn system_resolver() -> SystemResolver {
-        tracing::debug!("Initializing system DNS resolver");
-        SystemResolver
-    }
 
     pub fn mdns_resolvers(bind_ifaces: impl IntoIterator<Item = BindInterface>) -> MdnsResolvers {
         tracing::debug!("Initializing mDNS resolvers");
@@ -149,9 +139,6 @@ pub mod handy {
 
         for dns_scheme in dns_schemes {
             match dns_scheme {
-                DnsScheme::System => {
-                    resolvers = resolvers.with(Arc::new(system_resolver()));
-                }
                 DnsScheme::Mdns => {
                     let arc = mdns.get_or_insert_with(|| Arc::new(MdnsResolvers::new()));
                     arc.merge(&self::mdns_resolvers(bind_interfaces.iter().cloned()));
