@@ -1161,7 +1161,7 @@ dependencies = [
  "genmeta-nslookup",
  "genmeta-proxy",
  "genmeta-ssh3",
- "snafu",
+ "snafu 0.8.9",
  "tokio",
  "tracing",
 ]
@@ -1180,7 +1180,7 @@ dependencies = [
  "h3x",
  "http",
  "peg",
- "snafu",
+ "snafu 0.8.9",
  "tracing",
 ]
 
@@ -1196,7 +1196,7 @@ dependencies = [
  "h3x",
  "http",
  "http-body-util",
- "snafu",
+ "snafu 0.8.9",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1212,7 +1212,7 @@ dependencies = [
  "futures",
  "genmeta-common",
  "gmdns",
- "snafu",
+ "snafu 0.8.9",
  "tokio",
  "tracing",
  "tracing-appender",
@@ -1225,7 +1225,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "genmeta-nat",
- "snafu",
+ "snafu 0.8.9",
  "tokio",
  "tracing",
 ]
@@ -1237,7 +1237,7 @@ dependencies = [
  "dirs",
  "rustls",
  "serde",
- "snafu",
+ "snafu 0.8.9",
  "tokio",
  "toml",
  "x509-parser 0.14.0",
@@ -1260,7 +1260,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "snafu",
+ "snafu 0.8.9",
  "tokio",
  "tracing",
  "tracing-indicatif",
@@ -1275,7 +1275,7 @@ dependencies = [
  "clap",
  "qinterface",
  "qtraversal",
- "snafu",
+ "snafu 0.8.9",
  "tokio",
  "tracing",
  "tracing-appender",
@@ -1292,7 +1292,7 @@ dependencies = [
  "genmeta-home",
  "gmdns",
  "h3x",
- "snafu",
+ "snafu 0.8.9",
  "tokio",
  "tracing",
  "tracing-appender",
@@ -1312,7 +1312,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "snafu",
+ "snafu 0.8.9",
  "tokio",
  "tracing",
  "tracing-appender",
@@ -1330,7 +1330,7 @@ dependencies = [
  "h3x",
  "http",
  "qevent",
- "snafu",
+ "snafu 0.8.9",
  "ssh-config",
  "tokio",
  "tokio-util",
@@ -1350,7 +1350,7 @@ dependencies = [
  "genmeta-ssh3-proto",
  "peg",
  "rpassword",
- "snafu",
+ "snafu 0.8.9",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1369,7 +1369,7 @@ dependencies = [
  "pin-project-lite",
  "serde",
  "serde_cbor",
- "snafu",
+ "snafu 0.8.9",
  "socket2 0.5.10",
  "socks5-proto",
  "tokio",
@@ -1468,7 +1468,7 @@ dependencies = [
  "rustls",
  "rustls-pemfile",
  "serde",
- "snafu",
+ "snafu 0.8.9",
  "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
@@ -1526,7 +1526,7 @@ dependencies = [
  "pin-project-lite",
  "ring",
  "rustls",
- "snafu",
+ "snafu 0.9.0",
  "tokio",
  "tokio-util",
  "tower-service",
@@ -2914,7 +2914,7 @@ dependencies = [
  "sha1",
  "sha2",
  "signature",
- "snafu",
+ "snafu 0.8.9",
  "spki",
  "x509-cert",
 ]
@@ -3552,7 +3552,16 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e84b3f4eacbf3a1ce05eac6763b4d629d60cbc94d632e4092c54ade71f1e1a2"
 dependencies = [
- "snafu-derive",
+ "snafu-derive 0.8.9",
+]
+
+[[package]]
+name = "snafu"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1d4bced6a69f90b2056c03dcff2c4737f98d6fb9e0853493996e1d253ca29c6"
+dependencies = [
+ "snafu-derive 0.9.0",
 ]
 
 [[package]]
@@ -3560,6 +3569,18 @@ name = "snafu-derive"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.113",
+]
+
+[[package]]
+name = "snafu-derive"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54254b8531cafa275c5e096f62d48c81435d1015405a91198ddb11e967301d40"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -3629,7 +3650,7 @@ dependencies = [
  "peg",
  "regex",
  "regex-syntax",
- "snafu",
+ "snafu 0.8.9",
  "tokio",
 ]
 

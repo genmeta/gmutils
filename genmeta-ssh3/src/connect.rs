@@ -6,9 +6,9 @@ use genmeta_common::{
 };
 use genmeta_ssh3_client as ssh3;
 use h3x::{
-    connection::{Connection, OpenRequestStreamError},
+    connection::Connection,
     gm_quic::{self, BuildClientError, H3Client, prelude::ConnectServerError},
-    message::stream::{ReadStream, StreamError, WriteStream},
+    message::stream::{InitialMessageStreamError, MessageStreamError, ReadStream, WriteStream},
     pool::ConnectError,
 };
 use http::Uri;
@@ -30,11 +30,11 @@ pub enum Error {
         source: ConnectError<ConnectServerError>,
     },
     #[snafu(display("request stream failed"))]
-    RequestStream { source: StreamError },
+    RequestStream { source: MessageStreamError },
     #[snafu(display("response stream failed"))]
-    ResponseStream { source: StreamError },
+    ResponseStream { source: MessageStreamError },
     #[snafu(display("failed to send request"))]
-    OpenRequestStream { source: OpenRequestStreamError },
+    InitialMessageStream { source: InitialMessageStreamError },
     #[snafu(display("missing host in URI `{uri}`"))]
     MissingServerName { uri: Uri },
     #[snafu(display("connection timed out after {}ms for server `{server}`", connect_timeout.as_millis()))]
@@ -85,9 +85,9 @@ pub async fn connect(
     let connection = client.connect(server.clone()).await.context(ConnectSnafu)?;
 
     let (mut read_stream, mut write_stream) = connection
-        .open_request_stream()
+        .initial_message_stream()
         .await
-        .context(OpenRequestStreamSnafu)?;
+        .context(InitialMessageStreamSnafu)?;
 
     let request = http::Request::builder()
         .method(ssh3::proto::v0::METHOD.clone())

@@ -16,13 +16,12 @@ use genmeta_common::{
 };
 use genmeta_home::identity::Name;
 use h3x::{
-    connection::OpenRequestStreamError,
     gm_quic::{
         BuildClientError, H3Client,
         prelude::{ConnectServerError, handy::NoopLogger},
     },
     hyper::SendMesageError,
-    message::stream::StreamError,
+    message::stream::{InitialMessageStreamError, MessageStreamError},
     pool::ConnectError,
 };
 use http::{Method, Request, Uri, header::USER_AGENT};
@@ -151,7 +150,7 @@ pub enum Error {
     Timedout {},
 
     #[snafu(display("failed to open request stream"))]
-    OpenRequestStream { source: OpenRequestStreamError },
+    InitialMessageStream { source: InitialMessageStreamError },
 
     #[snafu(display("failed to build HTTP request"))]
     BuildRequest { source: http::Error },
@@ -166,10 +165,10 @@ pub enum Error {
     UploadFile { path: PathBuf, source: io::Error },
 
     #[snafu(display("failed to close request stream"))]
-    CloseRequestStream { source: StreamError },
+    CloseRequestStream { source: MessageStreamError },
 
     #[snafu(display("failed to receive response"))]
-    ReceiveResponse { source: StreamError },
+    ReceiveResponse { source: MessageStreamError },
 
     #[snafu(display("failed to create output file"))]
     CreateOutputFile { source: io::Error },
@@ -455,9 +454,9 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         timing.connected = Some(Instant::now());
 
         let (mut response_stream, mut request_stream) = connection
-            .open_request_stream()
+            .initial_message_stream()
             .await
-            .context(OpenRequestStreamSnafu)?;
+            .context(InitialMessageStreamSnafu)?;
 
         let user_agent = format!("genmeta-curl/{}", env!("CARGO_PKG_VERSION"));
         let mut request_builder = Request::builder()

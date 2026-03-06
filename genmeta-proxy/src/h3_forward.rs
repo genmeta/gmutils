@@ -1,4 +1,4 @@
-use h3x::gm_quic::H3Client;
+use h3x::{gm_quic::H3Client, server::MessageStreamError};
 use hyper::{
     Request, Response,
     body::{Body, Incoming},
@@ -11,10 +11,7 @@ use crate::Error;
 pub async fn forward_h3(
     req: Request<Incoming>,
     client: &H3Client,
-) -> Result<
-    Response<impl Body<Data = bytes::Bytes, Error = h3x::message::stream::StreamError>>,
-    Error,
-> {
+) -> Result<Response<impl Body<Data = bytes::Bytes, Error = MessageStreamError>>, Error> {
     let authority = req
         .uri()
         .authority()
