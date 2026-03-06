@@ -1,4 +1,4 @@
-use std::{mem, sync::Arc};
+use std::{mem, net::SocketAddr, sync::Arc};
 
 use clap::Parser;
 use genmeta_common::{bind, dns, id};
@@ -12,9 +12,9 @@ use tracing_subscriber::prelude::*;
 #[derive(Parser, Debug, Clone)]
 #[command(version, about)]
 pub struct Options {
-    /// Proxy listen address
-    #[arg(long, default_value = "127.0.0.1:8080")]
-    pub listen: std::net::SocketAddr,
+    /// Proxy listen address patterns
+    #[arg(long = "listen", value_name = "bind", default_values = ["127.0.0.1:16080", "[::1]:16080"])]
+    pub listens: Vec<bind::Bind>,
 
     /// Client identity for DHTTP/3 connections
     #[arg(long, value_name = "client_identity")]
@@ -240,17 +240,25 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     .with_qlog(Arc::new(NoopLogger))
     .build();
 
-    let listener = TcpListener::bind(options.listen)
-        .await
-        .context(BindListenerSnafu)?;
-
-    tracing::info!(addr = %options.listen, "Proxy listening");
-
+    let mut listeners = Vec::new();
+    for b in &options.listens {
+        let ip = b.host.as_ip_addr().ok_or_else(|| {
+            <Error as snafu::FromString>::without_source(
+                format!("listen bind `{}` must be a concrete IP address", b.host),
+            )
+        })?;
+        let addr = SocketAddr::new(ip, b.effective_port());
+        let listener = TcpListener::bind(addr).await.context(BindListenerSnafu)?;
+        tracing::info!(%addr, "Proxy listening");
+        listeners.push(listener);
+    }
     let router = Arc::new(route::Router::new());
     let client = Arc::new(client);
 
     loop {
-        let (stream, addr) = listener.accept().await.context(BindListenerSnafu)?;
+        let accepts: Vec<_> = listeners.iter().map(|l| Box::pin(l.accept())).collect();
+        let (result, _, _) = futures::future::select_all(accepts).await;
+        let (stream, addr) = result.context(BindListenerSnafu)?;
         tracing::debug!(%addr, "accepted connection");
         let client = client.clone();
         let router = router.clone();
