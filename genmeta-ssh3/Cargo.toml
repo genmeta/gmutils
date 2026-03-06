@@ -6,7 +6,7 @@ edition = "2024"
 
 [dependencies]
 clap = { workspace = true }
-genmeta-common = { workspace = true, features = ["bind", "dns", "error", "id"] }
+genmeta-common = { workspace = true, features = ["bind", "dns", "id"] }
 genmeta-home = { workspace = true }
 ssh-config = { workspace = true, features = ["openssh"] }
 genmeta-ssh3-client = { workspace = true }

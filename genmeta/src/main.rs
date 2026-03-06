@@ -1,5 +1,5 @@
 use clap::Parser;
-use genmeta_common::error::Whatever;
+use snafu::Whatever;
 
 #[derive(Parser, Debug, Clone)]
 #[command(version)]

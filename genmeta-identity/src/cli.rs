@@ -4,7 +4,6 @@ pub mod validator;
 use std::{borrow::Cow, fmt::Debug, ops::Deref};
 
 use clap::Parser;
-use genmeta_common::error::Whatever;
 use genmeta_home::{
     GenmetaHome,
     identity::{
@@ -15,7 +14,7 @@ use genmeta_home::{
 };
 use indicatif::ProgressStyle;
 use rankey::EncodePem;
-use snafu::{ResultExt, Snafu, whatever};
+use snafu::{ResultExt, Snafu, Whatever, whatever};
 use tokio::io;
 use tracing::{Instrument, info_span};
 use tracing_indicatif::{IndicatifLayer, span_ext::IndicatifSpanExt};

@@ -26,7 +26,7 @@ inquire = "0.9"
 inquire-derive = "0.9"
 indicatif = "0.18"
 rpassword = "7.3"
-whoami = "1.4"
+whoami = "2"
 
 # debug
 console-subscriber = "0.5"
@@ -60,7 +60,7 @@ x509-parser = "0.14"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_cbor = "0.11"
-toml = "0.8"
+toml = "1"
 
 # tracing
 tracing = { version = "0.1", default-features = false, features = [
@@ -87,7 +87,7 @@ dirs = { version = "6" }
 either = "1"
 globset = "0.4"
 peg = "0.8"
-snafu = "0.8"
+snafu = "0.9"
 tokio-util = { version = "0.7" }
 trust-dns-resolver = "0.23.2"
 

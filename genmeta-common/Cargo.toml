@@ -5,7 +5,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# feature error
+# feature bind, id and dns
 snafu = { workspace = true, optional = true }
 
 # feature bind, dns and id
@@ -34,8 +34,7 @@ futures = { workspace = true, optional = true }
 
 [features]
 # dev
-default = ["error", "dns", "id"]
-error = ["dep:snafu"]
+default = ["dns", "id"]
 bind = [
     "dep:clap",
     "dep:derive_more",
@@ -47,5 +46,5 @@ bind = [
     "dep:peg",
     "dep:snafu",
 ]
-id = ["error", "dep:clap", "dep:genmeta-home", "dep:http", "dep:tracing"]
+id = ["dep:snafu", "dep:clap", "dep:genmeta-home", "dep:http", "dep:tracing"]
 dns = ["bind", "dep:clap", "dep:gmdns", "dep:genmeta-home", "dep:tracing"]

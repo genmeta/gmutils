@@ -85,7 +85,10 @@ impl super::Options {
             Some(username) => (username, password),
             None => {
                 tracing::debug!("User not found in URI, using current user");
-                (whoami::username(), None)
+                (
+                    whoami::username().unwrap_or_else(|_| "unknown".to_string()),
+                    None,
+                )
             }
         };
 

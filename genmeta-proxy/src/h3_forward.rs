@@ -15,26 +15,32 @@ pub async fn forward_h3(
     let authority = req
         .uri()
         .authority()
-        .ok_or_else(|| {
-            crate::Error::from(Box::new(genmeta_common::error::Whatever::without_source(
+        .ok_or_else(|| Error::Whatever {
+            source: Box::new(snafu::Whatever::without_source(
                 "missing authority in DHTTP/3 request URI".to_string(),
-            )))
+            )),
         })?
         .clone();
 
-    let connection = client.connect(authority.clone()).await.map_err(|e| {
-        crate::Error::from(Box::new(genmeta_common::error::Whatever::with_source(
-            Box::new(e),
-            format!("failed to connect to DHTTP/3 server `{authority}`"),
-        )))
-    })?;
+    let connection = client
+        .connect(authority.clone())
+        .await
+        .map_err(|e| Error::Whatever {
+            source: Box::new(snafu::Whatever::with_source(
+                Box::new(e),
+                format!("failed to connect to DHTTP/3 server `{authority}`"),
+            )),
+        })?;
 
-    let response = connection.execute_hyper_request(req).await.map_err(|e| {
-        crate::Error::from(Box::new(genmeta_common::error::Whatever::with_source(
-            Box::new(e),
-            "failed to execute DHTTP/3 request".to_string(),
-        )))
-    })?;
+    let response = connection
+        .execute_hyper_request(req)
+        .await
+        .map_err(|e| Error::Whatever {
+            source: Box::new(snafu::Whatever::with_source(
+                Box::new(e),
+                "failed to execute DHTTP/3 request".to_string(),
+            )),
+        })?;
 
     Ok(response)
 }

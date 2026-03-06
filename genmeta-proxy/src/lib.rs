@@ -77,22 +77,22 @@ pub enum Error {
     ForwardMissingHost {},
 
     #[snafu(transparent)]
-    Whatever {
-        source: Box<genmeta_common::error::Whatever>,
-    },
+    Whatever { source: Box<snafu::Whatever> },
 }
+
 impl snafu::FromString for Error {
-    type Source = <genmeta_common::error::Whatever as snafu::FromString>::Source;
+    type Source = <snafu::Whatever as snafu::FromString>::Source;
 
     fn without_source(message: String) -> Self {
-        Box::new(genmeta_common::error::Whatever::without_source(message)).into()
+        Error::Whatever {
+            source: Box::new(snafu::Whatever::without_source(message)),
+        }
     }
 
     fn with_source(source: Self::Source, message: String) -> Self {
-        Box::new(genmeta_common::error::Whatever::with_source(
-            source, message,
-        ))
-        .into()
+        Error::Whatever {
+            source: Box::new(snafu::Whatever::with_source(source, message)),
+        }
     }
 }
 type BoxBody = http_body_util::combinators::UnsyncBoxBody<
