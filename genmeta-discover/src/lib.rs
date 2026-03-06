@@ -61,12 +61,19 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
 
     let mut stream = resolvers.discover();
 
+    // Auto-append ._genmeta.local suffix if not already present.
+    let with_suffix = if options.domain.is_empty() || options.domain.ends_with("._genmeta.local") {
+        options.domain.clone()
+    } else {
+        format!("{}._genmeta.local", options.domain)
+    };
+
     let mut domain_set = HashSet::new();
     while let Some((_source, packet)) = stream.next().await {
         let records: HashMap<_, HashSet<_>> = packet
             .answers
             .iter()
-            .filter(|a| a.name().contains(&options.domain))
+            .filter(|a| a.name().contains(&options.domain) || a.name().contains(with_suffix.as_str()))
             .fold(HashMap::new(), |mut map, record| {
                 map.entry(record.name().to_string())
                     .or_default()
