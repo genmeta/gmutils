@@ -19,12 +19,13 @@ pub enum Error {
     },
 }
 
-
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 pub enum LoadHomeAndIdentityError {
     #[snafu(transparent)]
-    LocateHome { source: genmeta_home::LocateGenmetaHomeError },
+    LocateHome {
+        source: genmeta_home::LocateGenmetaHomeError,
+    },
     #[snafu(transparent)]
     LoadIdentity { source: Error },
 }
@@ -34,7 +35,7 @@ pub async fn load_identity<'n>(
     genmeta_home: &GenmetaHome,
     load_list: impl IntoIterator<Item = (&dyn fmt::Display, Name<'_>)>,
 ) -> Result<Option<Identity<'static>>, Error> {
-    for (source, name) in load_list {
+    if let Some((source, name)) = load_list.into_iter().next() {
         tracing::debug!("Trying to load identity `{name}` specified by `{source}`");
         match genmeta_home.identities().load(name.borrow()).await {
             Ok(identity) => {

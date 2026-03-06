@@ -35,9 +35,18 @@ pub struct Options {
     /// Show detailed request logging
     #[arg(short, long)]
     pub verbose: bool,
+
+    /// Run as daemon (background process)
+    #[arg(long)]
+    pub daemon: bool,
+
+    /// Log file path (write tracing output to this file instead of stderr)
+    #[arg(long, value_name = "path")]
+    pub log: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Snafu)]
+#[snafu(visibility(pub))]
 pub enum Error {
     #[snafu(transparent)]
     LoadHomeAndIdentity {
@@ -79,6 +88,15 @@ pub enum Error {
 
     #[snafu(display("missing host in request"))]
     ForwardMissingHost {},
+
+    #[snafu(display("failed to daemonize"))]
+    Daemonize { source: daemonize::Error },
+
+    #[snafu(display("failed to create log file `{}`", path.display()))]
+    CreateLogFile {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
 
     #[snafu(transparent)]
     Whatever { source: Box<snafu::Whatever> },
@@ -186,13 +204,26 @@ async fn handle_request(
 }
 
 pub async fn run(mut options: Options) -> Result<(), Error> {
-    let (stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
+    let (writer, _guard) = if let Some(ref log_path) = options.log
+        && !options.daemon
+    {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path)
+            .context(CreateLogFileSnafu {
+                path: log_path.clone(),
+            })?;
+        tracing_appender::non_blocking(file)
+    } else {
+        tracing_appender::non_blocking(std::io::stderr())
+    };
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
                 .with_target(false)
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
-                .with_writer(stderr),
+                .with_writer(writer),
         )
         .with(
             tracing_subscriber::EnvFilter::builder()
@@ -243,9 +274,10 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     let mut listeners = Vec::new();
     for b in &options.listens {
         let ip = b.host.as_ip_addr().ok_or_else(|| {
-            <Error as snafu::FromString>::without_source(
-                format!("listen bind `{}` must be a concrete IP address", b.host),
-            )
+            <Error as snafu::FromString>::without_source(format!(
+                "listen bind `{}` must be a concrete IP address",
+                b.host
+            ))
         })?;
         let addr = SocketAddr::new(ip, b.effective_port());
         let listener = TcpListener::bind(addr).await.context(BindListenerSnafu)?;
