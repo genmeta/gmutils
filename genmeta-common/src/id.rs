@@ -5,65 +5,63 @@ use genmeta_home::{
     identity::{Identity, InvalidName, Name},
 };
 use http::Uri;
-use snafu::Report;
+use snafu::{Report, Snafu, whatever};
+
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+pub enum Error {
+    #[snafu(whatever)]
+    #[snafu(display("{message}"))]
+    Whatever {
+        message: String,
+        #[snafu(source(from(Box<dyn std::error::Error + Send + Sync>, Some)))]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
+}
+
+
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+pub enum LoadHomeAndIdentityError {
+    #[snafu(transparent)]
+    LocateHome { source: genmeta_home::LocateGenmetaHomeError },
+    #[snafu(transparent)]
+    LoadIdentity { source: Error },
+}
 
 /// Load identity by a list of (source, name) pairs, and fallback to default identity if all specified identities failed to load.
 pub async fn load_identity<'n>(
     genmeta_home: &GenmetaHome,
     load_list: impl IntoIterator<Item = (&dyn fmt::Display, Name<'_>)>,
-) -> Option<Identity<'static>> {
-    let mut tried_specified = false;
+) -> Result<Option<Identity<'static>>, Error> {
     for (source, name) in load_list {
-        tried_specified = true;
         tracing::debug!("Trying to load identity `{name}` specified by `{source}`");
         match genmeta_home.identities().load(name.borrow()).await {
             Ok(identity) => {
-                if tried_specified {
-                    tracing::warn!("Identity `{name}` specified by `{source}` loaded");
-                } else {
-                    tracing::debug!("Identity `{name}` specified by `{source}` loaded");
-                };
-                return Some(identity);
+                tracing::debug!("Identity `{name}` specified by `{source}` loaded");
+                return Ok(Some(identity));
             }
-            Err(error) => {
-                tracing::warn!(
-                    "Failed to load identity `{name}` specified by `{source}`: {}",
-                    Report::from_error(error)
-                );
-                continue;
+            Err(_error) => {
+                whatever!("failed to load identity `{name}` specified by `{source}`");
             }
         }
     }
 
-    // all specified identities failed to load, try to load the default identity
+    // no identity was specified, try to load the default identity
     match genmeta_home.identities().load_default_identity().await {
-        Ok(identity) if tried_specified => {
-            tracing::warn!(
-                "All specified identities failed to load, using default identity `{}`",
-                identity.name()
-            );
-            Some(identity)
-        }
         Ok(identity) => {
             tracing::debug!(
                 "No identity specified, using default identity `{}`",
                 identity.name()
             );
-            Some(identity)
-        }
-        Err(error) if tried_specified => {
-            tracing::warn!(
-                "All specified identities failed to load, and default identity also failed to load: {}",
-                Report::from_error(error)
-            );
-            None
+            Ok(Some(identity))
         }
         Err(error) => {
             tracing::debug!(
                 "No identity specified, and default identity failed to load: {}",
                 Report::from_error(error)
             );
-            None
+            Ok(None)
         }
     }
 }
@@ -80,7 +78,7 @@ pub async fn load_identity<'n>(
 pub async fn load_home_and_identity<'n>(
     genmeta_home_required: bool,
     load_list: impl IntoIterator<Item = (&dyn fmt::Display, Name<'n>)>,
-) -> Result<Option<Identity<'static>>, genmeta_home::LocateGenmetaHomeError> {
+) -> Result<Option<Identity<'static>>, LoadHomeAndIdentityError> {
     let genmeta_home = match GenmetaHome::load_from_environment() {
         Ok(home) => home,
         Err(error) if !genmeta_home_required => {
@@ -90,10 +88,10 @@ pub async fn load_home_and_identity<'n>(
             );
             return Ok(None);
         }
-        Err(error) => return Err(error),
+        Err(error) => return Err(error.into()),
     };
 
-    Ok(load_identity(&genmeta_home, load_list).await)
+    Ok(load_identity(&genmeta_home, load_list).await?)
 }
 
 pub fn expand_uri(uri: Uri) -> Result<Uri, InvalidName> {

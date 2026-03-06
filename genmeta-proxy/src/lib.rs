@@ -36,8 +36,8 @@ pub struct Options {
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(transparent)]
-    LocateGenmetaHome {
-        source: genmeta_home::LocateGenmetaHomeError,
+    LoadHomeAndIdentity {
+        source: id::LoadHomeAndIdentityError,
     },
 
     #[snafu(transparent)]
