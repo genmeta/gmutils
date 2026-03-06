@@ -100,6 +100,14 @@ pub struct Options {
     #[arg(long, conflicts_with = "id")]
     anonymous: bool,
 
+    /// Resolve names to IPv4 addresses only
+    #[arg(short = '4', long = "ipv4")]
+    ipv4: bool,
+
+    /// Resolve names to IPv6 addresses only
+    #[arg(short = '6', long = "ipv6")]
+    ipv6: bool,
+
     /// DNS resolution schemes
     #[arg(long, value_name = "scheme", default_value = "mdns, http", value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
     dns: Vec<dns::DnsScheme>,
@@ -411,6 +419,28 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     )
     .await?;
 
+    // Apply -4/-6 address family filter to bind URIs.
+    // Both flags set (or neither) means no filtering.
+    let bind_uris: std::borrow::Cow<'_, [_]> = if options.ipv4 && !options.ipv6 {
+        bind_setup
+            .bind_uris
+            .iter()
+            .filter(|uri| uri.as_inet_bind_uri().is_some_and(|a| a.is_ipv4()))
+            .cloned()
+            .collect::<Vec<_>>()
+            .into()
+    } else if options.ipv6 && !options.ipv4 {
+        bind_setup
+            .bind_uris
+            .iter()
+            .filter(|uri| uri.as_inet_bind_uri().is_some_and(|a| a.is_ipv6()))
+            .cloned()
+            .collect::<Vec<_>>()
+            .into()
+    } else {
+        std::borrow::Cow::Borrowed(&bind_setup.bind_uris)
+    };
+
     let dns_setup = dns::handy::build_resolvers(
         options.dns.iter().copied(),
         &bind_setup.bind_interfaces,
@@ -425,7 +455,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     .context(BuildClientSnafu)?
     .with_iface_manager(bind_setup.iface_manager)
     .with_resolver(Arc::new(dns_setup.resolvers))
-    .bind(&bind_setup.bind_uris)
+    .bind(&*bind_uris)
     .await
     .with_qlog(Arc::new(NoopLogger))
     .build();
