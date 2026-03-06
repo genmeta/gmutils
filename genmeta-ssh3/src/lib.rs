@@ -144,7 +144,8 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
-                .from_env_lossy(),
+                .from_env_lossy()
+                .add_directive("netlink_packet_route=error".parse().unwrap()),
         )
         .init();
 
