@@ -1,7 +1,7 @@
 use std::{borrow::Cow, fmt::Display};
 
-use genmeta_home::identity::{Identities, Name, fs::LoadIdentityError};
-use snafu::Report;
+use genmeta_home::identity::Name;
+
 
 use crate::{
     REGISTERABLE_DOMAINS,
@@ -140,28 +140,11 @@ pub(crate) async fn prompt_login_catpcha(
     Ok(get_response.await)
 }
 
-pub(crate) async fn prompt_select_one_name(
-    message: impl Into<Cow<'static, str>> + Send + 'static,
-    names: Vec<Name<'static>>,
-) -> Result<Name<'static>, inquire::InquireError> {
-    sync!(inquire::Select::new(&message.into(), names).prompt())
-}
 
 pub(crate) async fn prompt_select_resign_domains(
     domains: Vec<Name<'static>>,
 ) -> Result<Vec<Name<'static>>, inquire::InquireError> {
     sync!(inquire::MultiSelect::new("Select domains to re-sign:", domains.to_vec()).prompt())
-}
-
-pub(crate) async fn prompt_select_default_name(
-    current: Option<Name<'_>>,
-    names: Vec<Name<'static>>,
-) -> Result<Name<'static>, inquire::InquireError> {
-    let message: Cow<'static, str> = match current {
-        Some(ref domain) => format!("Select default identity (current: {domain}):",).into(),
-        None => "Select default identity:".into(),
-    };
-    prompt_select_one_name(message, names).await
 }
 
 pub(crate) async fn prompt_confirm_set_as_default_name(
@@ -176,18 +159,5 @@ pub(crate) async fn prompt_confim_update_default_name(
     new: Name<'_>,
 ) -> Result<bool, inquire::InquireError> {
     let message = format!("Current default identity is {current}, change to {new}?");
-    sync!(inquire::Confirm::new(&message).with_default(false).prompt())
-}
-
-pub(crate) async fn prompt_confirm_select_default_name_not_exist(
-    identities: &Identities,
-    selected: Name<'_>,
-    load_error: LoadIdentityError,
-) -> Result<bool, inquire::InquireError> {
-    let message = format!(
-        "Selected identity {selected} could not be loaded from {}: {}.\nProceed anyway?",
-        identities.as_path().display(),
-        Report::from_error(load_error)
-    );
     sync!(inquire::Confirm::new(&message).with_default(false).prompt())
 }

@@ -28,8 +28,8 @@ use crate::{
     cert_server::{self, CertServer, LoginResponse, RegisterResponse, ResignResponse},
     cli::prompt::{
         prompt_available_email, prompt_available_name, prompt_confim_update_default_name,
-        prompt_confirm_select_default_name_not_exist, prompt_confirm_set_as_default_name,
-        prompt_domain, prompt_login_catpcha, prompt_register_catpcha, prompt_select_default_name,
+        prompt_confirm_set_as_default_name,
+        prompt_domain, prompt_login_catpcha, prompt_register_catpcha,
         prompt_select_resign_domains,
     },
 };
@@ -162,6 +162,42 @@ fn display_cert_info(cert_der: &[u8], indent: &str) -> Result<(), Error> {
             .collect();
         if !dns_names.is_empty() {
             println!("{}SANs:       {}", indent, dns_names.join(", "));
+        }
+    }
+    if let Ok(Some(ku)) = cert.key_usage() {
+        let flags: Vec<&str> = [
+            ku.value.digital_signature().then_some("digital_signature"),
+            ku.value.non_repudiation().then_some("non_repudiation"),
+            ku.value.key_encipherment().then_some("key_encipherment"),
+            ku.value.data_encipherment().then_some("data_encipherment"),
+            ku.value.key_agreement().then_some("key_agreement"),
+            ku.value.key_cert_sign().then_some("key_cert_sign"),
+            ku.value.crl_sign().then_some("crl_sign"),
+            ku.value.encipher_only().then_some("encipher_only"),
+            ku.value.decipher_only().then_some("decipher_only"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if !flags.is_empty() {
+            println!("{}Key Usage:  {}", indent, flags.join(", "));
+        }
+    }
+    if let Ok(Some(eku)) = cert.extended_key_usage() {
+        let purposes: Vec<&str> = [
+            eku.value.any.then_some("any"),
+            eku.value.server_auth.then_some("server_auth"),
+            eku.value.client_auth.then_some("client_auth"),
+            eku.value.code_signing.then_some("code_signing"),
+            eku.value.email_protection.then_some("email_protection"),
+            eku.value.time_stamping.then_some("time_stamping"),
+            eku.value.ocsp_signing.then_some("ocsp_signing"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if !purposes.is_empty() {
+            println!("{}EKU:        {}", indent, purposes.join(", "));
         }
     }
     Ok(())
@@ -388,33 +424,31 @@ impl Default {
     ) -> Result<(), Error> {
         let identities = genmeta_home.identities();
 
-        let current_config = load_current_default_config(&identities).await?;
-
-        let name = match self.name.as_ref() {
-            Some(name) => name.borrow(),
+        match self.name.as_ref() {
             None => {
-                let current_default_name = current_config
-                    .as_ref()
-                    .and_then(|file| file.config().name().cloned());
-                let exist_names = query_exist_names_list(&identities).await?;
-                if exist_names.is_empty() {
-                    whatever!("no existing identities found");
-                }
-                prompt_select_default_name(current_default_name, exist_names).await?
+                // Show info for current default identity
+                let current_config = load_current_default_config(&identities).await?;
+                let name = match current_config.and_then(|c| c.config().name().cloned()) {
+                    Some(n) => n,
+                    None => whatever!("no default identity configured"),
+                };
+                let identity = identities.load(name.borrow()).await?;
+                println!("{}", identity.name());
+                let der = identity.certs()[0].as_ref();
+                display_cert_info(der, "  ")?;
+                Ok(())
             }
-        };
-
-        if let Err(error) = identities.load(name.borrow()).await
-            && !prompt_confirm_select_default_name_not_exist(&identities, name.to_owned(), error)
-                .await?
-        {
-            whatever!("operation cancelled by user");
+            Some(name) => {
+                // Configure name as default
+                identities.load(name.borrow()).await?;
+                let current_config = load_current_default_config(&identities).await?;
+                let mut current_config = current_config.unwrap_or_else(|| {
+                    DefaultConfigFile::new(identities.default_config_path().to_owned())
+                });
+                current_config.config_mut().set_name(name.to_owned());
+                save_default_config(&current_config).await
+            }
         }
-
-        let mut current_config = current_config
-            .unwrap_or_else(|| DefaultConfigFile::new(identities.default_config_path().to_owned()));
-        current_config.config_mut().set_name(name.to_owned());
-        save_default_config(&current_config).await
     }
 }
 
@@ -451,7 +485,7 @@ impl List {
                 } else {
                     "  "
                 };
-                println!("{marker}{}", name.as_full());
+                println!("{marker}{name}");
                 if self.verbose {
                     let identity = identities.load(name.borrow()).await?;
                     let der = identity.certs()[0].as_ref();
@@ -488,7 +522,7 @@ impl Info {
             }
         };
         let identity = identities.load(name.borrow()).await?;
-        println!("{}", identity.name().as_full());
+        println!("{}", identity.name());
 
         let der = identity.certs()[0].as_ref();
         display_cert_info(der, "  ")?;
