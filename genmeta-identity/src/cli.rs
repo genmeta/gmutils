@@ -143,6 +143,29 @@ async fn save_identity(
     ));
     Ok(())
 }
+fn display_cert_info(cert_der: &[u8], indent: &str) -> Result<(), Error> {
+    let (_, cert) = x509_parser::parse_x509_certificate(cert_der)
+        .whatever_context::<_, Error>("failed to parse certificate")?;
+    println!("{}Serial:     {}", indent, cert.serial);
+    println!("{}Subject:    {}", indent, cert.subject());
+    println!("{}Not Before: {}", indent, cert.validity().not_before);
+    println!("{}Not After:  {}", indent, cert.validity().not_after);
+    if let Ok(Some(san)) = cert.subject_alternative_name() {
+        let dns_names: Vec<_> = san
+            .value
+            .general_names
+            .iter()
+            .filter_map(|gn| match gn {
+                x509_parser::prelude::GeneralName::DNSName(n) => Some(*n),
+                _ => None,
+            })
+            .collect();
+        if !dns_names.is_empty() {
+            println!("{}SANs:       {}", indent, dns_names.join(", "));
+        }
+    }
+    Ok(())
+}
 
 #[tracing::instrument(skip(cert_server))]
 async fn resign_domain(
@@ -308,7 +331,7 @@ impl Create {
     }
 }
 
-/// Apply to resign identities
+/// Apply identity
 #[derive(Parser, Debug, Clone)]
 pub struct Apply {
     #[arg(short, long)]
@@ -432,26 +455,7 @@ impl List {
                 if self.verbose {
                     let identity = identities.load(name.borrow()).await?;
                     let der = identity.certs()[0].as_ref();
-                    let (_, cert) = x509_parser::parse_x509_certificate(der)
-                        .whatever_context::<_, Error>("failed to parse certificate")?;
-                    println!("    Serial:     {}", cert.serial);
-                    println!("    Subject:    {}", cert.subject());
-                    println!("    Not Before: {}", cert.validity().not_before);
-                    println!("    Not After:  {}", cert.validity().not_after);
-                    if let Ok(Some(san)) = cert.subject_alternative_name() {
-                        let dns_names: Vec<_> = san
-                            .value
-                            .general_names
-                            .iter()
-                            .filter_map(|gn| match gn {
-                                x509_parser::prelude::GeneralName::DNSName(n) => Some(*n),
-                                _ => None,
-                            })
-                            .collect();
-                        if !dns_names.is_empty() {
-                            println!("    SANs:       {}", dns_names.join(", "));
-                        }
-                    }
+                    display_cert_info(der, "    ")?;
                 }
             }
         }
@@ -484,32 +488,14 @@ impl Info {
             }
         };
         let identity = identities.load(name.borrow()).await?;
-        let der = identity.certs()[0].as_ref();
-        let (_, cert) = x509_parser::parse_x509_certificate(der)
-            .whatever_context::<_, Error>("failed to parse certificate")?;
         println!("{}", identity.name().as_full());
-        println!("  Serial:     {}", cert.serial);
-        println!("  Subject:    {}", cert.subject());
-        println!("  Not Before: {}", cert.validity().not_before);
-        println!("  Not After:  {}", cert.validity().not_after);
-        if let Ok(Some(san)) = cert.subject_alternative_name() {
-            let dns_names: Vec<_> = san
-                .value
-                .general_names
-                .iter()
-                .filter_map(|gn| match gn {
-                    x509_parser::prelude::GeneralName::DNSName(n) => Some(*n),
-                    _ => None,
-                })
-                .collect();
-            if !dns_names.is_empty() {
-                println!("  SANs:       {}", dns_names.join(", "));
-            }
-        }
+
+        let der = identity.certs()[0].as_ref();
+        display_cert_info(der, "  ")?;
+
         Ok(())
     }
 }
-
 #[derive(Parser, Debug, Clone)]
 pub enum Options {
     Create(Create),
