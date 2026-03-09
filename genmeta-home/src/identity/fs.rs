@@ -115,7 +115,7 @@ impl<'i> Identity<'i> {
     ) -> Result<Vec<CertificateDer<'static>>, LoadCertError> {
         let mut data = std::io::Cursor::new(fs::read(path).await?);
         let (end_entity_pem, _read) = Pem::read(&mut data).context(load_cert_error::PemSnafu)?;
-        // TOOD: less/more validation?
+        // TODO: less/more validation?
         Self::valid_cert_for_name(&end_entity_pem, name).await?;
         let mut certs = vec![CertificateDer::from(end_entity_pem.contents)];
         loop {

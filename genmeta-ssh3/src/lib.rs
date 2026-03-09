@@ -136,7 +136,7 @@ pub enum Error {
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
-    // todo: enable ASNI with `atty` crate
+    // todo: enable ANSI with `atty` crate
     let (stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
     tracing_subscriber::registry()
         .with(
