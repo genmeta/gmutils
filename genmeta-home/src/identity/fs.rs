@@ -87,7 +87,7 @@ pub enum SaveIdentityError {
 pub enum ListIdentitiesError {
     #[snafu(display("failed to list identities in directory {}", path.display()))]
     ReadDir { path: PathBuf, source: io::Error },
-    #[snafu(display("failed to read filetype of  {}", path.display()))]
+    #[snafu(display("failed to read filetype of {}", path.display()))]
     ReadFty { path: PathBuf, source: io::Error },
 }
 

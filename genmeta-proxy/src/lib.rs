@@ -54,7 +54,7 @@ pub enum Error {
     },
 
     #[snafu(transparent)]
-    BindConflict { source: bind::BindConflictError },
+    BindConflict { source: Box<bind::BindConflictError> },
 
     #[snafu(display("failed to build DNS resolvers"))]
     BuildDnsResolvers { source: BuildClientError },
@@ -203,8 +203,9 @@ async fn handle_request(
     }
 }
 
-pub async fn run(mut options: Options) -> Result<(), Error> {
-    let (writer, _guard) = if let Some(ref log_path) = options.log
+/// Initialize tracing subscriber, optionally writing to a log file.
+fn init_tracing(options: &Options) -> Result<tracing_appender::non_blocking::WorkerGuard, Error> {
+    let (writer, guard) = if let Some(ref log_path) = options.log
         && !options.daemon
     {
         let file = std::fs::OpenOptions::new()
@@ -236,6 +237,29 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
                 ),
         )
         .init();
+    Ok(guard)
+}
+
+/// Bind TCP listeners on the configured listen addresses.
+async fn bind_listeners(options: &Options) -> Result<Vec<TcpListener>, Error> {
+    let mut listeners = Vec::new();
+    for b in &options.listens {
+        let ip = b.host.as_ip_addr().ok_or_else(|| {
+            <Error as snafu::FromString>::without_source(format!(
+                "listen bind `{}` must be a concrete IP address",
+                b.host
+            ))
+        })?;
+        let addr = SocketAddr::new(ip, b.effective_port());
+        let listener = TcpListener::bind(addr).await.context(BindListenerSnafu)?;
+        tracing::info!(%addr, "Proxy listening");
+        listeners.push(listener);
+    }
+    Ok(listeners)
+}
+
+pub async fn run(mut options: Options) -> Result<(), Error> {
+    let _guard = init_tracing(&options)?;
 
     let id = if options.anonymous {
         None
@@ -275,19 +299,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     .with_qlog(Arc::new(NoopLogger))
     .build();
 
-    let mut listeners = Vec::new();
-    for b in &options.listens {
-        let ip = b.host.as_ip_addr().ok_or_else(|| {
-            <Error as snafu::FromString>::without_source(format!(
-                "listen bind `{}` must be a concrete IP address",
-                b.host
-            ))
-        })?;
-        let addr = SocketAddr::new(ip, b.effective_port());
-        let listener = TcpListener::bind(addr).await.context(BindListenerSnafu)?;
-        tracing::info!(%addr, "Proxy listening");
-        listeners.push(listener);
-    }
+    let listeners = bind_listeners(&options).await?;
     let router = Arc::new(route::Router::new());
     let client = Arc::new(client);
 

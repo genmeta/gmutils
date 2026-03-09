@@ -21,7 +21,7 @@ use h3x::{
         prelude::{ConnectServerError, handy::NoopLogger},
     },
     hyper::SendMessageError,
-    message::stream::{InitialMessageStreamError, MessageStreamError},
+    message::stream::{InitialMessageStreamError, MessageStreamError, WriteStream},
     pool::ConnectError,
 };
 use http::{Method, Request, StatusCode, Uri, header::USER_AGENT};
@@ -143,7 +143,9 @@ pub enum Error {
     },
 
     #[snafu(transparent)]
-    BindConflict { source: bind::BindConflictError },
+    BindConflict {
+        source: Box<bind::BindConflictError>,
+    },
 
     #[snafu(display("failed to build DNS resolvers"))]
     BuildDnsResolvers { source: BuildClientError },
@@ -357,14 +359,13 @@ where
     }
 }
 
-#[allow(clippy::result_large_err)]
-pub async fn run(mut options: Options) -> Result<(), Error> {
-    // Initialize tracing.
+/// Initialize tracing subscriber based on CLI verbosity flags.
+fn init_tracing(options: &Options) -> tracing_appender::non_blocking::WorkerGuard {
     // -s:   suppress all tracing output.
     // -s -S: show errors only (INFO level) but not progress.
     // We approximate -s -S by keeping INFO but note that progress is not
     // separately implemented — tracing output itself is the only stderr content.
-    let (stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
+    let (stderr, guard) = tracing_appender::non_blocking(std::io::stderr());
     let level = if options.silent && !options.show_error {
         tracing_subscriber::filter::LevelFilter::OFF
     } else {
@@ -388,7 +389,21 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
                 ),
         )
         .init();
+    guard
+}
 
+/// Load identity, set up bind interfaces, build DNS resolvers, and construct
+/// the H3 client.
+async fn setup_client(
+    options: &mut Options,
+) -> Result<
+    (
+        H3Client,
+        Option<genmeta_home::identity::Identity<'static>>,
+        Duration,
+    ),
+    Error,
+> {
     options.expand_uri()?;
 
     let id = if options.anonymous {
@@ -456,6 +471,313 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         .map(Duration::from_secs)
         .unwrap_or(Duration::MAX);
 
+    Ok((client, id, connect_timeout))
+}
+
+/// Build the HTTP request builder with method, headers, and user-agent.
+fn build_request_builder(uri: &Uri, method: &Method, options: &Options) -> http::request::Builder {
+    let user_agent = format!("genmeta-curl/{}", env!("CARGO_PKG_VERSION"));
+    let mut builder = Request::builder()
+        .uri(uri.clone())
+        .version(http::Version::HTTP_3)
+        .header(USER_AGENT, user_agent)
+        .header("Accept", "*/*");
+
+    if options.compressed && !options.raw {
+        builder = builder.header("Accept-Encoding", ACCEPT_ENCODING);
+    }
+
+    builder = builder.method(method);
+
+    for (k, v) in options.header.iter() {
+        builder = builder.header(k, v);
+    }
+
+    builder
+}
+
+/// Send the request body (data, file upload, or empty) and close the stream.
+async fn send_request_body(
+    request_builder: http::request::Builder,
+    request_stream: &mut WriteStream,
+    options: &Options,
+    current_method: &Method,
+    redirect_count: u32,
+) -> Result<(), Error> {
+    // After a redirect to GET/HEAD, skip sending a body
+    let skip_body = redirect_count > 0 && matches!(current_method, &Method::GET | &Method::HEAD);
+
+    if skip_body || options.data.is_none() && options.upload_file.is_none() {
+        let request = request_builder
+            .body(String::new())
+            .context(BuildRequestSnafu)?;
+        request_stream
+            .send_hyper_request(request)
+            .await
+            .context(SendRequestSnafu)?;
+    } else if let Some(ref data) = options.data {
+        let request = request_builder
+            .body(data.clone())
+            .context(BuildRequestSnafu)?;
+        request_stream
+            .send_hyper_request(request)
+            .await
+            .context(SendRequestSnafu)?;
+    } else if let Some(ref path) = options.upload_file {
+        // File upload only on first attempt (stream cannot be re-read)
+        if redirect_count == 0 {
+            let mut stream_writer = pin!(request_stream.as_writer());
+            let mut file = fs::File::open(path)
+                .await
+                .context(OpenUploadFileSnafu { path: path.clone() })?;
+            io::copy(&mut file, &mut stream_writer)
+                .await
+                .context(UploadFileSnafu { path: path.clone() })?;
+            stream_writer
+                .flush()
+                .await
+                .context(UploadFileSnafu { path: path.clone() })?;
+            tracing::warn!(path = %path.display(), redirect_count, "Skipping file upload body on redirect (stream cannot be re-read)");
+        } else {
+            let request = request_builder
+                .body(String::new())
+                .context(BuildRequestSnafu)?;
+            request_stream
+                .send_hyper_request(request)
+                .await
+                .context(SendRequestSnafu)?;
+        }
+    }
+
+    request_stream
+        .close()
+        .await
+        .context(CloseRequestStreamSnafu)?;
+    Ok(())
+}
+
+/// Check whether a response is a redirect and resolve the new target.
+///
+/// Returns `Some((new_uri, new_method))` when the caller should follow the
+/// redirect, or `None` when the response is final.
+fn resolve_redirect(
+    status: StatusCode,
+    headers: &http::HeaderMap,
+    current_uri: &Uri,
+    current_method: &Method,
+) -> Result<Option<(Uri, Method)>, Error> {
+    let location = match headers.get(http::header::LOCATION) {
+        Some(loc) => loc,
+        None => return Ok(None),
+    };
+
+    let location_str = location.to_str().unwrap_or("");
+    let parsed: Uri = location_str.parse().context(InvalidRedirectLocationSnafu)?;
+
+    // Resolve relative redirects against current URI
+    let new_uri = if parsed.authority().is_none() {
+        let scheme = current_uri.scheme_str().unwrap_or("https");
+        let authority = current_uri
+            .authority()
+            .map(|a| a.as_str())
+            .unwrap_or_default();
+        let path_q = parsed.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+        format!("{scheme}://{authority}{path_q}")
+            .parse()
+            .context(InvalidRedirectLocationSnafu)?
+    } else {
+        parsed
+    };
+
+    // 301/302/303 → switch to GET; 307/308 → keep method
+    let new_method = match status {
+        StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND | StatusCode::SEE_OTHER => Method::GET,
+        _ => current_method.clone(),
+    };
+
+    tracing::debug!(location = location_str, "Following redirect");
+
+    Ok(Some((new_uri, new_method)))
+}
+
+/// Stream the response body to a file or stdout, optionally decompressing.
+async fn stream_response_body(
+    mut response_stream: h3x::message::stream::ReadStream,
+    decompress: bool,
+    content_encoding: &str,
+    output: Option<&PathBuf>,
+) -> Result<u64, Error> {
+    if let Some(output_path) = output {
+        tracing::debug!("Dumping output to {}", output_path.display());
+        let mut file = fs::File::create(output_path)
+            .await
+            .context(CreateOutputFileSnafu)?;
+
+        let n = if decompress {
+            let body_reader = pin!(response_stream.as_reader());
+            decompress_copy(body_reader, &mut file, content_encoding).await?
+        } else {
+            let mut body_reader = pin!(response_stream.as_reader());
+            copy_all(&mut body_reader, &mut file)
+                .await
+                .context(ReadResponseSnafu)?
+        };
+        file.flush().await.context(FlushOutputSnafu)?;
+        Ok(n)
+    } else {
+        tracing::debug!("Dumping output to stdout");
+        let mut stdout = io::stdout();
+
+        let n = if decompress {
+            let body_reader = pin!(response_stream.as_reader());
+            decompress_copy(body_reader, &mut stdout, content_encoding).await?
+        } else {
+            let mut body_reader = pin!(response_stream.as_reader());
+            copy_all(&mut body_reader, &mut stdout)
+                .await
+                .context(ReadResponseSnafu)?
+        };
+        stdout.flush().await.context(FlushOutputSnafu)?;
+        Ok(n)
+    }
+}
+
+/// Process the final response: stream body and optionally print `--write-out`.
+#[allow(clippy::too_many_arguments)]
+async fn process_final_response(
+    response_stream: h3x::message::stream::ReadStream,
+    response_headers: &http::HeaderMap,
+    options: &Options,
+    status: StatusCode,
+    http_version: http::Version,
+    current_uri: &Uri,
+    current_method: &Method,
+    timing: &Timing,
+) -> Result<(), Error> {
+    let content_encoding = response_headers
+        .get(http::header::CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let decompress = options.compressed && !options.raw;
+
+    let size_download = stream_response_body(
+        response_stream,
+        decompress,
+        &content_encoding,
+        options.output.as_ref(),
+    )
+    .await?;
+
+    // --write-out: print format string after body, to stdout, no trailing newline
+    if let Some(ref fmt) = options.write_out {
+        let ctx = WriteOutContext {
+            status: status.as_u16(),
+            uri: current_uri,
+            method: current_method,
+            http_version,
+            timing,
+            size_download,
+            response_headers,
+        };
+        let expanded = expand_write_out(fmt, &ctx);
+        print!("{expanded}");
+        io::stdout().flush().await.context(FlushOutputSnafu)?;
+    }
+
+    Ok(())
+}
+
+/// Connect to the server (with timeout) and open the initial message streams.
+async fn connect_and_open_streams(
+    client: &H3Client,
+    uri: &Uri,
+    connect_timeout: Duration,
+    timing: &mut Timing,
+) -> Result<(h3x::message::stream::ReadStream, WriteStream), Error> {
+    let connect_fut = async {
+        client
+            .connect(
+                uri.authority()
+                    .expect("BUG: URI authority already validated")
+                    .clone(),
+            )
+            .await
+            .context(ConnectSnafu)
+    };
+    let connection = match tokio::time::timeout(connect_timeout, connect_fut).await {
+        Ok(result) => result?,
+        Err(_) => return TimedoutSnafu.fail(),
+    };
+    timing.connected = Some(Instant::now());
+    connection
+        .initial_message_stream()
+        .await
+        .context(InitialMessageStreamSnafu)
+}
+
+/// Check whether a response is a redirect; if so, drain the response body and
+/// return the new target URI and method.
+async fn check_redirect(
+    options: &Options,
+    status: StatusCode,
+    headers: &http::HeaderMap,
+    current_uri: &Uri,
+    current_method: &Method,
+    redirect_count: u32,
+    response_stream: &mut h3x::message::stream::ReadStream,
+) -> Result<Option<(Uri, Method)>, Error> {
+    if !options.location || !status.is_redirection() || status == StatusCode::NOT_MODIFIED {
+        return Ok(None);
+    }
+    if redirect_count >= options.max_redirs {
+        return TooManyRedirectsSnafu.fail();
+    }
+    let result = resolve_redirect(status, headers, current_uri, current_method)?;
+    if result.is_some() {
+        // Drain response body so the QUIC stream is cleanly closed
+        let mut body_reader = pin!(response_stream.as_reader());
+        io::copy(&mut body_reader, &mut io::sink()).await.ok();
+    }
+    Ok(result)
+}
+
+/// Print verbose response details to stderr.
+fn print_verbose_response(response: &http::response::Parts) {
+    let formatted = format!("< received response: {response:#?}")
+        .lines()
+        .collect::<Vec<_>>()
+        .join("\n< ");
+    eprintln!("{formatted}");
+}
+
+/// Receive the response head, record first-byte timing, and optionally print
+/// verbose details.
+async fn receive_response_head(
+    response_stream: &mut h3x::message::stream::ReadStream,
+    timing: &mut Timing,
+    verbose: bool,
+) -> Result<http::response::Parts, Error> {
+    let response = response_stream
+        .read_hyper_response_parts()
+        .await
+        .context(ReceiveResponseSnafu)?;
+
+    timing.first_byte = Some(Instant::now());
+
+    if verbose {
+        print_verbose_response(&response);
+    }
+
+    Ok(response)
+}
+
+
+pub async fn run(mut options: Options) -> Result<(), Error> {
+    let _guard = init_tracing(&options);
+    let (client, _id, connect_timeout) = setup_client(&mut options).await?;
+
     // Determine effective method (may change across redirects).
     let initial_method = options.request.clone().unwrap_or_else(|| match &options {
         o if o.data.is_some() => Method::POST,
@@ -470,230 +792,53 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     loop {
         let mut timing = Timing::new();
 
-        // Connect
-        let connect_fut = async {
-            client
-                .connect(
-                    current_uri
-                        .authority()
-                        .expect("BUG: URI authority already validated")
-                        .clone(),
-                )
-                .await
-                .context(ConnectSnafu)
-        };
-        let connection = match tokio::time::timeout(connect_timeout, connect_fut).await {
-            Ok(result) => result?,
-            Err(_) => return TimedoutSnafu.fail(),
-        };
-        timing.connected = Some(Instant::now());
+        let (mut response_stream, mut request_stream) =
+            connect_and_open_streams(&client, &current_uri, connect_timeout, &mut timing).await?;
 
-        let (mut response_stream, mut request_stream) = connection
-            .initial_message_stream()
-            .await
-            .context(InitialMessageStreamSnafu)?;
+        let request_builder = build_request_builder(&current_uri, &current_method, &options);
+        send_request_body(
+            request_builder,
+            &mut request_stream,
+            &options,
+            &current_method,
+            redirect_count,
+        )
+        .await?;
 
-        let user_agent = format!("genmeta-curl/{}", env!("CARGO_PKG_VERSION"));
-        let mut request_builder = Request::builder()
-            .uri(current_uri.clone())
-            .version(http::Version::HTTP_3)
-            .header(USER_AGENT, user_agent)
-            .header("Accept", "*/*");
-
-        if options.compressed && !options.raw {
-            request_builder = request_builder.header("Accept-Encoding", ACCEPT_ENCODING);
-        }
-
-        request_builder = request_builder.method(&current_method);
-
-        for (k, v) in options.header.iter() {
-            request_builder = request_builder.header(k, v);
-        }
-
-        // Send request body
-        let send_body: Result<_, Error> = async {
-            // After a redirect to GET/HEAD, skip sending a body
-            let skip_body =
-                redirect_count > 0 && matches!(current_method, Method::GET | Method::HEAD);
-
-            if skip_body || options.data.is_none() && options.upload_file.is_none() {
-                let request = request_builder
-                    .body(String::new())
-                    .context(BuildRequestSnafu)?;
-                request_stream
-                    .send_hyper_request(request)
-                    .await
-                    .context(SendRequestSnafu)?;
-            } else if let Some(ref data) = options.data {
-                let request = request_builder
-                    .body(data.clone())
-                    .context(BuildRequestSnafu)?;
-                request_stream
-                    .send_hyper_request(request)
-                    .await
-                    .context(SendRequestSnafu)?;
-            } else if let Some(ref path) = options.upload_file {
-                // File upload only on first attempt (stream cannot be re-read)
-                if redirect_count == 0 {
-                    let mut stream_writer = pin!(request_stream.as_writer());
-                    let mut file = fs::File::open(path)
-                        .await
-                        .context(OpenUploadFileSnafu { path: path.clone() })?;
-                    io::copy(&mut file, &mut stream_writer)
-                        .await
-                        .context(UploadFileSnafu { path: path.clone() })?;
-                    stream_writer
-                        .flush()
-                        .await
-                        .context(UploadFileSnafu { path: path.clone() })?;
-                    tracing::warn!(path = %path.display(), redirect_count, "Skipping file upload body on redirect (stream cannot be re-read)");
-                } else {
-                    let request = request_builder
-                        .body(String::new())
-                        .context(BuildRequestSnafu)?;
-                    request_stream
-                        .send_hyper_request(request)
-                        .await
-                        .context(SendRequestSnafu)?;
-                }
-            }
-
-            request_stream
-                .close()
-                .await
-                .context(CloseRequestStreamSnafu)?;
-            Ok(())
-        }
-        .await;
-        send_body?;
-
-        // Receive response head
-        let response = response_stream
-            .read_hyper_response_parts()
-            .await
-            .context(ReceiveResponseSnafu)?;
-
-        timing.first_byte = Some(Instant::now());
-
-        if options.verbose {
-            let formatted = format!("< received response: {response:#?}")
-                .lines()
-                .collect::<Vec<_>>()
-                .join("\n< ");
-            eprintln!("{formatted}");
-        }
+        let response =
+            receive_response_head(&mut response_stream, &mut timing, options.verbose).await?;
 
         let status = response.status;
         let response_headers = response.headers.clone();
         let http_version = response.version;
 
-        // Redirect handling
-        if options.location && status.is_redirection() && status != http::StatusCode::NOT_MODIFIED {
-            if redirect_count >= options.max_redirs {
-                return TooManyRedirectsSnafu.fail();
-            }
-
-            if let Some(location) = response.headers.get(http::header::LOCATION) {
-                let location_str = location.to_str().unwrap_or("");
-                let parsed: Uri = location_str.parse().context(InvalidRedirectLocationSnafu)?;
-
-                // Resolve relative redirects against current URI
-                let new_uri = if parsed.authority().is_none() {
-                    let scheme = current_uri.scheme_str().unwrap_or("https");
-                    let authority = current_uri
-                        .authority()
-                        .map(|a| a.as_str())
-                        .unwrap_or_default();
-                    let path_q = parsed.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
-                    format!("{scheme}://{authority}{path_q}")
-                        .parse()
-                        .context(InvalidRedirectLocationSnafu)?
-                } else {
-                    parsed
-                };
-
-                // 301/302/303 → switch to GET; 307/308 → keep method
-                current_method = match status {
-                    StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND | StatusCode::SEE_OTHER => {
-                        Method::GET
-                    }
-                    _ => current_method,
-                };
-                current_uri = new_uri;
-                redirect_count += 1;
-
-                // Drain response body so the QUIC stream is cleanly closed
-                let mut body_reader = pin!(response_stream.as_reader());
-                io::copy(&mut body_reader, &mut io::sink()).await.ok();
-
-                tracing::debug!(
-                    redirect_count,
-                    location = location_str,
-                    "Following redirect"
-                );
-                continue;
-            }
+        if let Some((new_uri, new_method)) = check_redirect(
+            &options,
+            status,
+            &response.headers,
+            &current_uri,
+            &current_method,
+            redirect_count,
+            &mut response_stream,
+        )
+        .await?
+        {
+            (current_uri, current_method) = (new_uri, new_method);
+            redirect_count += 1;
+            continue;
         }
 
-        // --- Final response: stream body to output ---
-
-        let content_encoding = response_headers
-            .get(http::header::CONTENT_ENCODING)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_lowercase();
-
-        let decompress = options.compressed && !options.raw;
-
-        let size_download: u64 = if let Some(ref output_path) = options.output {
-            tracing::debug!("Dumping output to {}", output_path.display());
-            let mut file = fs::File::create(output_path)
-                .await
-                .context(CreateOutputFileSnafu)?;
-
-            let n = if decompress {
-                let body_reader = pin!(response_stream.as_reader());
-                decompress_copy(body_reader, &mut file, &content_encoding).await?
-            } else {
-                let mut body_reader = pin!(response_stream.as_reader());
-                copy_all(&mut body_reader, &mut file)
-                    .await
-                    .context(ReadResponseSnafu)?
-            };
-            file.flush().await.context(FlushOutputSnafu)?;
-            n
-        } else {
-            tracing::debug!("Dumping output to stdout");
-            let mut stdout = io::stdout();
-
-            let n = if decompress {
-                let body_reader = pin!(response_stream.as_reader());
-                decompress_copy(body_reader, &mut stdout, &content_encoding).await?
-            } else {
-                let mut body_reader = pin!(response_stream.as_reader());
-                copy_all(&mut body_reader, &mut stdout)
-                    .await
-                    .context(ReadResponseSnafu)?
-            };
-            stdout.flush().await.context(FlushOutputSnafu)?;
-            n
-        };
-
-        // --write-out: print format string after body, to stdout, no trailing newline
-        if let Some(ref fmt) = options.write_out {
-            let ctx = WriteOutContext {
-                status: status.as_u16(),
-                uri: &current_uri,
-                method: &current_method,
-                http_version,
-                timing: &timing,
-                size_download,
-                response_headers: &response_headers,
-            };
-            let expanded = expand_write_out(fmt, &ctx);
-            print!("{expanded}");
-            io::stdout().flush().await.context(FlushOutputSnafu)?;
-        }
+        process_final_response(
+            response_stream,
+            &response_headers,
+            &options,
+            status,
+            http_version,
+            &current_uri,
+            &current_method,
+            &timing,
+        )
+        .await?;
 
         break;
     }

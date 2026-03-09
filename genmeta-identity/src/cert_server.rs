@@ -3,7 +3,7 @@ pub enum Error {
     #[snafu(transparent)]
     Request { source: reqwest::Error },
     #[snafu(display(
-        "HTTP Status Code {status}{}", 
+        "server returned HTTP status code `{status}`{}", 
         if message.is_empty() { String::new() } else { format!(": {message}", ) }
     ))]
     Status {
@@ -11,7 +11,7 @@ pub enum Error {
         message: String,
     },
     #[snafu(display(
-        "Code {code}{}", 
+        "server returned error code `{code}`{}", 
         message.as_ref().map_or(String::new(), |m| format!(": {}", m))
     ))]
     Code { code: i32, message: Option<String> },

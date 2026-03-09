@@ -21,7 +21,7 @@ use crate::config::Config;
 #[snafu(module(connect_error))]
 pub enum Error {
     #[snafu(transparent)]
-    BindConflict { source: BindConflictError },
+    BindConflict { source: Box<BindConflictError> },
     #[snafu(display("failed to build DNS resolvers"))]
     BuildDnsResolvers { source: BuildClientError },
     #[snafu(display("failed to build HTTP/3 client"))]

@@ -36,7 +36,7 @@ pub struct BindSetup {
 pub async fn setup_bind_interfaces_with(
     binds: Binds,
     f: impl FnOnce(&mut Vec<BindUri>),
-) -> Result<BindSetup, BindConflictError> {
+) -> Result<BindSetup, Box<BindConflictError>> {
     let monitor = Devices::global().monitor();
 
     let mut bind_uris = binds.to_bind_uris(monitor.interfaces().keys().map(String::as_str))?;
@@ -71,6 +71,6 @@ pub async fn setup_bind_interfaces_with(
 ///
 /// The returned [`BindSetup`] owns all state; callers decide which parts to
 /// keep (e.g. `nslookup` ignores the monitor).
-pub async fn setup_bind_interfaces(binds: Binds) -> Result<BindSetup, BindConflictError> {
+pub async fn setup_bind_interfaces(binds: Binds) -> Result<BindSetup, Box<BindConflictError>> {
     setup_bind_interfaces_with(binds, |_| {}).await
 }

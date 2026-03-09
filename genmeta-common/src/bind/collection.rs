@@ -33,7 +33,7 @@ impl Binds {
     /// Duplicate URIs (same target *and* same path-and-query) are
     /// silently deduplicated.
     #[allow(clippy::result_large_err)]
-    pub fn to_bind_uris<'a, I>(&'a self, interfaces: I) -> Result<Vec<BindUri>, BindConflictError>
+    pub fn to_bind_uris<'a, I>(&'a self, interfaces: I) -> Result<Vec<BindUri>, Box<BindConflictError>>
     where
         I: IntoIterator<Item = &'a str> + Clone,
     {
@@ -61,12 +61,12 @@ impl Binds {
                 hash_map::Entry::Occupied(entry) => {
                     if *entry.get() != path_and_query {
                         let (scheme, authority) = entry.key();
-                        return Err(BindConflictError {
+                        return Err(Box::new(BindConflictError {
                             scheme: scheme.clone(),
                             authority: authority.clone(),
                             existing: entry.get().clone(),
                             incoming: path_and_query,
-                        });
+                        }));
                     }
                     // Same target, same path-and-query → deduplicate
                     Ok(())
@@ -96,7 +96,7 @@ impl Binds {
                             templates.push((bind, template))
                         }
                     }
-                    Ok(templates)
+                    Ok::<_, Box<BindConflictError>>(templates)
                 })?;
 
         interfaces

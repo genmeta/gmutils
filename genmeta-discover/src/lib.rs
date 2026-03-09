@@ -24,7 +24,7 @@ pub struct Options {
 #[derive(Debug, snafu::Snafu)]
 pub enum Error {
     #[snafu(transparent)]
-    BindConflict { source: bind::BindConflictError },
+    BindConflict { source: Box<bind::BindConflictError> },
 }
 
 pub async fn run(mut options: Options) -> Result<(), Error> {

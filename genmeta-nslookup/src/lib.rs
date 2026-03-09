@@ -64,8 +64,9 @@ pub enum Error {
     Timedout { timeout: u64 },
 }
 
-pub async fn run(options: Options) -> Result<(), Error> {
-    let (stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
+/// Initialize tracing subscriber with stderr output.
+fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
+    let (stderr, guard) = tracing_appender::non_blocking(std::io::stderr());
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
@@ -85,7 +86,11 @@ pub async fn run(options: Options) -> Result<(), Error> {
         )
         // .with(console_subscriber::spawn())
         .init();
+    guard
+}
 
+pub async fn run(options: Options) -> Result<(), Error> {
+    let _guard = init_tracing();
     let id = if options.anonymous {
         None
     } else {
