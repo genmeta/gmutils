@@ -54,7 +54,9 @@ pub enum Error {
     },
 
     #[snafu(transparent)]
-    BindConflict { source: Box<bind::BindConflictError> },
+    BindConflict {
+        source: Box<bind::BindConflictError>,
+    },
 
     #[snafu(display("failed to build DNS resolvers"))]
     BuildDnsResolvers { source: BuildClientError },
@@ -88,6 +90,9 @@ pub enum Error {
 
     #[snafu(display("missing host in request"))]
     ForwardMissingHost {},
+
+    #[snafu(display("invalid host header"))]
+    ForwardInvalidHost { source: hyper::header::ToStrError },
 
     #[snafu(display("failed to daemonize"))]
     Daemonize { source: daemonize::Error },

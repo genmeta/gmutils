@@ -24,7 +24,9 @@ pub struct Options {
 #[derive(Debug, snafu::Snafu)]
 pub enum Error {
     #[snafu(transparent)]
-    BindConflict { source: Box<bind::BindConflictError> },
+    BindConflict {
+        source: Box<bind::BindConflictError>,
+    },
 }
 
 pub async fn run(mut options: Options) -> Result<(), Error> {
@@ -72,13 +74,22 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         format!("{}._genmeta.local", options.domain)
     };
 
+    let matches_domain = |name: &str, domain: &str| {
+        if domain.is_empty() {
+            true
+        } else {
+            name == domain || name.ends_with(&format!(".{}", domain))
+        }
+    };
+
     let mut domain_set = HashSet::new();
     while let Some((_source, packet)) = stream.next().await {
         let records: HashMap<_, HashSet<_>> = packet
             .answers
             .iter()
             .filter(|a| {
-                a.name().contains(&options.domain) || a.name().contains(with_suffix.as_str())
+                matches_domain(&a.name(), &options.domain)
+                    || matches_domain(&a.name(), with_suffix.as_str())
             })
             .fold(HashMap::new(), |mut map, record| {
                 map.entry(record.name().to_string())

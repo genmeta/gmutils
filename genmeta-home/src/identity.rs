@@ -106,7 +106,10 @@ impl<'de> serde::Deserialize<'de> for Name<'static> {
 impl<'n> Name<'n> {
     pub fn to_wildcard_name(self) -> Name<'n> {
         if !self.0.starts_with('*') {
-            let (.., tails) = self.0.split_once('.').unwrap_or(("", ""));
+            let (.., tails) = self
+                .0
+                .split_once('.')
+                .expect("BUG: Name always contains a dot (validated suffix)");
             return Name(Cow::Owned(format!("*.{tails}")));
         }
         self

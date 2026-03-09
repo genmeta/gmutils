@@ -3,7 +3,7 @@ use hyper::{
     Request, Response,
     body::{Body, Incoming},
 };
-use snafu::FromString;
+use snafu::ResultExt;
 
 use crate::Error;
 
@@ -15,32 +15,23 @@ pub async fn forward_h3(
     let authority = req
         .uri()
         .authority()
-        .ok_or_else(|| Error::Whatever {
-            source: Box::new(snafu::Whatever::without_source(
+        .ok_or_else(|| {
+            <Error as snafu::FromString>::without_source(
                 "missing authority in DHTTP/3 request URI".to_string(),
-            )),
+            )
         })?
         .clone();
 
     let connection = client
         .connect(authority.clone())
         .await
-        .map_err(|e| Error::Whatever {
-            source: Box::new(snafu::Whatever::with_source(
-                Box::new(e),
-                format!("failed to connect to DHTTP/3 server `{authority}`"),
-            )),
-        })?;
+        .whatever_context::<_, Error>(format!(
+            "failed to connect to DHTTP/3 server `{authority}`"
+        ))?;
 
     let response = connection
         .execute_hyper_request(req)
         .await
-        .map_err(|e| Error::Whatever {
-            source: Box::new(snafu::Whatever::with_source(
-                Box::new(e),
-                "failed to execute DHTTP/3 request".to_string(),
-            )),
-        })?;
-
+        .whatever_context::<_, Error>("failed to execute DHTTP/3 request")?;
     Ok(response)
 }

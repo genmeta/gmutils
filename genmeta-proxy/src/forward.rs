@@ -4,8 +4,8 @@ use snafu::ResultExt;
 use tokio::net::TcpStream;
 
 use crate::{
-    Error, ForwardConnectSnafu, ForwardHandshakeSnafu, ForwardMissingHostSnafu,
-    ForwardSendRequestSnafu,
+    Error, ForwardConnectSnafu, ForwardHandshakeSnafu, ForwardInvalidHostSnafu,
+    ForwardMissingHostSnafu, ForwardSendRequestSnafu,
 };
 
 /// Forward a plain HTTP/1.1 request to its target host.
@@ -17,7 +17,10 @@ pub async fn forward_http(req: Request<Incoming>) -> Result<Response<Incoming>, 
     let host_port = if let Some(authority) = req.uri().authority() {
         authority.to_string()
     } else if let Some(host_header) = req.headers().get(http::header::HOST) {
-        host_header.to_str().unwrap_or_default().to_string()
+        host_header
+            .to_str()
+            .context(ForwardInvalidHostSnafu)?
+            .to_string()
     } else {
         return ForwardMissingHostSnafu.fail();
     };

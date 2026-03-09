@@ -25,7 +25,7 @@ use h3x::{
     pool::ConnectError,
 };
 use http::{Method, Request, StatusCode, Uri, header::USER_AGENT};
-use snafu::{ResultExt, Snafu, ensure};
+use snafu::{OptionExt, ResultExt, Snafu, ensure};
 use tokio::{
     fs,
     io::{self, AsyncRead, AsyncWrite, AsyncWriteExt},
@@ -198,6 +198,19 @@ pub enum Error {
 
     #[snafu(display("redirect location is missing or invalid"))]
     InvalidRedirectLocation { source: http::uri::InvalidUri },
+
+    #[snafu(display("failed to parse redirect URL `{url}`"))]
+    ParseRedirectUrl {
+        url: String,
+        source: url::ParseError,
+    },
+}
+#[derive(Debug, Snafu)]
+enum ParseHeaderError {
+    #[snafu(display("missing header key in `{input}`"))]
+    MissingKey { input: String },
+    #[snafu(display("missing header value in `{input}`"))]
+    MissingValue { input: String },
 }
 
 impl Options {
@@ -209,12 +222,16 @@ impl Options {
     }
 }
 
-fn parse_header(s: &str) -> Result<(String, String), String> {
+fn parse_header(s: &str) -> Result<(String, String), ParseHeaderError> {
     let mut parts = s.splitn(2, ':');
-    let key = parts.next().ok_or("missing header key")?.trim().to_string();
+    let key = parts
+        .next()
+        .context(MissingKeySnafu { input: s })?
+        .trim()
+        .to_string();
     let value = parts
         .next()
-        .ok_or("missing header value")?
+        .context(MissingValueSnafu { input: s })?
         .trim()
         .to_string();
     Ok((key, value))
@@ -572,22 +589,18 @@ fn resolve_redirect(
     };
 
     let location_str = location.to_str().unwrap_or("");
-    let parsed: Uri = location_str.parse().context(InvalidRedirectLocationSnafu)?;
 
-    // Resolve relative redirects against current URI
-    let new_uri = if parsed.authority().is_none() {
-        let scheme = current_uri.scheme_str().unwrap_or("https");
-        let authority = current_uri
-            .authority()
-            .map(|a| a.as_str())
-            .unwrap_or_default();
-        let path_q = parsed.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
-        format!("{scheme}://{authority}{path_q}")
-            .parse()
-            .context(InvalidRedirectLocationSnafu)?
-    } else {
-        parsed
-    };
+    // Use url::Url::join() for RFC 3986 compliant relative reference resolution
+    let base_url = url::Url::parse(&current_uri.to_string()).context(ParseRedirectUrlSnafu {
+        url: current_uri.to_string(),
+    })?;
+    let resolved = base_url.join(location_str).context(ParseRedirectUrlSnafu {
+        url: location_str.to_string(),
+    })?;
+    let new_uri: Uri = resolved
+        .as_str()
+        .parse()
+        .context(InvalidRedirectLocationSnafu)?;
 
     // 301/302/303 → switch to GET; 307/308 → keep method
     let new_method = match status {
@@ -772,7 +785,6 @@ async fn receive_response_head(
 
     Ok(response)
 }
-
 
 pub async fn run(mut options: Options) -> Result<(), Error> {
     let _guard = init_tracing(&options);

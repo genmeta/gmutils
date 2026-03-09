@@ -33,7 +33,10 @@ impl Binds {
     /// Duplicate URIs (same target *and* same path-and-query) are
     /// silently deduplicated.
     #[allow(clippy::result_large_err)]
-    pub fn to_bind_uris<'a, I>(&'a self, interfaces: I) -> Result<Vec<BindUri>, Box<BindConflictError>>
+    pub fn to_bind_uris<'a, I>(
+        &'a self,
+        interfaces: I,
+    ) -> Result<Vec<BindUri>, Box<BindConflictError>>
     where
         I: IntoIterator<Item = &'a str> + Clone,
     {
