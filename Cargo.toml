@@ -37,6 +37,7 @@ gmdns = { path = "../gmdns" }
 h3x = { path = "../h3x" }
 qinterface = { path = "../gm-quic/qinterface", features = ["qudp"] }
 qtraversal = { path = "../gm-quic/qtraversal" }
+qevent = { path = "../gm-quic/qevent", features = ["telemetry"] }
 http = "1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
@@ -90,6 +91,7 @@ globset = "0.4"
 peg = "0.8"
 snafu = "0.9"
 tokio-util = { version = "0.7" }
+async-compression = { version = "0.4", features = ["tokio", "gzip", "deflate", "zstd"] }
 trust-dns-resolver = "0.23.2"
 
 # workspace

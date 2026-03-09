@@ -21,6 +21,6 @@ tracing-subscriber = { workspace = true }
 whoami = { workspace = true }
 
 
-qevent = { path = "../../gm-quic/qevent", features = ["telemetry"] }
+qevent = { workspace = true }
 
 # console-subscriber = { workspace = true }

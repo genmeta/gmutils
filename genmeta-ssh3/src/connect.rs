@@ -18,6 +18,7 @@ use snafu::prelude::*;
 use crate::config::Config;
 
 #[derive(Debug, Snafu)]
+#[snafu(module(connect_error))]
 pub enum Error {
     #[snafu(transparent)]
     BindConflict { source: BindConflictError },
@@ -44,6 +45,22 @@ pub enum Error {
     },
     #[snafu(display("server returned error status: `{status}`"))]
     ResponseStatus { status: http::StatusCode },
+    #[snafu(display("missing authority in URI `{uri}`"))]
+    MissingAuthority { uri: Uri },
+    #[snafu(transparent)]
+    Whatever { source: snafu::Whatever },
+}
+
+impl snafu::FromString for Error {
+    type Source = <snafu::Whatever as snafu::FromString>::Source;
+
+    fn without_source(message: String) -> Self {
+        snafu::Whatever::without_source(message).into()
+    }
+
+    fn with_source(source: Self::Source, message: String) -> Self {
+        snafu::Whatever::with_source(source, message).into()
+    }
 }
 
 pub async fn connect(
@@ -67,13 +84,13 @@ pub async fn connect(
         &bind_setup.bind_interfaces,
         config.id.as_ref(),
     )
-    .context(BuildDnsResolversSnafu)?;
+    .context(connect_error::BuildDnsResolversSnafu)?;
 
     let client = match &config.id {
         Some(id) => H3Client::builder().with_identity(id.name().as_full(), id.certs(), id.key()),
         None => H3Client::builder().without_identity(),
     }
-    .context(BuildClientSnafu)?
+    .context(connect_error::BuildClientSnafu)?
     .with_iface_manager(bind_setup.iface_manager)
     .with_resolver(Arc::new(dns_setup.resolvers))
     .bind(&bind_setup.bind_uris)
@@ -81,33 +98,41 @@ pub async fn connect(
     .with_qlog(Arc::new(NoopLogger))
     .build();
 
-    let server = config.uri.authority().expect("missing authority in URI");
-    let connection = client.connect(server.clone()).await.context(ConnectSnafu)?;
+    let server = config.uri.authority().ok_or_else(|| {
+        connect_error::MissingAuthoritySnafu {
+            uri: config.uri.clone(),
+        }
+        .build()
+    })?;
+    let connection = client
+        .connect(server.clone())
+        .await
+        .context(connect_error::ConnectSnafu)?;
 
     let (mut read_stream, mut write_stream) = connection
         .initial_message_stream()
         .await
-        .context(InitialMessageStreamSnafu)?;
+        .context(connect_error::InitialMessageStreamSnafu)?;
 
     let request = http::Request::builder()
         .method(ssh3::proto::v0::METHOD.clone())
         .uri(config.uri.clone())
         .body(())
-        .unwrap();
+        .whatever_context::<_, Error>("failed to build HTTP request")?;
     tracing::debug!(?request);
     write_stream
         .send_hyper_request_parts(request.into_parts().0)
         .await
-        .context(RequestStreamSnafu)?;
+        .context(connect_error::RequestStreamSnafu)?;
 
     let response = read_stream
         .read_hyper_response_parts()
         .await
-        .context(ResponseStreamSnafu)?;
+        .context(connect_error::ResponseStreamSnafu)?;
     tracing::debug!(?response);
     ensure!(
         response.status == 200,
-        ResponseStatusSnafu {
+        connect_error::ResponseStatusSnafu {
             status: response.status
         }
     );

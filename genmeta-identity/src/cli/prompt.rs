@@ -43,7 +43,7 @@ impl std::error::Error for Error {
 pub(crate) async fn sync<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
     tokio::task::spawn_blocking(f)
         .await
-        .expect("blocking task panicked")
+        .expect("BUG: blocking task should not panic")
 }
 
 /// sync!( sync_code() )

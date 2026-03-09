@@ -225,7 +225,8 @@ impl Bind {
         uri_template.scheme = Some(self.scheme.into());
         uri_template.path_and_query =
             (self.path_and_query.clone()).or(uri_template.path_and_query.clone());
-        let uri_template = Uri::from_parts(uri_template).expect("valid URI template");
+        let uri_template = Uri::from_parts(uri_template)
+            .expect("BUG: bind URI template built from valid scheme and path-and-query");
 
         let port = self.effective_port();
         move |authority: Authority| {
@@ -278,7 +279,7 @@ impl Bind {
                     format!("{addr}:{port}")
                 }
                 .parse()
-                .expect("valid authority");
+                .expect("BUG: formatted IP address and port is a valid authority");
                 Either::Left(template(authority).into_iter())
             }
             BindHost::Glob { .. } | BindHost::Exact { .. } => Either::Right(

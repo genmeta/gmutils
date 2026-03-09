@@ -77,7 +77,11 @@ pub async fn run(options: Options) -> Result<(), Error> {
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
                 .from_env_lossy()
-                .add_directive("netlink_packet_route=error".parse().unwrap()),
+                .add_directive(
+                    "netlink_packet_route=error"
+                        .parse()
+                        .expect("BUG: static tracing directive is valid"),
+                ),
         )
         // .with(console_subscriber::spawn())
         .init();
@@ -97,12 +101,12 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
     let bind_setup = bind::setup_bind_interfaces_with(
         bind::Binds::new(vec![
-            Bind::from_str("*").expect("wildcard bind pattern is always valid"),
+            Bind::from_str("*").expect("BUG: wildcard bind pattern is always valid"),
         ]),
         dns::handy::ensure_default_mdns_prop,
     )
     .await
-    .expect("wildcard bind should not conflict");
+    .expect("BUG: wildcard bind should not conflict");
 
     let dns_setup = dns::handy::build_resolvers(
         options.schemes.into_iter().collect::<BTreeSet<_>>(),

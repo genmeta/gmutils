@@ -11,6 +11,7 @@ use snafu::{ResultExt, Snafu};
 use ssh_config::error::ReadConfigError;
 
 #[derive(Debug, Snafu)]
+#[snafu(module(config_error))]
 pub enum Error {
     #[snafu(display("failed to parse URI `{uri}`"))]
     InvalidUri {
@@ -36,6 +37,13 @@ pub enum Error {
     },
     #[snafu(display("identity `{id}` in ssh config is invalid"))]
     InvalidIdInSshConfig { id: String, source: InvalidName },
+    #[snafu(display("failed to parse path and query `{path_and_query}`"))]
+    InvalidPathAndQuery {
+        path_and_query: String,
+        source: http::uri::InvalidUri,
+    },
+    #[snafu(display("failed to construct URI from parts"))]
+    ConstructUri { source: http::uri::InvalidUriParts },
 }
 
 #[derive(Debug)]
@@ -57,7 +65,7 @@ impl super::Options {
         let (ssh_config, read_config_errors) =
             ssh_config::openssh::read_config(&self.options, &self.host)
                 .await
-                .context(ReadConfigSnafu {})?;
+                .context(config_error::ReadConfigSnafu {})?;
 
         for (message, error) in read_config_errors {
             tracing::error!("{message}: {}", snafu::Report::from_error(error));
@@ -70,7 +78,7 @@ impl super::Options {
         // uri: ssh_config(if present) -> command line
         let uri = match &ssh_config.hostname {
             Some(uri) => uri.clone(),
-            None => self.host.parse().context(InvalidUriSnafu {
+            None => self.host.parse().context(config_error::InvalidUriSnafu {
                 uri: self.host.clone(),
             })?,
         };
@@ -99,7 +107,7 @@ impl super::Options {
         let ssh_config_id = (ssh_config.id.as_ref())
             .map(|id| {
                 Name::from_str(id)
-                    .context(InvalidIdInSshConfigSnafu { id })
+                    .context(config_error::InvalidIdInSshConfigSnafu { id })
                     .map(|name| (&"ssh config" as &dyn fmt::Display, name))
             })
             .transpose()?;
@@ -146,9 +154,9 @@ fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {
     let mut uri_parts = uri.into_parts();
     uri_parts.scheme = match uri_parts.scheme {
         Some(ref scheme) if scheme.as_str() == "ssh3" => uri_parts.scheme,
-        None => Some("ssh3".parse().unwrap()),
+        None => Some("ssh3".parse().expect("BUG: `ssh3` is a valid URI scheme")),
         Some(scheme) => {
-            return Err(UnsupportedSchemeSnafu {
+            return Err(config_error::UnsupportedSchemeSnafu {
                 scheme: scheme.to_string(),
             }
             .build());
@@ -157,38 +165,43 @@ fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {
     uri_parts.path_and_query = match uri_parts.path_and_query {
         root if root.as_ref().is_none_or(|path| path == "/") => {
             tracing::debug!("Path is empty, using `/ssh` as default");
-            Some("/ssh".parse().unwrap())
+            Some("/ssh".parse().expect("BUG: `/ssh` is a valid path"))
         }
         path_and_query => path_and_query,
     };
 
     uri_parts.path_and_query = match uri_parts.path_and_query {
-        Some(ref path_and_query) => Some(
-            format!(
+        Some(ref path_and_query) => {
+            let path_and_query = format!(
                 "{}/{}?{}",
                 path_and_query.path(),
                 username,
                 path_and_query.query().unwrap_or_default()
+            );
+            Some(
+                path_and_query
+                    .parse()
+                    .context(config_error::InvalidPathAndQuerySnafu { path_and_query })?,
             )
-            .parse()
-            .unwrap(),
-        ),
+        }
         None => unreachable!(),
     };
 
     uri_parts.authority = match uri_parts.authority {
         Some(authority) => {
-            let peer_name = Name::from_str(authority.host()).context(InvalidPeerNameSnafu {
-                id: authority.host().to_string(),
-            })?;
-            let authority =
-                Authority::from_str(peer_name.as_full()).context(InvalidAuthoritySnafu {
-                    authority: peer_name.as_full().to_string(),
+            let peer_name =
+                Name::from_str(authority.host()).context(config_error::InvalidPeerNameSnafu {
+                    id: authority.host().to_string(),
                 })?;
+            let authority = Authority::from_str(peer_name.as_full()).context(
+                config_error::InvalidAuthoritySnafu {
+                    authority: peer_name.as_full().to_string(),
+                },
+            )?;
             Some(authority)
         }
-        None => return Err(MissingAuthoritySnafu {}.build()),
+        None => return Err(config_error::MissingAuthoritySnafu {}.build()),
     };
 
-    Ok(Uri::from_parts(uri_parts).expect("failed to construct URI from parts"))
+    Uri::from_parts(uri_parts).context(config_error::ConstructUriSnafu)
 }

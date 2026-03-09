@@ -230,7 +230,8 @@ async fn resign_domains(
     domains: &[Name<'_>],
 ) -> Result<(), Error> {
     tracing::Span::current().pb_set_style(
-        &ProgressStyle::with_template("{span_child_prefix}{spinner} {msg} {pos}/{len}").unwrap(),
+        &ProgressStyle::with_template("{span_child_prefix}{spinner} {msg} {pos}/{len}")
+            .expect("BUG: static progress bar template is valid"),
     );
     tracing::Span::current().pb_set_length(domains.len() as u64);
     tracing::Span::current().pb_set_message("Resigning certificates for selected domains...");
@@ -561,7 +562,8 @@ impl Options {
 
 fn init_tracing() {
     let indicatif_layer = IndicatifLayer::new().with_progress_style(
-        ProgressStyle::with_template("{span_child_prefix}{spinner} {msg}").unwrap(),
+        ProgressStyle::with_template("{span_child_prefix}{spinner} {msg}")
+            .expect("BUG: static progress bar template is valid"),
     );
     tracing_subscriber::registry()
         .with(
@@ -575,7 +577,11 @@ fn init_tracing() {
             EnvFilter::builder()
                 .with_default_directive(LevelFilter::INFO.into())
                 .from_env_lossy()
-                .add_directive("netlink_packet_route=error".parse().unwrap()),
+                .add_directive(
+                    "netlink_packet_route=error"
+                        .parse()
+                        .expect("BUG: static tracing directive is valid"),
+                ),
         )
         .init();
 }

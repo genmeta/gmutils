@@ -135,9 +135,7 @@ pub enum Error {
     MissingAuthority {},
 
     #[snafu(display("failed to expand identity in URI"))]
-    ExpandUri {
-        source: genmeta_home::identity::InvalidName,
-    },
+    ExpandUri { source: id::ExpandUriError },
 
     #[snafu(transparent)]
     LoadHomeAndIdentity {
@@ -383,7 +381,11 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(level.into())
                 .from_env_lossy()
-                .add_directive("netlink_packet_route=error".parse().unwrap()),
+                .add_directive(
+                    "netlink_packet_route=error"
+                        .parse()
+                        .expect("BUG: static tracing directive is valid"),
+                ),
         )
         .init();
 
@@ -471,7 +473,12 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         // Connect
         let connect_fut = async {
             client
-                .connect(current_uri.authority().expect("checked").clone())
+                .connect(
+                    current_uri
+                        .authority()
+                        .expect("BUG: URI authority already validated")
+                        .clone(),
+                )
                 .await
                 .context(ConnectSnafu)
         };

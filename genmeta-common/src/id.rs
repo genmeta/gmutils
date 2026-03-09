@@ -4,8 +4,8 @@ use genmeta_home::{
     GenmetaHome,
     identity::{Identity, InvalidName, Name},
 };
-use http::Uri;
-use snafu::{Report, Snafu, whatever};
+use http::{Uri, uri::InvalidUriParts};
+use snafu::{Report, ResultExt, Snafu, whatever};
 
 #[derive(Debug, Snafu)]
 #[snafu(module)]
@@ -17,6 +17,22 @@ pub enum Error {
         #[snafu(source(from(Box<dyn std::error::Error + Send + Sync>, Some)))]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
+}
+
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+pub enum ExpandUriError {
+    #[snafu(transparent)]
+    InvalidName { source: InvalidName },
+
+    #[snafu(display("failed to parse expanded authority `{authority}`"))]
+    ParseAuthority {
+        authority: String,
+        source: http::uri::InvalidUri,
+    },
+
+    #[snafu(display("failed to reconstruct URI with expanded identity name"))]
+    ReconstructUri { source: InvalidUriParts },
 }
 
 #[derive(Debug, Snafu)]
@@ -95,7 +111,7 @@ pub async fn load_home_and_identity<'n>(
     Ok(load_identity(&genmeta_home, load_list).await?)
 }
 
-pub fn expand_uri(uri: Uri) -> Result<Uri, InvalidName> {
+pub fn expand_uri(uri: Uri) -> Result<Uri, ExpandUriError> {
     let mut uri_parts = uri.into_parts();
 
     if let Some(authority) = &uri_parts.authority
@@ -118,9 +134,9 @@ pub fn expand_uri(uri: Uri) -> Result<Uri, InvalidName> {
         uri_parts.authority = Some(
             authority
                 .parse()
-                .expect("failed to parse authority with expanded identity name"),
+                .context(expand_uri_error::ParseAuthoritySnafu { authority })?,
         );
     }
 
-    Ok(Uri::from_parts(uri_parts).expect("failed to construct URI with expanded identity name"))
+    Uri::from_parts(uri_parts).context(expand_uri_error::ReconstructUriSnafu)
 }

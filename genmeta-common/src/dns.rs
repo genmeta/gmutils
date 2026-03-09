@@ -75,7 +75,7 @@ pub mod handy {
 
     pub fn http_resolver() -> HttpResolver {
         tracing::debug!("Initializing HTTP DNS resolver with server {HTTP_DNS_SERVER}");
-        HttpResolver::new(HTTP_DNS_SERVER).expect("HTTP_DNS_SERVER is valid URL")
+        HttpResolver::new(HTTP_DNS_SERVER).expect("BUG: HTTP_DNS_SERVER is a valid URL")
     }
 
     pub fn h3_resolver(
@@ -99,7 +99,7 @@ pub mod handy {
         .with_resolver(resolver)
         .build();
 
-        Ok(H3Resolver::new(H3_DNS_SERVER, h3_client).expect("H3_DNS_SERVER is valid URL"))
+        Ok(H3Resolver::new(H3_DNS_SERVER, h3_client).expect("BUG: H3_DNS_SERVER is a valid URL"))
     }
 
     /// Placeholder for DHT resolver initialization.
