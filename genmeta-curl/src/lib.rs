@@ -20,11 +20,11 @@ use h3x::{
         BuildClientError, H3Client,
         prelude::{ConnectServerError, handy::NoopLogger},
     },
-    hyper::SendMesageError,
+    hyper::SendMessageError,
     message::stream::{InitialMessageStreamError, MessageStreamError},
     pool::ConnectError,
 };
-use http::{Method, Request, Uri, header::USER_AGENT};
+use http::{Method, Request, StatusCode, Uri, header::USER_AGENT};
 use snafu::{ResultExt, Snafu, ensure};
 use tokio::{
     fs,
@@ -168,7 +168,9 @@ pub enum Error {
     BuildRequest { source: http::Error },
 
     #[snafu(display("failed to send HTTP request"))]
-    SendRequest { source: SendMesageError<Infallible> },
+    SendRequest {
+        source: SendMessageError<Infallible>,
+    },
 
     #[snafu(display("failed to open file `{}` to upload", path.display()))]
     OpenUploadFile { path: PathBuf, source: io::Error },
@@ -199,6 +201,7 @@ pub enum Error {
 }
 
 impl Options {
+    #[allow(clippy::result_large_err)]
     fn expand_uri(&mut self) -> Result<(), Error> {
         ensure!(self.uri.authority().is_some(), MissingAuthoritySnafu);
         self.uri = id::expand_uri(self.uri.clone()).context(ExpandUriSnafu)?;
@@ -250,17 +253,19 @@ impl Timing {
     }
 }
 
-/// Expand a `--write-out` format string, substituting `%{var}` tokens.
-fn expand_write_out(
-    fmt: &str,
+/// Context for `--write-out` variable expansion.
+struct WriteOutContext<'a> {
     status: u16,
-    uri: &Uri,
-    method: &Method,
+    uri: &'a Uri,
+    method: &'a Method,
     http_version: http::Version,
-    timing: &Timing,
+    timing: &'a Timing,
     size_download: u64,
-    response_headers: &http::HeaderMap,
-) -> String {
+    response_headers: &'a http::HeaderMap,
+}
+
+/// Expand a `--write-out` format string, substituting `%{var}` tokens.
+fn expand_write_out(fmt: &str, ctx: &WriteOutContext<'_>) -> String {
     let mut out = String::with_capacity(fmt.len());
     let mut chars = fmt.chars().peekable();
     while let Some(c) = chars.next() {
@@ -272,16 +277,7 @@ fn expand_write_out(
             Some('{') => {
                 chars.next(); // consume '{'
                 let var: String = chars.by_ref().take_while(|&c| c != '}').collect();
-                let value = expand_variable(
-                    &var,
-                    status,
-                    uri,
-                    method,
-                    http_version,
-                    timing,
-                    size_download,
-                    response_headers,
-                );
+                let value = expand_variable(&var, ctx);
                 out.push_str(&value);
             }
             Some('%') => {
@@ -297,20 +293,12 @@ fn expand_write_out(
         .replace("\\r", "\r")
 }
 
-fn expand_variable(
-    var: &str,
-    status: u16,
-    uri: &Uri,
-    method: &Method,
-    http_version: http::Version,
-    timing: &Timing,
-    size_download: u64,
-    headers: &http::HeaderMap,
-) -> String {
+fn expand_variable(var: &str, ctx: &WriteOutContext<'_>) -> String {
     // Handle %{header{name}} pattern: var == "header{some-header}"
     if let Some(rest) = var.strip_prefix("header{") {
         let header_name = rest.trim_end_matches('}');
-        return headers
+        return ctx
+            .response_headers
             .get(header_name)
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
@@ -318,15 +306,15 @@ fn expand_variable(
     }
 
     match var {
-        "response_code" | "http_code" => status.to_string(),
-        "url" => uri.to_string(),
-        "method" => method.to_string(),
-        "scheme" => uri.scheme_str().unwrap_or("").to_string(),
-        "http_version" => format!("{http_version:?}").replace("HTTP/", ""),
-        "time_total" => format!("{:.6}", timing.time_total()),
-        "time_connect" => format!("{:.6}", timing.time_connect()),
-        "time_starttransfer" => format!("{:.6}", timing.time_starttransfer()),
-        "size_download" => size_download.to_string(),
+        "response_code" | "http_code" => ctx.status.to_string(),
+        "url" => ctx.uri.to_string(),
+        "method" => ctx.method.to_string(),
+        "scheme" => ctx.uri.scheme_str().unwrap_or("").to_string(),
+        "http_version" => format!("{:?}", ctx.http_version).replace("HTTP/", ""),
+        "time_total" => format!("{:.6}", ctx.timing.time_total()),
+        "time_connect" => format!("{:.6}", ctx.timing.time_connect()),
+        "time_starttransfer" => format!("{:.6}", ctx.timing.time_starttransfer()),
+        "size_download" => ctx.size_download.to_string(),
         _ => String::new(),
     }
 }
@@ -371,6 +359,7 @@ where
     }
 }
 
+#[allow(clippy::result_large_err)]
 pub async fn run(mut options: Options) -> Result<(), Error> {
     // Initialize tracing.
     // -s:   suppress all tracing output.
@@ -550,6 +539,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
                         .flush()
                         .await
                         .context(UploadFileSnafu { path: path.clone() })?;
+                    tracing::warn!(path = %path.display(), redirect_count, "Skipping file upload body on redirect (stream cannot be re-read)");
                 } else {
                     let request = request_builder
                         .body(String::new())
@@ -616,8 +606,10 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
                 };
 
                 // 301/302/303 → switch to GET; 307/308 → keep method
-                current_method = match status.as_u16() {
-                    301 | 302 | 303 => Method::GET,
+                current_method = match status {
+                    StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND | StatusCode::SEE_OTHER => {
+                        Method::GET
+                    }
                     _ => current_method,
                 };
                 current_uri = new_uri;
@@ -682,16 +674,16 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
 
         // --write-out: print format string after body, to stdout, no trailing newline
         if let Some(ref fmt) = options.write_out {
-            let expanded = expand_write_out(
-                fmt,
-                status.as_u16(),
-                &current_uri,
-                &current_method,
+            let ctx = WriteOutContext {
+                status: status.as_u16(),
+                uri: &current_uri,
+                method: &current_method,
                 http_version,
-                &timing,
+                timing: &timing,
                 size_download,
-                &response_headers,
-            );
+                response_headers: &response_headers,
+            };
+            let expanded = expand_write_out(fmt, &ctx);
             print!("{expanded}");
             io::stdout().flush().await.context(FlushOutputSnafu)?;
         }
