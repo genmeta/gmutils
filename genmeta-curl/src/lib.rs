@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     convert::Infallible,
     mem,
     path::PathBuf,
@@ -30,6 +31,7 @@ use tokio::{
     fs,
     io::{self, AsyncRead, AsyncWrite, AsyncWriteExt},
 };
+use tokio_util::task::AbortOnDropHandle;
 use tracing_subscriber::prelude::*;
 
 /// Maximum number of redirects to follow (same default as curl since 8.3.0)
@@ -418,6 +420,7 @@ async fn setup_client(
         H3Client,
         Option<genmeta_home::identity::Identity<'static>>,
         Duration,
+        AbortOnDropHandle<()>,
     ),
     Error,
 > {
@@ -436,15 +439,13 @@ async fn setup_client(
         .await?
     };
 
-    let bind_setup = bind::setup_bind_interfaces_with(
-        bind::Binds::new(mem::take(&mut options.binds)),
-        dns::handy::ensure_default_mdns_prop,
-    )
-    .await?;
+    let binds = bind::Binds::new(mem::take(&mut options.binds));
+    let bind_setup =
+        bind::setup_bind_interfaces_with(&binds, dns::handy::ensure_default_mdns_prop).await?;
 
     // Apply -4/-6 address family filter to bind URIs.
     // Both flags set (or neither) means no filtering.
-    let bind_uris: std::borrow::Cow<'_, [_]> = if options.ipv4 && !options.ipv6 {
+    let bind_uris: Cow<'_, [_]> = if options.ipv4 && !options.ipv6 {
         bind_setup
             .bind_uris
             .iter()
@@ -461,7 +462,7 @@ async fn setup_client(
             .collect::<Vec<_>>()
             .into()
     } else {
-        std::borrow::Cow::Borrowed(&bind_setup.bind_uris)
+        Cow::Borrowed(&bind_setup.bind_uris)
     };
 
     let dns_setup = dns::handy::build_resolvers(
@@ -471,6 +472,7 @@ async fn setup_client(
     )
     .context(BuildDnsResolversSnafu)?;
 
+    let monitor = bind_setup.monitor;
     let client = match &id {
         Some(id) => H3Client::builder().with_identity(id.name().as_full(), id.certs(), id.key()),
         None => H3Client::builder().without_identity(),
@@ -483,12 +485,34 @@ async fn setup_client(
     .with_qlog(Arc::new(NoopLogger))
     .build();
 
+    let quic = client.quic_client().clone();
+    let watcher = bind::watch_bind_interfaces(
+        &binds,
+        monitor,
+        bind_uris.into_owned(),
+        {
+            let quic = quic.clone();
+            move |uri| {
+                let quic = quic.clone();
+                Box::pin(async move {
+                    quic.bind(uri).await;
+                })
+            }
+        },
+        {
+            let quic = quic.clone();
+            move |uri| {
+                quic.unbind(&uri);
+            }
+        },
+    );
+
     let connect_timeout = options
         .connect_timeout
         .map(Duration::from_secs)
         .unwrap_or(Duration::MAX);
 
-    Ok((client, id, connect_timeout))
+    Ok((client, id, connect_timeout, watcher))
 }
 
 /// Build the HTTP request builder with method, headers, and user-agent.
@@ -788,7 +812,7 @@ async fn receive_response_head(
 
 pub async fn run(mut options: Options) -> Result<(), Error> {
     let _guard = init_tracing(&options);
-    let (client, _id, connect_timeout) = setup_client(&mut options).await?;
+    let (client, _id, connect_timeout, _watcher) = setup_client(&mut options).await?;
 
     // Determine effective method (may change across redirects).
     let initial_method = options.request.clone().unwrap_or_else(|| match &options {
