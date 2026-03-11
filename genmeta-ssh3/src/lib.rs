@@ -173,7 +173,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         remote_forwards: &options.remote_forwards,
     };
 
-    let (connection, reader, writer) = connect::connect(&config).await?;
+    let (_watcher, connection, reader, writer) = connect::connect(&config).await?;
     let reader = Box::pin(StreamReader::new(reader.into_bytes_stream()));
     let writer = Box::pin(SinkWriter::new(writer.into_bytes_sink()));
 

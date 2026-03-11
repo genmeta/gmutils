@@ -14,6 +14,7 @@ use h3x::{
 use http::Uri;
 use qevent::telemetry::handy::NoopLogger;
 use snafu::prelude::*;
+use tokio_util::task::AbortOnDropHandle;
 
 use crate::config::Config;
 
@@ -67,17 +68,18 @@ pub async fn connect(
     config: &Config,
 ) -> Result<
     (
+        AbortOnDropHandle<()>,
         Arc<Connection<gm_quic::prelude::Connection>>,
         ReadStream,
         WriteStream,
     ),
     Error,
 > {
-    let bind_setup = bind::setup_bind_interfaces_with(
-        config.binds.clone(),
-        dns::handy::ensure_default_mdns_prop,
-    )
-    .await?;
+    let bind_setup =
+        bind::setup_bind_interfaces_with(&config.binds, dns::handy::ensure_default_mdns_prop)
+            .await?;
+
+    let monitor = bind_setup.monitor;
 
     let dns_setup = dns::handy::build_resolvers(
         config.dns.iter().copied(),
@@ -97,6 +99,28 @@ pub async fn connect(
     .await
     .with_qlog(Arc::new(NoopLogger))
     .build();
+
+    let quic = client.quic_client().clone();
+    let watcher = bind::watch_bind_interfaces(
+        &config.binds,
+        monitor,
+        bind_setup.bind_uris.clone(),
+        {
+            let quic = quic.clone();
+            move |uri| {
+                let quic = quic.clone();
+                Box::pin(async move {
+                    quic.bind(uri).await;
+                })
+            }
+        },
+        {
+            let quic = quic.clone();
+            move |uri| {
+                quic.unbind(&uri);
+            }
+        },
+    );
 
     let server = config.uri.authority().ok_or_else(|| {
         connect_error::MissingAuthoritySnafu {
@@ -137,5 +161,5 @@ pub async fn connect(
         }
     );
 
-    Ok((connection, read_stream, write_stream))
+    Ok((watcher, connection, read_stream, write_stream))
 }
