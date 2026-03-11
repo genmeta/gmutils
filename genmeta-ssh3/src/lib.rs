@@ -110,7 +110,7 @@ pub struct Options {
     remote_forwards: Vec<RemoteForwardRule>,
 
     /// DNS resolution schemes
-    #[arg(long, value_name = "scheme", default_value = "mdns, http", value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
+    #[arg(long, value_name = "scheme", default_value = "mdns,http", value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
     dns: Vec<dns::DnsScheme>,
 
     /// Bind patterns for DHTTP/3 connections
