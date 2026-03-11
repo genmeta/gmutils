@@ -112,8 +112,8 @@ where
 
                         new_set
                     }
-                    Err(_) => {
-                        tracing::warn!("Failed to compute bind URIs during initial reconcile");
+                    Err(err) => {
+                        tracing::warn!("Failed to compute bind URIs during initial reconcile: {err}");
                         initial_bind_uris.into_iter().collect()
                     }
                 };
@@ -122,8 +122,8 @@ where
             while let Some((interfaces, _event)) = monitor.update().await {
                 let new_uris = match binds.to_bind_uris(interfaces.keys().map(String::as_str)) {
                     Ok(uris) => uris,
-                    Err(_) => {
-                        tracing::warn!("Failed to compute bind URIs after interface change");
+                    Err(err) => {
+                        tracing::warn!("Failed to compute bind URIs after interface change: {err}");
                         continue;
                     }
                 };
