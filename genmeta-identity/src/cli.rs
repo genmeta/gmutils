@@ -530,7 +530,7 @@ impl Info {
     }
 }
 #[derive(Parser, Debug, Clone)]
-#[command(disable_help_flag = true, disable_version_flag = true)]
+#[command(about, disable_help_flag = true, disable_version_flag = true)]
 pub enum Options {
     Create(Create),
     Apply(Apply),
