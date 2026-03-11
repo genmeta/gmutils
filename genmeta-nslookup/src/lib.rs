@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
+    io::IsTerminal,
     str::FromStr,
 };
 
@@ -72,6 +73,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
             tracing_subscriber::fmt::layer()
                 .with_target(false)
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
+                .with_ansi(std::io::stderr().is_terminal())
                 .with_writer(stderr),
         )
         .with(

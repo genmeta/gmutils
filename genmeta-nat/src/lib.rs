@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{io::IsTerminal, net::SocketAddr, sync::Arc};
 
 use clap::Parser;
 use qinterface::io::{IO, ProductIO, handy::DEFAULT_IO_FACTORY};
@@ -54,6 +54,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .with(
             tracing_subscriber::fmt::layer()
                 .with_target(false)
+                .with_ansi(std::io::stderr().is_terminal())
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
                 .with_writer(stderr),
         )

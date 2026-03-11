@@ -1,7 +1,7 @@
 pub mod prompt;
 pub mod validator;
 
-use std::{borrow::Cow, fmt::Debug, ops::Deref};
+use std::{borrow::Cow, fmt::Debug, io::IsTerminal, ops::Deref};
 
 use clap::Parser;
 use genmeta_home::{
@@ -569,6 +569,7 @@ fn init_tracing() {
         .with(
             tracing_subscriber::fmt::layer()
                 .with_target(false)
+                .with_ansi(std::io::stderr().is_terminal())
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
                 .with_writer(indicatif_layer.get_stderr_writer()),
         )

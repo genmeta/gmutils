@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, io::IsTerminal};
 
 // mod auth;
 mod config;
@@ -136,12 +136,12 @@ pub enum Error {
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
-    // todo: enable ANSI with `atty` crate
     let (stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
                 .with_target(false)
+                .with_ansi(std::io::stderr().is_terminal())
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
                 .with_writer(stderr),
         )

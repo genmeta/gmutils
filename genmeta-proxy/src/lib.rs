@@ -1,4 +1,4 @@
-use std::{mem, net::SocketAddr, sync::Arc};
+use std::{io::IsTerminal, mem, net::SocketAddr, sync::Arc};
 
 use clap::Parser;
 use genmeta_common::{bind, dns, id};
@@ -224,10 +224,12 @@ fn init_tracing(options: &Options) -> Result<tracing_appender::non_blocking::Wor
     } else {
         tracing_appender::non_blocking(std::io::stderr())
     };
+    let use_ansi = (options.log.is_none() || options.daemon) && std::io::stderr().is_terminal();
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
                 .with_target(false)
+                .with_ansi(use_ansi)
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
                 .with_writer(writer),
         )

@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    io::IsTerminal,
+};
 
 use clap::Parser;
 use futures::StreamExt;
@@ -35,6 +38,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         .with(
             tracing_subscriber::fmt::layer()
                 .with_target(false)
+                .with_ansi(std::io::stderr().is_terminal())
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
                 .with_writer(stderr),
         )

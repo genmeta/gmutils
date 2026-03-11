@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     convert::Infallible,
+    io::IsTerminal,
     mem,
     path::PathBuf,
     pin::pin,
@@ -394,6 +395,7 @@ fn init_tracing(options: &Options) -> tracing_appender::non_blocking::WorkerGuar
         .with(
             tracing_subscriber::fmt::layer()
                 .with_target(false)
+                .with_ansi(std::io::stderr().is_terminal())
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
                 .with_writer(stderr),
         )
