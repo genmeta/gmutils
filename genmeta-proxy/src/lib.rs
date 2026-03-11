@@ -279,11 +279,11 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         .await?
     };
 
-    let bind_setup = bind::setup_bind_interfaces_with(
-        bind::Binds::new(mem::take(&mut options.binds)),
-        dns::handy::ensure_default_mdns_prop,
-    )
-    .await?;
+    let binds = bind::Binds::new(mem::take(&mut options.binds));
+    let bind_setup =
+        bind::setup_bind_interfaces_with(&binds, dns::handy::ensure_default_mdns_prop).await?;
+
+    let monitor = bind_setup.monitor;
 
     let dns_setup = dns::handy::build_resolvers(
         options.dns.iter().copied(),
@@ -303,6 +303,29 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     .await
     .with_qlog(Arc::new(NoopLogger))
     .build();
+
+    let quic = client.quic_client().clone();
+
+    let _watcher = bind::watch_bind_interfaces(
+        &binds,
+        monitor,
+        bind_setup.bind_uris.clone(),
+        {
+            let quic = quic.clone();
+            move |uri| {
+                let quic = quic.clone();
+                Box::pin(async move {
+                    quic.bind(uri).await;
+                })
+            }
+        },
+        {
+            let quic = quic.clone();
+            move |uri| {
+                quic.unbind(&uri);
+            }
+        },
+    );
 
     let listeners = bind_listeners(&options).await?;
     let router = Arc::new(route::Router::new());
