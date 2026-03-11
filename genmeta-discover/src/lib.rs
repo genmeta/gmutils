@@ -50,16 +50,14 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         )
         .init();
 
-    let bind_setup = bind::setup_bind_interfaces_with(
-        Binds::new(std::mem::take(&mut options.binds)),
-        |bind_uris| {
-            for uri in bind_uris.iter_mut() {
-                if uri.prop("mdns").is_none() {
-                    uri.add_prop("mdns", "true");
-                }
+    let binds = Binds::new(std::mem::take(&mut options.binds));
+    let bind_setup = bind::setup_bind_interfaces_with(&binds, |bind_uris| {
+        for uri in bind_uris.iter_mut() {
+            if uri.prop("mdns").is_none() {
+                uri.add_prop("mdns", "true");
             }
-        },
-    )
+        }
+    })
     .await?;
 
     // Build mDNS resolvers using the shared helper
