@@ -178,7 +178,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let writer = Box::pin(SinkWriter::new(writer.into_bytes_sink()));
 
     let result = ssh3::run(options, reader, writer).await;
-    connection.close(&Code::H3_NO_ERROR);
+    connection.close(Code::H3_NO_ERROR, "");
 
     Ok(result?)
 }
