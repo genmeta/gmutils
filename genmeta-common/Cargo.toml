@@ -31,6 +31,8 @@ globset = { workspace = true, optional = true }
 h3x = { workspace = true, optional = true }
 peg = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["rt"] }
+tokio-util = { workspace = true, optional = true, features = ["rt"] }
 
 [features]
 # dev
@@ -45,6 +47,9 @@ bind = [
     "dep:h3x",
     "dep:peg",
     "dep:snafu",
+    "dep:tokio",
+    "dep:tokio-util",
+    "dep:tracing",
 ]
 id = ["dep:snafu", "dep:clap", "dep:genmeta-home", "dep:http", "dep:tracing"]
 dns = ["bind", "dep:clap", "dep:gmdns", "dep:genmeta-home", "dep:tracing"]
