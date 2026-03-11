@@ -95,28 +95,29 @@ where
     AbortOnDropHandle::new(tokio::spawn(
         async move {
             // Initial reconcile: handle events that arrived between setup and watcher start
-            let mut current_set: HashSet<BindUri> =
-                match binds.to_bind_uris(monitor.interfaces().keys().map(String::as_str)) {
-                    Ok(new_uris) => {
-                        let new_set: HashSet<BindUri> = new_uris.into_iter().collect();
-                        let initial_set: HashSet<BindUri> = initial_bind_uris.into_iter().collect();
+            let mut current_set: HashSet<BindUri> = match binds
+                .to_bind_uris(monitor.interfaces().keys().map(String::as_str))
+            {
+                Ok(new_uris) => {
+                    let new_set: HashSet<BindUri> = new_uris.into_iter().collect();
+                    let initial_set: HashSet<BindUri> = initial_bind_uris.into_iter().collect();
 
-                        for uri in &new_set - &initial_set {
-                            tracing::info!("Binding new URI `{uri}` during initial reconcile");
-                            bind_fn(uri).await;
-                        }
-                        for uri in &initial_set - &new_set {
-                            tracing::info!("Unbinding URI `{uri}` during initial reconcile");
-                            unbind_fn(uri);
-                        }
+                    for uri in &new_set - &initial_set {
+                        tracing::info!("Binding new URI `{uri}` during initial reconcile");
+                        bind_fn(uri).await;
+                    }
+                    for uri in &initial_set - &new_set {
+                        tracing::info!("Unbinding URI `{uri}` during initial reconcile");
+                        unbind_fn(uri);
+                    }
 
-                        new_set
-                    }
-                    Err(err) => {
-                        tracing::warn!("Failed to compute bind URIs during initial reconcile: {err}");
-                        initial_bind_uris.into_iter().collect()
-                    }
-                };
+                    new_set
+                }
+                Err(err) => {
+                    tracing::warn!("Failed to compute bind URIs during initial reconcile: {err}");
+                    initial_bind_uris.into_iter().collect()
+                }
+            };
 
             // Monitor loop: react to interface changes
             while let Some((interfaces, _event)) = monitor.update().await {
