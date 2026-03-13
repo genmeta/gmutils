@@ -53,7 +53,7 @@ pub async fn load_identity<'n>(
 ) -> Result<Option<Identity<'static>>, Error> {
     if let Some((source, name)) = load_list.into_iter().next() {
         tracing::debug!("Trying to load identity `{name}` specified by `{source}`");
-        match genmeta_home.identities().load(name.borrow()).await {
+        match genmeta_home.load(name.borrow()).await {
             Ok(identity) => {
                 tracing::debug!("Identity `{name}` specified by `{source}` loaded");
                 return Ok(Some(identity));
@@ -65,7 +65,7 @@ pub async fn load_identity<'n>(
     }
 
     // no identity was specified, try to load the default identity
-    match genmeta_home.identities().load_default_identity().await {
+    match genmeta_home.load_default_identity().await {
         Ok(identity) => {
             tracing::debug!(
                 "No identity specified, using default identity `{}`",

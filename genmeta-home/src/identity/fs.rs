@@ -8,7 +8,10 @@ use tokio::{
 };
 use x509_parser::prelude::Pem;
 
-use crate::identity::{Identities, Identity, Name};
+use crate::{
+    GenmetaHome,
+    identity::{Identity, Name},
+};
 
 #[derive(Snafu, Debug)]
 #[snafu(module)]
@@ -155,6 +158,8 @@ impl<'i> Identity<'i> {
         rustls::pki_types::pem::PemObject::from_pem_slice(&data).context(load_key_error::ParseSnafu)
     }
 
+    pub const SSL_DIR_NAME: &'static str = "ssl";
+
     pub async fn load_from_io(
         io: &Path,
         name: &str,
@@ -163,12 +168,13 @@ impl<'i> Identity<'i> {
             .await
             .context(load_identity_error::NotFoundSnafu { io })?;
 
-        let certs_path = io.join(Self::CERT_FILE_NAME);
+        let ssl_dir = io.join(Self::SSL_DIR_NAME);
+        let certs_path = ssl_dir.join(Self::CERT_FILE_NAME);
         let certs = Self::load_certs_file(certs_path.as_path(), name)
             .await
             .context(load_identity_error::LoadCertsSnafu { path: certs_path })?;
 
-        let key_path = io.join(Self::KEY_FILE_NAME);
+        let key_path = ssl_dir.join(Self::KEY_FILE_NAME);
         let key = Self::load_key_file(key_path.as_path(), &certs[0])
             .await
             .context(load_identity_error::LoadKeySnafu { path: key_path })?;
@@ -177,7 +183,7 @@ impl<'i> Identity<'i> {
     }
 }
 
-impl Identities {
+impl GenmetaHome {
     pub async fn locate_exactly(&self, name: Name<'_>) -> io::Result<PathBuf> {
         let identity_io = self.join_name(name);
         fs::metadata(identity_io.as_path())
@@ -188,7 +194,7 @@ impl Identities {
     pub async fn locate_wildcard(&self, name: Name<'_>) -> io::Result<PathBuf> {
         let wildcard_name = name.to_wildcard_name();
 
-        let identity_io = self.path.join(wildcard_name.as_partial());
+        let identity_io = self.join(wildcard_name.as_partial());
         fs::metadata(identity_io.as_path())
             .await
             .map(|_| identity_io)
@@ -209,14 +215,22 @@ impl Identities {
 
     pub async fn list(&self) -> Result<Vec<Name<'static>>, ListIdentitiesError> {
         use list_identities_error::*;
-        let path = self.path.as_path();
+        let path = self.as_path();
         let mut read_io = fs::read_dir(path).await.context(ReadDirSnafu { path })?;
 
         let mut list = Vec::new();
         while let Some(e) = read_io.next_entry().await.context(ReadDirSnafu { path })?
-            && let (path, name) = (e.path(), e.file_name())
-            && e.file_type().await.context(ReadFtySnafu { path })?.is_dir()
+            && let (entry_path, name) = (e.path(), e.file_name())
+            && e.file_type()
+                .await
+                .context(ReadFtySnafu {
+                    path: entry_path.clone(),
+                })?
+                .is_dir()
             && let Ok(name) = Name::try_from_str_partial(name.to_string_lossy())
+            && fs::metadata(entry_path.join(Identity::SSL_DIR_NAME))
+                .await
+                .is_ok()
         {
             list.push(name);
         }
@@ -279,11 +293,12 @@ impl Identities {
         cert: &[u8],
         key: &[u8],
     ) -> Result<(), SaveIdentityError> {
-        // create identity dir
+        // create identity dir and ssl subdir
         let identity_dir = self.join_name(name);
-        fs::create_dir_all(identity_dir.as_path()).await.context(
+        let ssl_dir = identity_dir.join(Identity::SSL_DIR_NAME);
+        fs::create_dir_all(ssl_dir.as_path()).await.context(
             save_identity_error::CreateIdentityDirSnafu {
-                path: identity_dir.clone(),
+                path: ssl_dir.clone(),
             },
         )?;
 
@@ -295,7 +310,7 @@ impl Identities {
         open_options.mode(0o400);
 
         // remove old file if any
-        let path = identity_dir.join(Identity::CERT_FILE_NAME);
+        let path = ssl_dir.join(Identity::CERT_FILE_NAME);
         if let Err(error) = fs::remove_file(path.as_path()).await
             && error.kind() != io::ErrorKind::NotFound
         {
@@ -312,7 +327,7 @@ impl Identities {
             .context(save_identity_error::WriteSnafu { path: path.clone() })?;
 
         // remove old file if any
-        let path = identity_dir.join(Identity::KEY_FILE_NAME);
+        let path = ssl_dir.join(Identity::KEY_FILE_NAME);
         if let Err(error) = fs::remove_file(path.as_path()).await
             && error.kind() != io::ErrorKind::NotFound
         {

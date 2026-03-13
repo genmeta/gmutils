@@ -6,8 +6,6 @@ use std::path::{Path, PathBuf};
 use snafu::OptionExt;
 use snafu::Snafu;
 
-use crate::identity::Identities;
-
 #[derive(Debug, Clone)]
 pub struct GenmetaHome {
     path: PathBuf,
@@ -54,9 +52,5 @@ impl GenmetaHome {
 
     pub fn join(&self, path: impl AsRef<Path>) -> PathBuf {
         self.path.join(path)
-    }
-
-    pub fn identities(&self) -> Identities {
-        Identities::from(self)
     }
 }

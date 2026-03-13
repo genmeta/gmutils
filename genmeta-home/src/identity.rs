@@ -1,9 +1,4 @@
-use std::{
-    borrow::Cow,
-    fmt::Display,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::{borrow::Cow, fmt::Display, path::PathBuf, str::FromStr};
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use snafu::Snafu;
@@ -261,27 +256,8 @@ impl<'i> Identity<'i> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Identities {
-    path: PathBuf,
-}
-
-impl From<&GenmetaHome> for Identities {
-    fn from(home: &GenmetaHome) -> Self {
-        Self {
-            path: home.join(Self::RELATIVE_PATH),
-        }
-    }
-}
-
-impl Identities {
-    pub const RELATIVE_PATH: &'static str = "identity";
-
-    pub fn as_path(&self) -> &Path {
-        self.path.as_path()
-    }
-
+impl GenmetaHome {
     pub fn join_name(&self, name: Name<'_>) -> PathBuf {
-        self.path.join(name.as_partial())
+        self.join(name.as_partial())
     }
 }

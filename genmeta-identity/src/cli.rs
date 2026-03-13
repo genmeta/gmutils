@@ -7,7 +7,7 @@ use clap::Parser;
 use genmeta_home::{
     GenmetaHome,
     identity::{
-        Identities, Name,
+        Name,
         default::{DefaultConfigFile, LoadDefaultConfigError, SaveDefaultConfigError},
         fs::{ListIdentitiesError, LoadIdentityError, SaveIdentityError},
     },
@@ -125,17 +125,19 @@ async fn acquire_captcha(cert_server: &CertServer, email: &str) -> Result<(), Er
 }
 
 async fn save_identity(
-    identities: &Identities,
+    genmeta_home: &GenmetaHome,
     domain: &Name<'_>,
     key_pem: &[u8],
     cert_pem: &[u8],
 ) -> Result<(), Error> {
-    let identity_dir = identities.join_name(domain.borrow());
+    let identity_dir = genmeta_home.join_name(domain.borrow());
     tracing::Span::current().pb_set_message(&format!(
         "Saving identity for {domain} to {}...",
         identity_dir.display()
     ));
-    identities.save(domain.borrow(), cert_pem, key_pem).await?;
+    genmeta_home
+        .save(domain.borrow(), cert_pem, key_pem)
+        .await?;
     tracing::Span::current().pb_set_finish_message(&format!(
         "Identity for {domain} successfully saved to {}",
         identity_dir.display()
@@ -204,7 +206,7 @@ fn display_cert_info(cert_der: &[u8], indent: &str) -> Result<(), Error> {
 
 #[tracing::instrument(skip(cert_server))]
 async fn resign_domain(
-    identities: &Identities,
+    genmeta_home: &GenmetaHome,
     cert_server: &CertServer,
     access_token: &str,
     domain: &Name<'_>,
@@ -217,14 +219,14 @@ async fn resign_domain(
         .await?;
 
     // 4. save identity
-    save_identity(identities, domain, key_pem.as_bytes(), &cert_pem).await?;
+    save_identity(genmeta_home, domain, key_pem.as_bytes(), &cert_pem).await?;
 
     Ok(())
 }
 
 #[tracing::instrument(skip(cert_server))]
 async fn resign_domains(
-    identities: &Identities,
+    genmeta_home: &GenmetaHome,
     cert_server: &CertServer,
     access_token: &str,
     domains: &[Name<'_>],
@@ -236,7 +238,7 @@ async fn resign_domains(
     tracing::Span::current().pb_set_length(domains.len() as u64);
     tracing::Span::current().pb_set_message("Resigning certificates for selected domains...");
     for domain in domains {
-        resign_domain(identities, cert_server, access_token, domain).await?;
+        resign_domain(genmeta_home, cert_server, access_token, domain).await?;
         tracing::Span::current().pb_inc(1);
     }
     tracing::Span::current()
@@ -246,14 +248,14 @@ async fn resign_domains(
 
 #[tracing::instrument()]
 async fn load_current_default_config(
-    identities: &Identities,
+    genmeta_home: &GenmetaHome,
 ) -> Result<Option<DefaultConfigFile>, Error> {
-    let path = identities.default_config_path();
+    let path = genmeta_home.default_config_path();
     tracing::Span::current().pb_set_message(&format!(
         "Loading default configuration from {}...",
         path.display()
     ));
-    let (message, result) = match identities.load_default_config().await {
+    let (message, result) = match genmeta_home.load_default_config().await {
         Ok(default_config) => ("Default configuration loaded.", Ok(Some(default_config))),
         Err(LoadDefaultConfigError::Io { source, .. })
             if source.kind() == io::ErrorKind::NotFound =>
@@ -280,9 +282,9 @@ async fn save_default_config(default_config: &DefaultConfigFile) -> Result<(), E
 }
 
 #[tracing::instrument()]
-async fn query_exist_names_list(identities: &Identities) -> Result<Vec<Name<'static>>, Error> {
+async fn query_exist_names_list(genmeta_home: &GenmetaHome) -> Result<Vec<Name<'static>>, Error> {
     tracing::Span::current().pb_set_message("Querying existing identities...");
-    let (message, result) = match identities.list().await {
+    let (message, result) = match genmeta_home.list().await {
         Ok(list) => (
             format!("Found {} existing identities.", list.len()),
             Ok(list),
@@ -341,12 +343,11 @@ impl Create {
         let RegisterResponse { cert_pem } =
             prompt_register_catpcha(cert_server.clone(), name, email, csr_pem).await?;
 
-        let identities = genmeta_home.identities();
-        save_identity(&identities, &domain, key_pem.as_bytes(), &cert_pem)
+        save_identity(genmeta_home, &domain, key_pem.as_bytes(), &cert_pem)
             .instrument(info_span!("save_identity"))
             .await?;
 
-        let default_config = load_current_default_config(&identities).await?;
+        let default_config = load_current_default_config(genmeta_home).await?;
         let current_default_name = default_config
             .as_ref()
             .and_then(|config| config.config().name());
@@ -358,7 +359,7 @@ impl Create {
 
         if update_default_name {
             let mut default_config =
-                default_config.unwrap_or_else(|| identities.new_default_config());
+                default_config.unwrap_or_else(|| genmeta_home.new_default_config());
             default_config.config_mut().set_name(domain.to_owned());
             save_default_config(&default_config).await?;
         }
@@ -397,13 +398,7 @@ impl Apply {
             Some(domains) => domains.into(),
             None => prompt_select_resign_domains(domains).await?.into(),
         };
-        resign_domains(
-            &genmeta_home.identities(),
-            cert_server,
-            &access_token,
-            &domains,
-        )
-        .await?;
+        resign_domains(genmeta_home, cert_server, &access_token, &domains).await?;
 
         Ok(())
     }
@@ -421,17 +416,15 @@ impl Default {
         genmeta_home: &GenmetaHome,
         _cert_server: &CertServer,
     ) -> Result<(), Error> {
-        let identities = genmeta_home.identities();
-
         match self.name.as_ref() {
             None => {
                 // Show info for current default identity
-                let current_config = load_current_default_config(&identities).await?;
+                let current_config = load_current_default_config(genmeta_home).await?;
                 let name = match current_config.and_then(|c| c.config().name().cloned()) {
                     Some(n) => n,
                     None => whatever!("no default identity configured"),
                 };
-                let identity = identities.load(name.borrow()).await?;
+                let identity = genmeta_home.load(name.borrow()).await?;
                 println!("{}", identity.name());
                 let der = identity.certs()[0].as_ref();
                 display_cert_info(der, "  ")?;
@@ -439,11 +432,10 @@ impl Default {
             }
             Some(name) => {
                 // Configure name as default
-                identities.load(name.borrow()).await?;
-                let current_config = load_current_default_config(&identities).await?;
-                let mut current_config = current_config.unwrap_or_else(|| {
-                    DefaultConfigFile::new(identities.default_config_path().to_owned())
-                });
+                genmeta_home.load(name.borrow()).await?;
+                let current_config = load_current_default_config(genmeta_home).await?;
+                let mut current_config = current_config
+                    .unwrap_or_else(|| DefaultConfigFile::new(genmeta_home.default_config_path()));
                 current_config.config_mut().set_name(name.to_owned());
                 save_default_config(&current_config).await
             }
@@ -465,9 +457,8 @@ impl List {
         genmeta_home: &GenmetaHome,
         _cert_server: &CertServer,
     ) -> Result<(), Error> {
-        let identities = genmeta_home.identities();
-        let names = query_exist_names_list(&identities).await?;
-        let default_config = load_current_default_config(&identities).await?;
+        let names = query_exist_names_list(genmeta_home).await?;
+        let default_config = load_current_default_config(genmeta_home).await?;
         let default_name = default_config
             .as_ref()
             .and_then(|c| c.config().name().cloned());
@@ -486,7 +477,7 @@ impl List {
                 };
                 println!("{marker}{name}");
                 if self.verbose {
-                    let identity = identities.load(name.borrow()).await?;
+                    let identity = genmeta_home.load(name.borrow()).await?;
                     let der = identity.certs()[0].as_ref();
                     display_cert_info(der, "    ")?;
                 }
@@ -509,18 +500,17 @@ impl Info {
         genmeta_home: &GenmetaHome,
         _cert_server: &CertServer,
     ) -> Result<(), Error> {
-        let identities = genmeta_home.identities();
         let name: Name<'static> = match self.name.as_ref() {
             Some(n) => n.to_owned(),
             None => {
-                let cfg = load_current_default_config(&identities).await?;
+                let cfg = load_current_default_config(genmeta_home).await?;
                 match cfg.and_then(|c| c.config().name().cloned()) {
                     Some(n) => n,
                     None => whatever!("no default identity configured"),
                 }
             }
         };
-        let identity = identities.load(name.borrow()).await?;
+        let identity = genmeta_home.load(name.borrow()).await?;
         println!("{}", identity.name());
 
         let der = identity.certs()[0].as_ref();

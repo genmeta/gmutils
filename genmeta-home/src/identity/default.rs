@@ -9,7 +9,10 @@ use snafu::{OptionExt, ResultExt, Snafu};
 use tokio::fs;
 use toml::Spanned;
 
-use crate::identity::{self, Identities, Identity, Name};
+use crate::{
+    GenmetaHome,
+    identity::{self, Identity, Name},
+};
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct DefaultConfig {
@@ -170,11 +173,11 @@ impl DefaultConfigFile {
 
     pub async fn load_default_identity(
         &self,
-        identities: &Identities,
+        genmeta_home: &GenmetaHome,
     ) -> Option<Result<Identity<'static>, LoadIdentityError>> {
         let name = self.config.name.as_ref()?;
 
-        Some(identities.load(name.as_ref().borrow()).await.context(
+        Some(genmeta_home.load(name.as_ref().borrow()).await.context(
             load_identity_error::LoadIdentitySnafu {
                 config: self.locate(name.span().start),
             },
@@ -202,9 +205,9 @@ pub enum LoadDefaultIdentityError {
     LoadIdentity { source: LoadIdentityError },
 }
 
-impl Identities {
+impl GenmetaHome {
     pub fn default_config_path(&self) -> PathBuf {
-        self.path.join(DefaultConfig::FILE_NAME)
+        self.join(DefaultConfig::FILE_NAME)
     }
 
     pub async fn load_default_config(&self) -> Result<DefaultConfigFile, LoadDefaultConfigError> {
