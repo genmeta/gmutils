@@ -177,11 +177,14 @@ impl DefaultConfigFile {
     ) -> Option<Result<Identity<'static>, LoadIdentityError>> {
         let name = self.config.name.as_ref()?;
 
-        Some(genmeta_home.load(name.as_ref().borrow()).await.context(
-            load_identity_error::LoadIdentitySnafu {
-                config: self.locate(name.span().start),
-            },
-        ))
+        Some(
+            genmeta_home
+                .load_identity(name.as_ref().borrow())
+                .await
+                .context(load_identity_error::LoadIdentitySnafu {
+                    config: self.locate(name.span().start),
+                }),
+        )
     }
 
     pub async fn save(&self) -> Result<(), SaveDefaultConfigError> {
@@ -206,26 +209,28 @@ pub enum LoadDefaultIdentityError {
 }
 
 impl GenmetaHome {
-    pub fn default_config_path(&self) -> PathBuf {
+    pub fn identity_default_config_path(&self) -> PathBuf {
         self.join(DefaultConfig::FILE_NAME)
     }
 
-    pub async fn load_default_config(&self) -> Result<DefaultConfigFile, LoadDefaultConfigError> {
-        DefaultConfigFile::load(self.default_config_path()).await
+    pub async fn load_identity_default_config(
+        &self,
+    ) -> Result<DefaultConfigFile, LoadDefaultConfigError> {
+        DefaultConfigFile::load(self.identity_default_config_path()).await
     }
 
     pub async fn load_default_identity(
         &self,
     ) -> Result<Identity<'static>, LoadDefaultIdentityError> {
         Ok(self
-            .load_default_config()
+            .load_identity_default_config()
             .await?
             .load_default_identity(self)
             .await
             .context(load_default_identity_error::NoDefaultIdentitySnafu)??)
     }
 
-    pub fn new_default_config(&self) -> DefaultConfigFile {
-        DefaultConfigFile::new(self.default_config_path())
+    pub fn new_identity_default_config(&self) -> DefaultConfigFile {
+        DefaultConfigFile::new(self.identity_default_config_path())
     }
 }

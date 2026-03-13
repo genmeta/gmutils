@@ -184,14 +184,14 @@ impl<'i> Identity<'i> {
 }
 
 impl GenmetaHome {
-    pub async fn locate_exactly(&self, name: Name<'_>) -> io::Result<PathBuf> {
-        let identity_io = self.join_name(name);
+    pub async fn locate_identity_exactly(&self, name: Name<'_>) -> io::Result<PathBuf> {
+        let identity_io = self.join_identity_name(name);
         fs::metadata(identity_io.as_path())
             .await
             .map(|_| identity_io)
     }
 
-    pub async fn locate_wildcard(&self, name: Name<'_>) -> io::Result<PathBuf> {
+    pub async fn locate_identity_wildcard(&self, name: Name<'_>) -> io::Result<PathBuf> {
         let wildcard_name = name.to_wildcard_name();
 
         let identity_io = self.join(wildcard_name.as_partial());
@@ -200,12 +200,12 @@ impl GenmetaHome {
             .map(|_| identity_io)
     }
 
-    pub async fn locate<'a>(&self, name: Name<'a>) -> io::Result<(PathBuf, Name<'a>)> {
-        match self.locate_exactly(name.borrow()).await {
+    pub async fn locate_identity<'a>(&self, name: Name<'a>) -> io::Result<(PathBuf, Name<'a>)> {
+        match self.locate_identity_exactly(name.borrow()).await {
             Ok(location) => Ok((location, name)),
             Err(error) => {
                 let wildcard_name = name.to_wildcard_name();
-                match self.locate_wildcard(wildcard_name.borrow()).await {
+                match self.locate_identity_wildcard(wildcard_name.borrow()).await {
                     Ok(location) => Ok((location, wildcard_name)),
                     Err(_) => Err(error),
                 }
@@ -213,7 +213,7 @@ impl GenmetaHome {
         }
     }
 
-    pub async fn list(&self) -> Result<Vec<Name<'static>>, ListIdentitiesError> {
+    pub async fn list_identities(&self) -> Result<Vec<Name<'static>>, ListIdentitiesError> {
         use list_identities_error::*;
         let path = self.as_path();
         let mut read_io = fs::read_dir(path).await.context(ReadDirSnafu { path })?;
@@ -237,24 +237,24 @@ impl GenmetaHome {
         Ok(list)
     }
 
-    pub async fn exist_exactly(&self, name: Name<'_>) -> bool {
-        self.locate_exactly(name).await.is_ok()
+    pub async fn identity_exists_exactly(&self, name: Name<'_>) -> bool {
+        self.locate_identity_exactly(name).await.is_ok()
     }
 
-    pub async fn exist_wildcard(&self, name: Name<'_>) -> bool {
-        self.locate_wildcard(name).await.is_ok()
+    pub async fn identity_exists_wildcard(&self, name: Name<'_>) -> bool {
+        self.locate_identity_wildcard(name).await.is_ok()
     }
 
-    pub async fn exists(&self, name: Name<'_>) -> bool {
-        self.locate(name).await.is_ok()
+    pub async fn identity_exists(&self, name: Name<'_>) -> bool {
+        self.locate_identity(name).await.is_ok()
     }
 
-    pub async fn load_exactly(
+    pub async fn load_identity_exactly(
         &self,
         name: Name<'_>,
     ) -> Result<Identity<'static>, LoadIdentityError> {
         let identity_io = self
-            .locate_exactly(name.borrow())
+            .locate_identity_exactly(name.borrow())
             .await
             .context(load_identity_error::NotFoundSnafu { io: self.as_path() })?;
         let (certs, key) = Identity::load_from_io(identity_io.as_path(), name.as_full()).await?;
@@ -262,13 +262,13 @@ impl GenmetaHome {
         Ok(Identity { name, certs, key })
     }
 
-    pub async fn load_wildcard(
+    pub async fn load_identity_wildcard(
         &self,
         name: Name<'_>,
     ) -> Result<Identity<'static>, LoadIdentityError> {
         let wildcard_name = name.to_wildcard_name();
         let identity_io = self
-            .locate_wildcard(wildcard_name.borrow())
+            .locate_identity_wildcard(wildcard_name.borrow())
             .await
             .context(load_identity_error::NotFoundSnafu { io: self.as_path() })?;
         let (certs, key) =
@@ -277,9 +277,12 @@ impl GenmetaHome {
         Ok(Identity { name, certs, key })
     }
 
-    pub async fn load(&self, name: Name<'_>) -> Result<Identity<'static>, LoadIdentityError> {
+    pub async fn load_identity(
+        &self,
+        name: Name<'_>,
+    ) -> Result<Identity<'static>, LoadIdentityError> {
         let (identity_io, name) = self
-            .locate(name)
+            .locate_identity(name)
             .await
             .context(load_identity_error::NotFoundSnafu { io: self.as_path() })?;
         let (certs, key) = Identity::load_from_io(identity_io.as_path(), name.as_full()).await?;
@@ -287,14 +290,14 @@ impl GenmetaHome {
         Ok(Identity { name, certs, key })
     }
 
-    pub async fn save(
+    pub async fn save_identity(
         &self,
         name: Name<'_>,
         cert: &[u8],
         key: &[u8],
     ) -> Result<(), SaveIdentityError> {
         // create identity dir and ssl subdir
-        let identity_dir = self.join_name(name);
+        let identity_dir = self.join_identity_name(name);
         let ssl_dir = identity_dir.join(Identity::SSL_DIR_NAME);
         fs::create_dir_all(ssl_dir.as_path()).await.context(
             save_identity_error::CreateIdentityDirSnafu {

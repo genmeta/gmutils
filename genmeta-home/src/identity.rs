@@ -257,7 +257,7 @@ impl<'i> Identity<'i> {
 }
 
 impl GenmetaHome {
-    pub fn join_name(&self, name: Name<'_>) -> PathBuf {
+    pub fn join_identity_name(&self, name: Name<'_>) -> PathBuf {
         self.join(name.as_partial())
     }
 }
