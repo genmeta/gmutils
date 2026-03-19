@@ -1,9 +1,13 @@
-use std::path::{Path, PathBuf};
+use std::{
+    iter,
+    path::{Path, PathBuf},
+};
 
+use futures::{Stream, StreamExt, stream};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use snafu::{IntoError, OptionExt, ResultExt, Snafu, ensure};
 use tokio::{
-    fs,
+    fs::{self, ReadDir},
     io::{self, AsyncWriteExt},
 };
 use x509_parser::prelude::Pem;
@@ -213,28 +217,41 @@ impl GenmetaHome {
         }
     }
 
-    pub async fn list_identities(&self) -> Result<Vec<Name<'static>>, ListIdentitiesError> {
+    pub fn identities(&self) -> impl Stream<Item = Result<Name<'static>, ListIdentitiesError>> {
         use list_identities_error::*;
-        let path = self.as_path();
-        let mut read_io = fs::read_dir(path).await.context(ReadDirSnafu { path })?;
-
-        let mut list = Vec::new();
-        while let Some(e) = read_io.next_entry().await.context(ReadDirSnafu { path })?
-            && let (entry_path, name) = (e.path(), e.file_name())
-            && e.file_type()
-                .await
-                .context(ReadFtySnafu {
-                    path: entry_path.clone(),
-                })?
-                .is_dir()
-            && let Ok(name) = Name::try_from_str_partial(name.to_string_lossy())
-            && fs::metadata(entry_path.join(Identity::SSL_DIR_NAME))
-                .await
-                .is_ok()
-        {
-            list.push(name);
+        async fn next_entry(
+            read_dir: &mut ReadDir,
+            path: &Path,
+        ) -> Result<Option<Name<'static>>, ListIdentitiesError> {
+            if let Some(e) = read_dir.next_entry().await.context(ReadDirSnafu { path })?
+                && let (entry_path, name) = (e.path(), e.file_name())
+                && e.file_type()
+                    .await
+                    .context(ReadFtySnafu {
+                        path: entry_path.clone(),
+                    })?
+                    .is_dir()
+                && let Ok(name) = Name::try_from_str_partial(name.to_string_lossy())
+                && fs::metadata(entry_path.join(Identity::SSL_DIR_NAME))
+                    .await
+                    .is_ok()
+            {
+                return Ok(Some(name));
+            }
+            Ok(None)
         }
-        Ok(list)
+
+        let path = self.as_path();
+        stream::once(fs::read_dir(path)).flat_map(move |result| {
+            match result.context(ReadDirSnafu { path }) {
+                Err(error) => stream::iter(iter::once(Err(error))).right_stream(),
+                Ok(read_dir) => stream::unfold(read_dir, move |mut read_dir| async move {
+                    Some((next_entry(&mut read_dir, path).await, read_dir))
+                })
+                .filter_map(async |entry| entry.transpose())
+                .left_stream(),
+            }
+        })
     }
 
     pub async fn identity_exists_exactly(&self, name: Name<'_>) -> bool {

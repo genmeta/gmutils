@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 dirs = { workspace = true }
+futures = { workspace = true }
 rustls = { workspace = true }
 snafu = { workspace = true }
 serde = { workspace = true }

@@ -4,6 +4,7 @@ pub mod validator;
 use std::{borrow::Cow, fmt::Debug, io::IsTerminal, ops::Deref};
 
 use clap::Parser;
+use futures::TryStreamExt;
 use genmeta_home::{
     GenmetaHome,
     identity::{
@@ -284,7 +285,7 @@ async fn save_default_config(default_config: &DefaultConfigFile) -> Result<(), E
 #[tracing::instrument()]
 async fn query_exist_names_list(genmeta_home: &GenmetaHome) -> Result<Vec<Name<'static>>, Error> {
     tracing::Span::current().pb_set_message("Querying existing identities...");
-    let (message, result) = match genmeta_home.list_identities().await {
+    let (message, result) = match genmeta_home.identities().try_collect::<Vec<_>>().await {
         Ok(list) => (
             format!("Found {} existing identities.", list.len()),
             Ok(list),
