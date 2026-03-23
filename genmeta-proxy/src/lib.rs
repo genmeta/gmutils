@@ -7,6 +7,7 @@ use h3x::gm_quic::{BuildClientError, H3Client, prelude::handy::NoopLogger};
 use http_body_util::BodyExt;
 use snafu::{ResultExt, Snafu};
 use tokio::net::TcpListener;
+use tracing::Instrument;
 use tracing_subscriber::prelude::*;
 
 #[derive(Parser, Debug, Clone)]
@@ -340,25 +341,29 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         tracing::debug!(%addr, "accepted connection");
         let client = client.clone();
         let router = router.clone();
-        tokio::spawn(async move {
-            let io = hyper_util::rt::TokioIo::new(stream);
-            if let Err(e) = hyper::server::conn::http1::Builder::new()
-                .preserve_header_case(true)
-                .title_case_headers(true)
-                .serve_connection(
-                    io,
-                    hyper::service::service_fn(move |req| {
-                        let client = client.clone();
-                        let router = router.clone();
-                        async move { handle_request(req, &client, &router).await }
-                    }),
-                )
-                .with_upgrades()
-                .await
-            {
-                tracing::error!(error = %e, %addr, "connection error");
+        let span = tracing::info_span!("conn", %addr);
+        tokio::spawn(
+            async move {
+                let io = hyper_util::rt::TokioIo::new(stream);
+                if let Err(e) = hyper::server::conn::http1::Builder::new()
+                    .preserve_header_case(true)
+                    .title_case_headers(true)
+                    .serve_connection(
+                        io,
+                        hyper::service::service_fn(move |req| {
+                            let client = client.clone();
+                            let router = router.clone();
+                            async move { handle_request(req, &client, &router).await }
+                        }),
+                    )
+                    .with_upgrades()
+                    .await
+                {
+                    tracing::error!(error = %e, %addr, "connection error");
+                }
             }
-        });
+            .instrument(span),
+        );
     }
 }
 

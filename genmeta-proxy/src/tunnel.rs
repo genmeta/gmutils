@@ -4,6 +4,7 @@ use hyper::{Request, Response, body::Incoming, upgrade::on as upgrade_on};
 use hyper_util::rt::TokioIo;
 use snafu::ResultExt;
 use tokio::{io::copy_bidirectional, net::TcpStream};
+use tracing::Instrument;
 
 use crate::Error;
 
@@ -17,6 +18,7 @@ pub async fn tunnel_connect(
     let upgrade_fut = upgrade_on(req);
     let addr = addr.to_owned();
 
+    let span = tracing::info_span!("tunnel", %addr);
     tokio::spawn(async move {
         match upgrade_fut.await.context(crate::TunnelUpgradeSnafu) {
             Err(e) => {
@@ -40,7 +42,7 @@ pub async fn tunnel_connect(
                 }
             }
         }
-    });
+    }.instrument(span));
 
     Ok(Response::builder()
         .status(200)
