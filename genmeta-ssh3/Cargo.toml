@@ -1,17 +1,19 @@
 [package]
 name = "genmeta-ssh3"
 description = "ssh3 client"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 
 [dependencies]
 clap = { workspace = true }
+crossterm = { workspace = true }
+dirs = { workspace = true }
 genmeta-common = { workspace = true, features = ["bind", "dns", "id"] }
 genmeta-home = { workspace = true }
-ssh-config = { workspace = true, features = ["openssh"] }
-genmeta-ssh3-client = { workspace = true }
+genmeta-ssh = { workspace = true }
 http = { workspace = true }
 h3x = { workspace = true }
+peg = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "rt"] }
@@ -19,8 +21,4 @@ tracing = { workspace = true }
 tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }
 whoami = { workspace = true }
-
-
 qevent = { workspace = true }
-
-# console-subscriber = { workspace = true }

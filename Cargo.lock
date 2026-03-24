@@ -321,6 +321,9 @@ name = "bytes"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "cc"
@@ -1357,6 +1360,8 @@ dependencies = [
  "futures",
  "h3x",
  "http",
+ "http-body-util",
+ "nix 0.29.0",
  "remoc",
  "serde",
  "snafu 0.9.0",
@@ -1366,39 +1371,25 @@ dependencies = [
 
 [[package]]
 name = "genmeta-ssh3"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "clap",
+ "crossterm",
+ "dirs",
  "genmeta-common",
  "genmeta-home",
- "genmeta-ssh3-client",
+ "genmeta-ssh",
  "h3x",
  "http",
+ "peg",
  "qevent",
  "snafu 0.9.0",
- "ssh-config",
  "tokio",
  "tokio-util",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
  "whoami",
-]
-
-[[package]]
-name = "genmeta-ssh3-client"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "genmeta-ssh",
- "h3x",
- "http",
- "http-body-util",
- "snafu 0.9.0",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1562,8 +1553,10 @@ dependencies = [
  "hyper",
  "matchit",
  "pin-project-lite",
+ "remoc",
  "ring",
  "rustls",
+ "serde",
  "snafu 0.9.0",
  "tokio",
  "tokio-util",
@@ -3016,18 +3009,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "regex"
-version = "1.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e10754a14b9137dd7b1e3e5b0493cc9171fdd105e0ab477f51b72e7f3ac0e276"
-dependencies = [
- "aho-corasick",
- "memchr",
- "regex-automata",
- "regex-syntax",
-]
-
-[[package]]
 name = "regex-automata"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3680,22 +3661,6 @@ checksum = "8baeff88f34ed0691978ec34440140e1572b68c7dd4a495fd14a3dc1944daa80"
 dependencies = [
  "base64ct",
  "der",
-]
-
-[[package]]
-name = "ssh-config"
-version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/genmeta-ssh3.git#c2b7d7d20ae7ba7a7846c59db37fff38d77f303c"
-dependencies = [
- "derive_more",
- "dirs",
- "either",
- "http",
- "peg",
- "regex",
- "regex-syntax",
- "snafu 0.8.9",
- "tokio",
 ]
 
 [[package]]

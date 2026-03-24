@@ -4,7 +4,6 @@ use genmeta_common::{
     bind::{self, BindConflictError},
     dns,
 };
-use genmeta_ssh3_client as ssh3;
 use h3x::{
     connection::Connection,
     gm_quic::{self, BuildClientError, H3Client, prelude::ConnectServerError},
@@ -139,7 +138,7 @@ pub async fn connect(
         .context(connect_error::InitialMessageStreamSnafu)?;
 
     let request = http::Request::builder()
-        .method(ssh3::proto::v0::METHOD.clone())
+        .method(http::Method::CONNECT)
         .uri(config.uri.clone())
         .body(())
         .whatever_context::<_, Error>("failed to build HTTP request")?;

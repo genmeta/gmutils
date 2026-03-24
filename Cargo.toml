@@ -107,9 +107,9 @@ genmeta-ssh3 = { path = "genmeta-ssh3" }
 genmeta-proxy = { path = "genmeta-proxy" }
 
 # ssh
-ssh-config = { git = "ssh://git@github.com/genmeta/genmeta-ssh3.git" }
+# ssh-config = { git = "ssh://git@github.com/genmeta/genmeta-ssh3.git" }
 # genmeta-ssh3-client = { git = "ssh://git@github.com/genmeta/genmeta-ssh3.git" }
-genmeta-ssh3-client = { path = "../genmeta-ssh3/genmeta-ssh3-client" }
+genmeta-ssh = { path = "../genmeta-ssh3" }
 
 # debug
 # [patch.'ssh://git@github.com/genmeta/gm-quic-traversal.git']

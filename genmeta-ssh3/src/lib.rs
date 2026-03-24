@@ -1,18 +1,20 @@
 use std::{fmt::Debug, io::IsTerminal};
 
-// mod auth;
 mod config;
 mod connect;
+pub mod forward;
+pub mod ssh_config;
+
 use clap::Parser;
 use genmeta_common::{bind, dns};
 use genmeta_home::identity::Name;
-use genmeta_ssh3_client as ssh3;
+use genmeta_ssh as ssh3;
 use h3x::{
     codec::{SinkWriter, StreamReader},
     error::Code,
 };
-use snafu::Snafu;
-use ssh3::forward::*;
+use forward::*;
+use snafu::{ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
 
 const URI_LONG_HELP: &str = "If this argument matches the ssh configuration file, \
@@ -96,7 +98,7 @@ pub struct Options {
     /// Local port forwarding
     #[arg(
         short = 'L',
-        value_name = "[bind_address:]port:host:hostport / [bind_address:]port:remote_socket / local_socket:host:hostport / local_socket:remote_socket",
+        value_name = "[bind_address:]port:host:hostport / ...",
         long_help = LOCAL_FORWARDING_LONG_HELP
     )]
     local_forwards: Vec<LocalForwardRule>,
@@ -104,7 +106,7 @@ pub struct Options {
     /// Remote port forwarding
     #[arg(
         short = 'R',
-        value_name = "[bind_address:]port:host:hostport / [bind_address:]port:local_socket / remote_socket:host:hostport / remote_socket:local_socket / [bind_address:]port",
+        value_name = "[bind_address:]port:host:hostport / ...",
         long_help = REMOTE_FORWARDING_LONG_HELP
     )]
     remote_forwards: Vec<RemoteForwardRule>,
@@ -132,7 +134,23 @@ pub enum Error {
     #[snafu(transparent)]
     Connect { source: connect::Error },
     #[snafu(transparent)]
-    Ssh3 { source: ssh3::Error },
+    Session { source: SessionError },
+}
+
+#[derive(Debug, Snafu)]
+#[snafu(module(session_error))]
+pub enum SessionError {
+    #[snafu(display("failed to set up PTY"))]
+    SetupPty { source: ssh3::session::client::SetupError },
+
+    #[snafu(display("failed to send exec request"))]
+    Exec { source: ssh3::session::client::SetupError },
+
+    #[snafu(display("failed to send shell request"))]
+    Shell { source: ssh3::session::client::SetupError },
+
+    #[snafu(display("session IO relay failed"))]
+    Run { source: ssh3::session::client::RunError },
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
@@ -164,21 +182,89 @@ pub async fn run(options: Options) -> Result<(), Error> {
         [] => None,
         commands => Some(commands.join(" ")),
     };
-    let options = ssh3::Options {
-        username: &config.username,
-        commands: commands.as_deref(),
-        pseudo: options.pseudo,
-        dynamic_forward: &options.dynamic_forward,
-        local_forwards: &options.local_forwards,
-        remote_forwards: &options.remote_forwards,
-    };
 
-    let (_watcher, connection, reader, writer) = connect::connect(&config).await?;
-    let reader = Box::pin(StreamReader::new(reader.into_bytes_stream()));
-    let writer = Box::pin(SinkWriter::new(writer.into_bytes_sink()));
+    let (_watcher, connection, read_stream, write_stream) = connect::connect(&config).await?;
+    let reader: std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>> =
+        Box::pin(StreamReader::new(read_stream.into_bytes_stream()));
+    let writer: std::pin::Pin<Box<dyn tokio::io::AsyncWrite + Send>> =
+        Box::pin(SinkWriter::new(write_stream.into_bytes_sink()));
 
-    let result = ssh3::run(options, reader, writer).await;
+    let result = run_session(reader, writer, commands.as_deref(), options.pseudo).await;
     connection.close(Code::H3_NO_ERROR, "");
 
-    Ok(result?)
+    let exit_code = result?;
+    if exit_code != 0 {
+        std::process::exit(exit_code);
+    }
+    Ok(())
+}
+
+async fn run_session(
+    reader: std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>,
+    writer: std::pin::Pin<Box<dyn tokio::io::AsyncWrite + Send>>,
+    commands: Option<&str>,
+    pseudo: bool,
+) -> Result<i32, SessionError> {
+    use session_error::*;
+    use ssh3::conversation::channel::SshChannel;
+    use ssh3::session::{PtyRequest, client::ClientSession};
+
+    // The version negotiation in SSH3 happens at the HTTP header level
+    // during the CONNECT upgrade, not on the byte stream. The server
+    // already validated the version. We skip stream-level negotiation here.
+
+    // Create a session channel directly from the upgraded message streams.
+    // The session channel data flows on these streams.
+    let channel = SshChannel::new(reader, writer);
+    let mut session = ClientSession::new(channel);
+
+    // PTY request.
+    if pseudo {
+        let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+        let pty_req = PtyRequest {
+            term_type: "xterm-256color".into(),
+            width_cols: h3x::varint::VarInt::from(cols as u32),
+            height_rows: h3x::varint::VarInt::from(rows as u32),
+            width_px: h3x::varint::VarInt::from_u32(0),
+            height_px: h3x::varint::VarInt::from_u32(0),
+            terminal_modes: ssh3::codec::SshBytes::from(Vec::new()),
+        };
+        session.request_pty(&pty_req).await.context(SetupPtySnafu)?;
+    }
+
+    // Exec or shell.
+    match commands {
+        Some(cmd) => {
+            session.exec(cmd.as_bytes()).await.context(ExecSnafu)?;
+        }
+        None => {
+            session.shell().await.context(ShellSnafu)?;
+        }
+    }
+
+    // IO relay.
+    let stdin = tokio::io::stdin();
+    let stdout = tokio::io::stdout();
+    let stderr = tokio::io::stderr();
+
+    let exit_result = session.run(stdin, stdout, stderr).await.context(RunSnafu)?;
+
+    match exit_result {
+        Some(ssh3::session::client::ExitResult::Status(code)) => {
+            tracing::debug!(exit_code = code, "remote process exited");
+            Ok(i32::try_from(code).unwrap_or(1))
+        }
+        Some(ssh3::session::client::ExitResult::Signal { signal_name, core_dumped }) => {
+            tracing::warn!(
+                signal = %signal_name,
+                core_dumped,
+                "remote process killed by signal"
+            );
+            Ok(128)
+        }
+        None => {
+            tracing::debug!("remote channel closed without exit status");
+            Ok(0)
+        }
+    }
 }

@@ -8,7 +8,9 @@ use genmeta_common::{
 use genmeta_home::identity::{Identity, InvalidName, Name};
 use http::{Uri, uri::Authority};
 use snafu::{ResultExt, Snafu};
-use ssh_config::error::ReadConfigError;
+
+use crate::forward::{DynamicForwardEndpoint, LocalForwardRule, RemoteForwardRule};
+use crate::ssh_config;
 
 #[derive(Debug, Snafu)]
 #[snafu(module(config_error))]
@@ -30,7 +32,7 @@ pub enum Error {
     #[snafu(display("missing authority in URI"))]
     MissingAuthority {},
     #[snafu(display("failed to read ssh configuration"))]
-    ReadConfig { source: ReadConfigError },
+    ReadConfig { source: ssh_config::ReadConfigError },
     #[snafu(transparent)]
     LoadHomeAndIdentity {
         source: id::LoadHomeAndIdentityError,
@@ -55,6 +57,9 @@ pub struct Config {
     pub uri: Uri,
     pub id: Option<Identity<'static>>,
     pub connect_timeout: Duration,
+    pub local_forwards: Vec<LocalForwardRule>,
+    pub remote_forwards: Vec<RemoteForwardRule>,
+    pub dynamic_forwards: Vec<DynamicForwardEndpoint>,
 }
 
 // CLI args > config file priority
@@ -63,21 +68,26 @@ pub struct Config {
 impl super::Options {
     pub async fn config(&self) -> Result<Config, Error> {
         let (ssh_config, read_config_errors) =
-            ssh_config::openssh::read_config(&self.options, &self.host)
+            ssh_config::read_config(&self.options, &self.host)
                 .await
                 .context(config_error::ReadConfigSnafu {})?;
 
-        for (message, error) in read_config_errors {
-            tracing::error!("{message}: {}", snafu::Report::from_error(error));
+        for (path, error) in read_config_errors {
+            tracing::error!("ssh config {}: {}", path.display(), snafu::Report::from_error(error));
         }
 
         // user: command line -> config file -> uri -> whoami
-        let mut username = self.login_name.clone().or_else(|| ssh_config.user.clone());
+        let mut username = self
+            .login_name
+            .clone()
+            .or_else(|| ssh_config.user.clone());
         let mut password = None;
 
-        // uri: ssh_config(if present) -> command line
-        let uri = match &ssh_config.hostname {
-            Some(uri) => uri.clone(),
+        // uri: ssh_config hostname (if present) -> command line host
+        let uri: Uri = match &ssh_config.hostname {
+            Some(hostname) => hostname
+                .parse()
+                .context(config_error::InvalidUriSnafu { uri: hostname })?,
             None => self.host.parse().context(config_error::InvalidUriSnafu {
                 uri: self.host.clone(),
             })?,
@@ -103,7 +113,6 @@ impl super::Options {
 
         let cli_id = (self.id.as_ref())
             .map(|id| (&"command line options" as &dyn fmt::Display, id.borrow()));
-        // TODO: better source with file path and line number
         let ssh_config_id = (ssh_config.id.as_ref())
             .map(|id| {
                 Name::from_str(id)
@@ -124,6 +133,14 @@ impl super::Options {
 
         let connect_timeout = ssh_config.connect_timeout.unwrap_or(Duration::MAX);
 
+        // Merge forwarding rules: CLI args take precedence, then ssh config.
+        let mut local_forwards = self.local_forwards.clone();
+        local_forwards.extend(ssh_config.local_forwards);
+        let mut remote_forwards = self.remote_forwards.clone();
+        remote_forwards.extend(ssh_config.remote_forwards);
+        let mut dynamic_forwards = self.dynamic_forward.clone();
+        dynamic_forwards.extend(ssh_config.dynamic_forwards);
+
         Ok(Config {
             binds: Binds::new(self.binds.clone()),
             dns: self.dns.iter().cloned().collect(),
@@ -132,6 +149,9 @@ impl super::Options {
             uri,
             id,
             connect_timeout,
+            local_forwards,
+            remote_forwards,
+            dynamic_forwards,
         })
     }
 }
