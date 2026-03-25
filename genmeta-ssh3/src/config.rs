@@ -9,7 +9,7 @@ use genmeta_home::identity::{Identity, InvalidName, Name};
 use http::{Uri, uri::Authority};
 use snafu::{ResultExt, Snafu};
 
-use crate::forward::{DynamicForwardEndpoint, LocalForwardRule, RemoteForwardRule};
+use crate::forward::{DynamicForward, LocalForward, RemoteForward};
 use crate::ssh_config;
 
 #[derive(Debug, Snafu)]
@@ -57,9 +57,9 @@ pub struct Config {
     pub uri: Uri,
     pub id: Option<Identity<'static>>,
     pub connect_timeout: Duration,
-    pub local_forwards: Vec<LocalForwardRule>,
-    pub remote_forwards: Vec<RemoteForwardRule>,
-    pub dynamic_forwards: Vec<DynamicForwardEndpoint>,
+    pub local_forwards: Vec<LocalForward>,
+    pub remote_forwards: Vec<RemoteForward>,
+    pub dynamic_forwards: Vec<DynamicForward>,
 }
 
 // CLI args > config file priority
@@ -67,20 +67,20 @@ pub struct Config {
 // HostName can provide the host part of URI
 impl super::Options {
     pub async fn config(&self) -> Result<Config, Error> {
-        let (ssh_config, read_config_errors) =
-            ssh_config::read_config(&self.options, &self.host)
-                .await
-                .context(config_error::ReadConfigSnafu {})?;
+        let (ssh_config, read_config_errors) = ssh_config::read_config(&self.options, &self.host)
+            .await
+            .context(config_error::ReadConfigSnafu {})?;
 
         for (path, error) in read_config_errors {
-            tracing::error!("ssh config {}: {}", path.display(), snafu::Report::from_error(error));
+            tracing::error!(
+                "ssh config {}: {}",
+                path.display(),
+                snafu::Report::from_error(error)
+            );
         }
 
         // user: command line -> config file -> uri -> whoami
-        let mut username = self
-            .login_name
-            .clone()
-            .or_else(|| ssh_config.user.clone());
+        let mut username = self.login_name.clone().or_else(|| ssh_config.user.clone());
         let mut password = None;
 
         // uri: ssh_config hostname (if present) -> command line host

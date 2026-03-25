@@ -6,6 +6,7 @@ pub mod forward;
 pub mod ssh_config;
 
 use clap::Parser;
+use forward::*;
 use genmeta_common::{bind, dns};
 use genmeta_home::identity::Name;
 use genmeta_ssh as ssh3;
@@ -13,7 +14,6 @@ use h3x::{
     codec::{SinkWriter, StreamReader},
     error::Code,
 };
-use forward::*;
 use snafu::{ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
 
@@ -93,7 +93,7 @@ pub struct Options {
 
     /// Dynamic port forwarding (SOCKS proxy)
     #[arg(short = 'D', value_name = "[bind_address:]port", long_help = DYNAMIC_FORWARD_LONG_HELP)]
-    dynamic_forward: Vec<DynamicForwardEndpoint>,
+    dynamic_forward: Vec<DynamicForward>,
 
     /// Local port forwarding
     #[arg(
@@ -101,7 +101,7 @@ pub struct Options {
         value_name = "[bind_address:]port:host:hostport / ...",
         long_help = LOCAL_FORWARDING_LONG_HELP
     )]
-    local_forwards: Vec<LocalForwardRule>,
+    local_forwards: Vec<LocalForward>,
 
     /// Remote port forwarding
     #[arg(
@@ -109,7 +109,7 @@ pub struct Options {
         value_name = "[bind_address:]port:host:hostport / ...",
         long_help = REMOTE_FORWARDING_LONG_HELP
     )]
-    remote_forwards: Vec<RemoteForwardRule>,
+    remote_forwards: Vec<RemoteForward>,
 
     /// DNS resolution schemes
     #[arg(long, value_name = "scheme", default_value = "mdns,http", value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
@@ -141,16 +141,24 @@ pub enum Error {
 #[snafu(module(session_error))]
 pub enum SessionError {
     #[snafu(display("failed to set up PTY"))]
-    SetupPty { source: ssh3::session::client::SetupError },
+    SetupPty {
+        source: ssh3::session::client::SetupError,
+    },
 
     #[snafu(display("failed to send exec request"))]
-    Exec { source: ssh3::session::client::SetupError },
+    Exec {
+        source: ssh3::session::client::SetupError,
+    },
 
     #[snafu(display("failed to send shell request"))]
-    Shell { source: ssh3::session::client::SetupError },
+    Shell {
+        source: ssh3::session::client::SetupError,
+    },
 
     #[snafu(display("session IO relay failed"))]
-    Run { source: ssh3::session::client::RunError },
+    Run {
+        source: ssh3::session::client::RunError,
+    },
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
@@ -254,7 +262,10 @@ async fn run_session(
             tracing::debug!(exit_code = code, "remote process exited");
             Ok(i32::try_from(code).unwrap_or(1))
         }
-        Some(ssh3::session::client::ExitResult::Signal { signal_name, core_dumped }) => {
+        Some(ssh3::session::client::ExitResult::Signal {
+            signal_name,
+            core_dumped,
+        }) => {
             tracing::warn!(
                 signal = %signal_name,
                 core_dumped,

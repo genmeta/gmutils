@@ -10,10 +10,9 @@ crossterm = { workspace = true }
 dirs = { workspace = true }
 genmeta-common = { workspace = true, features = ["bind", "dns", "id"] }
 genmeta-home = { workspace = true }
-genmeta-ssh = { workspace = true }
+genmeta-ssh = { workspace = true, features = ["cli"] }
 http = { workspace = true }
 h3x = { workspace = true }
-peg = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "rt"] }

@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use snafu::prelude::*;
 
-use crate::forward::{DynamicForwardEndpoint, LocalForwardRule, RemoteForwardRule};
+use crate::forward::{DynamicForward, LocalForward, RemoteForward};
 
 // ---------------------------------------------------------------------------
 // Error types
@@ -50,10 +50,7 @@ pub enum ReadConfigError {
     },
 
     #[snafu(display("parse error in `{}`", path.display()))]
-    Parse {
-        path: PathBuf,
-        source: ParseError,
-    },
+    Parse { path: PathBuf, source: ParseError },
 }
 
 #[derive(Debug, Snafu)]
@@ -76,11 +73,11 @@ pub enum ParseError {
         source: std::num::ParseIntError,
     },
 
-    #[snafu(display("line {line}: invalid forward rule `{value}`"))]
+    #[snafu(display("line {line}: invalid forward rule `{value}`: {reason}"))]
     InvalidForwardRule {
         line: usize,
         value: String,
-        source: peg::error::ParseError<peg::str::LineCol>,
+        reason: String,
     },
 }
 
@@ -96,9 +93,9 @@ pub struct SshConfig {
     pub port: Option<u16>,
     pub id: Option<String>,
     pub connect_timeout: Option<Duration>,
-    pub local_forwards: Vec<LocalForwardRule>,
-    pub remote_forwards: Vec<RemoteForwardRule>,
-    pub dynamic_forwards: Vec<DynamicForwardEndpoint>,
+    pub local_forwards: Vec<LocalForward>,
+    pub remote_forwards: Vec<RemoteForward>,
+    pub dynamic_forwards: Vec<DynamicForward>,
 }
 
 impl SshConfig {
@@ -120,9 +117,12 @@ impl SshConfig {
             self.connect_timeout = other.connect_timeout;
         }
         // Forwarding rules accumulate (not first-match-wins).
-        self.local_forwards.extend(other.local_forwards.iter().cloned());
-        self.remote_forwards.extend(other.remote_forwards.iter().cloned());
-        self.dynamic_forwards.extend(other.dynamic_forwards.iter().cloned());
+        self.local_forwards
+            .extend(other.local_forwards.iter().cloned());
+        self.remote_forwards
+            .extend(other.remote_forwards.iter().cloned());
+        self.dynamic_forwards
+            .extend(other.dynamic_forwards.iter().cloned());
     }
 }
 
@@ -187,8 +187,8 @@ fn parse_config(content: &str) -> Result<Vec<(Vec<String>, SshConfig)>, ParseErr
         }
 
         // Split into keyword and value. Accept both `Keyword Value` and `Keyword=Value`.
-        let (keyword, value) = split_keyword_value(line)
-            .ok_or_else(|| ParseError::InvalidLine {
+        let (keyword, value) =
+            split_keyword_value(line).ok_or_else(|| ParseError::InvalidLine {
                 line: line_num,
                 message: format!("cannot parse keyword from `{line}`"),
             })?;
@@ -214,12 +214,11 @@ fn parse_config(content: &str) -> Result<Vec<(Vec<String>, SshConfig)>, ParseErr
             }
             "port" => {
                 if current_config.port.is_none() {
-                    current_config.port = Some(
-                        value.parse().context(parse_error::InvalidPortSnafu {
+                    current_config.port =
+                        Some(value.parse().context(parse_error::InvalidPortSnafu {
                             line: line_num,
                             value,
-                        })?,
-                    );
+                        })?);
                 }
             }
             "id" => {
@@ -229,36 +228,44 @@ fn parse_config(content: &str) -> Result<Vec<(Vec<String>, SshConfig)>, ParseErr
             }
             "connecttimeout" => {
                 if current_config.connect_timeout.is_none() {
-                    let secs: u64 =
-                        value.parse().context(parse_error::InvalidTimeoutSnafu {
-                            line: line_num,
-                            value,
-                        })?;
+                    let secs: u64 = value.parse().context(parse_error::InvalidTimeoutSnafu {
+                        line: line_num,
+                        value,
+                    })?;
                     current_config.connect_timeout = Some(Duration::from_secs(secs));
                 }
             }
             "localforward" => {
-                let rule: LocalForwardRule =
-                    value.parse().context(parse_error::InvalidForwardRuleSnafu {
+                let rule: LocalForward = value.parse().map_err(|reason| {
+                    parse_error::InvalidForwardRuleSnafu {
                         line: line_num,
                         value,
-                    })?;
+                        reason,
+                    }
+                    .build()
+                })?;
                 current_config.local_forwards.push(rule);
             }
             "remoteforward" => {
-                let rule: RemoteForwardRule =
-                    value.parse().context(parse_error::InvalidForwardRuleSnafu {
+                let rule: RemoteForward = value.parse().map_err(|reason| {
+                    parse_error::InvalidForwardRuleSnafu {
                         line: line_num,
                         value,
-                    })?;
+                        reason,
+                    }
+                    .build()
+                })?;
                 current_config.remote_forwards.push(rule);
             }
             "dynamicforward" => {
-                let ep: DynamicForwardEndpoint =
-                    value.parse().context(parse_error::InvalidForwardRuleSnafu {
+                let ep: DynamicForward = value.parse().map_err(|reason| {
+                    parse_error::InvalidForwardRuleSnafu {
                         line: line_num,
                         value,
-                    })?;
+                        reason,
+                    }
+                    .build()
+                })?;
                 current_config.dynamic_forwards.push(ep);
             }
             _ => {
@@ -295,10 +302,7 @@ fn split_keyword_value(line: &str) -> Option<(&str, &str)> {
 
 /// Parse space-separated host patterns from a `Host` line value.
 fn parse_host_patterns(value: &str) -> Vec<String> {
-    value
-        .split_whitespace()
-        .map(|s| s.to_string())
-        .collect()
+    value.split_whitespace().map(|s| s.to_string()).collect()
 }
 
 /// Resolve config for a given hostname by matching against all blocks.
