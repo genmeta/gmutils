@@ -5,7 +5,7 @@ use std::{
 
 use futures::{Stream, StreamExt, stream};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use snafu::{IntoError, OptionExt, ResultExt, Snafu, ensure};
+use snafu::{IntoError, ResultExt, Snafu};
 use tokio::{
     fs::{self, ReadDir},
     io::{self, AsyncWriteExt},
@@ -14,7 +14,7 @@ use x509_parser::prelude::Pem;
 
 use crate::{
     GenmetaHome,
-    identity::{Identity, Name},
+    identity::{Identity, IdentityTls, IdentityTlsMaterial, Name},
 };
 
 #[derive(Snafu, Debug)]
@@ -25,15 +25,6 @@ pub enum LoadIdentityError {
 
     #[snafu(display("provided name is not a valid DNS name"))]
     InvalidDnsName,
-
-    #[snafu(display("failed to load identity certificates at {}", path.display()))]
-    LoadCerts {
-        path: PathBuf,
-        source: LoadCertError,
-    },
-
-    #[snafu(display("failed to load identity private key at {}", path.display()))]
-    LoadKey { path: PathBuf, source: LoadKeyError },
 }
 
 #[derive(Snafu, Debug)]
@@ -45,18 +36,6 @@ pub enum LoadCertError {
     Pem {
         source: x509_parser::error::PEMError,
     },
-    #[snafu(display("failed to parse certificate"))]
-    Nom {
-        source: x509_parser::nom::Err<x509_parser::error::X509Error>,
-    },
-    #[snafu(display("failed to parse certificate SAN extension"))]
-    Ext {
-        source: x509_parser::error::X509Error,
-    },
-    #[snafu(display("certificate does not contain SAN extension"))]
-    MissingSan {},
-    #[snafu(display("certificate SAN does not contain expected DNS name"))]
-    NotExistInSan {},
 }
 
 #[derive(Snafu, Debug)]
@@ -72,6 +51,19 @@ pub enum LoadKeyError {
     Parse {
         source: rustls::pki_types::pem::Error,
     },
+}
+
+#[derive(Snafu, Debug)]
+#[snafu(module)]
+pub enum LoadIdentityTlsMaterialError {
+    #[snafu(display("failed to load identity certificates at {}", path.display()))]
+    LoadCerts {
+        path: PathBuf,
+        source: LoadCertError,
+    },
+
+    #[snafu(display("failed to load identity private key at {}", path.display()))]
+    LoadKey { path: PathBuf, source: LoadKeyError },
 }
 
 #[derive(Snafu, Debug)]
@@ -98,32 +90,16 @@ pub enum ListIdentitiesError {
     ReadFty { path: PathBuf, source: io::Error },
 }
 
-impl<'i> Identity<'i> {
+impl Identity {
     pub(crate) const CERT_FILE_NAME: &'static str = "fullchain.crt";
     pub(crate) const KEY_FILE_NAME: &'static str = "privkey.pem";
+}
 
-    async fn valid_cert_for_name(pem: &Pem, name: &str) -> Result<(), LoadCertError> {
-        let cert = pem.parse_x509().context(load_cert_error::NomSnafu)?;
-        let san = cert
-            .subject_alternative_name()
-            .context(load_cert_error::ExtSnafu)?
-            .context(load_cert_error::MissingSanSnafu {})?;
-        let found = san.value.general_names.iter().any(|gn| match gn {
-            x509_parser::prelude::GeneralName::DNSName(dn) => *dn == name,
-            _ => false,
-        });
-        ensure!(found, load_cert_error::NotExistInSanSnafu {});
-        Ok(())
-    }
-
-    async fn load_certs_file(
-        path: &Path,
-        name: &str,
-    ) -> Result<Vec<CertificateDer<'static>>, LoadCertError> {
-        let mut data = std::io::Cursor::new(fs::read(path).await?);
+impl IdentityTls {
+    pub async fn certs(&self) -> Result<Vec<CertificateDer<'static>>, LoadCertError> {
+        let certs_path = self.path.join(Identity::CERT_FILE_NAME);
+        let mut data = std::io::Cursor::new(fs::read(certs_path.as_path()).await?);
         let (end_entity_pem, _read) = Pem::read(&mut data).context(load_cert_error::PemSnafu)?;
-        // TODO: less/more validation?
-        Self::valid_cert_for_name(&end_entity_pem, name).await?;
         let mut certs = vec![CertificateDer::from(end_entity_pem.contents)];
         loop {
             match Pem::read(&mut data) {
@@ -138,11 +114,9 @@ impl<'i> Identity<'i> {
         Ok(certs)
     }
 
-    async fn load_key_file(
-        path: &Path,
-        _cert: &CertificateDer<'_>,
-    ) -> Result<PrivateKeyDer<'static>, LoadKeyError> {
-        let metadata = fs::metadata(path).await?;
+    pub async fn key(&self) -> Result<PrivateKeyDer<'static>, LoadKeyError> {
+        let key_path = self.path.join(Identity::KEY_FILE_NAME);
+        let metadata = fs::metadata(key_path.as_path()).await?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
@@ -157,33 +131,28 @@ impl<'i> Identity<'i> {
             )
         }
 
-        let data = fs::read(path).await?;
-        // todo: check is public key matches certificate
+        let data = fs::read(key_path.as_path()).await?;
         rustls::pki_types::pem::PemObject::from_pem_slice(&data).context(load_key_error::ParseSnafu)
     }
 
-    pub const SSL_DIR_NAME: &'static str = "ssl";
-
-    pub async fn load_from_io(
-        io: &Path,
-        name: &str,
-    ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>), LoadIdentityError> {
-        let _metadata = fs::metadata(io)
+    pub async fn material(&self) -> Result<IdentityTlsMaterial, LoadIdentityTlsMaterialError> {
+        let certs_path = self.path.join(Identity::CERT_FILE_NAME);
+        let certs = self
+            .certs()
             .await
-            .context(load_identity_error::NotFoundSnafu { io })?;
+            .context(load_identity_tls_material_error::LoadCertsSnafu { path: certs_path })?;
 
-        let ssl_dir = io.join(Self::SSL_DIR_NAME);
-        let certs_path = ssl_dir.join(Self::CERT_FILE_NAME);
-        let certs = Self::load_certs_file(certs_path.as_path(), name)
+        let key_path = self.path.join(Identity::KEY_FILE_NAME);
+        let key = self
+            .key()
             .await
-            .context(load_identity_error::LoadCertsSnafu { path: certs_path })?;
+            .context(load_identity_tls_material_error::LoadKeySnafu { path: key_path })?;
 
-        let key_path = ssl_dir.join(Self::KEY_FILE_NAME);
-        let key = Self::load_key_file(key_path.as_path(), &certs[0])
-            .await
-            .context(load_identity_error::LoadKeySnafu { path: key_path })?;
-
-        Ok((certs, key))
+        Ok(IdentityTlsMaterial {
+            name: self.name.clone(),
+            certs,
+            key,
+        })
     }
 }
 
@@ -269,42 +238,41 @@ impl GenmetaHome {
     pub async fn load_identity_exactly(
         &self,
         name: Name<'_>,
-    ) -> Result<Identity<'static>, LoadIdentityError> {
+    ) -> Result<Identity, LoadIdentityError> {
         let identity_io = self
             .locate_identity_exactly(name.borrow())
             .await
             .context(load_identity_error::NotFoundSnafu { io: self.as_path() })?;
-        let (certs, key) = Identity::load_from_io(identity_io.as_path(), name.as_full()).await?;
-        let name = name.to_owned();
-        Ok(Identity { name, certs, key })
+        Ok(Identity {
+            path: identity_io,
+            name: name.to_owned(),
+        })
     }
 
     pub async fn load_identity_wildcard(
         &self,
         name: Name<'_>,
-    ) -> Result<Identity<'static>, LoadIdentityError> {
+    ) -> Result<Identity, LoadIdentityError> {
         let wildcard_name = name.to_wildcard_name();
         let identity_io = self
             .locate_identity_wildcard(wildcard_name.borrow())
             .await
             .context(load_identity_error::NotFoundSnafu { io: self.as_path() })?;
-        let (certs, key) =
-            Identity::load_from_io(identity_io.as_path(), wildcard_name.as_full()).await?;
-        let name = wildcard_name.to_owned();
-        Ok(Identity { name, certs, key })
+        Ok(Identity {
+            path: identity_io,
+            name: wildcard_name.to_owned(),
+        })
     }
 
-    pub async fn load_identity(
-        &self,
-        name: Name<'_>,
-    ) -> Result<Identity<'static>, LoadIdentityError> {
+    pub async fn load_identity(&self, name: Name<'_>) -> Result<Identity, LoadIdentityError> {
         let (identity_io, name) = self
             .locate_identity(name)
             .await
             .context(load_identity_error::NotFoundSnafu { io: self.as_path() })?;
-        let (certs, key) = Identity::load_from_io(identity_io.as_path(), name.as_full()).await?;
-        let name = name.to_owned();
-        Ok(Identity { name, certs, key })
+        Ok(Identity {
+            path: identity_io,
+            name: name.to_owned(),
+        })
     }
 
     pub async fn save_identity(

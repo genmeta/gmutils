@@ -57,7 +57,7 @@ pub struct Config {
     pub username: String,
     pub password: Option<String>,
     pub uri: Uri,
-    pub id: Option<Identity<'static>>,
+    pub id: Option<Identity>,
     pub connect_timeout: Duration,
     pub local_forwards: Vec<LocalForward>,
     pub remote_forwards: Vec<RemoteForward>,

@@ -34,7 +34,7 @@ impl fmt::Display for DnsScheme {
 pub mod handy {
     use std::sync::Arc;
 
-    use genmeta_home::identity::Identity;
+    use genmeta_home::identity::IdentityTlsMaterial;
     use gmdns::resolvers::{H3Resolver, HttpResolver, MdnsResolver, MdnsResolvers};
     use h3x::gm_quic::{BuildClientError, H3Client, prelude::Resolve, qinterface::BindInterface};
 
@@ -80,16 +80,20 @@ pub mod handy {
 
     pub fn h3_resolver(
         resolver: Arc<dyn Resolve>,
-        id: Option<&Identity<'static>>,
+        id_material: Option<&IdentityTlsMaterial>,
     ) -> Result<H3Resolver, BuildClientError> {
         tracing::debug!("Initializing DHTTP/3 DNS resolver with server {H3_DNS_SERVER}");
-        let h3_client = match id {
-            Some(id) => {
+        let h3_client = match id_material {
+            Some(id_material) => {
                 tracing::debug!(
-                    "Using client identity {} for DHTTP/3 DNS resolver",
-                    id.name()
+                    "Using preloaded client identity {} for DHTTP/3 DNS resolver",
+                    id_material.name()
                 );
-                H3Client::builder().with_identity(id.name().as_full(), id.certs(), id.key())?
+                H3Client::builder().with_identity(
+                    id_material.name().as_full(),
+                    id_material.certs(),
+                    id_material.key(),
+                )?
             }
             None => {
                 tracing::warn!("No client identity provided, DHTTP/3 DNS resolver may not work");
@@ -130,7 +134,7 @@ pub mod handy {
     pub fn build_resolvers(
         dns_schemes: impl IntoIterator<Item = super::DnsScheme>,
         bind_interfaces: &[h3x::gm_quic::qinterface::BindInterface],
-        id: Option<&genmeta_home::identity::Identity<'static>>,
+        id_material: Option<&IdentityTlsMaterial>,
     ) -> Result<ResolversSetup, BuildClientError> {
         use super::DnsScheme;
 
@@ -149,7 +153,7 @@ pub mod handy {
                 }
                 DnsScheme::H3 => {
                     let snapshot = Arc::new(resolvers.clone());
-                    let resolver = h3_resolver(snapshot, id)?;
+                    let resolver = h3_resolver(snapshot, id_material)?;
                     resolvers = resolvers.with(Arc::new(resolver));
                 }
                 DnsScheme::Dht => {

@@ -10,7 +10,7 @@ use genmeta_home::{
     identity::{
         Name,
         default::{DefaultConfigFile, LoadDefaultConfigError, SaveDefaultConfigError},
-        fs::{ListIdentitiesError, LoadIdentityError, SaveIdentityError},
+        fs::{ListIdentitiesError, LoadCertError, LoadIdentityError, SaveIdentityError},
     },
 };
 use indicatif::ProgressStyle;
@@ -53,6 +53,8 @@ pub enum Error {
     ListIdentities { source: ListIdentitiesError },
     #[snafu(transparent)]
     LoadIdentity { source: LoadIdentityError },
+    #[snafu(transparent)]
+    LoadCert { source: LoadCertError },
 
     #[snafu(display("failed to generate private key"))]
     GenerateKey {
@@ -517,7 +519,8 @@ impl Default {
                 };
                 let identity = genmeta_home.load_identity(name.borrow()).await?;
                 println!("{}", identity.name());
-                let der = identity.certs()[0].as_ref();
+                let certs = identity.tls().certs().await?;
+                let der = certs[0].as_ref();
                 display_cert_info(der, "  ")?;
                 Ok(())
             }
@@ -570,7 +573,8 @@ impl List {
                 println!("{marker}{name}");
                 if self.verbose {
                     let identity = genmeta_home.load_identity(name.borrow()).await?;
-                    let der = identity.certs()[0].as_ref();
+                    let certs = identity.tls().certs().await?;
+                    let der = certs[0].as_ref();
                     display_cert_info(der, "    ")?;
                 }
             }
@@ -651,7 +655,8 @@ impl Info {
         let identity = genmeta_home.load_identity(name.borrow()).await?;
         println!("{}", identity.name());
 
-        let der = identity.certs()[0].as_ref();
+        let certs = identity.tls().certs().await?;
+        let der = certs[0].as_ref();
         display_cert_info(der, "  ")?;
 
         Ok(())

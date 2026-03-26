@@ -153,6 +153,11 @@ pub enum Error {
     #[snafu(display("failed to build DNS resolvers"))]
     BuildDnsResolvers { source: BuildClientError },
 
+    #[snafu(display("failed to load identity tls material"))]
+    LoadIdentityTlsMaterial {
+        source: genmeta_home::identity::fs::LoadIdentityTlsMaterialError,
+    },
+
     #[snafu(display("failed to build HTTP/3 client"))]
     BuildClient { source: BuildClientError },
 
@@ -420,7 +425,7 @@ async fn setup_client(
 ) -> Result<
     (
         H3Client,
-        Option<genmeta_home::identity::Identity<'static>>,
+        Option<genmeta_home::identity::Identity>,
         Duration,
         AbortOnDropHandle<()>,
     ),
@@ -467,16 +472,30 @@ async fn setup_client(
         Cow::Borrowed(&bind_setup.bind_uris)
     };
 
+    let id_material = match &id {
+        Some(id) => Some(
+            id.tls()
+                .material()
+                .await
+                .context(LoadIdentityTlsMaterialSnafu)?,
+        ),
+        None => None,
+    };
+
     let dns_setup = dns::handy::build_resolvers(
         options.dns.iter().copied(),
         &bind_setup.bind_interfaces,
-        id.as_ref(),
+        id_material.as_ref(),
     )
     .context(BuildDnsResolversSnafu)?;
 
     let monitor = bind_setup.monitor;
-    let client = match &id {
-        Some(id) => H3Client::builder().with_identity(id.name().as_full(), id.certs(), id.key()),
+    let client = match &id_material {
+        Some(id_material) => H3Client::builder().with_identity(
+            id_material.name().as_full(),
+            id_material.certs(),
+            id_material.key(),
+        ),
         None => H3Client::builder().without_identity(),
     }
     .context(BuildClientSnafu)?

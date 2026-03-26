@@ -163,17 +163,23 @@ fn interpret_entries<'a>(entries: &[Entry<'a>]) -> (Vec<HostBlock<'a>>, Vec<Pars
                 }
             }
             "user" => {
-                if current_config.user.is_none() && let Some(token) = single_token(d) {
+                if current_config.user.is_none()
+                    && let Some(token) = single_token(d)
+                {
                     current_config.user = Some(token.value.to_string());
                 }
             }
             "hostname" => {
-                if current_config.hostname.is_none() && let Some(token) = single_token(d) {
+                if current_config.hostname.is_none()
+                    && let Some(token) = single_token(d)
+                {
                     current_config.hostname = Some(token.value.to_string());
                 }
             }
             "port" => {
-                if current_config.port.is_none() && let Some(token) = single_token(d) {
+                if current_config.port.is_none()
+                    && let Some(token) = single_token(d)
+                {
                     match token.value.parse::<u16>() {
                         Ok(port) => current_config.port = Some(port),
                         Err(_) => warnings.push(ParseWarning {
@@ -184,7 +190,9 @@ fn interpret_entries<'a>(entries: &[Entry<'a>]) -> (Vec<HostBlock<'a>>, Vec<Pars
                 }
             }
             "id" => {
-                if current_config.id.is_none() && let Some(token) = single_token(d) {
+                if current_config.id.is_none()
+                    && let Some(token) = single_token(d)
+                {
                     current_config.id = Some(token.value.to_string());
                 }
             }

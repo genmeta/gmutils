@@ -1,4 +1,9 @@
-use std::{borrow::Cow, fmt::Display, path::PathBuf, str::FromStr};
+use std::{
+    borrow::Cow,
+    fmt::Display,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use snafu::Snafu;
@@ -235,23 +240,64 @@ impl<'n> Name<'n> {
     }
 }
 
-#[derive(Debug)]
-pub struct Identity<'i> {
-    pub(crate) name: Name<'i>,
-    pub(crate) certs: Vec<CertificateDer<'i>>,
-    pub(crate) key: PrivateKeyDer<'i>,
+#[derive(Debug, Clone)]
+pub struct Identity {
+    pub(crate) path: PathBuf,
+    pub(crate) name: Name<'static>,
 }
 
-impl<'i> Identity<'i> {
-    pub fn name(&self) -> &Name<'i> {
+#[derive(Debug, Clone)]
+pub struct IdentityTls {
+    pub(crate) path: PathBuf,
+    pub(crate) name: Name<'static>,
+}
+
+#[derive(Debug)]
+pub struct IdentityTlsMaterial {
+    pub(crate) name: Name<'static>,
+    pub(crate) certs: Vec<CertificateDer<'static>>,
+    pub(crate) key: PrivateKeyDer<'static>,
+}
+
+impl Identity {
+    pub const SSL_DIR_NAME: &'static str = "ssl";
+
+    pub fn name(&self) -> &Name<'static> {
         &self.name
     }
 
-    pub fn certs(&self) -> &[CertificateDer<'i>] {
+    pub fn path(&self) -> &Path {
+        self.path.as_path()
+    }
+
+    pub fn tls(&self) -> IdentityTls {
+        IdentityTls {
+            path: self.path.join(Self::SSL_DIR_NAME),
+            name: self.name.clone(),
+        }
+    }
+}
+
+impl IdentityTls {
+    pub fn path(&self) -> &Path {
+        self.path.as_path()
+    }
+
+    pub fn name(&self) -> &Name<'static> {
+        &self.name
+    }
+}
+
+impl IdentityTlsMaterial {
+    pub fn name(&self) -> &Name<'static> {
+        &self.name
+    }
+
+    pub fn certs(&self) -> &[CertificateDer<'static>] {
         &self.certs
     }
 
-    pub fn key(&self) -> &PrivateKeyDer<'i> {
+    pub fn key(&self) -> &PrivateKeyDer<'static> {
         &self.key
     }
 }

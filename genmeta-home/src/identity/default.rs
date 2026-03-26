@@ -174,7 +174,7 @@ impl DefaultConfigFile {
     pub async fn load_default_identity(
         &self,
         genmeta_home: &GenmetaHome,
-    ) -> Option<Result<Identity<'static>, LoadIdentityError>> {
+    ) -> Option<Result<Identity, LoadIdentityError>> {
         let name = self.config.name.as_ref()?;
 
         Some(
@@ -219,9 +219,7 @@ impl GenmetaHome {
         DefaultConfigFile::load(self.identity_default_config_path()).await
     }
 
-    pub async fn load_default_identity(
-        &self,
-    ) -> Result<Identity<'static>, LoadDefaultIdentityError> {
+    pub async fn load_default_identity(&self) -> Result<Identity, LoadDefaultIdentityError> {
         Ok(self
             .load_identity_default_config()
             .await?
