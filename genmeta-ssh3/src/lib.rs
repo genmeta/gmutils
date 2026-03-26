@@ -214,8 +214,10 @@ async fn run_session(
     pseudo: bool,
 ) -> Result<i32, SessionError> {
     use session_error::*;
-    use ssh3::conversation::channel::SshChannel;
-    use ssh3::session::{PtyRequest, client::ClientSession};
+    use ssh3::{
+        conversation::channel::SshChannel,
+        session::{PtyRequest, client::ClientSession},
+    };
 
     // The version negotiation in SSH3 happens at the HTTP header level
     // during the CONNECT upgrade, not on the byte stream. The server

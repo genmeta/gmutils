@@ -9,8 +9,10 @@ use genmeta_home::identity::{Identity, InvalidName, Name};
 use http::{Uri, uri::Authority};
 use snafu::{ResultExt, Snafu};
 
-use crate::forward::{DynamicForward, LocalForward, RemoteForward};
-use crate::ssh_config;
+use crate::{
+    forward::{DynamicForward, LocalForward, RemoteForward},
+    ssh_config,
+};
 
 #[derive(Debug, Snafu)]
 #[snafu(module(config_error))]
@@ -71,11 +73,12 @@ impl super::Options {
             .await
             .context(config_error::ReadConfigSnafu {})?;
 
-        for (path, error) in read_config_errors {
-            tracing::error!(
-                "ssh config {}: {}",
-                path.display(),
-                snafu::Report::from_error(error)
+        for warning in &read_config_errors {
+            tracing::warn!(
+                "ssh config {}:{}: {}",
+                warning.location.path.display(),
+                warning.location.line,
+                warning.message,
             );
         }
 
