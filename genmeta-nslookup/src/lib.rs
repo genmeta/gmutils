@@ -25,8 +25,8 @@ pub struct Options {
     #[arg(index = 1)]
     name: Name<'static>,
 
-    /// DNS resolution scheme (e.g. system, mdns, http)
-    #[arg(index = 2, default_value = "mdns,http", value_delimiter = ',')]
+    /// DNS resolution scheme (e.g. system, mdns, h3)
+    #[arg(index = 2, default_value = "mdns,h3", value_delimiter = ',')]
     schemes: Vec<DnsScheme>,
 
     /// Client identity

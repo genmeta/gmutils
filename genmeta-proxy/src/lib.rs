@@ -26,7 +26,7 @@ pub struct Options {
     pub anonymous: bool,
 
     /// DNS resolution schemes
-    #[arg(long, value_name = "scheme", default_values = ["mdns", "http"], value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
+    #[arg(long, value_name = "scheme", default_values = ["mdns", "h3"], value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
     pub dns: Vec<dns::DnsScheme>,
 
     /// Bind patterns for DHTTP/3 connections
