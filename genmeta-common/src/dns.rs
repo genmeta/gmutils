@@ -3,7 +3,7 @@ use std::fmt;
 use clap::ValueEnum;
 
 pub const HTTP_DNS_SERVER: &str = "https://dns.genmeta.net/";
-pub const H3_DNS_SERVER: &str = "https://localhost:4433";
+pub const H3_DNS_SERVER: &str = "https://dns.genmeta.net:4433";
 pub const MDNS_SERVICE: &str = "_genmeta.local";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
