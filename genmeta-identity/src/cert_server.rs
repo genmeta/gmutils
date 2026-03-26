@@ -118,6 +118,39 @@ pub struct ResignResponse {
     pub cert_pem: Vec<u8>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UserResponse {
+    pub id: i64,
+    pub name: String,
+    pub email: String,
+    pub limit_count: i64,
+    pub used: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OriginalCertInfoResponse {
+    pub cert: String,
+    pub domain: String,
+    pub expire_time: i64,
+}
+
+#[derive(Debug)]
+pub struct CertInfoResponse {
+    pub cert_pem: Vec<u8>,
+    pub domain: String,
+    pub expire_time: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OriginalRenewResponse {
+    pub cert: String,
+}
+
+#[derive(Debug)]
+pub struct RenewResponse {
+    pub cert_pem: Vec<u8>,
+}
+
 async fn parse_response<T: DeserializeOwned>(response: reqwest::Response) -> Result<T, Error> {
     let response = match response.status() {
         status if status.is_success() => response,
@@ -203,6 +236,63 @@ impl CertServer {
             .decode(&cert)
             .context(Base64Snafu { data: cert })?;
         Ok(ResignResponse { cert_pem })
+    }
+
+    pub async fn renew_cert(
+        &self,
+        access_token: &str,
+        domain: &str,
+        csr_pem: &str,
+    ) -> Result<RenewResponse, Error> {
+        let response = self
+            .http_client
+            .post(format!("{}/api/v1/cert/renew", self.base_url))
+            .header(header::AUTHORIZATION, access_token)
+            .json(&json!({
+                "domain": domain,
+                "csr": base64::engine::general_purpose::STANDARD.encode(csr_pem),
+            }))
+            .send()
+            .await?;
+        let OriginalRenewResponse { cert } =
+            parse_response::<OriginalRenewResponse>(response).await?;
+
+        let cert_pem = base64::engine::general_purpose::STANDARD
+            .decode(&cert)
+            .context(Base64Snafu { data: cert })?;
+        Ok(RenewResponse { cert_pem })
+    }
+
+    pub async fn get_user(&self, access_token: &str) -> Result<UserResponse, Error> {
+        let response = self
+            .http_client
+            .get(format!("{}/api/v1/user", self.base_url))
+            .header(header::AUTHORIZATION, access_token)
+            .send()
+            .await?;
+        parse_response::<UserResponse>(response).await
+    }
+
+    pub async fn get_cert_by_domain(&self, domain: &str) -> Result<CertInfoResponse, Error> {
+        let response = self
+            .http_client
+            .get(format!("{}/api/v1/cert/{domain}", self.base_url))
+            .send()
+            .await?;
+        let OriginalCertInfoResponse {
+            cert,
+            domain,
+            expire_time,
+        } = parse_response::<OriginalCertInfoResponse>(response).await?;
+
+        let cert_pem = base64::engine::general_purpose::STANDARD
+            .decode(&cert)
+            .context(Base64Snafu { data: cert })?;
+        Ok(CertInfoResponse {
+            cert_pem,
+            domain,
+            expire_time,
+        })
     }
 
     pub async fn check_name(&self, username: &str) -> Result<CheckUsernameResponse, Error> {
