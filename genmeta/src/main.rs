@@ -2,8 +2,6 @@ use clap::Parser;
 use snafu::Whatever;
 
 #[derive(Parser, Debug, Clone)]
-// 这个属性也会干掉子crate的help
-#[command(disable_help_flag = true, disable_version_flag = true)]
 enum Options {
     Curl(genmeta_curl::Options),
     Discover(genmeta_discover::Options),
