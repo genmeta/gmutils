@@ -79,6 +79,9 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 ] }
 tracing-indicatif = { version = "0.3" }
 
+# builder
+bon = "3"
+
 # utils
 base64 = "0.22"
 bytes = "1"
@@ -91,7 +94,12 @@ globset = "0.4"
 peg = "0.8"
 snafu = "0.9"
 tokio-util = { version = "0.7" }
-async-compression = { version = "0.4", features = ["tokio", "gzip", "deflate", "zstd"] }
+async-compression = { version = "0.4", features = [
+    "tokio",
+    "gzip",
+    "deflate",
+    "zstd",
+] }
 trust-dns-resolver = "0.23.2"
 
 # workspace
@@ -109,7 +117,9 @@ genmeta-proxy = { path = "genmeta-proxy" }
 # ssh
 # ssh-config = { git = "ssh://git@github.com/genmeta/genmeta-ssh3.git" }
 # genmeta-ssh3-client = { git = "ssh://git@github.com/genmeta/genmeta-ssh3.git" }
-genmeta-ssh3-core = { package = "genmeta-ssh", path = "../genmeta-ssh3", features = ["config"] }
+genmeta-ssh3-core = { package = "genmeta-ssh", path = "../genmeta-ssh3", features = [
+    "config",
+] }
 
 # debug
 # [patch.'ssh://git@github.com/genmeta/gm-quic-traversal.git']

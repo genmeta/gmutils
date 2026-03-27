@@ -1,11 +1,9 @@
 use std::{
-    borrow::Cow,
     convert::Infallible,
     io::IsTerminal,
     mem,
     path::PathBuf,
     pin::pin,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -14,14 +12,12 @@ use clap::Parser;
 use genmeta_common::{
     bind,
     dns::{self},
+    h3_client::{self, SetupH3ClientError},
     id,
 };
 use genmeta_home::identity::Name;
 use h3x::{
-    gm_quic::{
-        BuildClientError, H3Client,
-        prelude::{ConnectServerError, handy::NoopLogger},
-    },
+    gm_quic::{H3Client, prelude::ConnectServerError},
     hyper::SendMessageError,
     message::stream::{InitialMessageStreamError, MessageStreamError, WriteStream},
     pool::ConnectError,
@@ -146,20 +142,7 @@ pub enum Error {
     },
 
     #[snafu(transparent)]
-    BindConflict {
-        source: Box<bind::BindConflictError>,
-    },
-
-    #[snafu(display("failed to build DNS resolvers"))]
-    BuildDnsResolvers { source: BuildClientError },
-
-    #[snafu(display("failed to load identity ssl material"))]
-    LoadIdentitySsl {
-        source: genmeta_home::identity::fs::LoadIdentitySslError,
-    },
-
-    #[snafu(display("failed to build HTTP/3 client"))]
-    BuildClient { source: BuildClientError },
+    SetupH3Client { source: SetupH3ClientError },
 
     #[snafu(display("failed to connect to server"))]
     Connect {
@@ -447,88 +430,32 @@ async fn setup_client(
     };
 
     let binds = bind::Binds::new(mem::take(&mut options.binds));
-    let bind_setup =
-        bind::setup_bind_interfaces_with(&binds, dns::handy::ensure_default_mdns_prop).await?;
 
     // Apply -4/-6 address family filter to bind URIs.
     // Both flags set (or neither) means no filtering.
-    let bind_uris: Cow<'_, [_]> = if options.ipv4 && !options.ipv6 {
-        bind_setup
-            .bind_uris
-            .iter()
-            .filter(|uri| uri.as_inet_bind_uri().is_some_and(|a| a.is_ipv4()))
-            .cloned()
-            .collect::<Vec<_>>()
-            .into()
-    } else if options.ipv6 && !options.ipv4 {
-        bind_setup
-            .bind_uris
-            .iter()
-            .filter(|uri| uri.as_inet_bind_uri().is_some_and(|a| a.is_ipv6()))
-            .cloned()
-            .collect::<Vec<_>>()
-            .into()
-    } else {
-        Cow::Borrowed(&bind_setup.bind_uris)
-    };
+    let bind_uri_filter: Option<fn(&h3x::gm_quic::qinterface::bind_uri::BindUri) -> bool> =
+        if options.ipv4 && !options.ipv6 {
+            Some(|uri| uri.as_inet_bind_uri().is_some_and(|a| a.is_ipv4()))
+        } else if options.ipv6 && !options.ipv4 {
+            Some(|uri| uri.as_inet_bind_uri().is_some_and(|a| a.is_ipv6()))
+        } else {
+            None
+        };
 
-    let id_material = match &id {
-        Some(id) => Some(id.ssl().await.context(LoadIdentitySslSnafu)?),
-        None => None,
-    };
-
-    let dns_setup = dns::handy::build_resolvers(
-        options.dns.iter().copied(),
-        &bind_setup.bind_interfaces,
-        id_material.as_ref(),
-    )
-    .context(BuildDnsResolversSnafu)?;
-
-    let monitor = bind_setup.monitor;
-    let client = match &id_material {
-        Some(id_material) => H3Client::builder().with_identity(
-            id_material.name().as_full(),
-            id_material.certs(),
-            id_material.key(),
-        ),
-        None => H3Client::builder().without_identity(),
-    }
-    .context(BuildClientSnafu)?
-    .with_iface_manager(bind_setup.iface_manager)
-    .with_resolver(Arc::new(dns_setup.resolvers))
-    .bind(&*bind_uris)
-    .await
-    .with_qlog(Arc::new(NoopLogger))
-    .build();
-
-    let quic = client.quic_client().clone();
-    let watcher = bind::watch_bind_interfaces(
-        &binds,
-        monitor,
-        bind_uris.into_owned(),
-        {
-            let quic = quic.clone();
-            move |uri| {
-                let quic = quic.clone();
-                Box::pin(async move {
-                    quic.bind(uri).await;
-                })
-            }
-        },
-        {
-            let quic = quic.clone();
-            move |uri| {
-                quic.unbind(&uri);
-            }
-        },
-    );
+    let h3_setup = h3_client::setup_h3_client()
+        .binds(&binds)
+        .dns_schemes(&options.dns)
+        .maybe_identity(id.as_ref())
+        .maybe_bind_uri_filter(bind_uri_filter)
+        .call()
+        .await?;
 
     let connect_timeout = options
         .connect_timeout
         .map(Duration::from_secs)
         .unwrap_or(Duration::MAX);
 
-    Ok((client, id, connect_timeout, watcher))
+    Ok((h3_setup.client, id, connect_timeout, h3_setup.watcher))
 }
 
 /// Build the HTTP request builder with method, headers, and user-agent.

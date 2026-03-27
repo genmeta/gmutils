@@ -8,7 +8,7 @@ edition = "2024"
 async-compression = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true }
-genmeta-common = { workspace = true, features = ["bind", "dns", "id"] }
+genmeta-common = { workspace = true, features = ["h3-client", "id"] }
 genmeta-home = { workspace = true }
 h3x = { workspace = true }
 http = { workspace = true }

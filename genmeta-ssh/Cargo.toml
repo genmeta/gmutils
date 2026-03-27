@@ -8,7 +8,7 @@ edition = "2024"
 clap = { workspace = true }
 crossterm = { workspace = true }
 dirs = { workspace = true }
-genmeta-common = { workspace = true, features = ["bind", "dns", "id"] }
+genmeta-common = { workspace = true, features = ["h3-client", "id"] }
 genmeta-home = { workspace = true }
 genmeta-ssh3-core = { workspace = true, features = ["cli", "config"] }
 http = { workspace = true }

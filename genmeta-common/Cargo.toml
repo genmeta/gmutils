@@ -19,6 +19,9 @@ gmdns = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 genmeta-home = { workspace = true, optional = true }
 
+# feature h3-client
+bon = { workspace = true, optional = true }
+
 # feature bind 
 derive_more = { workspace = true, optional = true, features = [
     "deref",
@@ -53,3 +56,4 @@ bind = [
 ]
 id = ["dep:snafu", "dep:clap", "dep:genmeta-home", "dep:http", "dep:tracing"]
 dns = ["bind", "dep:clap", "dep:gmdns", "dep:genmeta-home", "dep:tracing"]
+h3-client = ["dns", "dep:bon"]

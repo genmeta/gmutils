@@ -1,17 +1,13 @@
 use std::{sync::Arc, time::Duration};
 
-use genmeta_common::{
-    bind::{self, BindConflictError},
-    dns,
-};
+use genmeta_common::h3_client::{self, SetupH3ClientError};
 use h3x::{
     connection::Connection,
-    gm_quic::{self, BuildClientError, H3Client, prelude::ConnectServerError},
+    gm_quic::{self, prelude::ConnectServerError},
     message::stream::{InitialMessageStreamError, MessageStreamError, ReadStream, WriteStream},
     pool::ConnectError,
 };
 use http::Uri;
-use qevent::telemetry::handy::NoopLogger;
 use snafu::prelude::*;
 use tokio_util::task::AbortOnDropHandle;
 
@@ -21,15 +17,7 @@ use crate::config::Config;
 #[snafu(module(connect_error))]
 pub enum Error {
     #[snafu(transparent)]
-    BindConflict { source: Box<BindConflictError> },
-    #[snafu(display("failed to build DNS resolvers"))]
-    BuildDnsResolvers { source: BuildClientError },
-    #[snafu(display("failed to load identity ssl material"))]
-    LoadIdentitySsl {
-        source: genmeta_home::identity::fs::LoadIdentitySslError,
-    },
-    #[snafu(display("failed to build HTTP/3 client"))]
-    BuildClient { source: BuildClientError },
+    SetupH3Client { source: SetupH3ClientError },
     #[snafu(display("failed to connect to server"))]
     Connect {
         source: ConnectError<ConnectServerError>,
@@ -78,65 +66,17 @@ pub async fn connect(
     ),
     Error,
 > {
-    let bind_setup =
-        bind::setup_bind_interfaces_with(&config.binds, dns::handy::ensure_default_mdns_prop)
-            .await?;
+    let dns_schemes: Vec<_> = config.dns.iter().copied().collect();
 
-    let monitor = bind_setup.monitor;
+    let h3_setup = h3_client::setup_h3_client()
+        .binds(&config.binds)
+        .dns_schemes(&dns_schemes)
+        .maybe_identity(config.id.as_ref())
+        .call()
+        .await?;
 
-    let id_material = match &config.id {
-        Some(id) => Some(
-            id.ssl()
-                .await
-                .context(connect_error::LoadIdentitySslSnafu)?,
-        ),
-        None => None,
-    };
-
-    let dns_setup = dns::handy::build_resolvers(
-        config.dns.iter().copied(),
-        &bind_setup.bind_interfaces,
-        id_material.as_ref(),
-    )
-    .context(connect_error::BuildDnsResolversSnafu)?;
-
-    let client = match &id_material {
-        Some(id_material) => H3Client::builder().with_identity(
-            id_material.name().as_full(),
-            id_material.certs(),
-            id_material.key(),
-        ),
-        None => H3Client::builder().without_identity(),
-    }
-    .context(connect_error::BuildClientSnafu)?
-    .with_iface_manager(bind_setup.iface_manager)
-    .with_resolver(Arc::new(dns_setup.resolvers))
-    .bind(&bind_setup.bind_uris)
-    .await
-    .with_qlog(Arc::new(NoopLogger))
-    .build();
-
-    let quic = client.quic_client().clone();
-    let watcher = bind::watch_bind_interfaces(
-        &config.binds,
-        monitor,
-        bind_setup.bind_uris.clone(),
-        {
-            let quic = quic.clone();
-            move |uri| {
-                let quic = quic.clone();
-                Box::pin(async move {
-                    quic.bind(uri).await;
-                })
-            }
-        },
-        {
-            let quic = quic.clone();
-            move |uri| {
-                quic.unbind(&uri);
-            }
-        },
-    );
+    let client = h3_setup.client;
+    let watcher = h3_setup.watcher;
 
     let server = config.uri.authority().ok_or_else(|| {
         connect_error::MissingAuthoritySnafu {
