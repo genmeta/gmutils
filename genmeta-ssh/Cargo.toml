@@ -1,6 +1,5 @@
 [package]
-# TODO：rename to genmeta-ssh
-name = "genmeta-ssh3"
+name = "genmeta-ssh"
 description = "ssh3 client"
 version = "0.5.0"
 edition = "2024"
@@ -11,7 +10,7 @@ crossterm = { workspace = true }
 dirs = { workspace = true }
 genmeta-common = { workspace = true, features = ["bind", "dns", "id"] }
 genmeta-home = { workspace = true }
-genmeta-ssh = { workspace = true, features = ["cli", "config"] }
+genmeta-ssh3-core = { workspace = true, features = ["cli", "config"] }
 http = { workspace = true }
 h3x = { workspace = true }
 snafu = { workspace = true }

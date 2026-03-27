@@ -14,7 +14,7 @@ genmeta-discover = { workspace = true }
 genmeta-doctor = { workspace = true }
 genmeta-identity = { workspace = true }
 genmeta-nslookup = { workspace = true }
-genmeta-ssh3 = { workspace = true }
+genmeta-ssh = { workspace = true }
 genmeta-proxy = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
@@ -41,13 +41,13 @@ build.intel = true
 
 copy-assets = [
   "cp $project/target/$target/release/genmeta $formula/",
-  "cp $project/genmeta-ssh3.sh $formula/",
+  "cp $project/genmeta-ssh.sh $formula/",
 ]
 
 content = """
   def install
     bin.install "genmeta"
-    bin.install "genmeta-ssh3.sh"
+    bin.install "genmeta-ssh.sh"
   end
 
   test do
@@ -65,10 +65,10 @@ build.64bit = true
 # build.arm64 = true
 
 
-bin = ["genmeta.exe", "genmeta-ssh3.bat"]
+bin = ["genmeta.exe", "genmeta-ssh.bat"]
 copy-assets = [
   "cp $project/target/$target/release/genmeta.exe $package/",
-  "cp $project/genmeta-ssh3.bat $package/",
+  "cp $project/genmeta-ssh.bat $package/",
 ]
 
 # Package Metadata (Debian)
@@ -86,7 +86,7 @@ assets = [
     "755",
   ],
   [
-    "../genmeta-ssh3.sh",
+    "../genmeta-ssh.sh",
     "usr/bin/",
     "755",
   ],

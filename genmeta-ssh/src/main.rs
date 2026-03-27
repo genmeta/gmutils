@@ -1,5 +1,5 @@
 use clap::Parser;
-use genmeta_ssh3::{Error, Options, run};
+use genmeta_ssh::{Error, Options, run};
 
 #[tokio::main]
 #[snafu::report]

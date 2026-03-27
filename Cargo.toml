@@ -5,7 +5,7 @@ members = [
     "genmeta",
     "genmeta-common",
     "genmeta-curl",
-    "genmeta-ssh3",
+    "genmeta-ssh",
     "genmeta-nslookup",
     "genmeta-discover",
     "genmeta-nat",
@@ -103,13 +103,13 @@ genmeta-doctor = { path = "genmeta-doctor" }
 genmeta-identity = { path = "genmeta-identity" }
 genmeta-nat = { path = "genmeta-nat" }
 genmeta-nslookup = { path = "genmeta-nslookup" }
-genmeta-ssh3 = { path = "genmeta-ssh3" }
+genmeta-ssh = { path = "genmeta-ssh" }
 genmeta-proxy = { path = "genmeta-proxy" }
 
 # ssh
 # ssh-config = { git = "ssh://git@github.com/genmeta/genmeta-ssh3.git" }
 # genmeta-ssh3-client = { git = "ssh://git@github.com/genmeta/genmeta-ssh3.git" }
-genmeta-ssh = { path = "../genmeta-ssh3", features = ["config"] }
+genmeta-ssh3-core = { package = "genmeta-ssh", path = "../genmeta-ssh3", features = ["config"] }
 
 # debug
 # [patch.'ssh://git@github.com/genmeta/gm-quic-traversal.git']

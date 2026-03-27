@@ -1185,7 +1185,7 @@ dependencies = [
  "genmeta-identity",
  "genmeta-nslookup",
  "genmeta-proxy",
- "genmeta-ssh3",
+ "genmeta-ssh 0.5.0",
  "snafu 0.9.0",
  "tokio",
  "tracing",
@@ -1371,7 +1371,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "genmeta-ssh3"
+name = "genmeta-ssh"
 version = "0.5.0"
 dependencies = [
  "clap",
@@ -1379,7 +1379,7 @@ dependencies = [
  "dirs",
  "genmeta-common",
  "genmeta-home",
- "genmeta-ssh",
+ "genmeta-ssh 0.1.0",
  "h3x",
  "http",
  "qevent",

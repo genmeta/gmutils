@@ -17,7 +17,7 @@ enum Options {
     },
     Nslookup(genmeta_nslookup::Options),
     Proxy(genmeta_proxy::Options),
-    Ssh3(genmeta_ssh3::Options),
+    Ssh(genmeta_ssh::Options),
     Version {},
 }
 
@@ -36,7 +36,7 @@ enum Error {
     #[snafu(transparent)]
     Proxy { source: genmeta_proxy::Error },
     #[snafu(transparent)]
-    Ssh3 { source: genmeta_ssh3::Error },
+    Ssh { source: genmeta_ssh::Error },
     #[snafu(transparent)]
     Whatever { source: Whatever },
 }
@@ -57,7 +57,7 @@ async fn run(options: Options) -> Result<(), Error> {
         Options::Identity { options } => genmeta_identity::run(options).await?,
         Options::Nslookup(options) => genmeta_nslookup::run(options).await?,
         Options::Proxy(options) => genmeta_proxy::run(options).await?,
-        Options::Ssh3(options) => genmeta_ssh3::run(options).await?,
+        Options::Ssh(options) => genmeta_ssh::run(options).await?,
         Options::Version {} => println!("{}", env!("CARGO_PKG_VERSION")),
     };
     Ok(())

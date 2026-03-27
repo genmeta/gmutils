@@ -9,7 +9,7 @@ use clap::Parser;
 use forward::*;
 use genmeta_common::{bind, dns};
 use genmeta_home::identity::Name;
-use genmeta_ssh as ssh3;
+use genmeta_ssh3_core as ssh3;
 use h3x::{
     codec::{SinkWriter, StreamReader},
     error::Code,
