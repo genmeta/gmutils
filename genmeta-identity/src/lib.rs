@@ -1,3 +1,5 @@
+// use h3
+
 #[cfg(feature = "cli")]
 pub mod cli;
 #[cfg(feature = "cli")]

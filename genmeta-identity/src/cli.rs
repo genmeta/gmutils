@@ -519,7 +519,7 @@ impl Default {
                 };
                 let identity = genmeta_home.load_identity(name.borrow()).await?;
                 println!("{}", identity.name());
-                let certs = identity.tls().certs().await?;
+                let certs = identity.certs().await?;
                 let der = certs[0].as_ref();
                 display_cert_info(der, "  ")?;
                 Ok(())
@@ -573,7 +573,7 @@ impl List {
                 println!("{marker}{name}");
                 if self.verbose {
                     let identity = genmeta_home.load_identity(name.borrow()).await?;
-                    let certs = identity.tls().certs().await?;
+                    let certs = identity.certs().await?;
                     let der = certs[0].as_ref();
                     display_cert_info(der, "    ")?;
                 }
@@ -589,10 +589,12 @@ pub struct Info {
     /// Identity name (defaults to current default)
     pub name: Option<Name<'static>>,
 
+    // 去掉
     /// Query data from cert server instead of local identity storage
     #[arg(long)]
     pub remote: bool,
 
+    // 去掉
     /// Email for remote account query (`info --remote`)
     #[arg(short, long)]
     pub email: Option<String>,
@@ -655,7 +657,7 @@ impl Info {
         let identity = genmeta_home.load_identity(name.borrow()).await?;
         println!("{}", identity.name());
 
-        let certs = identity.tls().certs().await?;
+        let certs = identity.certs().await?;
         let der = certs[0].as_ref();
         display_cert_info(der, "  ")?;
 

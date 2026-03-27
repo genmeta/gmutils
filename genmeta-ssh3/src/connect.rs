@@ -24,9 +24,9 @@ pub enum Error {
     BindConflict { source: Box<BindConflictError> },
     #[snafu(display("failed to build DNS resolvers"))]
     BuildDnsResolvers { source: BuildClientError },
-    #[snafu(display("failed to load identity tls material"))]
-    LoadIdentityTlsMaterial {
-        source: genmeta_home::identity::fs::LoadIdentityTlsMaterialError,
+    #[snafu(display("failed to load identity ssl material"))]
+    LoadIdentitySsl {
+        source: genmeta_home::identity::fs::LoadIdentitySslError,
     },
     #[snafu(display("failed to build HTTP/3 client"))]
     BuildClient { source: BuildClientError },
@@ -86,10 +86,9 @@ pub async fn connect(
 
     let id_material = match &config.id {
         Some(id) => Some(
-            id.tls()
-                .material()
+            id.ssl()
                 .await
-                .context(connect_error::LoadIdentityTlsMaterialSnafu)?,
+                .context(connect_error::LoadIdentitySslSnafu)?,
         ),
         None => None,
     };

@@ -240,26 +240,22 @@ impl<'n> Name<'n> {
     }
 }
 
+/// An identity home directory (e.g. `.genmeta/reimu.pilot/`).
 #[derive(Debug, Clone)]
-pub struct Identity {
+pub struct IdentityHome {
     pub(crate) path: PathBuf,
     pub(crate) name: Name<'static>,
 }
 
-#[derive(Debug, Clone)]
-pub struct IdentityTls {
-    pub(crate) path: PathBuf,
-    pub(crate) name: Name<'static>,
-}
-
+/// Loaded TLS material (certificates + private key) for an identity.
 #[derive(Debug)]
-pub struct IdentityTlsMaterial {
+pub struct Identity {
     pub(crate) name: Name<'static>,
     pub(crate) certs: Vec<CertificateDer<'static>>,
     pub(crate) key: PrivateKeyDer<'static>,
 }
 
-impl Identity {
+impl IdentityHome {
     pub const SSL_DIR_NAME: &'static str = "ssl";
 
     pub fn name(&self) -> &Name<'static> {
@@ -270,25 +266,12 @@ impl Identity {
         self.path.as_path()
     }
 
-    pub fn tls(&self) -> IdentityTls {
-        IdentityTls {
-            path: self.path.join(Self::SSL_DIR_NAME),
-            name: self.name.clone(),
-        }
+    pub fn ssl_path(&self) -> PathBuf {
+        self.path.join(Self::SSL_DIR_NAME)
     }
 }
 
-impl IdentityTls {
-    pub fn path(&self) -> &Path {
-        self.path.as_path()
-    }
-
-    pub fn name(&self) -> &Name<'static> {
-        &self.name
-    }
-}
-
-impl IdentityTlsMaterial {
+impl Identity {
     pub fn name(&self) -> &Name<'static> {
         &self.name
     }

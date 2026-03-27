@@ -11,7 +11,7 @@ use toml::Spanned;
 
 use crate::{
     GenmetaHome,
-    identity::{self, Identity, Name},
+    identity::{self, IdentityHome, Name},
 };
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
@@ -174,7 +174,7 @@ impl DefaultConfigFile {
     pub async fn load_default_identity(
         &self,
         genmeta_home: &GenmetaHome,
-    ) -> Option<Result<Identity, LoadIdentityError>> {
+    ) -> Option<Result<IdentityHome, LoadIdentityError>> {
         let name = self.config.name.as_ref()?;
 
         Some(
@@ -219,7 +219,7 @@ impl GenmetaHome {
         DefaultConfigFile::load(self.identity_default_config_path()).await
     }
 
-    pub async fn load_default_identity(&self) -> Result<Identity, LoadDefaultIdentityError> {
+    pub async fn load_default_identity(&self) -> Result<IdentityHome, LoadDefaultIdentityError> {
         Ok(self
             .load_identity_default_config()
             .await?

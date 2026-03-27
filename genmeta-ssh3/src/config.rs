@@ -5,7 +5,7 @@ use genmeta_common::{
     bind::{self, Binds},
     dns, id,
 };
-use genmeta_home::identity::{Identity, InvalidName, Name};
+use genmeta_home::identity::{IdentityHome, InvalidName, Name};
 use http::{Uri, uri::Authority};
 use snafu::{ResultExt, Snafu};
 
@@ -57,7 +57,7 @@ pub struct Config {
     pub username: String,
     pub password: Option<String>,
     pub uri: Uri,
-    pub id: Option<Identity>,
+    pub id: Option<IdentityHome>,
     pub connect_timeout: Duration,
     pub local_forwards: Vec<LocalForward>,
     pub remote_forwards: Vec<RemoteForward>,

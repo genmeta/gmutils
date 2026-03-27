@@ -2,7 +2,7 @@ use std::fmt;
 
 use genmeta_home::{
     GenmetaHome,
-    identity::{Identity, InvalidName, Name},
+    identity::{IdentityHome, InvalidName, Name},
 };
 use http::{Uri, uri::InvalidUriParts};
 use snafu::{Report, ResultExt, Snafu, whatever};
@@ -50,7 +50,7 @@ pub enum LoadHomeAndIdentityError {
 pub async fn load_identity<'n>(
     genmeta_home: &GenmetaHome,
     load_list: impl IntoIterator<Item = (&dyn fmt::Display, Name<'_>)>,
-) -> Result<Option<Identity>, Error> {
+) -> Result<Option<IdentityHome>, Error> {
     if let Some((source, name)) = load_list.into_iter().next() {
         tracing::debug!("Trying to load identity `{name}` specified by `{source}`");
         match genmeta_home.load_identity(name.borrow()).await {
@@ -95,7 +95,7 @@ pub async fn load_identity<'n>(
 pub async fn load_home_and_identity<'n>(
     genmeta_home_required: bool,
     load_list: impl IntoIterator<Item = (&dyn fmt::Display, Name<'n>)>,
-) -> Result<Option<Identity>, LoadHomeAndIdentityError> {
+) -> Result<Option<IdentityHome>, LoadHomeAndIdentityError> {
     let genmeta_home = match GenmetaHome::load_from_environment() {
         Ok(home) => home,
         Err(error) if !genmeta_home_required => {

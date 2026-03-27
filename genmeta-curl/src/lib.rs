@@ -153,9 +153,9 @@ pub enum Error {
     #[snafu(display("failed to build DNS resolvers"))]
     BuildDnsResolvers { source: BuildClientError },
 
-    #[snafu(display("failed to load identity tls material"))]
-    LoadIdentityTlsMaterial {
-        source: genmeta_home::identity::fs::LoadIdentityTlsMaterialError,
+    #[snafu(display("failed to load identity ssl material"))]
+    LoadIdentitySsl {
+        source: genmeta_home::identity::fs::LoadIdentitySslError,
     },
 
     #[snafu(display("failed to build HTTP/3 client"))]
@@ -425,7 +425,7 @@ async fn setup_client(
 ) -> Result<
     (
         H3Client,
-        Option<genmeta_home::identity::Identity>,
+        Option<genmeta_home::identity::IdentityHome>,
         Duration,
         AbortOnDropHandle<()>,
     ),
@@ -473,12 +473,7 @@ async fn setup_client(
     };
 
     let id_material = match &id {
-        Some(id) => Some(
-            id.tls()
-                .material()
-                .await
-                .context(LoadIdentityTlsMaterialSnafu)?,
-        ),
+        Some(id) => Some(id.ssl().await.context(LoadIdentitySslSnafu)?),
         None => None,
     };
 

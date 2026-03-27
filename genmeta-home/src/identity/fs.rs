@@ -14,7 +14,7 @@ use x509_parser::prelude::Pem;
 
 use crate::{
     GenmetaHome,
-    identity::{Identity, IdentityTls, IdentityTlsMaterial, Name},
+    identity::{Identity, IdentityHome, Name},
 };
 
 #[derive(Snafu, Debug)]
@@ -55,7 +55,7 @@ pub enum LoadKeyError {
 
 #[derive(Snafu, Debug)]
 #[snafu(module)]
-pub enum LoadIdentityTlsMaterialError {
+pub enum LoadIdentitySslError {
     #[snafu(display("failed to load identity certificates at {}", path.display()))]
     LoadCerts {
         path: PathBuf,
@@ -90,14 +90,14 @@ pub enum ListIdentitiesError {
     ReadFty { path: PathBuf, source: io::Error },
 }
 
-impl Identity {
+impl IdentityHome {
     pub(crate) const CERT_FILE_NAME: &'static str = "fullchain.crt";
     pub(crate) const KEY_FILE_NAME: &'static str = "privkey.pem";
 }
 
-impl IdentityTls {
+impl IdentityHome {
     pub async fn certs(&self) -> Result<Vec<CertificateDer<'static>>, LoadCertError> {
-        let certs_path = self.path.join(Identity::CERT_FILE_NAME);
+        let certs_path = self.ssl_path().join(IdentityHome::CERT_FILE_NAME);
         let mut data = std::io::Cursor::new(fs::read(certs_path.as_path()).await?);
         let (end_entity_pem, _read) = Pem::read(&mut data).context(load_cert_error::PemSnafu)?;
         let mut certs = vec![CertificateDer::from(end_entity_pem.contents)];
@@ -115,7 +115,7 @@ impl IdentityTls {
     }
 
     pub async fn key(&self) -> Result<PrivateKeyDer<'static>, LoadKeyError> {
-        let key_path = self.path.join(Identity::KEY_FILE_NAME);
+        let key_path = self.ssl_path().join(IdentityHome::KEY_FILE_NAME);
         let metadata = fs::metadata(key_path.as_path()).await?;
         #[cfg(unix)]
         {
@@ -135,20 +135,20 @@ impl IdentityTls {
         rustls::pki_types::pem::PemObject::from_pem_slice(&data).context(load_key_error::ParseSnafu)
     }
 
-    pub async fn material(&self) -> Result<IdentityTlsMaterial, LoadIdentityTlsMaterialError> {
-        let certs_path = self.path.join(Identity::CERT_FILE_NAME);
+    pub async fn ssl(&self) -> Result<Identity, LoadIdentitySslError> {
+        let certs_path = self.ssl_path().join(IdentityHome::CERT_FILE_NAME);
         let certs = self
             .certs()
             .await
-            .context(load_identity_tls_material_error::LoadCertsSnafu { path: certs_path })?;
+            .context(load_identity_ssl_error::LoadCertsSnafu { path: certs_path })?;
 
-        let key_path = self.path.join(Identity::KEY_FILE_NAME);
+        let key_path = self.ssl_path().join(IdentityHome::KEY_FILE_NAME);
         let key = self
             .key()
             .await
-            .context(load_identity_tls_material_error::LoadKeySnafu { path: key_path })?;
+            .context(load_identity_ssl_error::LoadKeySnafu { path: key_path })?;
 
-        Ok(IdentityTlsMaterial {
+        Ok(Identity {
             name: self.name.clone(),
             certs,
             key,
@@ -201,7 +201,7 @@ impl GenmetaHome {
                     })?
                     .is_dir()
                 && let Ok(name) = Name::try_from_str_partial(name.to_string_lossy())
-                && fs::metadata(entry_path.join(Identity::SSL_DIR_NAME))
+                && fs::metadata(entry_path.join(IdentityHome::SSL_DIR_NAME))
                     .await
                     .is_ok()
             {
@@ -238,12 +238,12 @@ impl GenmetaHome {
     pub async fn load_identity_exactly(
         &self,
         name: Name<'_>,
-    ) -> Result<Identity, LoadIdentityError> {
+    ) -> Result<IdentityHome, LoadIdentityError> {
         let identity_io = self
             .locate_identity_exactly(name.borrow())
             .await
             .context(load_identity_error::NotFoundSnafu { io: self.as_path() })?;
-        Ok(Identity {
+        Ok(IdentityHome {
             path: identity_io,
             name: name.to_owned(),
         })
@@ -252,24 +252,24 @@ impl GenmetaHome {
     pub async fn load_identity_wildcard(
         &self,
         name: Name<'_>,
-    ) -> Result<Identity, LoadIdentityError> {
+    ) -> Result<IdentityHome, LoadIdentityError> {
         let wildcard_name = name.to_wildcard_name();
         let identity_io = self
             .locate_identity_wildcard(wildcard_name.borrow())
             .await
             .context(load_identity_error::NotFoundSnafu { io: self.as_path() })?;
-        Ok(Identity {
+        Ok(IdentityHome {
             path: identity_io,
             name: wildcard_name.to_owned(),
         })
     }
 
-    pub async fn load_identity(&self, name: Name<'_>) -> Result<Identity, LoadIdentityError> {
+    pub async fn load_identity(&self, name: Name<'_>) -> Result<IdentityHome, LoadIdentityError> {
         let (identity_io, name) = self
             .locate_identity(name)
             .await
             .context(load_identity_error::NotFoundSnafu { io: self.as_path() })?;
-        Ok(Identity {
+        Ok(IdentityHome {
             path: identity_io,
             name: name.to_owned(),
         })
@@ -283,7 +283,7 @@ impl GenmetaHome {
     ) -> Result<(), SaveIdentityError> {
         // create identity dir and ssl subdir
         let identity_dir = self.join_identity_name(name);
-        let ssl_dir = identity_dir.join(Identity::SSL_DIR_NAME);
+        let ssl_dir = identity_dir.join(IdentityHome::SSL_DIR_NAME);
         fs::create_dir_all(ssl_dir.as_path()).await.context(
             save_identity_error::CreateIdentityDirSnafu {
                 path: ssl_dir.clone(),
@@ -298,7 +298,7 @@ impl GenmetaHome {
         open_options.mode(0o400);
 
         // remove old file if any
-        let path = ssl_dir.join(Identity::CERT_FILE_NAME);
+        let path = ssl_dir.join(IdentityHome::CERT_FILE_NAME);
         if let Err(error) = fs::remove_file(path.as_path()).await
             && error.kind() != io::ErrorKind::NotFound
         {
@@ -315,7 +315,7 @@ impl GenmetaHome {
             .context(save_identity_error::WriteSnafu { path: path.clone() })?;
 
         // remove old file if any
-        let path = ssl_dir.join(Identity::KEY_FILE_NAME);
+        let path = ssl_dir.join(IdentityHome::KEY_FILE_NAME);
         if let Err(error) = fs::remove_file(path.as_path()).await
             && error.kind() != io::ErrorKind::NotFound
         {

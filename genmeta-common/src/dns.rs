@@ -34,7 +34,7 @@ impl fmt::Display for DnsScheme {
 pub mod handy {
     use std::sync::Arc;
 
-    use genmeta_home::identity::IdentityTlsMaterial;
+    use genmeta_home::identity::Identity;
     use gmdns::resolvers::{H3Resolver, HttpResolver, MdnsResolver, MdnsResolvers};
     use h3x::gm_quic::{BuildClientError, H3Client, prelude::Resolve, qinterface::BindInterface};
 
@@ -80,7 +80,7 @@ pub mod handy {
 
     pub fn h3_resolver(
         resolver: Arc<dyn Resolve>,
-        id_material: Option<&IdentityTlsMaterial>,
+        id_material: Option<&Identity>,
     ) -> Result<H3Resolver, BuildClientError> {
         tracing::debug!("Initializing DHTTP/3 DNS resolver with server {H3_DNS_SERVER}");
         let h3_client = match id_material {
@@ -134,7 +134,7 @@ pub mod handy {
     pub fn build_resolvers(
         dns_schemes: impl IntoIterator<Item = super::DnsScheme>,
         bind_interfaces: &[h3x::gm_quic::qinterface::BindInterface],
-        id_material: Option<&IdentityTlsMaterial>,
+        id_material: Option<&Identity>,
     ) -> Result<ResolversSetup, BuildClientError> {
         use super::DnsScheme;
 
