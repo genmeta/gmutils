@@ -14,8 +14,7 @@ use genmeta_common::{
 use genmeta_home::identity::Name;
 use gmdns::resolvers::DnsErrors;
 use h3x::gm_quic::BuildClientError;
-use snafu::{ResultExt, Snafu, ensure};
-use tokio::time;
+use snafu::{ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
 
 #[derive(Parser, Debug, Clone)]
@@ -40,11 +39,6 @@ pub struct Options {
     /// Print records as they are resolved
     #[arg(short, long, default_value = "true")]
     streaming: bool,
-
-    // TODO: remove this option
-    /// Timeout in seconds
-    #[arg(short, long, default_value = "10")]
-    timeout: u64,
 }
 
 #[derive(Debug, Snafu)]
@@ -64,9 +58,6 @@ pub enum Error {
         name: Name<'static>,
         source: DnsErrors,
     },
-
-    #[snafu(display("lookup timed out after {timeout} seconds"))]
-    Timedout { timeout: u64 },
 }
 
 /// Initialize tracing subscriber with stderr output.
@@ -159,13 +150,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
                 .insert(endpoint);
             async {}
         });
-        let timeout = options.timeout;
-        let collect = time::timeout(time::Duration::from_secs(timeout), collect);
-
-        ensure!(
-            collect.await.is_ok() || !endpoint_addrs.is_empty(),
-            TimedoutSnafu { timeout }
-        );
+        collect.await;
 
         println!("Name: {}:", options.name);
         for (source, endpoint_addrs) in endpoint_addrs.into_iter() {
