@@ -1,4 +1,4 @@
-// use h3
+// TODO: migrate cert_server.rs from reqwest to h3x client
 
 #[cfg(feature = "cli")]
 pub mod cli;
