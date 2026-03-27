@@ -27,8 +27,7 @@ use tracing_subscriber::{
 use crate::{
     DEFAULT_CERT_SERVER_BASE_URL, REGISTERABLE_DOMAINS,
     cert_server::{
-        self, CertInfoResponse, CertServer, LoginResponse, RegisterResponse, RenewResponse,
-        ResignResponse, UserResponse,
+        self, CertServer, LoginResponse, RegisterResponse, RenewResponse, ResignResponse,
     },
     cli::prompt::{
         prompt_available_email, prompt_available_name, prompt_confim_update_default_name,
@@ -208,16 +207,6 @@ fn display_cert_info(cert_der: &[u8], indent: &str) -> Result<(), Error> {
         }
     }
     Ok(())
-}
-
-fn cert_der_from_bytes(cert_data: &[u8]) -> Result<Vec<u8>, Error> {
-    if cert_data.starts_with(b"-----BEGIN CERTIFICATE-----") {
-        let (_, pem) = x509_parser::pem::parse_x509_pem(cert_data)
-            .whatever_context::<_, Error>("failed to parse PEM certificate")?;
-        Ok(pem.contents)
-    } else {
-        Ok(cert_data.to_vec())
-    }
 }
 
 #[tracing::instrument(skip(cert_server))]
@@ -588,62 +577,14 @@ impl List {
 pub struct Info {
     /// Identity name (defaults to current default)
     pub name: Option<Name<'static>>,
-
-    // 去掉
-    /// Query data from cert server instead of local identity storage
-    #[arg(long)]
-    pub remote: bool,
-
-    // 去掉
-    /// Email for remote account query (`info --remote`)
-    #[arg(short, long)]
-    pub email: Option<String>,
 }
 
 impl Info {
     pub async fn run(
         &self,
         genmeta_home: &GenmetaHome,
-        cert_server: &CertServer,
+        _cert_server: &CertServer,
     ) -> Result<(), Error> {
-        if self.remote {
-            match self.name.as_ref() {
-                Some(domain) => {
-                    let CertInfoResponse {
-                        cert_pem,
-                        domain,
-                        expire_time,
-                    } = cert_server.get_cert_by_domain(domain.as_full()).await?;
-                    println!("{}", domain);
-                    println!("  Expire Time: {}", expire_time);
-                    let cert_der = cert_der_from_bytes(&cert_pem)?;
-                    display_cert_info(&cert_der, "  ")?;
-                }
-                None => {
-                    let email = match self.email.clone() {
-                        Some(email) => email,
-                        None => prompt::prompt_email().await?,
-                    };
-                    acquire_captcha(cert_server, &email).await?;
-                    let LoginResponse { access_token, .. } =
-                        prompt_login_catpcha(cert_server.clone(), email).await?;
-                    let UserResponse {
-                        id,
-                        name,
-                        email,
-                        limit_count,
-                        used,
-                    } = cert_server.get_user(&access_token).await?;
-                    println!("{}", name);
-                    println!("  id: {}", id);
-                    println!("  email: {}", email);
-                    println!("  limit_count: {}", limit_count);
-                    println!("  used: {}", used);
-                }
-            }
-            return Ok(());
-        }
-
         let name: Name<'static> = match self.name.as_ref() {
             Some(n) => n.to_owned(),
             None => {
