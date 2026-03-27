@@ -188,26 +188,29 @@ impl GenmetaHome {
 
     pub fn identities(&self) -> impl Stream<Item = Result<Name<'static>, ListIdentitiesError>> {
         use list_identities_error::*;
-        async fn next_entry(
+        async fn next_identity(
             read_dir: &mut ReadDir,
             path: &Path,
         ) -> Result<Option<Name<'static>>, ListIdentitiesError> {
-            if let Some(e) = read_dir.next_entry().await.context(ReadDirSnafu { path })?
-                && let (entry_path, name) = (e.path(), e.file_name())
-                && e.file_type()
-                    .await
-                    .context(ReadFtySnafu {
-                        path: entry_path.clone(),
-                    })?
-                    .is_dir()
-                && let Ok(name) = Name::try_from_str_partial(name.to_string_lossy())
-                && fs::metadata(entry_path.join(IdentityHome::SSL_DIR_NAME))
-                    .await
-                    .is_ok()
-            {
-                return Ok(Some(name));
+            loop {
+                let Some(e) = read_dir.next_entry().await.context(ReadDirSnafu { path })? else {
+                    return Ok(None);
+                };
+                if let (entry_path, name) = (e.path(), e.file_name())
+                    && e.file_type()
+                        .await
+                        .context(ReadFtySnafu {
+                            path: entry_path.clone(),
+                        })?
+                        .is_dir()
+                    && let Ok(name) = Name::try_from_str_partial(name.to_string_lossy())
+                    && fs::metadata(entry_path.join(IdentityHome::SSL_DIR_NAME))
+                        .await
+                        .is_ok()
+                {
+                    return Ok(Some(name));
+                }
             }
-            Ok(None)
         }
 
         let path = self.as_path();
@@ -215,9 +218,12 @@ impl GenmetaHome {
             match result.context(ReadDirSnafu { path }) {
                 Err(error) => stream::iter(iter::once(Err(error))).right_stream(),
                 Ok(read_dir) => stream::unfold(read_dir, move |mut read_dir| async move {
-                    Some((next_entry(&mut read_dir, path).await, read_dir))
+                    match next_identity(&mut read_dir, path).await {
+                        Ok(Some(name)) => Some((Ok(name), read_dir)),
+                        Ok(None) => None,
+                        Err(e) => Some((Err(e), read_dir)),
+                    }
                 })
-                .filter_map(async |entry| entry.transpose())
                 .left_stream(),
             }
         })
