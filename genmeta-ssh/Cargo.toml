@@ -10,7 +10,7 @@ crossterm = { workspace = true }
 dirs = { workspace = true }
 genmeta-common = { workspace = true, features = ["h3-client", "id"] }
 genmeta-home = { workspace = true }
-genmeta-ssh3-core = { workspace = true, features = ["cli", "config"] }
+genmeta-ssh-core = { workspace = true, features = ["cli", "config"] }
 http = { workspace = true }
 h3x = { workspace = true }
 snafu = { workspace = true }

@@ -11,7 +11,6 @@ members = [
     "genmeta-nat",
     "genmeta-doctor",
     "genmeta-identity",
-    "genmeta-home",
     "genmeta-proxy",
 ]
 
@@ -33,11 +32,11 @@ whoami = "2"
 console-subscriber = "0.5"
 
 # network
-gmdns = { path = "../gmdns" }
-h3x = { path = "../h3x" }
-qinterface = { path = "../gm-quic/qinterface", features = ["qudp"] }
-qtraversal = { path = "../gm-quic/qtraversal" }
-qevent = { path = "../gm-quic/qevent", features = ["telemetry"] }
+gmdns = { git = "ssh://git@github.com/genmeta/gmdns.git", branch = "feat/resolver" }
+h3x = { git = "ssh://git@github.com/genmeta/h3x.git", branch = "feat/v0.5" }
+qinterface = { git = "ssh://git@github.com/genmeta/dquic.git", branch = "feat/v0.5", features = ["qudp"] }
+qtraversal = { git = "ssh://git@github.com/genmeta/dquic.git", branch = "feat/v0.5" }
+qevent = { git = "ssh://git@github.com/genmeta/dquic.git", branch = "feat/v0.5", features = ["telemetry"] }
 http = "1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
@@ -53,8 +52,7 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 
 # security
-# rankey = { git = "ssh://git@github.com/genmeta/rankey.git" }
-rankey = { path = "../rankey" }
+rankey = { git = "ssh://git@github.com/genmeta/rankey.git", branch = "master" }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 x509-parser = "0.14"
 
@@ -104,7 +102,7 @@ trust-dns-resolver = "0.23.2"
 
 # workspace
 genmeta-common = { path = "genmeta-common" }
-genmeta-home = { path = "genmeta-home" }
+genmeta-home = { git = "ssh://git@github.com/genmeta/dhttp-home.git", branch = "main" }
 genmeta-curl = { path = "genmeta-curl" }
 genmeta-discover = { path = "genmeta-discover" }
 genmeta-doctor = { path = "genmeta-doctor" }
@@ -115,24 +113,25 @@ genmeta-ssh = { path = "genmeta-ssh" }
 genmeta-proxy = { path = "genmeta-proxy" }
 
 # ssh
-# ssh-config = { git = "ssh://git@github.com/genmeta/genmeta-ssh3.git" }
-# genmeta-ssh3-client = { git = "ssh://git@github.com/genmeta/genmeta-ssh3.git" }
-genmeta-ssh3-core = { package = "genmeta-ssh", path = "../genmeta-ssh3", features = [
+genmeta-ssh-core = { package = "genmeta-ssh", git = "ssh://git@github.com/genmeta/genmeta-ssh.git", branch = "main", features = [
     "config",
 ] }
 
 # debug
-# [patch.'ssh://git@github.com/genmeta/gm-quic-traversal.git']
-# gm-quic = { path = "../gm-quic-traversal/gm-quic" }
-# h3-shim = { path = "../gm-quic-traversal/h3-shim" }
-# qbase = { path = "../gm-quic-traversal/qbase" }
-# qdns = { path = "../gm-quic-traversal/qdns" }
-# qevent = { path = "../gm-quic-traversal/qevent" }
-# qinterface = { path = "../gm-quic-traversal/qinterface" }
-# qtraversal = { path = "../gm-quic-traversal/qtraversal" }
+# [patch.'ssh://git@github.com/genmeta/h3x.git']
+# h3x = { path = "../h3x" }
 
 # [patch.'ssh://git@github.com/genmeta/gmdns.git']
 # gmdns = { path = "../gmdns" }
+
+# [patch.'ssh://git@github.com/genmeta/genmeta-ssh.git']
+# genmeta-ssh = { path = "../genmeta-ssh" }
+
+# [patch.'ssh://git@github.com/genmeta/rankey.git']
+# rankey = { path = "../rankey" }
+
+# [patch.'ssh://git@github.com/genmeta/dhttp-home.git']
+# genmeta-home = { path = "../dhttp-home" }
 
 [profile.release]
 opt-level = "z"

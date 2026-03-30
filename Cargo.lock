@@ -1461,6 +1461,7 @@ dependencies = [
 [[package]]
 name = "gm-quic"
 version = "0.4.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#c26faf3f4e9e48c981dc789cceba67a132c28ac6"
 dependencies = [
  "bytes",
  "dashmap",
@@ -2634,6 +2635,7 @@ dependencies = [
 [[package]]
 name = "qbase"
 version = "0.4.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#c26faf3f4e9e48c981dc789cceba67a132c28ac6"
 dependencies = [
  "bitflags",
  "bytes",
@@ -2657,6 +2659,7 @@ dependencies = [
 [[package]]
 name = "qcongestion"
 version = "0.4.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#c26faf3f4e9e48c981dc789cceba67a132c28ac6"
 dependencies = [
  "qbase",
  "qevent",
@@ -2669,6 +2672,7 @@ dependencies = [
 [[package]]
 name = "qconnection"
 version = "0.4.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#c26faf3f4e9e48c981dc789cceba67a132c28ac6"
 dependencies = [
  "bytes",
  "dashmap",
@@ -2696,6 +2700,7 @@ dependencies = [
 [[package]]
 name = "qdns"
 version = "0.4.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#c26faf3f4e9e48c981dc789cceba67a132c28ac6"
 dependencies = [
  "futures",
  "qbase",
@@ -2706,6 +2711,7 @@ dependencies = [
 [[package]]
 name = "qevent"
 version = "0.4.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#c26faf3f4e9e48c981dc789cceba67a132c28ac6"
 dependencies = [
  "bytes",
  "derive_builder",
@@ -2723,6 +2729,7 @@ dependencies = [
 [[package]]
 name = "qinterface"
 version = "0.4.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#c26faf3f4e9e48c981dc789cceba67a132c28ac6"
 dependencies = [
  "bytes",
  "dashmap",
@@ -2747,6 +2754,7 @@ dependencies = [
 [[package]]
 name = "qmacro"
 version = "0.4.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#c26faf3f4e9e48c981dc789cceba67a132c28ac6"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -2757,6 +2765,7 @@ dependencies = [
 [[package]]
 name = "qrecovery"
 version = "0.4.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#c26faf3f4e9e48c981dc789cceba67a132c28ac6"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2774,6 +2783,7 @@ dependencies = [
 [[package]]
 name = "qtraversal"
 version = "0.4.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#c26faf3f4e9e48c981dc789cceba67a132c28ac6"
 dependencies = [
  "async-trait",
  "bitflags",
@@ -2802,6 +2812,7 @@ dependencies = [
 [[package]]
 name = "qudp"
 version = "0.4.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#c26faf3f4e9e48c981dc789cceba67a132c28ac6"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -2880,6 +2891,7 @@ dependencies = [
 [[package]]
 name = "qunreliable"
 version = "0.4.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#c26faf3f4e9e48c981dc789cceba67a132c28ac6"
 dependencies = [
  "bytes",
  "futures",
