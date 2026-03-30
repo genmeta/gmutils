@@ -10,7 +10,7 @@ use genmeta_home::{
     identity::{
         Name,
         default::{DefaultConfigFile, LoadDefaultConfigError, SaveDefaultConfigError},
-        fs::{ListIdentitiesError, LoadCertError, LoadIdentityError, SaveIdentityError},
+        ssl::{ListIdentitiesError, LoadCertError, LoadIdentityError, SaveIdentityError},
     },
 };
 use indicatif::ProgressStyle;
@@ -141,7 +141,8 @@ async fn save_identity(
         identity_dir.display()
     ));
     genmeta_home
-        .save_identity(domain.borrow(), cert_pem, key_pem)
+        .identity_home(domain.borrow())
+        .save_identity(cert_pem, key_pem)
         .await?;
     tracing::Span::current().pb_set_finish_message(&format!(
         "Identity for {domain} successfully saved to {}",

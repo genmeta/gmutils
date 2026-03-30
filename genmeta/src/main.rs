@@ -3,6 +3,7 @@ use snafu::Whatever;
 
 #[derive(Parser, Debug, Clone)]
 enum Options {
+    Access(genmeta_access::Options),
     Curl(genmeta_curl::Options),
     Discover(genmeta_discover::Options),
     Doctor {
@@ -21,6 +22,8 @@ enum Options {
 
 #[derive(snafu::Snafu, Debug)]
 enum Error {
+    #[snafu(transparent)]
+    Access { source: genmeta_access::Error },
     #[snafu(transparent)]
     Curl { source: genmeta_curl::Error },
     #[snafu(transparent)]
@@ -49,6 +52,7 @@ async fn main() -> Result<(), Error> {
 
 async fn run(options: Options) -> Result<(), Error> {
     match options {
+        Options::Access(options) => genmeta_access::run(options).await?,
         Options::Curl(options) => genmeta_curl::run(options).await?,
         Options::Discover(options) => genmeta_discover::run(options).await?,
         Options::Doctor { options } => genmeta_doctor::run(options).await?,

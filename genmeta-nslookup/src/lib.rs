@@ -51,7 +51,7 @@ pub enum Error {
     BuildDnsResolvers { source: BuildClientError },
     #[snafu(display("failed to load identity ssl material"))]
     LoadIdentitySsl {
-        source: genmeta_home::identity::fs::LoadIdentitySslError,
+        source: genmeta_home::identity::ssl::LoadIdentitySslError,
     },
     #[snafu(display("failed to lookup DNS records of `{name}`"))]
     LookUp {
@@ -109,7 +109,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .expect("BUG: wildcard bind should not conflict");
 
     let id_material = match &id {
-        Some(id) => Some(id.ssl().await.context(LoadIdentitySslSnafu)?),
+        Some(id) => Some(id.identity().await.context(LoadIdentitySslSnafu)?),
         None => None,
     };
 

@@ -29,7 +29,7 @@ pub enum SetupH3ClientError {
 
     #[snafu(display("failed to load identity SSL material"))]
     LoadIdentitySsl {
-        source: genmeta_home::identity::fs::LoadIdentitySslError,
+        source: genmeta_home::identity::ssl::LoadIdentitySslError,
     },
 
     #[snafu(display("failed to build DNS resolvers"))]
@@ -55,7 +55,7 @@ pub async fn setup_h3_client(
 
     let id_material = match identity {
         Some(id) => Some(
-            id.ssl()
+            id.identity()
                 .await
                 .context(setup_h3_client_error::LoadIdentitySslSnafu)?,
         ),

@@ -34,7 +34,7 @@ impl fmt::Display for DnsScheme {
 pub mod handy {
     use std::sync::Arc;
 
-    use genmeta_home::identity::Identity;
+    use genmeta_home::identity::ssl::Identity;
     use gmdns::resolvers::{H3Resolver, HttpResolver, MdnsResolver, MdnsResolvers};
     use h3x::gm_quic::{BuildClientError, H3Client, prelude::Resolve, qinterface::BindInterface};
 
