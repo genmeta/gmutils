@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::io::IsTerminal;
 
 use clap::Parser;
 use firewall_base::{
@@ -7,35 +7,15 @@ use firewall_base::{
 use firewall_db::{
     access_db_path,
     identity::Name,
-    init_identity_access_database, load_genmeta_home, open_identity_access_database,
+    init_identity_access_database, open_identity_access_database,
     service::{error::Error as ServiceError, location_service::LocationService},
 };
+use genmeta_common::error::ReportFromStr;
+use genmeta_home::GenmetaHome;
 use snafu::{OptionExt, ResultExt, Snafu};
+use tracing_subscriber::prelude::*;
 
 // --- CLI types ---
-
-#[derive(Debug, Clone, Copy)]
-struct ReportFromStr<T>(T);
-
-#[derive(Debug, snafu::Snafu)]
-#[snafu(display("{}", snafu::Report::from_error(source)))]
-struct ReportError<E: std::error::Error + 'static> {
-    #[snafu(source(false))]
-    source: E,
-}
-
-impl<T> FromStr for ReportFromStr<T>
-where
-    T: FromStr<Err: std::error::Error + 'static>,
-{
-    type Err = ReportError<T::Err>;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        T::from_str(s)
-            .map(Self)
-            .map_err(|source| ReportError { source })
-    }
-}
 
 #[derive(Parser, Debug, Clone)]
 enum RulesOptions {
@@ -110,7 +90,9 @@ pub struct Options {
 #[snafu(module)]
 pub enum Error {
     #[snafu(display("failed to locate GENMETA_HOME"))]
-    LocateHome { source: firewall_db::AccessDbError },
+    LocateHome {
+        source: genmeta_home::LocateGenmetaHomeError,
+    },
 
     #[snafu(display("identity is required for this command"))]
     MissingIdentity,
@@ -145,15 +127,51 @@ pub enum Error {
 
 // --- Logic ---
 
-fn tracing_init() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
+pub async fn run(options: Options) -> Result<(), Error> {
+    let (stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_ansi(std::io::stderr().is_terminal())
+                .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
+                .with_writer(stderr),
+        )
+        .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
                 .from_env_lossy(),
         )
-        .with_writer(std::io::stderr)
-        .try_init();
+        .init();
+
+    let home = GenmetaHome::load_from_environment().context(error::LocateHomeSnafu)?;
+    let output = match options.command {
+        Command::Init {
+            identity: ReportFromStr(identity),
+        } => {
+            init_identity_access_database(&home, identity.borrow())
+                .await
+                .context(error::InitDatabaseSnafu)?;
+            access_db_path(&home, identity.borrow())
+                .display()
+                .to_string()
+        }
+        command => {
+            let identity = options
+                .identity
+                .map(|ReportFromStr(id)| id)
+                .context(error::MissingIdentitySnafu)?;
+            let db = open_identity_access_database(&home, identity.borrow())
+                .await
+                .context(error::OpenDatabaseSnafu)?;
+            run_with(command, &db).await?
+        }
+    };
+
+    if !output.is_empty() {
+        println!("{}", output.trim_end());
+    }
+    Ok(())
 }
 
 async fn run_with(command: Command, db: &sea_orm::DatabaseConnection) -> Result<String, Error> {
@@ -226,45 +244,12 @@ async fn run_with(command: Command, db: &sea_orm::DatabaseConnection) -> Result<
     Ok(String::new())
 }
 
-pub async fn run(options: Options) -> Result<(), Error> {
-    tracing_init();
-
-    let home = load_genmeta_home().context(error::LocateHomeSnafu)?;
-    let output = match options.command {
-        Command::Init {
-            identity: ReportFromStr(identity),
-        } => {
-            init_identity_access_database(&home, identity.borrow())
-                .await
-                .context(error::InitDatabaseSnafu)?;
-            access_db_path(&home, identity.borrow())
-                .display()
-                .to_string()
-        }
-        command => {
-            let identity = options
-                .identity
-                .map(|ReportFromStr(id)| id)
-                .context(error::MissingIdentitySnafu)?;
-            let db = open_identity_access_database(&home, identity.borrow())
-                .await
-                .context(error::OpenDatabaseSnafu)?;
-            run_with(command, &db).await?
-        }
-    };
-
-    if !output.is_empty() {
-        println!("{}", output.trim_end());
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
     use clap::Parser;
-    use firewall_db::{GenmetaHome, access_db_path, init_identity_access_database};
+    use firewall_db::{access_db_path, init_identity_access_database};
 
     use super::*;
 

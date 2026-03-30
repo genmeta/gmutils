@@ -54,6 +54,7 @@ bind = [
     "dep:tokio-util",
     "dep:tracing",
 ]
+error = ["dep:snafu"]
 id = ["dep:snafu", "dep:clap", "dep:genmeta-home", "dep:http", "dep:tracing"]
 dns = ["bind", "dep:clap", "dep:gmdns", "dep:genmeta-home", "dep:tracing"]
 h3-client = ["dns", "dep:bon"]

@@ -1688,12 +1688,14 @@ dependencies = [
  "clap",
  "firewall-base",
  "firewall-db",
+ "genmeta-common",
  "genmeta-home",
  "sea-orm",
  "sea-orm-migration",
  "snafu 0.9.0",
  "tokio",
  "tracing",
+ "tracing-appender",
  "tracing-subscriber",
 ]
 
