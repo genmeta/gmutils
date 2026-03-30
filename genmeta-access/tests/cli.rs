@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use firewall_db::{identity::Name, identity_access_db_path, init_access_database_for};
+use firewall_db::{identity::Name, identity_access_db_path};
 use genmeta_access::{Options, run_for_home};
 use genmeta_home::GenmetaHome;
 
@@ -43,37 +43,21 @@ async fn run_cli(home: &GenmetaHome, command: &str) -> String {
 }
 
 #[tokio::test]
-async fn cli_identity_init_creates_store() {
-    let test_home = TestHome::new("cli-init");
+async fn auto_init_creates_store() {
+    let test_home = TestHome::new("auto-init");
     let home = test_home.home();
     let identity: Name<'static> = "alice.pilot".parse().unwrap();
-
-    run_cli(&home, "init alice.pilot").await;
-
     let identity_home = home.identity_home(identity.borrow());
+
+    assert!(!identity_access_db_path(&identity_home).is_file());
+    run_cli(&home, "alice.pilot rulesets list").await;
     assert!(identity_access_db_path(&identity_home).is_file());
 }
 
 #[tokio::test]
-async fn cli_identity_command_fails_without_store() {
-    let test_home = TestHome::new("cli-missing-store");
-    let home = test_home.home();
-
-    let error = run_for_home(
-        &home,
-        Options::parse_from(["access", "alice.pilot", "rulesets", "list"]),
-    )
-    .await
-    .unwrap_err();
-
-    let rendered = format!("{}", snafu::Report::from_error(error));
-    assert!(rendered.contains("access store does not exist"));
-}
-
-#[tokio::test]
 async fn invalid_identity_input_error() {
-    let error = Options::try_parse_from(["access", "invalid identity", "rulesets", "list"])
-        .unwrap_err();
+    let error =
+        Options::try_parse_from(["access", "invalid identity", "rulesets", "list"]).unwrap_err();
     assert!(
         error
             .to_string()
@@ -85,10 +69,6 @@ async fn invalid_identity_input_error() {
 async fn cli_ruleset_crud_flow() {
     let test_home = TestHome::new("cli-ruleset-crud");
     let home = test_home.home();
-    let identity: Name<'static> = "alice.pilot".parse().unwrap();
-    let identity_home = home.identity_home(identity.borrow());
-    init_access_database_for(&identity_home).await.unwrap();
-
     run_cli(&home, "alice.pilot ruleset /api deny *?").await;
     let listed = run_cli(&home, "alice.pilot ruleset /api rules list").await;
     assert!(listed.contains("/api"));
@@ -108,8 +88,6 @@ async fn end_to_end_identity_store_isolation() {
     let test_home = TestHome::new("cli-isolation");
     let home = test_home.home();
 
-    run_cli(&home, "init alice.pilot").await;
-    run_cli(&home, "init bob.pilot").await;
     run_cli(&home, "alice.pilot ruleset /api allow *?").await;
 
     let alice_rules = run_cli(&home, "alice.pilot rulesets list --wide").await;

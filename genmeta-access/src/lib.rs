@@ -17,7 +17,7 @@ use firewall_db::{
 };
 use genmeta_common::error::ReportFromStr;
 use genmeta_home::{GenmetaHome, LocateGenmetaHomeError};
-use snafu::{OptionExt, ResultExt, Snafu};
+use snafu::{ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
 
 // --- CLI types ---
@@ -67,9 +67,6 @@ enum RuleSetsOptions {
 
 #[derive(Parser, Debug, Clone)]
 enum Command {
-    Init {
-        identity: ReportFromStr<Name<'static>>,
-    },
     Rulesets {
         #[command(subcommand)]
         options: RuleSetsOptions,
@@ -83,7 +80,7 @@ enum Command {
 
 #[derive(Parser, Debug, Clone)]
 pub struct Options {
-    identity: Option<ReportFromStr<Name<'static>>>,
+    identity: ReportFromStr<Name<'static>>,
 
     #[command(subcommand)]
     command: Command,
@@ -96,9 +93,6 @@ pub struct Options {
 pub enum Error {
     #[snafu(display("failed to locate GENMETA_HOME"))]
     LocateHome { source: LocateGenmetaHomeError },
-
-    #[snafu(display("identity is required for this command"))]
-    MissingIdentity,
 
     #[snafu(display("failed to initialize identity access database"))]
     InitDatabase { source: firewall_db::AccessDbError },
@@ -157,37 +151,29 @@ pub async fn run(options: Options) -> Result<(), Error> {
 }
 
 pub async fn run_for_home(home: &GenmetaHome, options: Options) -> Result<String, Error> {
-    match options.command {
-        Command::Init {
-            identity: ReportFromStr(identity),
-        } => {
-            let identity_home = home.identity_home(identity.borrow());
-            init_access_database_for(&identity_home)
-                .await
-                .context(error::InitDatabaseSnafu)?;
-            Ok(identity_access_db_path(&identity_home)
-                .display()
-                .to_string())
-        }
-        command => {
-            let identity = options
-                .identity
-                .map(|ReportFromStr(id)| id)
-                .context(error::MissingIdentitySnafu)?;
-            let identity_home = home.identity_home(identity.borrow());
-            let db = open_access_database(&identity_home)
-                .await
-                .context(error::OpenDatabaseSnafu)?;
-            run_with(command, &db).await
-        }
-    }
+    let ReportFromStr(identity) = options.identity;
+    let identity_home = home.identity_home(identity.borrow());
+    let db_path = identity_access_db_path(&identity_home);
+    let db = if db_path.is_file() {
+        open_access_database(&identity_home)
+            .await
+            .context(error::OpenDatabaseSnafu)?
+    } else {
+        tracing::warn!(
+            "access store not found, initializing at `{}`",
+            db_path.display()
+        );
+        init_access_database_for(&identity_home)
+            .await
+            .context(error::InitDatabaseSnafu)?
+    };
+    run_with(options.command, &db).await
 }
 
 async fn run_with(command: Command, db: &sea_orm::DatabaseConnection) -> Result<String, Error> {
     let location_service = LocationService::new(db);
 
     match command {
-        Command::Init { .. } => return Ok(String::new()),
         Command::Ruleset {
             pattern: ReportFromStr(pattern),
             options,
