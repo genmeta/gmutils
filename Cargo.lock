@@ -1262,6 +1262,7 @@ dependencies = [
 [[package]]
 name = "genmeta-home"
 version = "0.1.0"
+source = "git+ssh://git@github.com/genmeta/dhttp-home.git?branch=main#1a9ec3dce32db45ab893886a956ca43dc4b67edd"
 dependencies = [
  "dirs",
  "futures",
@@ -1270,7 +1271,7 @@ dependencies = [
  "snafu 0.9.0",
  "tokio",
  "toml",
- "x509-parser 0.14.0",
+ "x509-parser 0.18.1",
 ]
 
 [[package]]
@@ -1355,6 +1356,7 @@ dependencies = [
 [[package]]
 name = "genmeta-ssh"
 version = "0.1.0"
+source = "git+ssh://git@github.com/genmeta/genmeta-ssh.git?branch=main#2341d64f2b6ad075f3faff470bbacf859931414e"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1479,6 +1481,7 @@ dependencies = [
 [[package]]
 name = "gmdns"
 version = "0.1.0"
+source = "git+ssh://git@github.com/genmeta/gmdns.git?branch=feat%2Fresolver#cce6de921bf90647c1cdbb139be9424904459cca"
 dependencies = [
  "base64 0.22.1",
  "bitfield-struct",
@@ -1542,6 +1545,7 @@ dependencies = [
 [[package]]
 name = "h3x"
 version = "0.1.0"
+source = "git+ssh://git@github.com/genmeta/h3x.git?branch=feat%2Fv0.5#0c98be2d8849dc9d4d3ffcaab66aa84f4893012c"
 dependencies = [
  "bon",
  "bytes",
@@ -1754,7 +1758,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core",
 ]
 
 [[package]]
@@ -2953,6 +2957,7 @@ dependencies = [
 [[package]]
 name = "rankey"
 version = "0.1.0"
+source = "git+ssh://git@github.com/genmeta/rankey.git?branch=fix%2Flock_versions#4fc26f649d6f82c0d54fb903b12238269a155633"
 dependencies = [
  "block-buffer",
  "chrono",
@@ -4477,7 +4482,7 @@ version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1de69df01bdf1ead2f4ac895dc77c9351aefff65b2f3db429a343f9cbf05e132"
 dependencies = [
- "windows-core 0.56.0",
+ "windows-core",
  "windows-targets 0.52.6",
 ]
 
@@ -4487,23 +4492,10 @@ version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4698e52ed2d08f8658ab0c39512a7c00ee5fe2688c65f8c0a4f06750d729f2a6"
 dependencies = [
- "windows-implement 0.56.0",
- "windows-interface 0.56.0",
+ "windows-implement",
+ "windows-interface",
  "windows-result 0.1.2",
  "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows-core"
-version = "0.62.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
-dependencies = [
- "windows-implement 0.60.2",
- "windows-interface 0.59.3",
- "windows-link",
- "windows-result 0.4.1",
- "windows-strings",
 ]
 
 [[package]]
@@ -4518,32 +4510,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "windows-implement"
-version = "0.60.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "windows-interface"
 version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08990546bf4edef8f431fa6326e032865f27138718c587dc21bc0265bbcb57cc"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "windows-interface"
-version = "0.59.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
 dependencies = [
  "proc-macro2",
  "quote",
