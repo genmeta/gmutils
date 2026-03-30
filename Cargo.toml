@@ -108,12 +108,12 @@ async-compression = { version = "0.4", features = [
 trust-dns-resolver = "0.23.2"
 
 # workspace
-firewall-base = { path = "../firewall/firewall-base" }
-firewall-db = { path = "../firewall/firewall-db" }
-firewall-migration = { path = "../firewall/firewall-migration" }
+firewall-base = { git = "ssh://git@github.com/genmeta/firewall.git", branch = "main" }
+firewall-db = { git = "ssh://git@github.com/genmeta/firewall.git", branch = "main" }
+firewall-migration = { git = "ssh://git@github.com/genmeta/firewall.git", branch = "main" }
 genmeta-access = { path = "genmeta-access" }
 genmeta-common = { path = "genmeta-common" }
-genmeta-home = { path = "../dhttp-home" }
+genmeta-home = { git = "ssh://git@github.com/genmeta/dhttp-home.git", branch = "main" }
 genmeta-curl = { path = "genmeta-curl" }
 genmeta-discover = { path = "genmeta-discover" }
 genmeta-doctor = { path = "genmeta-doctor" }
@@ -143,6 +143,11 @@ genmeta-ssh-core = { package = "genmeta-ssh", git = "ssh://git@github.com/genmet
 
 # [patch.'ssh://git@github.com/genmeta/dhttp-home.git']
 # genmeta-home = { path = "../dhttp-home" }
+
+# [patch.'ssh://git@github.com/genmeta/firewall.git']
+# firewall-base = { path = "../firewall/firewall-base" }
+# firewall-db = { path = "../firewall/firewall-db" }
+# firewall-migration = { path = "../firewall/firewall-migration" }
 
 [profile.release]
 opt-level = "z"

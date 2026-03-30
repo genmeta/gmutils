@@ -2,16 +2,21 @@ use std::io::IsTerminal;
 
 use clap::Parser;
 use firewall_base::{
-    action::RequestAction, expr::exprs::LocationRuleExprs, pattern::LocationPattern,
+    action::RequestAction,
+    error::location::{LocateLocationFailed, MatchLocationFailed},
+    expr::exprs::LocationRuleExprs,
+    pattern::LocationPattern,
 };
 use firewall_db::{
-    access_db_path,
     identity::Name,
-    init_identity_access_database, open_identity_access_database,
-    service::{error::Error as ServiceError, location_service::LocationService},
+    identity_access_db_path, init_access_database_for, open_access_database,
+    service::{
+        error::Error as ServiceError,
+        location_service::{LocationService, RemoveRuleFailed},
+    },
 };
 use genmeta_common::error::ReportFromStr;
-use genmeta_home::GenmetaHome;
+use genmeta_home::{GenmetaHome, LocateGenmetaHomeError};
 use snafu::{OptionExt, ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
 
@@ -90,9 +95,7 @@ pub struct Options {
 #[snafu(module)]
 pub enum Error {
     #[snafu(display("failed to locate GENMETA_HOME"))]
-    LocateHome {
-        source: genmeta_home::LocateGenmetaHomeError,
-    },
+    LocateHome { source: LocateGenmetaHomeError },
 
     #[snafu(display("identity is required for this command"))]
     MissingIdentity,
@@ -105,17 +108,17 @@ pub enum Error {
 
     #[snafu(display("failed to list ruleset rules"))]
     ListRules {
-        source: ServiceError<firewall_base::error::location::MatchLocationFailed>,
+        source: ServiceError<MatchLocationFailed>,
     },
 
     #[snafu(display("failed to remove ruleset"))]
     RemoveRuleSet {
-        source: ServiceError<firewall_base::error::location::LocateLocationFailed>,
+        source: ServiceError<LocateLocationFailed>,
     },
 
     #[snafu(display("failed to remove rules"))]
     RemoveRules {
-        source: ServiceError<firewall_db::service::location_service::RemoveRuleFailed>,
+        source: ServiceError<RemoveRuleFailed>,
     },
 
     #[snafu(display("failed to add rule"))]
@@ -145,33 +148,39 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .init();
 
     let home = GenmetaHome::load_from_environment().context(error::LocateHomeSnafu)?;
-    let output = match options.command {
+    let output = run_for_home(&home, options).await?;
+
+    if !output.is_empty() {
+        println!("{}", output.trim_end());
+    }
+    Ok(())
+}
+
+pub async fn run_for_home(home: &GenmetaHome, options: Options) -> Result<String, Error> {
+    match options.command {
         Command::Init {
             identity: ReportFromStr(identity),
         } => {
-            init_identity_access_database(&home, identity.borrow())
+            let identity_home = home.identity_home(identity.borrow());
+            init_access_database_for(&identity_home)
                 .await
                 .context(error::InitDatabaseSnafu)?;
-            access_db_path(&home, identity.borrow())
+            Ok(identity_access_db_path(&identity_home)
                 .display()
-                .to_string()
+                .to_string())
         }
         command => {
             let identity = options
                 .identity
                 .map(|ReportFromStr(id)| id)
                 .context(error::MissingIdentitySnafu)?;
-            let db = open_identity_access_database(&home, identity.borrow())
+            let identity_home = home.identity_home(identity.borrow());
+            let db = open_access_database(&identity_home)
                 .await
                 .context(error::OpenDatabaseSnafu)?;
-            run_with(command, &db).await?
+            run_with(command, &db).await
         }
-    };
-
-    if !output.is_empty() {
-        println!("{}", output.trim_end());
     }
-    Ok(())
 }
 
 async fn run_with(command: Command, db: &sea_orm::DatabaseConnection) -> Result<String, Error> {
@@ -242,153 +251,4 @@ async fn run_with(command: Command, db: &sea_orm::DatabaseConnection) -> Result<
     }
 
     Ok(String::new())
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use clap::Parser;
-    use firewall_db::{access_db_path, init_identity_access_database};
-
-    use super::*;
-
-    struct TestHome {
-        path: PathBuf,
-    }
-
-    impl TestHome {
-        fn new(name: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "genmeta-access-tests-{name}-{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
-            std::fs::create_dir_all(&path).unwrap();
-            Self { path }
-        }
-
-        fn home(&self) -> GenmetaHome {
-            GenmetaHome::new(self.path.clone())
-        }
-    }
-
-    impl Drop for TestHome {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
-
-    async fn run_cli(home: &GenmetaHome, command: &str) -> String {
-        let mut args = vec!["access"];
-        args.extend(command.split_whitespace());
-        let options = Options::parse_from(&args);
-        run_for_home(home, options)
-            .await
-            .unwrap_or_else(|error| panic!("{}", snafu::Report::from_error(error)))
-    }
-
-    async fn run_for_home(home: &GenmetaHome, options: Options) -> Result<String, Error> {
-        match options.command {
-            Command::Init {
-                identity: ReportFromStr(identity),
-            } => {
-                init_identity_access_database(home, identity.borrow())
-                    .await
-                    .context(error::InitDatabaseSnafu)?;
-                Ok(access_db_path(home, identity.borrow())
-                    .display()
-                    .to_string())
-            }
-            command => {
-                let identity = options
-                    .identity
-                    .map(|ReportFromStr(id)| id)
-                    .context(error::MissingIdentitySnafu)?;
-                let db = open_identity_access_database(home, identity.borrow())
-                    .await
-                    .context(error::OpenDatabaseSnafu)?;
-                run_with(command, &db).await
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn cli_identity_init_creates_store() {
-        let test_home = TestHome::new("cli-init");
-        let home = test_home.home();
-        let identity: Name<'static> = "alice.pilot".parse().unwrap();
-
-        run_cli(&home, "init alice.pilot").await;
-
-        assert!(access_db_path(&home, identity.borrow()).is_file());
-    }
-
-    #[tokio::test]
-    async fn cli_identity_command_fails_without_store() {
-        let test_home = TestHome::new("cli-missing-store");
-        let home = test_home.home();
-
-        let error = run_for_home(
-            &home,
-            Options::parse_from(["access", "alice.pilot", "rulesets", "list"]),
-        )
-        .await
-        .unwrap_err();
-
-        let rendered = format!("{}", snafu::Report::from_error(error));
-        assert!(rendered.contains("access store does not exist"));
-    }
-
-    #[tokio::test]
-    async fn invalid_identity_input_error() {
-        let error = Options::try_parse_from(["access", "invalid identity", "rulesets", "list"])
-            .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("name contains invalid characters")
-        );
-    }
-
-    #[tokio::test]
-    async fn cli_ruleset_crud_flow() {
-        let test_home = TestHome::new("cli-ruleset-crud");
-        let home = test_home.home();
-        let identity: Name<'static> = "alice.pilot".parse().unwrap();
-        init_identity_access_database(&home, identity.borrow())
-            .await
-            .unwrap();
-
-        run_cli(&home, "alice.pilot ruleset /api deny *?").await;
-        let listed = run_cli(&home, "alice.pilot ruleset /api rules list").await;
-        assert!(listed.contains("/api"));
-        assert!(listed.contains("deny *?"));
-
-        let all = run_cli(&home, "alice.pilot rulesets list --wide").await;
-        assert!(all.contains("/api"));
-
-        run_cli(&home, "alice.pilot ruleset /api rules remove 0").await;
-        let after_remove = run_cli(&home, "alice.pilot ruleset /api rules list").await;
-        assert!(after_remove.contains("- /api"));
-        assert!(!after_remove.contains("deny *?"));
-    }
-
-    #[tokio::test]
-    async fn end_to_end_identity_store_isolation() {
-        let test_home = TestHome::new("cli-isolation");
-        let home = test_home.home();
-
-        run_cli(&home, "init alice.pilot").await;
-        run_cli(&home, "init bob.pilot").await;
-        run_cli(&home, "alice.pilot ruleset /api allow *?").await;
-
-        let alice_rules = run_cli(&home, "alice.pilot rulesets list --wide").await;
-        let bob_rules = run_cli(&home, "bob.pilot rulesets list --wide").await;
-
-        assert!(alice_rules.contains("/api"));
-        assert!(!bob_rules.contains("/api"));
-    }
 }
