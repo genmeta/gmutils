@@ -152,7 +152,11 @@ pub mod handy {
                     resolvers = resolvers.with(Arc::new(http_resolver()));
                 }
                 DnsScheme::H3 => {
-                    let snapshot = Arc::new(resolvers.clone());
+                    let snapshot = Arc::new(
+                        resolvers
+                            .clone()
+                            .with(Arc::new(h3x::gm_quic::prelude::handy::SystemResolver)),
+                    );
                     let resolver = h3_resolver(snapshot, id_material)?;
                     resolvers = resolvers.with(Arc::new(resolver));
                 }
