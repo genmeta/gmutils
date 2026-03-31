@@ -79,6 +79,7 @@ enum Command {
 }
 
 #[derive(Parser, Debug, Clone)]
+#[command(version, about)]
 pub struct Options {
     identity: ReportFromStr<Name<'static>>,
 

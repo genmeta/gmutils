@@ -1,7 +1,8 @@
-use clap::Parser;
+use clap::{Arg, ArgAction, Command as ClapCommand, CommandFactory, FromArgMatches, Parser};
 use snafu::Whatever;
 
 #[derive(Parser, Debug, Clone)]
+#[command(disable_help_flag = true, disable_version_flag = true)]
 enum Options {
     Access(genmeta_access::Options),
     Curl(genmeta_curl::Options),
@@ -42,10 +43,64 @@ enum Error {
     Whatever { source: Whatever },
 }
 
+/// Re-add `--help` (and `--version` when a version is set) to a command and all
+/// its descendants. This counteracts the propagation of `disable_help_flag` from
+/// launcher-level commands, so that independent subcommands still expose flags.
+fn enable_help(mut cmd: ClapCommand) -> ClapCommand {
+    let names: Vec<String> = cmd
+        .get_subcommands()
+        .map(|sc| sc.get_name().to_string())
+        .collect();
+    for name in names {
+        cmd = cmd.mut_subcommand(&name, enable_help);
+    }
+    cmd = cmd.arg(
+        Arg::new("help_flag")
+            .short('h')
+            .long("help")
+            .action(ArgAction::HelpLong)
+            .help("Print help"),
+    );
+    if cmd.get_version().is_some() {
+        cmd = cmd.arg(
+            Arg::new("version_flag")
+                .short('V')
+                .long("version")
+                .action(ArgAction::Version)
+                .help("Print version"),
+        );
+    }
+    cmd
+}
+
+/// Apply [`enable_help`] to every non-launcher subcommand of a launcher command.
+fn enable_help_for_subcommands(mut cmd: ClapCommand) -> ClapCommand {
+    let names: Vec<String> = cmd
+        .get_subcommands()
+        .filter(|sc| !matches!(sc.get_name(), "version"))
+        .map(|sc| sc.get_name().to_string())
+        .collect();
+    for name in names {
+        cmd = cmd.mut_subcommand(&name, enable_help);
+    }
+    cmd
+}
+
 #[tokio::main]
 #[snafu::report]
 async fn main() -> Result<(), Error> {
-    run(Options::parse()).await.inspect_err(|error| {
+    let mut cmd = Options::command();
+
+    for name in ["access", "curl", "discover", "nslookup", "proxy", "ssh"] {
+        cmd = cmd.mut_subcommand(name, enable_help);
+    }
+    cmd = cmd.mut_subcommand("doctor", enable_help_for_subcommands);
+    cmd = cmd.mut_subcommand("identity", enable_help_for_subcommands);
+
+    let matches = cmd.get_matches();
+    let options = Options::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+
+    run(options).await.inspect_err(|error| {
         tracing::debug!(?error, "Exit with error");
     })
 }
