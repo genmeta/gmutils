@@ -3,7 +3,7 @@
 //! Consolidates the duplicated bind-interfaces initialization flow found across
 //! consumer crates (`genmeta-curl`, `genmeta-ssh3`, `genmeta-nslookup`).
 
-use std::{collections::HashSet, future::Future, pin::Pin, sync::Arc};
+use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
 
 use futures::{StreamExt, stream::FuturesUnordered};
 use h3x::gm_quic::{
@@ -94,28 +94,41 @@ where
 
     AbortOnDropHandle::new(tokio::spawn(
         async move {
+            // Use identity_key() for stable comparison — alloc_port() generates
+            // unique query params each call, so raw BindUri equality would
+            // cause unnecessary full rebinds on every interface event.
+            fn to_keyed_map(uris: Vec<BindUri>) -> HashMap<String, BindUri> {
+                uris.into_iter()
+                    .map(|uri| (uri.identity_key(), uri))
+                    .collect()
+            }
+
             // Initial reconcile: handle events that arrived between setup and watcher start
-            let mut current_set: HashSet<BindUri> = match binds
+            let mut current_map: HashMap<String, BindUri> = match binds
                 .to_bind_uris(monitor.interfaces().keys().map(String::as_str))
             {
                 Ok(new_uris) => {
-                    let new_set: HashSet<BindUri> = new_uris.into_iter().collect();
-                    let initial_set: HashSet<BindUri> = initial_bind_uris.into_iter().collect();
+                    let new_map = to_keyed_map(new_uris);
+                    let initial_map = to_keyed_map(initial_bind_uris);
 
-                    for uri in &new_set - &initial_set {
-                        tracing::info!("Binding new URI `{uri}` during initial reconcile");
-                        bind_fn(uri).await;
+                    for (key, uri) in &new_map {
+                        if !initial_map.contains_key(key) {
+                            tracing::info!("Binding new URI `{uri}` during initial reconcile");
+                            bind_fn(uri.clone()).await;
+                        }
                     }
-                    for uri in &initial_set - &new_set {
-                        tracing::info!("Unbinding URI `{uri}` during initial reconcile");
-                        unbind_fn(uri);
+                    for (key, uri) in &initial_map {
+                        if !new_map.contains_key(key) {
+                            tracing::info!("Unbinding URI `{uri}` during initial reconcile");
+                            unbind_fn(uri.clone());
+                        }
                     }
 
-                    new_set
+                    new_map
                 }
                 Err(err) => {
                     tracing::warn!("Failed to compute bind URIs during initial reconcile: {err}");
-                    initial_bind_uris.into_iter().collect()
+                    to_keyed_map(initial_bind_uris)
                 }
             };
 
@@ -129,18 +142,22 @@ where
                     }
                 };
 
-                let new_set: HashSet<BindUri> = new_uris.into_iter().collect();
+                let new_map = to_keyed_map(new_uris);
 
-                for uri in &current_set - &new_set {
-                    tracing::info!("Unbinding URI `{uri}`");
-                    unbind_fn(uri);
+                for (key, uri) in &current_map {
+                    if !new_map.contains_key(key) {
+                        tracing::info!("Unbinding URI `{uri}`");
+                        unbind_fn(uri.clone());
+                    }
                 }
-                for uri in &new_set - &current_set {
-                    tracing::info!("Binding new URI `{uri}`");
-                    bind_fn(uri).await;
+                for (key, uri) in &new_map {
+                    if !current_map.contains_key(key) {
+                        tracing::info!("Binding new URI `{uri}`");
+                        bind_fn(uri.clone()).await;
+                    }
                 }
 
-                current_set = new_set;
+                current_map = new_map;
             }
         }
         .instrument(span),
