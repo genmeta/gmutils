@@ -356,6 +356,8 @@ pub struct Create {
     pub domain: Option<String>,
     #[arg(short, long)]
     pub email: Option<String>,
+    #[arg(long)]
+    pub captcha: Option<String>,
 }
 
 impl Create {
@@ -386,22 +388,39 @@ impl Create {
 
         acquire_captcha(cert_server, &email).await?;
 
-        // TODO: cert server returns DER format, avoid double base64 encoding
-        let RegisterResponse { cert_pem } =
-            prompt_register_catpcha(cert_server.clone(), name, email, csr_pem).await?;
+        // Non-interactive mode when --captcha is provided
+        let RegisterResponse { cert_pem } = match self.captcha.clone() {
+            Some(captcha) => {
+                cert_server
+                    .register(&name, &email, &captcha, &csr_pem)
+                    .await?
+            }
+            None => {
+                prompt_register_catpcha(cert_server.clone(), name.clone(), email.clone(), csr_pem)
+                    .await?
+            }
+        };
 
         save_identity(genmeta_home, &domain, key_pem.as_bytes(), &cert_pem)
             .instrument(info_span!("save_identity"))
             .await?;
 
+        let is_interactive = self.captcha.is_none();
         let default_config = load_current_default_config(genmeta_home).await?;
         let current_default_name = default_config
             .as_ref()
             .and_then(|config| config.config().name());
 
-        let update_default_name = match current_default_name.map(|name| name.borrow()) {
-            Some(current) => prompt_confim_update_default_name(current, domain.borrow()).await?,
-            None => prompt_confirm_set_as_default_name(domain.borrow()).await?,
+        let update_default_name = if is_interactive {
+            match current_default_name.map(|name| name.borrow()) {
+                Some(current) => {
+                    prompt_confim_update_default_name(current, domain.borrow()).await?
+                }
+                None => prompt_confirm_set_as_default_name(domain.borrow()).await?,
+            }
+        } else {
+            // Non-interactive: automatically set as default
+            true
         };
 
         if update_default_name {
@@ -672,7 +691,9 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let genmeta_home = GenmetaHome::load_from_environment()?;
 
     _ = rustls::crypto::ring::default_provider().install_default();
-    let cert_server = CertServer::new(DEFAULT_CERT_SERVER_BASE_URL)?;
+    let cert_server_url = std::env::var("CERT_SERVER_URL")
+        .unwrap_or_else(|_| DEFAULT_CERT_SERVER_BASE_URL.to_string());
+    let cert_server = CertServer::new(cert_server_url)?;
 
     options.run(&genmeta_home, &cert_server).await
 }
