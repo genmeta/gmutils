@@ -1,13 +1,27 @@
 //! One-call H3 client setup consolidating the duplicated initialization flow
 //! across consumer crates.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use h3x::gm_quic::{
-    BuildClientError, H3Client, prelude::handy::NoopLogger, qinterface::bind_uri::BindUri,
+    BuildClientError, H3Client,
+    prelude::handy::{NoopLogger, ToCertificate},
+    qinterface::bind_uri::BindUri,
 };
+use rustls::RootCertStore;
 use snafu::{ResultExt, Snafu};
 use tokio_util::task::AbortOnDropHandle;
+
+/// Lazily-initialized Genmeta root CA certificate store, embedded at compile
+/// time from the project-level `root.crt`.
+pub fn genmeta_root_cert_store() -> &'static Arc<RootCertStore> {
+    static STORE: LazyLock<Arc<RootCertStore>> = LazyLock::new(|| {
+        let mut store = RootCertStore::empty();
+        store.add_parsable_certificates(include_bytes!("../../root.crt").to_certificate());
+        Arc::new(store)
+    });
+    &STORE
+}
 
 use crate::{bind, dns};
 
@@ -80,12 +94,16 @@ pub async fn setup_h3_client(
     };
 
     let client = match &id_material {
-        Some(id_material) => H3Client::builder().with_identity(
-            id_material.name().as_full(),
-            id_material.certs(),
-            id_material.key(),
-        ),
-        None => H3Client::builder().without_identity(),
+        Some(id_material) => H3Client::builder()
+            .with_root_certificates(genmeta_root_cert_store().clone())
+            .with_identity(
+                id_material.name().as_full(),
+                id_material.certs(),
+                id_material.key(),
+            ),
+        None => H3Client::builder()
+            .with_root_certificates(genmeta_root_cert_store().clone())
+            .without_identity(),
     }
     .context(setup_h3_client_error::BuildClientSnafu)?
     .with_iface_manager(bind_setup.iface_manager)

@@ -39,6 +39,7 @@ pub mod handy {
     use h3x::gm_quic::{BuildClientError, H3Client, prelude::Resolve, qinterface::BindInterface};
 
     use super::{H3_DNS_SERVER, HTTP_DNS_SERVER, MDNS_SERVICE};
+    use crate::h3_client::genmeta_root_cert_store;
 
     pub fn mdns_resolvers(bind_ifaces: impl IntoIterator<Item = BindInterface>) -> MdnsResolvers {
         tracing::debug!("Initializing mDNS resolvers");
@@ -89,15 +90,19 @@ pub mod handy {
                     "Using preloaded client identity {} for DHTTP/3 DNS resolver",
                     id_material.name()
                 );
-                H3Client::builder().with_identity(
-                    id_material.name().as_full(),
-                    id_material.certs(),
-                    id_material.key(),
-                )?
+                H3Client::builder()
+                    .with_root_certificates(genmeta_root_cert_store().clone())
+                    .with_identity(
+                        id_material.name().as_full(),
+                        id_material.certs(),
+                        id_material.key(),
+                    )?
             }
             None => {
                 tracing::warn!("No client identity provided, DHTTP/3 DNS resolver may not work");
-                H3Client::builder().without_identity()?
+                H3Client::builder()
+                    .with_root_certificates(genmeta_root_cert_store().clone())
+                    .without_identity()?
             }
         }
         .with_resolver(resolver)

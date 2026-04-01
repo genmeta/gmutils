@@ -21,6 +21,7 @@ genmeta-home = { workspace = true, optional = true }
 
 # feature h3-client
 bon = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
 
 # feature bind 
 derive_more = { workspace = true, optional = true, features = [
@@ -57,4 +58,4 @@ bind = [
 error = ["dep:snafu"]
 id = ["dep:snafu", "dep:clap", "dep:genmeta-home", "dep:http", "dep:tracing"]
 dns = ["bind", "dep:clap", "dep:gmdns", "dep:genmeta-home", "dep:tracing"]
-h3-client = ["dns", "dep:bon"]
+h3-client = ["dns", "dep:bon", "dep:rustls"]

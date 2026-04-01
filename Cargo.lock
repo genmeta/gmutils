@@ -1717,6 +1717,7 @@ dependencies = [
  "h3x",
  "http",
  "peg",
+ "rustls",
  "snafu 0.9.0",
  "tokio",
  "tokio-util",
@@ -2074,7 +2075,7 @@ dependencies = [
 [[package]]
 name = "h3x"
 version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/h3x.git?branch=feat%2Fv0.5#7d1ebf91ceaae28aa1423d5294a190eb76c3b666"
+source = "git+ssh://git@github.com/genmeta/h3x.git?branch=feat%2Fv0.5#4f1e45d46266ea423a224ff1b306c0c0f5eb5260"
 dependencies = [
  "bon",
  "bytes",
