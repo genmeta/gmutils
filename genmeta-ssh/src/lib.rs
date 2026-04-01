@@ -1,4 +1,4 @@
-use std::{fmt::Debug, io::IsTerminal};
+use std::{fmt::Debug, io::IsTerminal, sync::Arc};
 
 mod config;
 mod connect;
@@ -10,11 +10,9 @@ use forward::*;
 use genmeta_common::{bind, dns};
 use genmeta_home::identity::Name;
 use genmeta_ssh_core as ssh3;
-use h3x::{
-    codec::{SinkWriter, StreamReader},
-    error::Code,
-};
-use snafu::{ResultExt, Snafu};
+use h3x::error::Code;
+use snafu::{FromString, ResultExt, Snafu};
+use tracing::Instrument;
 use tracing_subscriber::prelude::*;
 
 const URI_LONG_HELP: &str = "If this argument matches the ssh configuration file, \
@@ -22,7 +20,6 @@ the HostName and User of the matched Host will be used. \
 Otherwise the argument will be parsed as a URI. URIs follow these rules: \
 Scheme is optional, only `ssh3` is accepted. \
 Username is optional, if not present, use current user. \
-Password is optional, if not present, prompt for it. \
 Path is optional, if not present, use `/ssh` as default.";
 
 const OPTIONS_LONG_HELP: &str =
@@ -135,11 +132,16 @@ pub enum Error {
     Connect { source: connect::Error },
     #[snafu(transparent)]
     Session { source: SessionError },
+    #[snafu(transparent)]
+    Forward { source: ForwardError },
 }
 
 #[derive(Debug, Snafu)]
 #[snafu(module(session_error))]
 pub enum SessionError {
+    #[snafu(display("failed to open session channel"))]
+    OpenChannel { source: snafu::Whatever },
+
     #[snafu(display("failed to set up PTY"))]
     SetupPty {
         source: ssh3::session::client::SetupError,
@@ -159,6 +161,23 @@ pub enum SessionError {
     Run {
         source: ssh3::session::client::RunError,
     },
+}
+
+#[derive(Debug, Snafu)]
+#[snafu(module(forward_error))]
+pub enum ForwardError {
+    #[snafu(display("failed to bind local forward listener"))]
+    BindLocalForward {
+        source: ssh3::forward::client::BindLocalForwardError,
+    },
+
+    #[snafu(display("failed to request remote forward"))]
+    RequestRemoteForward {
+        source: ssh3::forward::client::RequestRemoteForwardError,
+    },
+
+    #[snafu(display("failed to bind dynamic forward listener"))]
+    BindDynamicForward { source: std::io::Error },
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
@@ -191,47 +210,76 @@ pub async fn run(options: Options) -> Result<(), Error> {
         commands => Some(commands.join(" ")),
     };
 
-    let (_watcher, connection, read_stream, write_stream) = connect::connect(&config).await?;
-    let reader: std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>> =
-        Box::pin(StreamReader::new(read_stream.into_bytes_stream()));
-    let writer: std::pin::Pin<Box<dyn tokio::io::AsyncWrite + Send>> =
-        Box::pin(SinkWriter::new(write_stream.into_bytes_sink()));
+    let connect_result = connect::connect(&config).await?;
+    let _watcher = connect_result.watcher;
+    let connection = connect_result.connection;
+    let conversation = Arc::new(connect_result.conversation);
 
-    let result = run_session(reader, writer, commands.as_deref(), options.pseudo).await;
-    connection.close(Code::H3_NO_ERROR, "");
+    // Start port forwarding tasks before opening the session channel.
+    let mut forward_tasks = tokio::task::JoinSet::new();
 
-    let exit_code = result?;
-    if exit_code != 0 {
-        std::process::exit(exit_code);
+    // -L local forwards
+    for spec in &config.local_forwards {
+        let conv = conversation.clone();
+        let spec = spec.clone();
+        let label = spec.to_string();
+        forward_tasks.spawn(async move {
+            let Err(e) = spec
+                .run(conv)
+                .instrument(tracing::info_span!("local_forward", %label))
+                .await;
+            tracing::error!(error = %snafu::Report::from_error(&e), "local forward failed");
+        });
     }
-    Ok(())
-}
 
-async fn run_session(
-    reader: std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>,
-    writer: std::pin::Pin<Box<dyn tokio::io::AsyncWrite + Send>>,
-    commands: Option<&str>,
-    pseudo: bool,
-) -> Result<i32, SessionError> {
-    use session_error::*;
-    use ssh3::{
-        conversation::channel::SshChannel,
-        session::{PtyRequest, client::ClientSession},
-    };
+    // -R remote forwards
+    let mut remote_mappings: Vec<ssh3::forward::client::RemoteForwardEstablished> = Vec::new();
+    for spec in &config.remote_forwards {
+        let established = spec
+            .request(&conversation)
+            .await
+            .context(forward_error::RequestRemoteForwardSnafu)?;
+        remote_mappings.push(established);
+    }
+    if !remote_mappings.is_empty() {
+        let conv = conversation.clone();
+        forward_tasks.spawn(
+            ssh3::forward::client::accept_forwarded_channels(conv, remote_mappings)
+                .instrument(tracing::info_span!("channel_acceptor")),
+        );
+    }
 
-    // The version negotiation in SSH3 happens at the HTTP header level
-    // during the CONNECT upgrade, not on the byte stream. The server
-    // already validated the version. We skip stream-level negotiation here.
+    // -D dynamic SOCKS5 forwards
+    for spec in &config.dynamic_forwards {
+        let conv = conversation.clone();
+        let spec = spec.clone();
+        let label = spec.to_string();
+        forward_tasks.spawn(async move {
+            let Err(e) = run_dynamic_forward(spec, conv)
+                .instrument(tracing::info_span!("dynamic_forward", %label))
+                .await;
+            tracing::error!(error = %snafu::Report::from_error(&e), "dynamic forward failed");
+        });
+    }
 
-    // Create a session channel directly from the upgraded message streams.
-    // The session channel data flows on these streams.
-    let channel = SshChannel::new(reader, writer);
-    let mut session = ClientSession::new(channel);
+    // Open a session channel on a dedicated QUIC stream.
+    let (ch_reader, ch_writer) = conversation
+        .open_channel(
+            &ssh3::forward::SessionChannelOpen,
+            ssh3::constants::DEFAULT_MAX_MESSAGE_SIZE,
+        )
+        .await
+        .map_err(|e| SessionError::OpenChannel {
+            source: snafu::Whatever::without_source(e.to_string()),
+        })?;
 
-    // PTY request.
-    if pseudo {
+    let channel = ssh3::conversation::channel::SshChannel::new(ch_reader, ch_writer);
+    let mut session = ssh3::session::client::ClientSession::new(channel);
+
+    // PTY request
+    if options.pseudo {
         let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-        let pty_req = PtyRequest {
+        let pty_req = ssh3::session::PtyRequest {
             term_type: "xterm-256color".into(),
             width_cols: h3x::varint::VarInt::from(cols as u32),
             height_rows: h3x::varint::VarInt::from(rows as u32),
@@ -239,30 +287,37 @@ async fn run_session(
             height_px: h3x::varint::VarInt::from_u32(0),
             terminal_modes: ssh3::codec::SshBytes::from(Vec::new()),
         };
-        session.request_pty(&pty_req).await.context(SetupPtySnafu)?;
+        session
+            .request_pty(&pty_req)
+            .await
+            .context(session_error::SetupPtySnafu)?;
     }
 
-    // Exec or shell.
-    match commands {
+    // Exec or shell
+    match commands.as_deref() {
         Some(cmd) => {
-            session.exec(cmd.as_bytes()).await.context(ExecSnafu)?;
+            session
+                .exec(cmd.as_bytes())
+                .await
+                .context(session_error::ExecSnafu)?;
         }
         None => {
-            session.shell().await.context(ShellSnafu)?;
+            session.shell().await.context(session_error::ShellSnafu)?;
         }
     }
 
-    // IO relay.
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
-    let stderr = tokio::io::stderr();
+    // IO relay
+    let exit_result = session
+        .run(tokio::io::stdin(), tokio::io::stdout(), tokio::io::stderr())
+        .await
+        .context(session_error::RunSnafu)?;
 
-    let exit_result = session.run(stdin, stdout, stderr).await.context(RunSnafu)?;
+    connection.close(Code::H3_NO_ERROR, "");
 
-    match exit_result {
+    let exit_code = match exit_result {
         Some(ssh3::session::client::ExitResult::Status(code)) => {
             tracing::debug!(exit_code = code, "remote process exited");
-            Ok(i32::try_from(code).unwrap_or(1))
+            i32::try_from(code).unwrap_or(1)
         }
         Some(ssh3::session::client::ExitResult::Signal {
             signal_name,
@@ -273,11 +328,82 @@ async fn run_session(
                 core_dumped,
                 "remote process killed by signal"
             );
-            Ok(128)
+            128
         }
         None => {
             tracing::debug!("remote channel closed without exit status");
-            Ok(0)
+            0
         }
+    };
+
+    if exit_code != 0 {
+        std::process::exit(exit_code);
+    }
+    Ok(())
+}
+
+/// Run a dynamic SOCKS5 forward: bind a local TCP listener and, for each
+/// accepted connection, open a "socks5" channel to the server. The server
+/// handles SOCKS5 negotiation and connects to the final destination.
+async fn run_dynamic_forward<M>(
+    spec: DynamicForward,
+    conversation: Arc<ssh3::conversation::Conversation<M>>,
+) -> Result<std::convert::Infallible, ForwardError>
+where
+    M: ssh3::conversation::ManageSessionStream + 'static,
+    M::StreamReader: 'static,
+    M::StreamWriter: 'static,
+{
+    let bind_addr = match spec.host.as_str() {
+        "" | "*" => "0.0.0.0",
+        other => other,
+    };
+    let listener = tokio::net::TcpListener::bind((bind_addr, spec.port))
+        .await
+        .context(forward_error::BindDynamicForwardSnafu)?;
+    tracing::info!(
+        bind = %listener.local_addr().unwrap_or_else(|_| "?".parse().unwrap()),
+        "dynamic SOCKS5 forward listening"
+    );
+
+    let mut tasks = tokio::task::JoinSet::new();
+    loop {
+        let (stream, peer) = match listener.accept().await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "accept failed");
+                continue;
+            }
+        };
+        let conv = conversation.clone();
+        tasks.spawn(
+            async move {
+                let channel_result = conv
+                    .open_channel(
+                        &ssh3::forward::Socks5ChannelOpen,
+                        ssh3::constants::DEFAULT_MAX_MESSAGE_SIZE,
+                    )
+                    .await;
+
+                let (ch_reader, ch_writer) = match channel_result {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %snafu::Report::from_error(&e),
+                            "socks5 channel open failed"
+                        );
+                        return;
+                    }
+                };
+
+                let (local_reader, local_writer) = stream.into_split();
+                let s2ch =
+                    tokio::spawn(ssh3::forward::relay(local_reader, ch_writer).in_current_span());
+                let ch2s =
+                    tokio::spawn(ssh3::forward::relay(ch_reader, local_writer).in_current_span());
+                let _ = tokio::join!(s2ch, ch2s);
+            }
+            .instrument(tracing::info_span!("socks5_conn", %peer)),
+        );
     }
 }

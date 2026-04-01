@@ -55,7 +55,6 @@ pub struct Config {
     pub binds: bind::Binds,
     pub dns: BTreeSet<dns::DnsScheme>,
     pub username: String,
-    pub password: Option<String>,
     pub uri: Uri,
     pub id: Option<IdentityHome>,
     pub connect_timeout: Duration,
@@ -84,7 +83,6 @@ impl super::Options {
 
         // user: command line -> config file -> uri -> whoami
         let mut username = self.login_name.clone().or_else(|| ssh_config.user.clone());
-        let mut password = None;
 
         // uri: ssh_config hostname (if present) -> command line host
         let uri: Uri = match &ssh_config.hostname {
@@ -98,17 +96,14 @@ impl super::Options {
 
         if username.is_none() {
             tracing::debug!("User not found in ssh_config, trying to parse from hostname");
-            (username, password) = parse_username_password_from_uri(&uri);
+            username = parse_username_from_uri(&uri);
         }
 
-        let (username, password) = match username {
-            Some(username) => (username, password),
+        let username = match username {
+            Some(username) => username,
             None => {
                 tracing::debug!("User not found in URI, using current user");
-                (
-                    whoami::username().unwrap_or_else(|_| "unknown".to_string()),
-                    None,
-                )
+                whoami::username().unwrap_or_else(|_| "unknown".to_string())
             }
         };
 
@@ -148,7 +143,6 @@ impl super::Options {
             binds: Binds::new(self.binds.clone()),
             dns: self.dns.iter().cloned().collect(),
             username,
-            password,
             uri,
             id,
             connect_timeout,
@@ -159,18 +153,16 @@ impl super::Options {
     }
 }
 
-fn parse_username_password_from_uri(uri: &Uri) -> (Option<String>, Option<String>) {
+fn parse_username_from_uri(uri: &Uri) -> Option<String> {
     uri.authority()
         .and_then(|authority| authority.as_str().rsplit_once('@'))
-        .map(|(username_password, _host)| {
-            username_password
+        .map(|(userinfo, _host)| {
+            // Strip password portion if present (user:pass@host)
+            userinfo
                 .split_once(':')
-                .map(|(username, password)| {
-                    (Some(username.to_string()), Some(password.to_string()))
-                })
-                .unwrap_or((Some(username_password.to_string()), None))
+                .map_or(userinfo, |(user, _)| user)
+                .to_string()
         })
-        .unwrap_or((None, None))
 }
 
 fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {

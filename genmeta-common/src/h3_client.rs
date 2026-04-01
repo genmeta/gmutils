@@ -3,10 +3,16 @@
 
 use std::sync::{Arc, LazyLock};
 
-use h3x::gm_quic::{
-    BuildClientError, H3Client,
-    prelude::handy::{NoopLogger, ToCertificate},
-    qinterface::bind_uri::BindUri,
+use h3x::{
+    connection::ConnectionBuilder,
+    gm_quic::{
+        BuildClientError, H3Client,
+        prelude::{
+            Connection,
+            handy::{NoopLogger, ToCertificate},
+        },
+        qinterface::bind_uri::BindUri,
+    },
 };
 use rustls::RootCertStore;
 use snafu::{ResultExt, Snafu};
@@ -62,6 +68,10 @@ pub async fn setup_h3_client(
     /// Optional filter applied to expanded bind URIs before binding the QUIC
     /// client. Useful for restricting to IPv4-only or IPv6-only addresses.
     bind_uri_filter: Option<fn(&BindUri) -> bool>,
+    /// Optional custom connection builder for registering additional protocol
+    /// factories (e.g. `Ssh3ProtocolFactory`). When provided, replaces the
+    /// default connection builder used by the QUIC client.
+    connection_builder: Option<Arc<ConnectionBuilder<Connection>>>,
 ) -> Result<H3ClientSetup, SetupH3ClientError> {
     let bind_setup =
         bind::setup_bind_interfaces_with(binds, dns::handy::ensure_default_mdns_prop).await?;
@@ -109,7 +119,12 @@ pub async fn setup_h3_client(
     .with_iface_manager(bind_setup.iface_manager)
     .with_resolver(Arc::new(dns_setup.resolvers))
     .bind(&bind_uris)
-    .await
+    .await;
+
+    let client = match connection_builder {
+        Some(builder) => client.with_builder(builder),
+        None => client,
+    }
     .with_qlog(Arc::new(NoopLogger))
     .build();
 
