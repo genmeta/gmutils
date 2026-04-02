@@ -1,4 +1,8 @@
-use std::{fmt::Debug, io::IsTerminal, sync::Arc};
+use std::{
+    fmt::Debug,
+    io::{IsTerminal, Read},
+    sync::Arc,
+};
 
 mod config;
 mod connect;
@@ -306,9 +310,15 @@ pub async fn run(options: Options) -> Result<(), Error> {
         }
     }
 
-    // IO relay
+    // IO relay — use a dedicated OS thread for stdin to avoid blocking
+    // tokio runtime shutdown (tokio::io::stdin uses spawn_blocking which
+    // cannot be cancelled and hangs the runtime Drop).
     let exit_result = session
-        .run(tokio::io::stdin(), tokio::io::stdout(), tokio::io::stderr())
+        .run(
+            ThreadedStdin::new(),
+            tokio::io::stdout(),
+            tokio::io::stderr(),
+        )
         .await
         .context(session_error::RunSnafu)?;
 
@@ -405,5 +415,91 @@ where
             }
             .instrument(tracing::info_span!("socks5_conn", %peer)),
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ThreadedStdin — non-blocking stdin that won't block runtime shutdown
+// ---------------------------------------------------------------------------
+
+/// Reads stdin on a dedicated OS thread and exposes it as [`tokio::io::AsyncRead`].
+///
+/// Unlike [`tokio::io::stdin`], the reader thread lives outside tokio's
+/// blocking pool, so an in-progress `read(2)` does not prevent the runtime
+/// from shutting down.
+struct ThreadedStdin {
+    rx: tokio::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>,
+    pending: Vec<u8>,
+    pos: usize,
+}
+
+impl ThreadedStdin {
+    fn new() -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        std::thread::Builder::new()
+            .name("stdin-reader".into())
+            .spawn(move || {
+                let stdin = std::io::stdin();
+                let mut buf = vec![0u8; 8192];
+                loop {
+                    match stdin.lock().read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            if tx.blocking_send(Ok(buf[..n].to_vec())).is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(e) => {
+                            let _ = tx.blocking_send(Err(e));
+                            break;
+                        }
+                    }
+                }
+            })
+            .expect("failed to spawn stdin reader thread");
+        Self {
+            rx,
+            pending: Vec::new(),
+            pos: 0,
+        }
+    }
+}
+
+impl tokio::io::AsyncRead for ThreadedStdin {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let me = self.get_mut();
+
+        // Drain buffered data first.
+        if me.pos < me.pending.len() {
+            let n = buf.remaining().min(me.pending.len() - me.pos);
+            buf.put_slice(&me.pending[me.pos..me.pos + n]);
+            me.pos += n;
+            if me.pos == me.pending.len() {
+                me.pending.clear();
+                me.pos = 0;
+            }
+            return std::task::Poll::Ready(Ok(()));
+        }
+
+        // Receive the next chunk from the reader thread.
+        match me.rx.poll_recv(cx) {
+            std::task::Poll::Ready(Some(Ok(data))) => {
+                let n = buf.remaining().min(data.len());
+                buf.put_slice(&data[..n]);
+                if n < data.len() {
+                    me.pending = data;
+                    me.pos = n;
+                }
+                std::task::Poll::Ready(Ok(()))
+            }
+            std::task::Poll::Ready(Some(Err(e))) => std::task::Poll::Ready(Err(e)),
+            std::task::Poll::Ready(None) => std::task::Poll::Ready(Ok(())),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
     }
 }
