@@ -171,6 +171,11 @@ pub mod handy {
             }
         }
 
+        // Always append SystemResolver as the final fallback so that IP literal
+        // addresses (e.g. STUN server "10.10.0.2:20002") can be resolved
+        // without going through DNS.
+        resolvers = resolvers.with(Arc::new(h3x::gm_quic::prelude::handy::SystemResolver));
+
         Ok(ResolversSetup {
             resolvers,
             mdns_resolvers: mdns,

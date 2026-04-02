@@ -59,7 +59,10 @@ pub enum SetupH3ClientError {
     BuildClient { source: BuildClientError },
 }
 
-/// Consolidated H3 client initialization: bind → ssl → dns → client → watch.
+/// Default STUN server used when `STUN_SERVER` env is not set.
+const DEFAULT_STUN_SERVER: &str = "stun.genmeta.net";
+
+/// Consolidated H3 client initialization: bind → ssl → dns → stun → client → watch.
 #[bon::builder]
 pub async fn setup_h3_client(
     binds: &bind::Binds,
@@ -72,6 +75,10 @@ pub async fn setup_h3_client(
     /// factories (e.g. `Ssh3ProtocolFactory`). When provided, replaces the
     /// default connection builder used by the QUIC client.
     connection_builder: Option<Arc<ConnectionBuilder<Connection>>>,
+    /// Optional STUN server override. When `Some`, uses the given server;
+    /// when `None`, reads from `STUN_SERVER` env or falls back to
+    /// [`DEFAULT_STUN_SERVER`]. Set to `Some("")` to explicitly disable STUN.
+    stun_server: Option<String>,
 ) -> Result<H3ClientSetup, SetupH3ClientError> {
     let bind_setup =
         bind::setup_bind_interfaces_with(binds, dns::handy::ensure_default_mdns_prop).await?;
@@ -117,9 +124,22 @@ pub async fn setup_h3_client(
     }
     .context(setup_h3_client_error::BuildClientSnafu)?
     .with_iface_manager(bind_setup.iface_manager)
-    .with_resolver(Arc::new(dns_setup.resolvers))
-    .bind(&bind_uris)
-    .await;
+    .with_resolver(Arc::new(dns_setup.resolvers));
+
+    // Enable STUN for NAT traversal. Resolution order:
+    // 1. Explicit `stun_server` parameter
+    // 2. `STUN_SERVER` environment variable
+    // 3. Default: stun.genmeta.net
+    // An empty string explicitly disables STUN.
+    let effective_stun = stun_server
+        .unwrap_or_else(|| std::env::var("STUN_SERVER").unwrap_or(DEFAULT_STUN_SERVER.into()));
+    let client = if effective_stun.is_empty() {
+        client
+    } else {
+        client.with_stun(effective_stun)
+    };
+
+    let client = client.bind(&bind_uris).await;
 
     let client = match connection_builder {
         Some(builder) => client.with_builder(builder),
