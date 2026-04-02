@@ -441,6 +441,8 @@ pub struct Apply {
     pub email: Option<String>,
     #[arg(short, long)]
     pub domains: Option<Vec<Name<'static>>>,
+    #[arg(long)]
+    pub captcha: Option<String>,
 }
 
 impl Apply {
@@ -458,7 +460,10 @@ impl Apply {
         let LoginResponse {
             access_token,
             domains,
-        } = prompt_login_catpcha(cert_server.clone(), email).await?;
+        } = match self.captcha.clone() {
+            Some(captcha) => cert_server.login(&email, &captcha).await?,
+            None => prompt_login_catpcha(cert_server.clone(), email).await?,
+        };
 
         let domains: Cow<'_, [Name<'static>]> = match self.domains.as_deref() {
             Some(domains) => domains.into(),
