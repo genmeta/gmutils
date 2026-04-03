@@ -110,10 +110,10 @@ async fn diagnose_nat(options: &Options) -> Result<(), Error> {
 }
 
 async fn resolve_stun_server(domain: &str, is_ipv4: bool) -> Result<SocketAddr, Error> {
-    let mut addrs = tokio::net::lookup_host(domain)
+    let addrs = genmeta_common::dns::handy::resolve_domain(domain)
         .await
         .context(error::ResolveStunServerSnafu { domain })?;
-    match addrs.find(|addr| addr.is_ipv4() == is_ipv4) {
+    match addrs.into_iter().find(|addr| addr.is_ipv4() == is_ipv4) {
         Some(addr) => Ok(addr),
         None => error::NoMatchingAddressSnafu { domain }.fail(),
     }

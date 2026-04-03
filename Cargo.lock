@@ -1920,6 +1920,7 @@ name = "genmeta-nat"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "genmeta-common",
  "qinterface",
  "qtraversal",
  "snafu 0.9.0",

@@ -181,4 +181,25 @@ pub mod handy {
             mdns_resolvers: mdns,
         })
     }
+
+    /// Resolve a domain name to socket addresses using the standard H3 + System
+    /// DNS resolver chain. Suitable for lightweight tools that don't need mDNS
+    /// or client identity.
+    pub async fn resolve_domain(name: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+        use futures::StreamExt;
+        use h3x::gm_quic::qresolve::{EndpointAddr, Resolve};
+
+        let setup =
+            build_resolvers([super::DnsScheme::H3], &[], None).map_err(std::io::Error::other)?;
+        let stream = Resolve::lookup(&setup.resolvers, name).await?;
+        Ok(stream
+            .filter_map(|(_source, ep)| async move {
+                match ep {
+                    EndpointAddr::Socket(socket_ep) => Some(socket_ep.addr()),
+                    _ => None,
+                }
+            })
+            .collect()
+            .await)
+    }
 }

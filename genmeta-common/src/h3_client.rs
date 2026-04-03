@@ -59,8 +59,8 @@ pub enum SetupH3ClientError {
     BuildClient { source: BuildClientError },
 }
 
-/// Default STUN server used when `STUN_SERVER` env is not set.
-const DEFAULT_STUN_SERVER: &str = "stun.genmeta.net";
+/// Default STUN server address.
+const DEFAULT_STUN_SERVER: &str = "stun.genmeta.net:20002";
 
 /// Consolidated H3 client initialization: bind → ssl → dns → stun → client → watch.
 #[bon::builder]
@@ -76,8 +76,8 @@ pub async fn setup_h3_client(
     /// default connection builder used by the QUIC client.
     connection_builder: Option<Arc<ConnectionBuilder<Connection>>>,
     /// Optional STUN server override. When `Some`, uses the given server;
-    /// when `None`, reads from `STUN_SERVER` env or falls back to
-    /// [`DEFAULT_STUN_SERVER`]. Set to `Some("")` to explicitly disable STUN.
+    /// when `None`, falls back to [`DEFAULT_STUN_SERVER`].
+    /// Set to `Some("")` to explicitly disable STUN.
     stun_server: Option<String>,
 ) -> Result<H3ClientSetup, SetupH3ClientError> {
     let bind_setup =
@@ -128,11 +128,9 @@ pub async fn setup_h3_client(
 
     // Enable STUN for NAT traversal. Resolution order:
     // 1. Explicit `stun_server` parameter
-    // 2. `STUN_SERVER` environment variable
-    // 3. Default: stun.genmeta.net
+    // 2. Default: stun.genmeta.net:20002
     // An empty string explicitly disables STUN.
-    let effective_stun = stun_server
-        .unwrap_or_else(|| std::env::var("STUN_SERVER").unwrap_or(DEFAULT_STUN_SERVER.into()));
+    let effective_stun = stun_server.unwrap_or_else(|| DEFAULT_STUN_SERVER.into());
     let client = if effective_stun.is_empty() {
         client
     } else {

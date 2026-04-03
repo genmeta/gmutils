@@ -6,6 +6,7 @@ edition = "2024"
 
 [dependencies]
 clap = { workspace = true }
+genmeta-common = { path = "../genmeta-common", features = ["dns"] }
 qinterface = { workspace = true }
 qtraversal = { workspace = true }
 snafu = { workspace = true }
