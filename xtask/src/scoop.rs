@@ -2,6 +2,7 @@ use std::{fs, io::Write, path::Path};
 
 use serde::Serialize;
 use snafu::{ResultExt, Whatever};
+use tracing::info;
 use xshell::{Shell, cmd};
 
 use crate::{package_meta, sha256_file, target_dir};
@@ -84,65 +85,26 @@ struct ArchiveInfo {
 }
 
 pub fn run(targets: &[String]) -> Result<(), Whatever> {
-    let sh = Shell::new().whatever_context("failed to create shell")?;
-    check_cargo_xwin(&sh)?;
-
     let meta = package_meta(CARGO_NAME)?;
     let target_dir = target_dir()?;
     let workspace = std::env::current_dir().whatever_context("failed to get cwd")?;
 
-    let mut archives = Vec::new();
+    let archives: Vec<ArchiveInfo> = std::thread::scope(|s| {
+        let handles: Vec<_> = targets
+            .iter()
+            .map(|triple| {
+                let meta_version = &meta.version;
+                let target_dir = &target_dir;
+                let workspace = &workspace;
+                s.spawn(move || build_one(triple, meta_version, target_dir, workspace))
+            })
+            .collect();
 
-    for triple in targets {
-        eprintln!("--- building scoop archive for {triple} ---");
-        let arch_key = scoop_arch(triple)?;
-
-        // Build
-        cmd!(
-            sh,
-            "cargo xwin build --release --target {triple} --bin {CARGO_NAME}"
-        )
-        .run()
-        .whatever_context(format!("cargo xwin build failed for {triple}"))?;
-
-        // Stage
-        let scoop_dir = target_dir.join(triple).join("release").join("scoop");
-        let staging = scoop_dir.join("staging");
-        let _ = fs::remove_dir_all(&staging);
-        fs::create_dir_all(&staging)
-            .whatever_context(format!("failed to create {}", staging.display()))?;
-
-        // Copy artifacts
-        let binary = target_dir
-            .join(triple)
-            .join("release")
-            .join(format!("{CARGO_NAME}.exe"));
-        fs::copy(&binary, staging.join(format!("{CARGO_NAME}.exe")))
-            .whatever_context(format!("failed to copy {}", binary.display()))?;
-        fs::copy(
-            workspace.join("genmeta-ssh.bat"),
-            staging.join("genmeta-ssh.bat"),
-        )
-        .whatever_context("failed to copy genmeta-ssh.bat")?;
-
-        // Create zip
-        let archive_name = format!("{CARGO_NAME}-{}-{triple}.zip", meta.version);
-        let archive_path = scoop_dir.join(&archive_name);
-        create_zip(&staging, &archive_path)?;
-
-        // Cleanup staging
-        let _ = fs::remove_dir_all(&staging);
-
-        // Hash
-        let sha = sha256_file(&archive_path)?;
-
-        eprintln!("produced {}", archive_path.display());
-        archives.push(ArchiveInfo {
-            arch_key: arch_key.to_string(),
-            archive_name,
-            sha256: sha,
-        });
-    }
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect::<Result<Vec<_>, _>>()
+    })?;
 
     // Generate aggregated manifest
     let manifest_name = format!("{CARGO_NAME}.json");
@@ -189,7 +151,66 @@ pub fn run(targets: &[String]) -> Result<(), Whatever> {
         .whatever_context("failed to serialize scoop manifest")?;
     fs::write(&manifest_path, json + "\n")
         .whatever_context(format!("failed to write {}", manifest_path.display()))?;
-    eprintln!("produced {}", manifest_path.display());
+    info!(path = %manifest_path.display(), "produced manifest");
 
     Ok(())
+}
+
+fn build_one(
+    triple: &str,
+    version: &str,
+    target_dir: &std::path::Path,
+    workspace: &std::path::Path,
+) -> Result<ArchiveInfo, Whatever> {
+    let _span = tracing::info_span!("scoop", triple).entered();
+    let arch_key = scoop_arch(triple)?;
+
+    let sh = Shell::new().whatever_context("failed to create shell")?;
+    check_cargo_xwin(&sh)?;
+
+    // Build
+    cmd!(
+        sh,
+        "cargo xwin build --release --target {triple} --bin {CARGO_NAME}"
+    )
+    .run()
+    .whatever_context(format!("cargo xwin build failed for {triple}"))?;
+
+    // Stage
+    let scoop_dir = target_dir.join(triple).join("release").join("scoop");
+    let staging = scoop_dir.join("staging");
+    let _ = fs::remove_dir_all(&staging);
+    fs::create_dir_all(&staging)
+        .whatever_context(format!("failed to create {}", staging.display()))?;
+
+    // Copy artifacts
+    let binary = target_dir
+        .join(triple)
+        .join("release")
+        .join(format!("{CARGO_NAME}.exe"));
+    fs::copy(&binary, staging.join(format!("{CARGO_NAME}.exe")))
+        .whatever_context(format!("failed to copy {}", binary.display()))?;
+    fs::copy(
+        workspace.join("genmeta-ssh.bat"),
+        staging.join("genmeta-ssh.bat"),
+    )
+    .whatever_context("failed to copy genmeta-ssh.bat")?;
+
+    // Create zip
+    let archive_name = format!("{CARGO_NAME}-{version}-{triple}.zip");
+    let archive_path = scoop_dir.join(&archive_name);
+    create_zip(&staging, &archive_path)?;
+
+    // Cleanup staging
+    let _ = fs::remove_dir_all(&staging);
+
+    // Hash
+    let sha = sha256_file(&archive_path)?;
+
+    info!(path = %archive_path.display(), "produced archive");
+    Ok(ArchiveInfo {
+        arch_key: arch_key.to_string(),
+        archive_name,
+        sha256: sha,
+    })
 }

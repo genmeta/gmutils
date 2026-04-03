@@ -10,13 +10,14 @@ use bollard::{
 };
 use futures_util::StreamExt;
 use snafu::{ResultExt, Whatever};
+use tracing::{Instrument, info, info_span};
 
 use crate::{package_version, target_dir};
 
 const CARGO_NAME: &str = "genmeta";
 
 /// Base Docker image for cross-compilation.
-const BASE_IMAGE: &str = "rust-cross-ubuntu_20lts";
+const BASE_IMAGE: &str = "debian:bookworm";
 
 /// Image tag prefix for genmeta deb builds.
 const IMAGE_TAG_PREFIX: &str = "gmutils-deb";
@@ -52,15 +53,15 @@ async fn check_docker(docker: &Docker) -> Result<(), Whatever> {
 /// If not, pull the base image, create a container, install toolchain, and commit.
 async fn ensure_image(docker: &Docker, triple: &str) -> Result<String, Whatever> {
     let deb = deb_arch(triple)?;
-    let tag = format!("{BASE_IMAGE}-{triple}:{IMAGE_TAG_PREFIX}");
+    let tag = format!("xtask-{triple}:{IMAGE_TAG_PREFIX}");
 
     // Check if image already exists
     if docker.inspect_image(&tag).await.is_ok() {
-        eprintln!("image {tag} already exists");
+        info!(tag, "image already exists");
         return Ok(tag);
     }
 
-    eprintln!("building image {tag}...");
+    info!(tag, "building image");
 
     // Ensure base image exists (pull if needed)
     let mut pull_stream = docker.create_image(
@@ -99,10 +100,30 @@ async fn ensure_image(docker: &Docker, triple: &str) -> Result<String, Whatever>
         .await
         .whatever_context("failed to start setup container")?;
 
-    // Install cross-compilation toolchain + dpkg-dev for dpkg-shlibdeps
+    // Install Rust toolchain, Zig, cargo-zigbuild, and cross-compilation libs
     let setup_script = format!(
         r#"set -e
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install --assume-yes -qq \
+    ca-certificates curl build-essential pkg-config libclang-dev wget
+
+# install rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- --default-toolchain nightly --profile minimal -y
+source /root/.cargo/env
 rustup target add {triple}
+
+# install zig
+wget -q https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz
+tar -xf zig-linux-x86_64-0.14.0.tar.xz
+mv zig-linux-x86_64-0.14.0 /usr/local/zig
+ln -s /usr/local/zig/zig /usr/local/bin/zig
+rm zig-linux-x86_64-0.14.0.tar.xz
+
+cargo install cargo-zigbuild
+
+# cross-compilation libraries
 dpkg --add-architecture {deb}
 apt-get update -qq
 apt-get install --assume-yes -qq libc-dev:{deb} dpkg-dev
@@ -134,7 +155,7 @@ apt-get install --assume-yes -qq libc-dev:{deb} dpkg-dev
         .await
         .whatever_context("failed to remove setup container")?;
 
-    eprintln!("image {tag} ready");
+    info!(tag, "image ready");
     Ok(tag)
 }
 
@@ -239,6 +260,28 @@ fn format_control(fields: &[(&str, &str)]) -> String {
         + "\n"
 }
 
+/// Bind mounts for the host cargo git/registry cache (read-only).
+/// This avoids re-downloading crates and allows private git dependencies
+/// to work without SSH credentials in the container.
+fn cargo_cache_mounts() -> Vec<Mount> {
+    let cargo_home = std::env::var("CARGO_HOME")
+        .unwrap_or_else(|_| format!("{}/.cargo", std::env::var("HOME").unwrap_or_default()));
+    let mut mounts = Vec::new();
+    for subdir in ["git", "registry"] {
+        let host_path = format!("{cargo_home}/{subdir}");
+        if std::path::Path::new(&host_path).is_dir() {
+            mounts.push(Mount {
+                target: Some(format!("/root/.cargo/{subdir}")),
+                source: Some(host_path),
+                typ: Some(MountTypeEnum::BIND),
+                read_only: Some(true),
+                ..Default::default()
+            });
+        }
+    }
+    mounts
+}
+
 pub async fn run(targets: &[String]) -> Result<(), Whatever> {
     let docker = Docker::connect_with_local_defaults()
         .whatever_context("failed to connect to Docker/Podman")?;
@@ -247,74 +290,101 @@ pub async fn run(targets: &[String]) -> Result<(), Whatever> {
     let version = package_version(CARGO_NAME)?;
     let target_dir = target_dir()?;
 
+    let mut tasks = tokio::task::JoinSet::new();
+
     for triple in targets {
-        eprintln!("--- building deb for {triple} ---");
-        let arch = deb_arch(triple)?;
-        let gnu = gnu_arch(triple)?;
-        let image = ensure_image(&docker, triple).await?;
-
-        let deb_name = format!("{CARGO_NAME}_{version}-1_{arch}.deb");
-        let out_dir = target_dir.join(triple).join("release").join("deb");
-        std::fs::create_dir_all(&out_dir)
-            .whatever_context(format!("failed to create {}", out_dir.display()))?;
-
-        // Create container with workspace mounted
-        let workspace_dir =
-            std::env::current_dir().whatever_context("failed to get current directory")?;
-
-        let container_name = format!("xtask-deb-{triple}");
-        let container = docker
-            .create_container(
-                Some(
-                    CreateContainerOptionsBuilder::default()
-                        .name(&container_name)
-                        .build(),
-                ),
-                ContainerCreateBody {
-                    image: Some(image.clone()),
-                    cmd: Some(vec!["sleep".into(), "infinity".into()]),
-                    working_dir: Some("/workspace".into()),
-                    host_config: Some(HostConfig {
-                        mounts: Some(vec![Mount {
-                            target: Some("/workspace".into()),
-                            source: Some(workspace_dir.to_string_lossy().into_owned()),
-                            typ: Some(MountTypeEnum::BIND),
-                            ..Default::default()
-                        }]),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-            )
-            .await
-            .whatever_context("failed to create build container")?;
-
-        docker
-            .start_container(&container.id, None::<StartContainerOptions>)
-            .await
-            .whatever_context("failed to start build container")?;
-
-        // Build
-        let build_cmd = format!(
-            "source /cargo/env && \
-             export RUSTFLAGS=\"${{RUSTFLAGS:-}} -L /usr/lib/{gnu}\" && \
-             cargo zigbuild --release --target {triple} --bin {CARGO_NAME}"
+        let docker = docker.clone();
+        let version = version.clone();
+        let target_dir = target_dir.clone();
+        let span = info_span!("deb", %triple);
+        let triple = triple.clone();
+        tasks.spawn(
+            async move { build_one(&docker, &triple, &version, &target_dir).await }
+                .instrument(span),
         );
-        exec_in_container(&docker, &container.id, &["bash", "-c", &build_cmd]).await?;
+    }
 
-        // Stage + detect dependencies + build .deb (single exec)
-        let control = format_control(&[
-            ("Package", CARGO_NAME),
-            ("Version", &format!("{version}-1")),
-            ("Architecture", arch),
-            ("Maintainer", "Genmeta Tech Limited <support@genmeta.net>"),
-            ("Description", "Genmeta Binary Utilities"),
-            ("Section", "utilities"),
-            ("Priority", "optional"),
-        ]);
+    while let Some(result) = tasks.join_next().await {
+        result.whatever_context("deb build task panicked")??;
+    }
 
-        let package_script = format!(
-            r#"set -e
+    Ok(())
+}
+
+async fn build_one(
+    docker: &Docker,
+    triple: &str,
+    version: &str,
+    target_dir: &std::path::Path,
+) -> Result<(), Whatever> {
+    let arch = deb_arch(triple)?;
+    let gnu = gnu_arch(triple)?;
+    let image = ensure_image(docker, triple).await?;
+
+    let deb_name = format!("{CARGO_NAME}_{version}-1_{arch}.deb");
+    let out_dir = target_dir.join(triple).join("release").join("deb");
+    std::fs::create_dir_all(&out_dir)
+        .whatever_context(format!("failed to create {}", out_dir.display()))?;
+
+    let workspace_dir =
+        std::env::current_dir().whatever_context("failed to get current directory")?;
+
+    let mut mounts = vec![Mount {
+        target: Some("/workspace".into()),
+        source: Some(workspace_dir.to_string_lossy().into_owned()),
+        typ: Some(MountTypeEnum::BIND),
+        ..Default::default()
+    }];
+    mounts.extend(cargo_cache_mounts());
+
+    let container_name = format!("xtask-deb-{triple}");
+    let container = docker
+        .create_container(
+            Some(
+                CreateContainerOptionsBuilder::default()
+                    .name(&container_name)
+                    .build(),
+            ),
+            ContainerCreateBody {
+                image: Some(image.clone()),
+                cmd: Some(vec!["sleep".into(), "infinity".into()]),
+                working_dir: Some("/workspace".into()),
+                host_config: Some(HostConfig {
+                    mounts: Some(mounts),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .whatever_context("failed to create build container")?;
+
+    docker
+        .start_container(&container.id, None::<StartContainerOptions>)
+        .await
+        .whatever_context("failed to start build container")?;
+
+    // Build
+    let build_cmd = format!(
+        "source /root/.cargo/env && \
+         export RUSTFLAGS=\"${{RUSTFLAGS:-}} -L /usr/lib/{gnu}\" && \
+         cargo zigbuild --release --target {triple} --bin {CARGO_NAME}"
+    );
+    exec_in_container(docker, &container.id, &["bash", "-c", &build_cmd]).await?;
+
+    // Stage + detect dependencies + build .deb (single exec)
+    let control = format_control(&[
+        ("Package", CARGO_NAME),
+        ("Version", &format!("{version}-1")),
+        ("Architecture", arch),
+        ("Maintainer", "Genmeta Tech Limited <support@genmeta.net>"),
+        ("Description", "Genmeta Binary Utilities"),
+        ("Section", "utilities"),
+        ("Priority", "optional"),
+    ]);
+
+    let package_script = format!(
+        r#"set -e
 # staging layout
 mkdir -p /staging/usr/bin /staging/DEBIAN
 
@@ -337,32 +407,30 @@ fi
 # build .deb
 dpkg-deb -b /staging /output/{deb_name}
 "#
-        );
+    );
 
-        // Create output dir inside container
-        exec_in_container(&docker, &container.id, &["mkdir", "-p", "/output"]).await?;
-        exec_in_container(&docker, &container.id, &["bash", "-c", &package_script]).await?;
+    // Create output dir inside container
+    exec_in_container(docker, &container.id, &["mkdir", "-p", "/output"]).await?;
+    exec_in_container(docker, &container.id, &["bash", "-c", &package_script]).await?;
 
-        // Copy .deb out
-        copy_from_container(
-            &docker,
+    // Copy .deb out
+    copy_from_container(
+        docker,
+        &container.id,
+        &format!("/output/{deb_name}"),
+        &out_dir,
+    )
+    .await?;
+
+    // Cleanup
+    docker
+        .remove_container(
             &container.id,
-            &format!("/output/{deb_name}"),
-            &out_dir,
+            Some(RemoveContainerOptionsBuilder::default().force(true).build()),
         )
-        .await?;
+        .await
+        .whatever_context("failed to remove build container")?;
 
-        // Cleanup
-        docker
-            .remove_container(
-                &container.id,
-                Some(RemoveContainerOptionsBuilder::default().force(true).build()),
-            )
-            .await
-            .whatever_context("failed to remove build container")?;
-
-        eprintln!("produced {}", out_dir.join(&deb_name).display());
-    }
-
+    info!(deb_name, "produced");
     Ok(())
 }

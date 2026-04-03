@@ -2,6 +2,7 @@ use std::{fs, path::Path};
 
 use flate2::{Compression, write::GzEncoder};
 use snafu::{ResultExt, Whatever};
+use tracing::info;
 use xshell::{Shell, cmd};
 
 use crate::{package_meta, sha256_file, target_dir};
@@ -96,61 +97,26 @@ fn generate_formula(
 }
 
 pub fn run(targets: &[String]) -> Result<(), Whatever> {
-    let sh = Shell::new().whatever_context("failed to create shell")?;
-    check_cargo(&sh)?;
-
     let meta = package_meta(CARGO_NAME)?;
     let target_dir = target_dir()?;
     let workspace = std::env::current_dir().whatever_context("failed to get cwd")?;
 
-    let mut archives = Vec::new();
+    let archives: Vec<ArchiveInfo> = std::thread::scope(|s| {
+        let handles: Vec<_> = targets
+            .iter()
+            .map(|triple| {
+                let meta_version = &meta.version;
+                let target_dir = &target_dir;
+                let workspace = &workspace;
+                s.spawn(move || build_one(triple, meta_version, target_dir, workspace))
+            })
+            .collect();
 
-    for triple in targets {
-        eprintln!("--- building brew archive for {triple} ---");
-
-        // Build
-        cmd!(
-            sh,
-            "cargo build --release --target {triple} --bin {CARGO_NAME}"
-        )
-        .run()
-        .whatever_context(format!("cargo build failed for {triple}"))?;
-
-        // Stage
-        let brew_dir = target_dir.join(triple).join("release").join("brew");
-        let staging = brew_dir.join("staging");
-        let _ = fs::remove_dir_all(&staging);
-        fs::create_dir_all(&staging)
-            .whatever_context(format!("failed to create {}", staging.display()))?;
-
-        // Copy binaries
-        let binary = target_dir.join(triple).join("release").join(CARGO_NAME);
-        fs::copy(&binary, staging.join(CARGO_NAME))
-            .whatever_context(format!("failed to copy {}", binary.display()))?;
-        fs::copy(
-            workspace.join("genmeta-ssh.sh"),
-            staging.join("genmeta-ssh.sh"),
-        )
-        .whatever_context("failed to copy genmeta-ssh.sh")?;
-
-        // Create tar.gz
-        let archive_name = format!("{CARGO_NAME}-{}-{triple}.tar.gz", meta.version);
-        let archive_path = brew_dir.join(&archive_name);
-        create_tar_gz(&staging, &archive_path)?;
-
-        // Cleanup staging
-        let _ = fs::remove_dir_all(&staging);
-
-        // Hash
-        let sha = sha256_file(&archive_path)?;
-
-        eprintln!("produced {}", archive_path.display());
-        archives.push(ArchiveInfo {
-            triple: triple.clone(),
-            archive_name,
-            sha256: sha,
-        });
-    }
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect::<Result<Vec<_>, _>>()
+    })?;
 
     // Generate aggregated formula
     let content_path = workspace.join("genmeta").join("homebrew_content.rb");
@@ -173,7 +139,62 @@ pub fn run(targets: &[String]) -> Result<(), Whatever> {
     let formula_path = formula_dir.join(format!("{CARGO_NAME}.rb"));
     fs::write(&formula_path, &formula)
         .whatever_context(format!("failed to write {}", formula_path.display()))?;
-    eprintln!("produced {}", formula_path.display());
+    info!(path = %formula_path.display(), "produced formula");
 
     Ok(())
+}
+
+fn build_one(
+    triple: &str,
+    version: &str,
+    target_dir: &std::path::Path,
+    workspace: &std::path::Path,
+) -> Result<ArchiveInfo, Whatever> {
+    let _span = tracing::info_span!("brew", triple).entered();
+
+    let sh = Shell::new().whatever_context("failed to create shell")?;
+    check_cargo(&sh)?;
+
+    // Build
+    cmd!(
+        sh,
+        "cargo build --release --target {triple} --bin {CARGO_NAME}"
+    )
+    .run()
+    .whatever_context(format!("cargo build failed for {triple}"))?;
+
+    // Stage
+    let brew_dir = target_dir.join(triple).join("release").join("brew");
+    let staging = brew_dir.join("staging");
+    let _ = fs::remove_dir_all(&staging);
+    fs::create_dir_all(&staging)
+        .whatever_context(format!("failed to create {}", staging.display()))?;
+
+    // Copy binaries
+    let binary = target_dir.join(triple).join("release").join(CARGO_NAME);
+    fs::copy(&binary, staging.join(CARGO_NAME))
+        .whatever_context(format!("failed to copy {}", binary.display()))?;
+    fs::copy(
+        workspace.join("genmeta-ssh.sh"),
+        staging.join("genmeta-ssh.sh"),
+    )
+    .whatever_context("failed to copy genmeta-ssh.sh")?;
+
+    // Create tar.gz
+    let archive_name = format!("{CARGO_NAME}-{version}-{triple}.tar.gz");
+    let archive_path = brew_dir.join(&archive_name);
+    create_tar_gz(&staging, &archive_path)?;
+
+    // Cleanup staging
+    let _ = fs::remove_dir_all(&staging);
+
+    // Hash
+    let sha = sha256_file(&archive_path)?;
+
+    info!(path = %archive_path.display(), "produced archive");
+    Ok(ArchiveInfo {
+        triple: triple.to_string(),
+        archive_name,
+        sha256: sha,
+    })
 }
