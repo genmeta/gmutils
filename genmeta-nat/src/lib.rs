@@ -9,13 +9,12 @@ use qtraversal::{
 use snafu::ResultExt;
 use tracing_subscriber::prelude::*;
 
+/// Well-known STUN server domain published by pishoo via DNS.
+const STUN_DOMAIN: &str = "stun.genmeta.net";
+
 #[derive(Parser, Debug, Clone)]
 #[command(name = "nat-detect", version, about)]
 pub struct Options {
-    /// STUN server address
-    #[arg(short, long, default_value = "nat.genmeta.net:20002")]
-    pub server: String,
-
     /// Local bind address for NAT detection
     #[arg(short, long, default_value = "0.0.0.0:5379")]
     pub bind: SocketAddr,
@@ -38,14 +37,11 @@ pub enum Error {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
-    #[snafu(display("failed to resolve STUN server `{domain}`"))]
-    ResolveStunServer {
-        domain: String,
-        source: std::io::Error,
-    },
+    #[snafu(display("failed to resolve STUN server via DNS"))]
+    ResolveStunServer { source: std::io::Error },
 
-    #[snafu(display("no matching address found for STUN server `{domain}`"))]
-    NoMatchingAddress { domain: String },
+    #[snafu(display("no STUN server address found via DNS"))]
+    NoStunServer,
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
@@ -79,7 +75,8 @@ async fn diagnose_nat(options: &Options) -> Result<(), Error> {
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
-    let stun_server = resolve_stun_server(&options.server, options.bind.is_ipv4()).await?;
+    let stun_server = resolve_stun_server(options.bind.is_ipv4()).await?;
+    tracing::info!(%stun_server, "resolved STUN server from DNS");
 
     let bind_uri = format!("inet://{}", options.bind).into();
     let iface: Arc<dyn IO> = Arc::from(DEFAULT_IO_FACTORY.bind(bind_uri));
@@ -109,12 +106,12 @@ async fn diagnose_nat(options: &Options) -> Result<(), Error> {
     Ok(())
 }
 
-async fn resolve_stun_server(domain: &str, is_ipv4: bool) -> Result<SocketAddr, Error> {
-    let addrs = genmeta_common::dns::handy::resolve_domain(domain)
+async fn resolve_stun_server(is_ipv4: bool) -> Result<SocketAddr, Error> {
+    let addrs = genmeta_common::dns::handy::resolve_domain(STUN_DOMAIN)
         .await
-        .context(error::ResolveStunServerSnafu { domain })?;
-    match addrs.into_iter().find(|addr| addr.is_ipv4() == is_ipv4) {
-        Some(addr) => Ok(addr),
-        None => error::NoMatchingAddressSnafu { domain }.fail(),
-    }
+        .context(error::ResolveStunServerSnafu)?;
+    addrs
+        .into_iter()
+        .find(|addr| addr.is_ipv4() == is_ipv4)
+        .ok_or(Error::NoStunServer)
 }
