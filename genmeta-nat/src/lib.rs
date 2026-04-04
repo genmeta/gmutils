@@ -1,6 +1,13 @@
-use std::{io::IsTerminal, net::SocketAddr, sync::Arc};
+use std::{io::IsTerminal, net::SocketAddr, str::FromStr, sync::Arc};
 
 use clap::Parser;
+use genmeta_common::{
+    bind::{self, Bind},
+    dns::{self, DnsScheme},
+    id,
+};
+use genmeta_home::identity::Name;
+use h3x::gm_quic::{BuildClientError, qresolve};
 use qinterface::io::{IO, ProductIO, handy::DEFAULT_IO_FACTORY};
 use qtraversal::{
     nat::{client::StunClient, router::StunRouter},
@@ -15,6 +22,14 @@ const STUN_DOMAIN: &str = "stun.genmeta.net";
 #[derive(Parser, Debug, Clone)]
 #[command(name = "nat-detect", version, about)]
 pub struct Options {
+    /// Client identity
+    #[arg(short, long)]
+    pub id: Option<Name<'static>>,
+
+    /// Skip identity loading and use anonymous mode
+    #[arg(long, conflicts_with = "id")]
+    pub anonymous: bool,
+
     /// Local bind address for NAT detection
     #[arg(short, long, default_value = "0.0.0.0:5379")]
     pub bind: SocketAddr,
@@ -27,6 +42,19 @@ pub struct Options {
 #[derive(Debug, snafu::Snafu)]
 #[snafu(module)]
 pub enum Error {
+    #[snafu(transparent)]
+    LoadHomeAndIdentity {
+        source: id::LoadHomeAndIdentityError,
+    },
+
+    #[snafu(display("failed to load identity ssl material"))]
+    LoadIdentitySsl {
+        source: genmeta_home::identity::ssl::LoadIdentitySslError,
+    },
+
+    #[snafu(display("failed to build DNS resolvers"))]
+    BuildDnsResolvers { source: BuildClientError },
+
     #[snafu(display("failed to detect external address"))]
     DetectExternalAddr {
         source: Box<dyn std::error::Error + Send + Sync>,
@@ -38,7 +66,7 @@ pub enum Error {
     },
 
     #[snafu(display("failed to resolve STUN server via DNS"))]
-    ResolveStunServer { source: std::io::Error },
+    ResolveStunServer { source: gmdns::resolvers::DnsErrors },
 
     #[snafu(display("no STUN server address found via DNS"))]
     NoStunServer,
@@ -75,7 +103,39 @@ async fn diagnose_nat(options: &Options) -> Result<(), Error> {
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
-    let stun_server = resolve_stun_server(options.bind.is_ipv4()).await?;
+    let identity = if options.anonymous {
+        None
+    } else {
+        id::load_home_and_identity(
+            options.id.is_some(),
+            options
+                .id
+                .as_ref()
+                .map(|id| (&"command line option" as &dyn std::fmt::Display, id.clone())),
+        )
+        .await?
+    };
+
+    let id_material = match &identity {
+        Some(id) => Some(id.identity().await.context(error::LoadIdentitySslSnafu)?),
+        None => None,
+    };
+
+    let binds = bind::Binds::new(vec![
+        Bind::from_str("*").expect("BUG: wildcard bind pattern is always valid"),
+    ]);
+    let bind_setup = bind::setup_bind_interfaces_with(&binds, dns::handy::ensure_default_mdns_prop)
+        .await
+        .expect("BUG: wildcard bind should not conflict");
+
+    let dns_setup = dns::handy::build_resolvers(
+        [DnsScheme::H3],
+        &bind_setup.bind_interfaces,
+        id_material.as_ref(),
+    )
+    .context(error::BuildDnsResolversSnafu)?;
+
+    let stun_server = resolve_stun_server(&dns_setup.resolvers, options.bind.is_ipv4()).await?;
     tracing::info!(%stun_server, "resolved STUN server from DNS");
 
     let bind_uri = format!("inet://{}", options.bind).into();
@@ -106,12 +166,27 @@ async fn diagnose_nat(options: &Options) -> Result<(), Error> {
     Ok(())
 }
 
-async fn resolve_stun_server(is_ipv4: bool) -> Result<SocketAddr, Error> {
-    let addrs = genmeta_common::dns::handy::resolve_domain(STUN_DOMAIN)
+async fn resolve_stun_server(
+    resolvers: &gmdns::resolvers::Resolvers,
+    is_ipv4: bool,
+) -> Result<SocketAddr, Error> {
+    use futures::StreamExt;
+    use qresolve::EndpointAddr;
+
+    let stream = resolvers
+        .lookup(STUN_DOMAIN)
         .await
         .context(error::ResolveStunServerSnafu)?;
-    addrs
-        .into_iter()
-        .find(|addr| addr.is_ipv4() == is_ipv4)
+    stream
+        .filter_map(|(_source, ep)| async move {
+            match ep {
+                EndpointAddr::Socket(socket_ep) => Some(socket_ep.addr()),
+                _ => None,
+            }
+        })
+        .filter(|addr| futures::future::ready(addr.is_ipv4() == is_ipv4))
+        .boxed()
+        .next()
+        .await
         .ok_or(Error::NoStunServer)
 }
