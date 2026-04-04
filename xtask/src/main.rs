@@ -4,7 +4,7 @@ mod scoop;
 
 use std::{io::IsTerminal, path::PathBuf};
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use snafu::{OptionExt, ResultExt, Whatever};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -24,25 +24,89 @@ enum Command {
     },
 }
 
+/// Supported target triples for .deb builds.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum DebTarget {
+    /// x86_64-unknown-linux-gnu
+    #[value(name = "x86_64-unknown-linux-gnu")]
+    X86_64,
+    /// aarch64-unknown-linux-gnu
+    #[value(name = "aarch64-unknown-linux-gnu")]
+    Aarch64,
+    /// armv7-unknown-linux-gnueabihf
+    #[value(name = "armv7-unknown-linux-gnueabihf")]
+    Armv7,
+}
+
+impl DebTarget {
+    pub fn triple(self) -> &'static str {
+        match self {
+            Self::X86_64 => "x86_64-unknown-linux-gnu",
+            Self::Aarch64 => "aarch64-unknown-linux-gnu",
+            Self::Armv7 => "armv7-unknown-linux-gnueabihf",
+        }
+    }
+}
+
+/// Supported target triples for Homebrew builds.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum BrewTarget {
+    /// aarch64-apple-darwin
+    #[value(name = "aarch64-apple-darwin")]
+    Aarch64,
+    /// x86_64-apple-darwin
+    #[value(name = "x86_64-apple-darwin")]
+    X86_64,
+}
+
+impl BrewTarget {
+    pub fn triple(self) -> &'static str {
+        match self {
+            Self::Aarch64 => "aarch64-apple-darwin",
+            Self::X86_64 => "x86_64-apple-darwin",
+        }
+    }
+}
+
+/// Supported target triples for Scoop builds.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ScoopTarget {
+    /// x86_64-pc-windows-msvc
+    #[value(name = "x86_64-pc-windows-msvc")]
+    X86_64,
+    /// i686-pc-windows-msvc
+    #[value(name = "i686-pc-windows-msvc")]
+    I686,
+}
+
+impl ScoopTarget {
+    pub fn triple(self) -> &'static str {
+        match self {
+            Self::X86_64 => "x86_64-pc-windows-msvc",
+            Self::I686 => "i686-pc-windows-msvc",
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum DistFormat {
     /// Build .deb packages (via Docker container + cargo-zigbuild)
     Deb {
-        /// Target triples to build for (e.g. x86_64-unknown-linux-gnu)
+        /// Target triples to build for
         #[arg(long = "target", required = true)]
-        targets: Vec<String>,
+        targets: Vec<DebTarget>,
     },
     /// Build Homebrew archives + formula
     Brew {
-        /// Target triples to build for (e.g. aarch64-apple-darwin)
+        /// Target triples to build for
         #[arg(long = "target", required = true)]
-        targets: Vec<String>,
+        targets: Vec<BrewTarget>,
     },
     /// Build Scoop archives + manifest
     Scoop {
-        /// Target triples to build for (e.g. x86_64-pc-windows-msvc)
+        /// Target triples to build for
         #[arg(long = "target", required = true)]
-        targets: Vec<String>,
+        targets: Vec<ScoopTarget>,
     },
 }
 

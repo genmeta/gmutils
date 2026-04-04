@@ -12,7 +12,7 @@ use futures_util::StreamExt;
 use snafu::{ResultExt, Whatever};
 use tracing::{Instrument, info, info_span};
 
-use crate::{package_version, target_dir};
+use crate::{DebTarget, package_version, target_dir};
 
 const CARGO_NAME: &str = "genmeta";
 
@@ -282,7 +282,7 @@ fn cargo_cache_mounts() -> Vec<Mount> {
     mounts
 }
 
-pub async fn run(targets: &[String]) -> Result<(), Whatever> {
+pub async fn run(targets: &[DebTarget]) -> Result<(), Whatever> {
     let docker = Docker::connect_with_local_defaults()
         .whatever_context("failed to connect to Docker/Podman")?;
     check_docker(&docker).await?;
@@ -292,15 +292,14 @@ pub async fn run(targets: &[String]) -> Result<(), Whatever> {
 
     let mut tasks = tokio::task::JoinSet::new();
 
-    for triple in targets {
+    for &target in targets {
         let docker = docker.clone();
         let version = version.clone();
         let target_dir = target_dir.clone();
-        let span = info_span!("deb", %triple);
-        let triple = triple.clone();
+        let triple = target.triple();
+        let span = info_span!("deb", triple);
         tasks.spawn(
-            async move { build_one(&docker, &triple, &version, &target_dir).await }
-                .instrument(span),
+            async move { build_one(&docker, triple, &version, &target_dir).await }.instrument(span),
         );
     }
 
