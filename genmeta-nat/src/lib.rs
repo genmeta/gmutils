@@ -13,7 +13,7 @@ use tracing_subscriber::prelude::*;
 #[command(name = "nat-detect", version, about)]
 pub struct Options {
     /// STUN server address
-    #[arg(short, long, default_value = "nat.genmeta.net:20004")]
+    #[arg(short, long, default_value = "nat.genmeta.net:20002")]
     pub server: String,
 
     /// Local bind address for NAT detection
