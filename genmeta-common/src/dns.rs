@@ -34,11 +34,19 @@ impl fmt::Display for DnsScheme {
 pub mod handy {
     use std::sync::Arc;
 
+    #[cfg(feature = "h3-client")]
     use genmeta_home::identity::ssl::Identity;
-    use gmdns::resolvers::{H3Resolver, HttpResolver, MdnsResolver, MdnsResolvers};
-    use h3x::gm_quic::{BuildClientError, H3Client, prelude::Resolve, qinterface::BindInterface};
+    #[cfg(feature = "h3-client")]
+    use gmdns::resolvers::H3Resolver;
+    use gmdns::resolvers::{HttpResolver, MdnsResolver, MdnsResolvers};
+    use h3x::gm_quic::qinterface::BindInterface;
+    #[cfg(feature = "h3-client")]
+    use h3x::gm_quic::{BuildClientError, H3Client, prelude::Resolve};
 
-    use super::{H3_DNS_SERVER, HTTP_DNS_SERVER, MDNS_SERVICE};
+    #[cfg(feature = "h3-client")]
+    use super::H3_DNS_SERVER;
+    use super::{HTTP_DNS_SERVER, MDNS_SERVICE};
+    #[cfg(feature = "h3-client")]
     use crate::h3_client::genmeta_root_cert_store;
 
     pub fn mdns_resolvers(bind_ifaces: impl IntoIterator<Item = BindInterface>) -> MdnsResolvers {
@@ -79,6 +87,7 @@ pub mod handy {
         HttpResolver::new(HTTP_DNS_SERVER).expect("BUG: HTTP_DNS_SERVER is a valid URL")
     }
 
+    #[cfg(feature = "h3-client")]
     pub fn h3_resolver(
         resolver: Arc<dyn Resolve>,
         id_material: Option<&Identity>,
@@ -121,6 +130,7 @@ pub mod handy {
     }
 
     /// Result of [`build_resolvers`], carrying all DNS resolver state.
+    #[cfg(feature = "h3-client")]
     pub struct ResolversSetup {
         /// Combined DNS resolvers.
         pub resolvers: gmdns::resolvers::Resolvers,
@@ -136,6 +146,7 @@ pub mod handy {
     /// `bind_interfaces` is used to seed mDNS resolvers when the `Mdns`
     /// scheme is present. `id` is the optional client identity for the DHTTP/3
     /// DNS resolver.
+    #[cfg(feature = "h3-client")]
     pub fn build_resolvers(
         dns_schemes: impl IntoIterator<Item = super::DnsScheme>,
         bind_interfaces: &[h3x::gm_quic::qinterface::BindInterface],
@@ -185,6 +196,7 @@ pub mod handy {
     /// Resolve a domain name to socket addresses using the standard H3 + System
     /// DNS resolver chain. Suitable for lightweight tools that don't need mDNS
     /// or client identity.
+    #[cfg(feature = "h3-client")]
     pub async fn resolve_domain(name: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
         use futures::StreamExt;
         use h3x::gm_quic::qresolve::{EndpointAddr, Resolve};
