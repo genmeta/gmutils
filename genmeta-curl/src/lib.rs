@@ -92,7 +92,7 @@ pub struct Options {
     connect_timeout: Option<u64>,
 
     /// Client identity for DHTTP/3 connections
-    #[arg(long, value_name = "client_identity")]
+    #[arg(short, long, value_name = "client_identity")]
     id: Option<Name<'static>>,
 
     /// Skip identity loading and use anonymous mode
@@ -129,6 +129,7 @@ pub struct Options {
 }
 
 #[derive(Debug, Snafu)]
+#[snafu(module)]
 pub enum Error {
     #[snafu(display("missing authority in URI"))]
     MissingAuthority {},
@@ -207,8 +208,8 @@ enum ParseHeaderError {
 impl Options {
     #[allow(clippy::result_large_err)]
     fn expand_uri(&mut self) -> Result<(), Error> {
-        ensure!(self.uri.authority().is_some(), MissingAuthoritySnafu);
-        self.uri = id::expand_uri(self.uri.clone()).context(ExpandUriSnafu)?;
+        ensure!(self.uri.authority().is_some(), error::MissingAuthoritySnafu);
+        self.uri = id::expand_uri(self.uri.clone()).context(error::ExpandUriSnafu)?;
         Ok(())
     }
 }
@@ -349,20 +350,28 @@ where
     match content_encoding {
         "gzip" | "x-gzip" => {
             let mut dec = GzipDecoder::new(reader);
-            copy_all(&mut dec, writer).await.context(ReadResponseSnafu)
+            copy_all(&mut dec, writer)
+                .await
+                .context(error::ReadResponseSnafu)
         }
         "deflate" => {
             let mut dec = DeflateDecoder::new(reader);
-            copy_all(&mut dec, writer).await.context(ReadResponseSnafu)
+            copy_all(&mut dec, writer)
+                .await
+                .context(error::ReadResponseSnafu)
         }
         "zstd" => {
             let mut dec = ZstdDecoder::new(reader);
-            copy_all(&mut dec, writer).await.context(ReadResponseSnafu)
+            copy_all(&mut dec, writer)
+                .await
+                .context(error::ReadResponseSnafu)
         }
         _ => {
             // identity or unknown encoding — pass through
             let mut r = reader;
-            copy_all(&mut r, writer).await.context(ReadResponseSnafu)
+            copy_all(&mut r, writer)
+                .await
+                .context(error::ReadResponseSnafu)
         }
     }
 }
@@ -494,49 +503,49 @@ async fn send_request_body(
     if skip_body || options.data.is_none() && options.upload_file.is_none() {
         let request = request_builder
             .body(String::new())
-            .context(BuildRequestSnafu)?;
+            .context(error::BuildRequestSnafu)?;
         request_stream
             .send_hyper_request(request)
             .await
-            .context(SendRequestSnafu)?;
+            .context(error::SendRequestSnafu)?;
     } else if let Some(ref data) = options.data {
         let request = request_builder
             .body(data.clone())
-            .context(BuildRequestSnafu)?;
+            .context(error::BuildRequestSnafu)?;
         request_stream
             .send_hyper_request(request)
             .await
-            .context(SendRequestSnafu)?;
+            .context(error::SendRequestSnafu)?;
     } else if let Some(ref path) = options.upload_file {
         // File upload only on first attempt (stream cannot be re-read)
         if redirect_count == 0 {
             let mut stream_writer = pin!(request_stream.as_writer());
             let mut file = fs::File::open(path)
                 .await
-                .context(OpenUploadFileSnafu { path: path.clone() })?;
+                .context(error::OpenUploadFileSnafu { path: path.clone() })?;
             io::copy(&mut file, &mut stream_writer)
                 .await
-                .context(UploadFileSnafu { path: path.clone() })?;
+                .context(error::UploadFileSnafu { path: path.clone() })?;
             stream_writer
                 .flush()
                 .await
-                .context(UploadFileSnafu { path: path.clone() })?;
+                .context(error::UploadFileSnafu { path: path.clone() })?;
             tracing::warn!(path = %path.display(), redirect_count, "Skipping file upload body on redirect (stream cannot be re-read)");
         } else {
             let request = request_builder
                 .body(String::new())
-                .context(BuildRequestSnafu)?;
+                .context(error::BuildRequestSnafu)?;
             request_stream
                 .send_hyper_request(request)
                 .await
-                .context(SendRequestSnafu)?;
+                .context(error::SendRequestSnafu)?;
         }
     }
 
     request_stream
         .close()
         .await
-        .context(CloseRequestStreamSnafu)?;
+        .context(error::CloseRequestStreamSnafu)?;
     Ok(())
 }
 
@@ -558,16 +567,19 @@ fn resolve_redirect(
     let location_str = location.to_str().unwrap_or("");
 
     // Use url::Url::join() for RFC 3986 compliant relative reference resolution
-    let base_url = url::Url::parse(&current_uri.to_string()).context(ParseRedirectUrlSnafu {
-        url: current_uri.to_string(),
-    })?;
-    let resolved = base_url.join(location_str).context(ParseRedirectUrlSnafu {
-        url: location_str.to_string(),
-    })?;
+    let base_url =
+        url::Url::parse(&current_uri.to_string()).context(error::ParseRedirectUrlSnafu {
+            url: current_uri.to_string(),
+        })?;
+    let resolved = base_url
+        .join(location_str)
+        .context(error::ParseRedirectUrlSnafu {
+            url: location_str.to_string(),
+        })?;
     let new_uri: Uri = resolved
         .as_str()
         .parse()
-        .context(InvalidRedirectLocationSnafu)?;
+        .context(error::InvalidRedirectLocationSnafu)?;
 
     // 301/302/303 → switch to GET; 307/308 → keep method
     let new_method = match status {
@@ -591,7 +603,7 @@ async fn stream_response_body(
         tracing::debug!("Dumping output to {}", output_path.display());
         let mut file = fs::File::create(output_path)
             .await
-            .context(CreateOutputFileSnafu)?;
+            .context(error::CreateOutputFileSnafu)?;
 
         let n = if decompress {
             let body_reader = pin!(response_stream.as_reader());
@@ -600,9 +612,9 @@ async fn stream_response_body(
             let mut body_reader = pin!(response_stream.as_reader());
             copy_all(&mut body_reader, &mut file)
                 .await
-                .context(ReadResponseSnafu)?
+                .context(error::ReadResponseSnafu)?
         };
-        file.flush().await.context(FlushOutputSnafu)?;
+        file.flush().await.context(error::FlushOutputSnafu)?;
         Ok(n)
     } else {
         tracing::debug!("Dumping output to stdout");
@@ -615,9 +627,9 @@ async fn stream_response_body(
             let mut body_reader = pin!(response_stream.as_reader());
             copy_all(&mut body_reader, &mut stdout)
                 .await
-                .context(ReadResponseSnafu)?
+                .context(error::ReadResponseSnafu)?
         };
-        stdout.flush().await.context(FlushOutputSnafu)?;
+        stdout.flush().await.context(error::FlushOutputSnafu)?;
         Ok(n)
     }
 }
@@ -663,7 +675,10 @@ async fn process_final_response(
         };
         let expanded = expand_write_out(fmt, &ctx);
         print!("{expanded}");
-        io::stdout().flush().await.context(FlushOutputSnafu)?;
+        io::stdout()
+            .flush()
+            .await
+            .context(error::FlushOutputSnafu)?;
     }
 
     Ok(())
@@ -684,17 +699,17 @@ async fn connect_and_open_streams(
                     .clone(),
             )
             .await
-            .context(ConnectSnafu)
+            .context(error::ConnectSnafu)
     };
     let connection = match tokio::time::timeout(connect_timeout, connect_fut).await {
         Ok(result) => result?,
-        Err(_) => return TimedoutSnafu.fail(),
+        Err(_) => return error::TimedoutSnafu.fail(),
     };
     timing.connected = Some(Instant::now());
     connection
         .initial_message_stream()
         .await
-        .context(InitialMessageStreamSnafu)
+        .context(error::InitialMessageStreamSnafu)
 }
 
 /// Check whether a response is a redirect; if so, drain the response body and
@@ -712,7 +727,7 @@ async fn check_redirect(
         return Ok(None);
     }
     if redirect_count >= options.max_redirs {
-        return TooManyRedirectsSnafu.fail();
+        return error::TooManyRedirectsSnafu.fail();
     }
     let result = resolve_redirect(status, headers, current_uri, current_method)?;
     if result.is_some() {
@@ -742,7 +757,7 @@ async fn receive_response_head(
     let response = response_stream
         .read_hyper_response_parts()
         .await
-        .context(ReceiveResponseSnafu)?;
+        .context(error::ReceiveResponseSnafu)?;
 
     timing.first_byte = Some(Instant::now());
 

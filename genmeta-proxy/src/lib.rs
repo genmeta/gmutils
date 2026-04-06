@@ -22,7 +22,7 @@ pub struct Options {
     pub listens: Vec<bind::Bind>,
 
     /// Client identity for DHTTP/3 connections
-    #[arg(long, value_name = "client_identity")]
+    #[arg(short, long, value_name = "client_identity")]
     pub id: Option<Name<'static>>,
 
     /// Skip identity loading and use anonymous mode
