@@ -1,7 +1,7 @@
 use std::{fmt, net::IpAddr};
 
 use globset::{Glob, GlobMatcher};
-use h3x::gm_quic::qbase::net::Family;
+use h3x::dquic::qbase::net::Family;
 
 /// The host part of a [`Bind`](super::Bind) — a parsed IP address, a glob pattern, or an exact name.
 ///

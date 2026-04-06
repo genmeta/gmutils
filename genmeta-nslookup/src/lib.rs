@@ -13,7 +13,7 @@ use genmeta_common::{
 };
 use genmeta_home::identity::Name;
 use gmdns::resolvers::DnsErrors;
-use h3x::gm_quic::BuildClientError;
+use h3x::dquic::BuildClientError;
 use snafu::{ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
 

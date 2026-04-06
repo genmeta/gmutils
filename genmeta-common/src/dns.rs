@@ -39,9 +39,9 @@ pub mod handy {
     #[cfg(feature = "h3-client")]
     use gmdns::resolvers::H3Resolver;
     use gmdns::resolvers::{HttpResolver, MdnsResolver, MdnsResolvers};
-    use h3x::gm_quic::qinterface::BindInterface;
+    use h3x::dquic::qinterface::BindInterface;
     #[cfg(feature = "h3-client")]
-    use h3x::gm_quic::{BuildClientError, H3Client, prelude::Resolve};
+    use h3x::dquic::{BuildClientError, H3Client, prelude::Resolve};
 
     #[cfg(feature = "h3-client")]
     use super::H3_DNS_SERVER;
@@ -73,7 +73,7 @@ pub mod handy {
     /// specifies the `mdns` prop. Designed to be passed directly to
     /// [`setup_bind_interfaces_with`](crate::bind::setup_bind_interfaces_with).
     pub fn ensure_default_mdns_prop(
-        bind_uris: &mut Vec<h3x::gm_quic::qinterface::bind_uri::BindUri>,
+        bind_uris: &mut Vec<h3x::dquic::qinterface::bind_uri::BindUri>,
     ) {
         if !bind_uris.iter().any(|uri| uri.prop("mdns").is_some()) {
             for uri in bind_uris {
@@ -149,7 +149,7 @@ pub mod handy {
     #[cfg(feature = "h3-client")]
     pub fn build_resolvers(
         dns_schemes: impl IntoIterator<Item = super::DnsScheme>,
-        bind_interfaces: &[h3x::gm_quic::qinterface::BindInterface],
+        bind_interfaces: &[h3x::dquic::qinterface::BindInterface],
         id_material: Option<&Identity>,
     ) -> Result<ResolversSetup, BuildClientError> {
         use super::DnsScheme;
@@ -171,7 +171,7 @@ pub mod handy {
                     let snapshot = Arc::new(
                         resolvers
                             .clone()
-                            .with(Arc::new(h3x::gm_quic::prelude::handy::SystemResolver)),
+                            .with(Arc::new(h3x::dquic::prelude::handy::SystemResolver)),
                     );
                     let resolver = h3_resolver(snapshot, id_material)?;
                     resolvers = resolvers.with(Arc::new(resolver));
@@ -185,7 +185,7 @@ pub mod handy {
         // Always append SystemResolver as the final fallback so that IP literal
         // addresses (e.g. STUN server "10.10.0.2:20002") can be resolved
         // without going through DNS.
-        resolvers = resolvers.with(Arc::new(h3x::gm_quic::prelude::handy::SystemResolver));
+        resolvers = resolvers.with(Arc::new(h3x::dquic::prelude::handy::SystemResolver));
 
         Ok(ResolversSetup {
             resolvers,
@@ -199,7 +199,7 @@ pub mod handy {
     #[cfg(feature = "h3-client")]
     pub async fn resolve_domain(name: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
         use futures::StreamExt;
-        use h3x::gm_quic::qresolve::{EndpointAddr, Resolve};
+        use h3x::dquic::qresolve::{EndpointAddr, Resolve};
 
         let setup =
             build_resolvers([super::DnsScheme::H3], &[], None).map_err(std::io::Error::other)?;

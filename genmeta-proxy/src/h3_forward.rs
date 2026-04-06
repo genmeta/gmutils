@@ -1,4 +1,4 @@
-use h3x::{gm_quic::H3Client, server::MessageStreamError};
+use h3x::{dquic::H3Client, server::MessageStreamError};
 use hyper::{
     Request, Response,
     body::{Body, Incoming},

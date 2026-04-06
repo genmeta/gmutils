@@ -5,7 +5,7 @@ use std::sync::{Arc, LazyLock};
 
 use h3x::{
     connection::ConnectionBuilder,
-    gm_quic::{
+    dquic::{
         BuildClientError, H3Client,
         prelude::{
             Connection,

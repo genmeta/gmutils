@@ -6,7 +6,7 @@
 use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
 
 use futures::{StreamExt, stream::FuturesUnordered};
-use h3x::gm_quic::{
+use h3x::dquic::{
     prelude::handy::DEFAULT_IO_FACTORY,
     qinterface::{
         BindInterface,

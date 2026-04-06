@@ -17,7 +17,7 @@ use genmeta_common::{
 };
 use genmeta_home::identity::Name;
 use h3x::{
-    gm_quic::{H3Client, prelude::ConnectServerError},
+    dquic::{H3Client, prelude::ConnectServerError},
     hyper::SendMessageError,
     message::stream::{InitialMessageStreamError, MessageStreamError, WriteStream},
     pool::ConnectError,
@@ -433,7 +433,7 @@ async fn setup_client(
 
     // Apply -4/-6 address family filter to bind URIs.
     // Both flags set (or neither) means no filtering.
-    let bind_uri_filter: Option<fn(&h3x::gm_quic::qinterface::bind_uri::BindUri) -> bool> =
+    let bind_uri_filter: Option<fn(&h3x::dquic::qinterface::bind_uri::BindUri) -> bool> =
         if options.ipv4 && !options.ipv6 {
             Some(|uri| uri.as_inet_bind_uri().is_some_and(|a| a.is_ipv4()))
         } else if options.ipv6 && !options.ipv4 {

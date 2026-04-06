@@ -7,7 +7,7 @@ use genmeta_common::{
     id,
 };
 use genmeta_home::identity::Name;
-use h3x::gm_quic::H3Client;
+use h3x::dquic::H3Client;
 use http_body_util::BodyExt;
 use snafu::{ResultExt, Snafu};
 use tokio::net::TcpListener;

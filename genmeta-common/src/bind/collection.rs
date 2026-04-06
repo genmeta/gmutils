@@ -4,7 +4,7 @@ use std::{
 };
 
 use derive_more::{Deref, DerefMut, From, Into};
-use h3x::gm_quic::qinterface::bind_uri::BindUri;
+use h3x::dquic::qinterface::bind_uri::BindUri;
 use http::uri::{Authority, PathAndQuery, Scheme};
 
 use super::{Bind, BindConflictError, BindHost};

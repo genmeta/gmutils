@@ -7,7 +7,7 @@ use genmeta_common::{
     id,
 };
 use genmeta_home::identity::Name;
-use h3x::gm_quic::{BuildClientError, qresolve};
+use h3x::dquic::{BuildClientError, qresolve};
 use qinterface::io::{IO, ProductIO, handy::DEFAULT_IO_FACTORY};
 use qtraversal::{
     nat::{client::StunClient, router::StunRouter},

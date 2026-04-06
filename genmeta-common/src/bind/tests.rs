@@ -1,6 +1,6 @@
 use std::net::IpAddr;
 
-use h3x::gm_quic::{qbase::net::Family, qinterface::bind_uri::BindUriScheme};
+use h3x::dquic::{qbase::net::Family, qinterface::bind_uri::BindUriScheme};
 use http::uri::Scheme;
 
 use super::*;

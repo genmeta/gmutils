@@ -129,27 +129,6 @@ genmeta-ssh-core = { package = "genmeta-ssh", git = "ssh://git@github.com/genmet
     "config",
 ] }
 
-# debug
-# [patch.'ssh://git@github.com/genmeta/h3x.git']
-# h3x = { path = "../h3x" }
-
-# [patch.'ssh://git@github.com/genmeta/gmdns.git']
-# gmdns = { path = "../gmdns" }
-
-# [patch.'ssh://git@github.com/genmeta/genmeta-ssh.git']
-# genmeta-ssh = { path = "../genmeta-ssh" }
-
-# [patch.'ssh://git@github.com/genmeta/rankey.git']
-# rankey = { path = "../rankey" }
-
-# [patch.'ssh://git@github.com/genmeta/dhttp-home.git']
-# genmeta-home = { path = "../dhttp-home" }
-
-# [patch.'ssh://git@github.com/genmeta/firewall.git']
-# firewall-base = { path = "../firewall/firewall-base" }
-# firewall-db = { path = "../firewall/firewall-db" }
-# firewall-migration = { path = "../firewall/firewall-migration" }
-
 [profile.release]
 opt-level = "z"
 lto = true

@@ -5,7 +5,7 @@ use genmeta_common::h3_client::{self, SetupH3ClientError};
 use genmeta_ssh_core as ssh3;
 use h3x::{
     connection::{Connection, ConnectionBuilder},
-    gm_quic::prelude::{self, ConnectServerError},
+    dquic::prelude::{self, ConnectServerError},
     pool::ConnectError,
     qpack::field::Protocol,
     quic::GetStreamIdExt,

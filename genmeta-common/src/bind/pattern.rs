@@ -1,7 +1,7 @@
 use std::{fmt, str::FromStr};
 
 use either::Either;
-use h3x::gm_quic::{
+use h3x::dquic::{
     qbase::net::Family,
     qinterface::bind_uri::{BindUri, BindUriScheme},
 };

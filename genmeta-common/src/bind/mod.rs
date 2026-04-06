@@ -1,7 +1,7 @@
 //! Extended bind pattern for flexible BindUri generation.
 //!
 //! [`Bind`] is a pattern-like extension of
-//! [`BindUri`](h3x::gm_quic::qinterface::bind_uri::BindUri) that provides:
+//! [`BindUri`](h3x::dquic::qinterface::bind_uri::BindUri) that provides:
 //!
 //! 1. **Glob host** — `iface://v4.en*:8080` matches all interfaces starting with "en"
 //! 2. **Omitted family** — `iface://enp17s0:8080` implies both V4 and V6
@@ -25,8 +25,8 @@ pub use std::net::IpAddr;
 pub use collection::Binds;
 pub use error::BindConflictError;
 // Re-export commonly used types for tests that used to live in the parent module
-pub use h3x::gm_quic::qbase::net::Family;
-pub use h3x::gm_quic::qinterface::bind_uri::BindUriScheme;
+pub use h3x::dquic::qbase::net::Family;
+pub use h3x::dquic::qinterface::bind_uri::BindUriScheme;
 pub use host::BindHost;
 pub use http::uri::Scheme;
 pub use pattern::Bind;
