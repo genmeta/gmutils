@@ -9,6 +9,7 @@ clap = { workspace = true }
 futures = { workspace = true }
 gmdns = { workspace = true }
 genmeta-common = { workspace = true, features = ["dns"] }
+h3x = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

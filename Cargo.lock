@@ -1874,6 +1874,7 @@ dependencies = [
  "futures",
  "genmeta-common",
  "gmdns",
+ "h3x",
  "snafu 0.9.0",
  "tokio",
  "tracing",

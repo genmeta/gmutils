@@ -5,6 +5,6 @@ use genmeta_discover::{Options, run};
 #[snafu::report]
 async fn main() -> Result<(), genmeta_discover::Error> {
     run(Options::parse()).await.inspect_err(|error| {
-        tracing::debug!(?error, "Exit with error");
+        tracing::debug!(?error, "exit with error");
     })
 }

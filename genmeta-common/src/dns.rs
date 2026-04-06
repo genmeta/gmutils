@@ -32,6 +32,7 @@ impl fmt::Display for DnsScheme {
 }
 
 pub mod handy {
+    #[cfg(feature = "h3-client")]
     use std::sync::Arc;
 
     #[cfg(feature = "h3-client")]
