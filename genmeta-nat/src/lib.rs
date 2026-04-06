@@ -1,4 +1,4 @@
-use std::{io::IsTerminal, net::SocketAddr, str::FromStr, sync::Arc};
+use std::{io::IsTerminal, net::SocketAddr, sync::Arc};
 
 use clap::Parser;
 use genmeta_common::{
@@ -7,8 +7,7 @@ use genmeta_common::{
     id,
 };
 use genmeta_home::identity::Name;
-use h3x::dquic::{BuildClientError, qresolve};
-use qinterface::io::{IO, ProductIO, handy::DEFAULT_IO_FACTORY};
+use h3x::dquic::{BuildClientError, qinterface::io::IO, qresolve};
 use qtraversal::{
     nat::{client::StunClient, router::StunRouter},
     route::ReceiveAndDeliverPacket,
@@ -30,9 +29,10 @@ pub struct Options {
     #[arg(long, conflicts_with = "id")]
     pub anonymous: bool,
 
-    /// Local bind address for NAT detection
-    #[arg(short, long, default_value = "0.0.0.0:5379")]
-    pub bind: SocketAddr,
+    /// Bind patterns for local network interfaces
+    #[arg(long = "interface", value_name = "bind", default_value = "*",
+          hide = cfg!(not(debug_assertions)))]
+    pub binds: Vec<Bind>,
 
     /// Show detailed output
     #[arg(short, long)]
@@ -72,8 +72,8 @@ pub enum Error {
     NoStunServer,
 }
 
-pub async fn run(options: Options) -> Result<(), Error> {
-    let (stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
+fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
+    let (stderr, guard) = tracing_appender::non_blocking(std::io::stderr());
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
@@ -93,11 +93,15 @@ pub async fn run(options: Options) -> Result<(), Error> {
                 ),
         )
         .init();
-
-    diagnose_nat(&options).await
+    guard
 }
 
-async fn diagnose_nat(options: &Options) -> Result<(), Error> {
+pub async fn run(mut options: Options) -> Result<(), Error> {
+    let _guard = init_tracing();
+    diagnose_nat(&mut options).await
+}
+
+async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
     if options.verbose {
         qtraversal::nat::client::VISUALIZE_NAT_DETECTION
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -121,9 +125,7 @@ async fn diagnose_nat(options: &Options) -> Result<(), Error> {
         None => None,
     };
 
-    let binds = bind::Binds::new(vec![
-        Bind::from_str("*").expect("BUG: wildcard bind pattern is always valid"),
-    ]);
+    let binds = bind::Binds::new(std::mem::take(&mut options.binds));
     let bind_setup = bind::setup_bind_interfaces_with(&binds, dns::handy::ensure_default_mdns_prop)
         .await
         .expect("BUG: wildcard bind should not conflict");
@@ -135,11 +137,20 @@ async fn diagnose_nat(options: &Options) -> Result<(), Error> {
     )
     .context(error::BuildDnsResolversSnafu)?;
 
-    let stun_server = resolve_stun_server(&dns_setup.resolvers, options.bind.is_ipv4()).await?;
-    tracing::info!(%stun_server, "resolved STUN server from DNS");
+    // Use the first bound interface for STUN NAT detection.
+    let stun_iface = bind_setup
+        .bind_interfaces
+        .first()
+        .expect("BUG: at least one interface must be bound");
+    let is_ipv4 = stun_iface
+        .bind_uri()
+        .as_inet_bind_uri()
+        .map(|addr| addr.is_ipv4())
+        .unwrap_or(true);
+    let iface: Arc<dyn IO> = Arc::new(stun_iface.borrow());
 
-    let bind_uri = format!("inet://{}", options.bind).into();
-    let iface: Arc<dyn IO> = Arc::from(DEFAULT_IO_FACTORY.bind(bind_uri));
+    let stun_server = resolve_stun_server(&dns_setup.resolvers, is_ipv4).await?;
+    tracing::info!(%stun_server, "resolved STUN server from DNS");
 
     let stun_router = StunRouter::new();
     let stun_client = StunClient::new(iface.clone(), stun_router.clone(), stun_server, None);

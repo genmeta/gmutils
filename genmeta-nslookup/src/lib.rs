@@ -1,13 +1,12 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     io::IsTerminal,
-    str::FromStr,
 };
 
 use clap::Parser;
 use futures::StreamExt;
 use genmeta_common::{
-    bind::{self, Bind},
+    bind,
     dns::{self, DnsScheme},
     id,
 };
@@ -39,9 +38,15 @@ pub struct Options {
     /// Print records as they are resolved
     #[arg(short, long, default_value = "true")]
     streaming: bool,
+
+    /// Bind patterns for local network interfaces
+    #[arg(long = "interface", value_name = "bind", default_value = "*",
+          hide = cfg!(not(debug_assertions)))]
+    binds: Vec<bind::Bind>,
 }
 
 #[derive(Debug, Snafu)]
+#[snafu(module)]
 pub enum Error {
     #[snafu(transparent)]
     LoadHomeAndIdentity {
@@ -86,7 +91,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     guard
 }
 
-pub async fn run(options: Options) -> Result<(), Error> {
+pub async fn run(mut options: Options) -> Result<(), Error> {
     let _guard = init_tracing();
     let id = if options.anonymous {
         None
@@ -101,15 +106,13 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .await?
     };
 
-    let binds = bind::Binds::new(vec![
-        Bind::from_str("*").expect("BUG: wildcard bind pattern is always valid"),
-    ]);
+    let binds = bind::Binds::new(std::mem::take(&mut options.binds));
     let bind_setup = bind::setup_bind_interfaces_with(&binds, dns::handy::ensure_default_mdns_prop)
         .await
         .expect("BUG: wildcard bind should not conflict");
 
     let id_material = match &id {
-        Some(id) => Some(id.identity().await.context(LoadIdentitySslSnafu)?),
+        Some(id) => Some(id.identity().await.context(error::LoadIdentitySslSnafu)?),
         None => None,
     };
 
@@ -118,7 +121,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         &bind_setup.bind_interfaces,
         id_material.as_ref(),
     )
-    .context(BuildDnsResolversSnafu)?;
+    .context(error::BuildDnsResolversSnafu)?;
 
     tracing::debug!(%dns_setup.resolvers);
 
@@ -126,7 +129,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .resolvers
         .lookup(options.name.as_full())
         .await
-        .context(LookUpSnafu {
+        .context(error::LookUpSnafu {
             name: options.name.to_owned(),
         })?;
 

@@ -125,8 +125,8 @@ pub enum Error {
 
 // --- Logic ---
 
-pub async fn run(options: Options) -> Result<(), Error> {
-    let (stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
+fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
+    let (stderr, guard) = tracing_appender::non_blocking(std::io::stderr());
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
@@ -141,6 +141,11 @@ pub async fn run(options: Options) -> Result<(), Error> {
                 .from_env_lossy(),
         )
         .init();
+    guard
+}
+
+pub async fn run(options: Options) -> Result<(), Error> {
+    let _guard = init_tracing();
 
     let home = GenmetaHome::load_from_environment().context(error::LocateHomeSnafu)?;
     let output = run_for_home(&home, options).await?;

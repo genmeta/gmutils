@@ -184,8 +184,8 @@ pub enum ForwardError {
     BindDynamicForward { source: std::io::Error },
 }
 
-pub async fn run(options: Options) -> Result<(), Error> {
-    let (stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
+fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
+    let (stderr, guard) = tracing_appender::non_blocking(std::io::stderr());
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
@@ -205,6 +205,11 @@ pub async fn run(options: Options) -> Result<(), Error> {
                 ),
         )
         .init();
+    guard
+}
+
+pub async fn run(options: Options) -> Result<(), Error> {
+    let _guard = init_tracing();
 
     let config = options.config().await?;
     tracing::debug!(?config);
