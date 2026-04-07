@@ -49,7 +49,7 @@ pub enum SetupH3ClientError {
 
     #[snafu(display("failed to load identity SSL material"))]
     LoadIdentitySsl {
-        source: genmeta_home::identity::ssl::LoadIdentitySslError,
+        source: dhttp_home::identity::ssl::LoadIdentitySslError,
     },
 
     #[snafu(display("failed to build DNS resolvers"))]
@@ -67,7 +67,7 @@ const DEFAULT_STUN_SERVER: &str = "stun.genmeta.net:20002";
 pub async fn setup_h3_client(
     binds: &bind::Binds,
     dns_schemes: &[dns::DnsScheme],
-    identity: Option<&genmeta_home::identity::IdentityHome>,
+    identity: Option<&dhttp_home::identity::IdentityHome>,
     /// Optional filter applied to expanded bind URIs before binding the QUIC
     /// client. Useful for restricting to IPv4-only or IPv6-only addresses.
     bind_uri_filter: Option<fn(&BindUri) -> bool>,

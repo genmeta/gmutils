@@ -114,7 +114,7 @@ firewall-db = { git = "ssh://git@github.com/genmeta/firewall.git", branch = "mai
 firewall-migration = { git = "ssh://git@github.com/genmeta/firewall.git", branch = "main" }
 genmeta-access = { path = "genmeta-access" }
 genmeta-common = { path = "genmeta-common" }
-genmeta-home = { git = "ssh://git@github.com/genmeta/dhttp-home.git", branch = "main" }
+dhttp-home = { git = "ssh://git@github.com/genmeta/dhttp-home.git", branch = "main" }
 genmeta-curl = { path = "genmeta-curl" }
 genmeta-discover = { path = "genmeta-discover" }
 genmeta-doctor = { path = "genmeta-doctor" }

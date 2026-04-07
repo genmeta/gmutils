@@ -1,12 +1,12 @@
 use std::{io::IsTerminal, mem, net::SocketAddr, sync::Arc};
 
 use clap::Parser;
+use dhttp_home::identity::Name;
 use genmeta_common::{
     bind, dns,
     h3_client::{self, SetupH3ClientError},
     id,
 };
-use genmeta_home::identity::Name;
 use h3x::dquic::H3Client;
 use http_body_util::BodyExt;
 use snafu::{Report, ResultExt, Snafu};

@@ -36,7 +36,7 @@ pub mod handy {
     use std::sync::Arc;
 
     #[cfg(feature = "h3-client")]
-    use genmeta_home::identity::ssl::Identity;
+    use dhttp_home::identity::ssl::Identity;
     #[cfg(feature = "h3-client")]
     use gmdns::resolvers::H3Resolver;
     use gmdns::resolvers::{HttpResolver, MdnsResolver, MdnsResolvers};

@@ -15,7 +15,7 @@ base64 = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 genmeta-common = { workspace = true }
-genmeta-home = { workspace = true }
+dhttp-home = { workspace = true }
 rankey = { workspace = true }
 reqwest = { workspace = true }
 rustls = { workspace = true }

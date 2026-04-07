@@ -8,7 +8,7 @@ edition = "2024"
 clap = { workspace = true }
 futures = { workspace = true }
 genmeta-common = { workspace = true, features = ["h3-client", "id"] }
-genmeta-home = { workspace = true }
+dhttp-home = { workspace = true }
 gmdns = { workspace = true }
 h3x = { workspace = true }
 snafu = { workspace = true }

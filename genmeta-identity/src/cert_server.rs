@@ -42,7 +42,7 @@ use std::sync::Arc;
 
 use base64::Engine;
 use bytes::Bytes;
-use genmeta_home::identity::Name;
+use dhttp_home::identity::Name;
 use reqwest::header;
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;

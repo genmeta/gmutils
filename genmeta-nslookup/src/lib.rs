@@ -4,13 +4,13 @@ use std::{
 };
 
 use clap::Parser;
+use dhttp_home::identity::Name;
 use futures::StreamExt;
 use genmeta_common::{
     bind,
     dns::{self, DnsScheme},
     id,
 };
-use genmeta_home::identity::Name;
 use gmdns::resolvers::DnsErrors;
 use h3x::dquic::BuildClientError;
 use snafu::{ResultExt, Snafu};
@@ -56,7 +56,7 @@ pub enum Error {
     BuildDnsResolvers { source: BuildClientError },
     #[snafu(display("failed to load identity ssl material"))]
     LoadIdentitySsl {
-        source: genmeta_home::identity::ssl::LoadIdentitySslError,
+        source: dhttp_home::identity::ssl::LoadIdentitySslError,
     },
     #[snafu(display("failed to lookup DNS records of `{name}`"))]
     LookUp {

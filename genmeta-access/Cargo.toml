@@ -9,7 +9,7 @@ clap = { workspace = true }
 firewall-base = { workspace = true, features = ["cli"] }
 firewall-db = { workspace = true }
 genmeta-common = { workspace = true, features = ["error"] }
-genmeta-home = { workspace = true }
+dhttp-home = { workspace = true }
 sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
 sea-orm-migration = { workspace = true, features = ["sqlx-sqlite"] }
 snafu = { workspace = true }

@@ -1,6 +1,6 @@
 use std::{borrow::Cow, fmt::Display};
 
-use genmeta_home::identity::Name;
+use dhttp_home::identity::Name;
 
 use crate::{
     REGISTERABLE_DOMAINS,

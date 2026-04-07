@@ -1,6 +1,7 @@
 use std::io::IsTerminal;
 
 use clap::Parser;
+use dhttp_home::{DhttpHome, LocateDhttpHomeError};
 use firewall_base::{
     action::RequestAction,
     error::location::{LocateLocationFailed, MatchLocationFailed},
@@ -16,7 +17,6 @@ use firewall_db::{
     },
 };
 use genmeta_common::error::ReportFromStr;
-use genmeta_home::{GenmetaHome, LocateGenmetaHomeError};
 use snafu::{ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
 
@@ -92,8 +92,8 @@ pub struct Options {
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 pub enum Error {
-    #[snafu(display("failed to locate GENMETA_HOME"))]
-    LocateHome { source: LocateGenmetaHomeError },
+    #[snafu(display("failed to locate DHTTP_HOME"))]
+    LocateHome { source: LocateDhttpHomeError },
 
     #[snafu(display("failed to initialize identity access database"))]
     InitDatabase { source: firewall_db::AccessDbError },
@@ -147,7 +147,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
 pub async fn run(options: Options) -> Result<(), Error> {
     let _guard = init_tracing();
 
-    let home = GenmetaHome::load_from_environment().context(error::LocateHomeSnafu)?;
+    let home = DhttpHome::load_from_environment().context(error::LocateHomeSnafu)?;
     let output = run_for_home(&home, options).await?;
 
     if !output.is_empty() {
@@ -156,7 +156,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     Ok(())
 }
 
-pub async fn run_for_home(home: &GenmetaHome, options: Options) -> Result<String, Error> {
+pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, Error> {
     let ReportFromStr(identity) = options.identity;
     let identity_home = home.identity_home(identity.borrow());
     let db_path = identity_access_db_path(&identity_home);

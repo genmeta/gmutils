@@ -4,15 +4,15 @@ pub mod validator;
 use std::{borrow::Cow, fmt::Debug, io::IsTerminal, ops::Deref};
 
 use clap::Parser;
-use futures::TryStreamExt;
-use genmeta_home::{
-    GenmetaHome,
+use dhttp_home::{
+    DhttpHome,
     identity::{
         Name,
         default::{DefaultConfigFile, LoadDefaultConfigError, SaveDefaultConfigError},
         ssl::{ListIdentitiesError, LoadCertError, LoadIdentityError, SaveIdentityError},
     },
 };
+use futures::TryStreamExt;
 use indicatif::ProgressStyle;
 use rankey::EncodePem;
 use snafu::{ResultExt, Snafu, Whatever, whatever};
@@ -71,8 +71,8 @@ pub enum Error {
     },
 
     #[snafu(transparent)]
-    LocateGenmetaHome {
-        source: genmeta_home::LocateGenmetaHomeError,
+    LocateDhttpHome {
+        source: dhttp_home::LocateDhttpHomeError,
     },
 
     #[snafu(transparent)]
@@ -130,17 +130,17 @@ async fn acquire_captcha(cert_server: &CertServer, email: &str) -> Result<(), Er
 }
 
 async fn save_identity(
-    genmeta_home: &GenmetaHome,
+    dhttp_home: &DhttpHome,
     domain: &Name<'_>,
     key_pem: &[u8],
     cert_pem: &[u8],
 ) -> Result<(), Error> {
-    let identity_dir = genmeta_home.join_identity_name(domain.borrow());
+    let identity_dir = dhttp_home.join_identity_name(domain.borrow());
     tracing::Span::current().pb_set_message(&format!(
         "Saving identity for {domain} to {}...",
         identity_dir.display()
     ));
-    genmeta_home
+    dhttp_home
         .identity_home(domain.borrow())
         .save_identity(cert_pem, key_pem)
         .await?;
@@ -212,7 +212,7 @@ fn display_cert_info(cert_der: &[u8], indent: &str) -> Result<(), Error> {
 
 #[tracing::instrument(skip(cert_server))]
 async fn resign_domain(
-    genmeta_home: &GenmetaHome,
+    dhttp_home: &DhttpHome,
     cert_server: &CertServer,
     access_token: &str,
     domain: &Name<'_>,
@@ -225,14 +225,14 @@ async fn resign_domain(
         .await?;
 
     // 4. save identity
-    save_identity(genmeta_home, domain, key_pem.as_bytes(), &cert_pem).await?;
+    save_identity(dhttp_home, domain, key_pem.as_bytes(), &cert_pem).await?;
 
     Ok(())
 }
 
 #[tracing::instrument(skip(cert_server))]
 async fn resign_domains(
-    genmeta_home: &GenmetaHome,
+    dhttp_home: &DhttpHome,
     cert_server: &CertServer,
     access_token: &str,
     domains: &[Name<'_>],
@@ -244,7 +244,7 @@ async fn resign_domains(
     tracing::Span::current().pb_set_length(domains.len() as u64);
     tracing::Span::current().pb_set_message("Resigning certificates for selected domains...");
     for domain in domains {
-        resign_domain(genmeta_home, cert_server, access_token, domain).await?;
+        resign_domain(dhttp_home, cert_server, access_token, domain).await?;
         tracing::Span::current().pb_inc(1);
     }
     tracing::Span::current()
@@ -254,7 +254,7 @@ async fn resign_domains(
 
 #[tracing::instrument(skip(cert_server))]
 async fn renew_domain(
-    genmeta_home: &GenmetaHome,
+    dhttp_home: &DhttpHome,
     cert_server: &CertServer,
     access_token: &str,
     domain: &Name<'_>,
@@ -266,14 +266,14 @@ async fn renew_domain(
         .renew_cert(access_token, domain.as_full(), &csr_pem)
         .await?;
 
-    save_identity(genmeta_home, domain, key_pem.as_bytes(), &cert_pem).await?;
+    save_identity(dhttp_home, domain, key_pem.as_bytes(), &cert_pem).await?;
 
     Ok(())
 }
 
 #[tracing::instrument(skip(cert_server))]
 async fn renew_domains(
-    genmeta_home: &GenmetaHome,
+    dhttp_home: &DhttpHome,
     cert_server: &CertServer,
     access_token: &str,
     domains: &[Name<'_>],
@@ -285,7 +285,7 @@ async fn renew_domains(
     tracing::Span::current().pb_set_length(domains.len() as u64);
     tracing::Span::current().pb_set_message("Renewing certificates for selected domains...");
     for domain in domains {
-        renew_domain(genmeta_home, cert_server, access_token, domain).await?;
+        renew_domain(dhttp_home, cert_server, access_token, domain).await?;
         tracing::Span::current().pb_inc(1);
     }
     tracing::Span::current()
@@ -295,14 +295,14 @@ async fn renew_domains(
 
 #[tracing::instrument()]
 async fn load_current_default_config(
-    genmeta_home: &GenmetaHome,
+    dhttp_home: &DhttpHome,
 ) -> Result<Option<DefaultConfigFile>, Error> {
-    let path = genmeta_home.identity_default_config_path();
+    let path = dhttp_home.identity_default_config_path();
     tracing::Span::current().pb_set_message(&format!(
         "Loading default configuration from {}...",
         path.display()
     ));
-    let (message, result) = match genmeta_home.load_identity_default_config().await {
+    let (message, result) = match dhttp_home.load_identity_default_config().await {
         Ok(default_config) => ("Default configuration loaded.", Ok(Some(default_config))),
         Err(LoadDefaultConfigError::Io { source, .. })
             if source.kind() == io::ErrorKind::NotFound =>
@@ -329,9 +329,9 @@ async fn save_default_config(default_config: &DefaultConfigFile) -> Result<(), E
 }
 
 #[tracing::instrument()]
-async fn query_exist_names_list(genmeta_home: &GenmetaHome) -> Result<Vec<Name<'static>>, Error> {
+async fn query_exist_names_list(dhttp_home: &DhttpHome) -> Result<Vec<Name<'static>>, Error> {
     tracing::Span::current().pb_set_message("Querying existing identities...");
-    let (message, result) = match genmeta_home.identities().try_collect::<Vec<_>>().await {
+    let (message, result) = match dhttp_home.identities().try_collect::<Vec<_>>().await {
         Ok(list) => (
             format!("Found {} existing identities.", list.len()),
             Ok(list),
@@ -361,11 +361,7 @@ pub struct Create {
 }
 
 impl Create {
-    pub async fn run(
-        &self,
-        genmeta_home: &GenmetaHome,
-        cert_server: &CertServer,
-    ) -> Result<(), Error> {
+    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
         let domain: String = match self.domain.as_ref() {
             // TODO: wait for future cert server domain restrictions
             Some(domain) if !REGISTERABLE_DOMAINS.contains(&domain.as_str()) => {
@@ -401,12 +397,12 @@ impl Create {
             }
         };
 
-        save_identity(genmeta_home, &domain, key_pem.as_bytes(), &cert_pem)
+        save_identity(dhttp_home, &domain, key_pem.as_bytes(), &cert_pem)
             .instrument(info_span!("save_identity"))
             .await?;
 
         let is_interactive = self.captcha.is_none();
-        let default_config = load_current_default_config(genmeta_home).await?;
+        let default_config = load_current_default_config(dhttp_home).await?;
         let current_default_name = default_config
             .as_ref()
             .and_then(|config| config.config().name());
@@ -425,7 +421,7 @@ impl Create {
 
         if update_default_name {
             let mut default_config =
-                default_config.unwrap_or_else(|| genmeta_home.new_identity_default_config());
+                default_config.unwrap_or_else(|| dhttp_home.new_identity_default_config());
             default_config.config_mut().set_name(domain.to_owned());
             save_default_config(&default_config).await?;
         }
@@ -446,11 +442,7 @@ pub struct Apply {
 }
 
 impl Apply {
-    pub async fn run(
-        &self,
-        genmeta_home: &GenmetaHome,
-        cert_server: &CertServer,
-    ) -> Result<(), Error> {
+    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
         let email = match self.email.clone() {
             Some(email) => email,
             None => prompt::prompt_email().await?,
@@ -469,7 +461,7 @@ impl Apply {
             Some(domains) => domains.into(),
             None => prompt_select_resign_domains(domains).await?.into(),
         };
-        resign_domains(genmeta_home, cert_server, &access_token, &domains).await?;
+        resign_domains(dhttp_home, cert_server, &access_token, &domains).await?;
 
         Ok(())
     }
@@ -485,11 +477,7 @@ pub struct Renew {
 }
 
 impl Renew {
-    pub async fn run(
-        &self,
-        genmeta_home: &GenmetaHome,
-        cert_server: &CertServer,
-    ) -> Result<(), Error> {
+    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
         let email = match self.email.clone() {
             Some(email) => email,
             None => prompt::prompt_email().await?,
@@ -505,7 +493,7 @@ impl Renew {
             Some(domains) => domains.into(),
             None => prompt_select_resign_domains(domains).await?.into(),
         };
-        renew_domains(genmeta_home, cert_server, &access_token, &domains).await?;
+        renew_domains(dhttp_home, cert_server, &access_token, &domains).await?;
 
         Ok(())
     }
@@ -520,18 +508,18 @@ pub struct Default {
 impl Default {
     pub async fn run(
         &self,
-        genmeta_home: &GenmetaHome,
+        dhttp_home: &DhttpHome,
         _cert_server: &CertServer,
     ) -> Result<(), Error> {
         match self.name.as_ref() {
             None => {
                 // Show info for current default identity
-                let current_config = load_current_default_config(genmeta_home).await?;
+                let current_config = load_current_default_config(dhttp_home).await?;
                 let name = match current_config.and_then(|c| c.config().name().cloned()) {
                     Some(n) => n,
                     None => whatever!("no default identity configured"),
                 };
-                let identity = genmeta_home.load_identity(name.borrow()).await?;
+                let identity = dhttp_home.load_identity(name.borrow()).await?;
                 println!("{}", identity.name());
                 let certs = identity.certs().await?;
                 let der = certs[0].as_ref();
@@ -540,10 +528,10 @@ impl Default {
             }
             Some(name) => {
                 // Configure name as default
-                genmeta_home.load_identity(name.borrow()).await?;
-                let current_config = load_current_default_config(genmeta_home).await?;
+                dhttp_home.load_identity(name.borrow()).await?;
+                let current_config = load_current_default_config(dhttp_home).await?;
                 let mut current_config = current_config.unwrap_or_else(|| {
-                    DefaultConfigFile::new(genmeta_home.identity_default_config_path())
+                    DefaultConfigFile::new(dhttp_home.identity_default_config_path())
                 });
                 current_config.config_mut().set_name(name.to_owned());
                 save_default_config(&current_config).await
@@ -563,11 +551,11 @@ pub struct List {
 impl List {
     pub async fn run(
         &self,
-        genmeta_home: &GenmetaHome,
+        dhttp_home: &DhttpHome,
         _cert_server: &CertServer,
     ) -> Result<(), Error> {
-        let names = query_exist_names_list(genmeta_home).await?;
-        let default_config = load_current_default_config(genmeta_home).await?;
+        let names = query_exist_names_list(dhttp_home).await?;
+        let default_config = load_current_default_config(dhttp_home).await?;
         let default_name = default_config
             .as_ref()
             .and_then(|c| c.config().name().cloned());
@@ -586,7 +574,7 @@ impl List {
                 };
                 println!("{marker}{name}");
                 if self.verbose {
-                    let identity = genmeta_home.load_identity(name.borrow()).await?;
+                    let identity = dhttp_home.load_identity(name.borrow()).await?;
                     let certs = identity.certs().await?;
                     let der = certs[0].as_ref();
                     display_cert_info(der, "    ")?;
@@ -607,20 +595,20 @@ pub struct Info {
 impl Info {
     pub async fn run(
         &self,
-        genmeta_home: &GenmetaHome,
+        dhttp_home: &DhttpHome,
         _cert_server: &CertServer,
     ) -> Result<(), Error> {
         let name: Name<'static> = match self.name.as_ref() {
             Some(n) => n.to_owned(),
             None => {
-                let cfg = load_current_default_config(genmeta_home).await?;
+                let cfg = load_current_default_config(dhttp_home).await?;
                 match cfg.and_then(|c| c.config().name().cloned()) {
                     Some(n) => n,
                     None => whatever!("no default identity configured"),
                 }
             }
         };
-        let identity = genmeta_home.load_identity(name.borrow()).await?;
+        let identity = dhttp_home.load_identity(name.borrow()).await?;
         println!("{}", identity.name());
 
         let certs = identity.certs().await?;
@@ -643,18 +631,14 @@ pub enum Options {
 }
 
 impl Options {
-    pub async fn run(
-        &self,
-        genmeta_home: &GenmetaHome,
-        cert_server: &CertServer,
-    ) -> Result<(), Error> {
+    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
         match self {
-            Options::Create(cmd) => cmd.run(genmeta_home, cert_server).await,
-            Options::Apply(cmd) => cmd.run(genmeta_home, cert_server).await,
-            Options::Renew(cmd) => cmd.run(genmeta_home, cert_server).await,
-            Options::Default(cmd) => cmd.run(genmeta_home, cert_server).await,
-            Options::Info(cmd) => cmd.run(genmeta_home, cert_server).await,
-            Options::List(cmd) => cmd.run(genmeta_home, cert_server).await,
+            Options::Create(cmd) => cmd.run(dhttp_home, cert_server).await,
+            Options::Apply(cmd) => cmd.run(dhttp_home, cert_server).await,
+            Options::Renew(cmd) => cmd.run(dhttp_home, cert_server).await,
+            Options::Default(cmd) => cmd.run(dhttp_home, cert_server).await,
+            Options::Info(cmd) => cmd.run(dhttp_home, cert_server).await,
+            Options::List(cmd) => cmd.run(dhttp_home, cert_server).await,
             Options::Version {} => {
                 println!("{}", env!("CARGO_PKG_VERSION"));
                 Ok(())
@@ -693,12 +677,12 @@ fn init_tracing() {
 pub async fn run(options: Options) -> Result<(), Error> {
     init_tracing();
 
-    let genmeta_home = GenmetaHome::load_from_environment()?;
+    let dhttp_home = DhttpHome::load_from_environment()?;
 
     _ = rustls::crypto::ring::default_provider().install_default();
     let cert_server_url = std::env::var("CERT_SERVER_URL")
         .unwrap_or_else(|_| DEFAULT_CERT_SERVER_BASE_URL.to_string());
     let cert_server = CertServer::new(cert_server_url)?;
 
-    options.run(&genmeta_home, &cert_server).await
+    options.run(&dhttp_home, &cert_server).await
 }

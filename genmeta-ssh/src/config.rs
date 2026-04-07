@@ -1,11 +1,11 @@
 use core::fmt;
 use std::{collections::BTreeSet, str::FromStr, time::Duration};
 
+use dhttp_home::identity::{IdentityHome, InvalidName, Name};
 use genmeta_common::{
     bind::{self, Binds},
     dns, id,
 };
-use genmeta_home::identity::{IdentityHome, InvalidName, Name};
 use http::{Uri, uri::Authority};
 use snafu::{ResultExt, Snafu};
 

@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use clap::Parser;
+use dhttp_home::DhttpHome;
 use firewall_db::{identity::Name, identity_access_db_path};
 use genmeta_access::{Options, run_for_home};
-use genmeta_home::GenmetaHome;
 
 struct TestHome {
     path: PathBuf,
@@ -22,8 +22,8 @@ impl TestHome {
         Self { path }
     }
 
-    fn home(&self) -> GenmetaHome {
-        GenmetaHome::new(self.path.clone())
+    fn home(&self) -> DhttpHome {
+        DhttpHome::new(self.path.clone())
     }
 }
 
@@ -33,7 +33,7 @@ impl Drop for TestHome {
     }
 }
 
-async fn run_cli(home: &GenmetaHome, command: &str) -> String {
+async fn run_cli(home: &DhttpHome, command: &str) -> String {
     let mut args = vec!["access"];
     args.extend(command.split_whitespace());
     let options = Options::parse_from(&args);

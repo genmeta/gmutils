@@ -1257,6 +1257,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "dhttp-home"
+version = "0.1.0"
+source = "git+ssh://git@github.com/genmeta/dhttp-home.git?branch=main#b1b0999527ce58e114a451f6c20a879c7e5fa83e"
+dependencies = [
+ "dirs",
+ "futures",
+ "rustls",
+ "serde",
+ "snafu 0.9.0",
+ "tokio",
+ "toml",
+ "x509-parser 0.18.1",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1545,7 +1560,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 [[package]]
 name = "firewall-base"
 version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/firewall.git?branch=main#e87320f732975d16e6fa0a97375b20655986324b"
+source = "git+ssh://git@github.com/genmeta/firewall.git?branch=main#961bb48f151425de500897bde11d3231d84e24cf"
 dependencies = [
  "clap",
  "derive_more",
@@ -1563,14 +1578,14 @@ dependencies = [
 [[package]]
 name = "firewall-db"
 version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/firewall.git?branch=main#e87320f732975d16e6fa0a97375b20655986324b"
+source = "git+ssh://git@github.com/genmeta/firewall.git?branch=main#961bb48f151425de500897bde11d3231d84e24cf"
 dependencies = [
  "chrono",
  "derive_more",
+ "dhttp-home",
  "firewall-base",
  "firewall-migration",
  "futures",
- "genmeta-home",
  "sea-orm",
  "sea-orm-migration",
  "serde",
@@ -1582,7 +1597,7 @@ dependencies = [
 [[package]]
 name = "firewall-migration"
 version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/firewall.git?branch=main#e87320f732975d16e6fa0a97375b20655986324b"
+source = "git+ssh://git@github.com/genmeta/firewall.git?branch=main#961bb48f151425de500897bde11d3231d84e24cf"
 dependencies = [
  "async-std",
  "sea-orm-migration",
@@ -1810,10 +1825,10 @@ name = "genmeta-access"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "dhttp-home",
  "firewall-base",
  "firewall-db",
  "genmeta-common",
- "genmeta-home",
  "sea-orm",
  "sea-orm-migration",
  "snafu 0.9.0",
@@ -1830,9 +1845,9 @@ dependencies = [
  "bon",
  "clap",
  "derive_more",
+ "dhttp-home",
  "either",
  "futures",
- "genmeta-home",
  "globset",
  "gmdns",
  "h3x",
@@ -1852,8 +1867,8 @@ dependencies = [
  "async-compression",
  "bytes",
  "clap",
+ "dhttp-home",
  "genmeta-common",
- "genmeta-home",
  "h3x",
  "http",
  "http-body-util",
@@ -1894,30 +1909,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "genmeta-home"
-version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/dhttp-home.git?branch=main#0114d98ece3bc414781168da2d60db45013a5d2d"
-dependencies = [
- "dirs",
- "futures",
- "rustls",
- "serde",
- "snafu 0.9.0",
- "tokio",
- "toml",
- "x509-parser 0.18.1",
-]
-
-[[package]]
 name = "genmeta-identity"
 version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "bytes",
  "clap",
+ "dhttp-home",
  "futures",
  "genmeta-common",
- "genmeta-home",
  "indicatif",
  "inquire",
  "inquire-derive",
@@ -1939,9 +1939,9 @@ name = "genmeta-nat"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "dhttp-home",
  "futures",
  "genmeta-common",
- "genmeta-home",
  "gmdns",
  "h3x",
  "qinterface",
@@ -1958,9 +1958,9 @@ name = "genmeta-nslookup"
 version = "0.1.3"
 dependencies = [
  "clap",
+ "dhttp-home",
  "futures",
  "genmeta-common",
- "genmeta-home",
  "gmdns",
  "h3x",
  "snafu 0.9.0",
@@ -1977,9 +1977,9 @@ dependencies = [
  "bytes",
  "clap",
  "daemonize",
+ "dhttp-home",
  "futures",
  "genmeta-common",
- "genmeta-home",
  "h3x",
  "http",
  "http-body-util",
@@ -2019,10 +2019,10 @@ dependencies = [
  "bytes",
  "clap",
  "crossterm",
+ "dhttp-home",
  "dirs",
  "futures",
  "genmeta-common",
- "genmeta-home",
  "genmeta-ssh 0.1.0",
  "h3x",
  "http",

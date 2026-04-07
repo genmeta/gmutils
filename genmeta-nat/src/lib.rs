@@ -1,12 +1,12 @@
 use std::{io::IsTerminal, net::SocketAddr, sync::Arc};
 
 use clap::Parser;
+use dhttp_home::identity::Name;
 use genmeta_common::{
     bind::{self, Bind},
     dns::{self, DnsScheme},
     id,
 };
-use genmeta_home::identity::Name;
 use h3x::dquic::{BuildClientError, qinterface::io::IO, qresolve};
 use qtraversal::{
     nat::{client::StunClient, router::StunRouter},
@@ -49,7 +49,7 @@ pub enum Error {
 
     #[snafu(display("failed to load identity ssl material"))]
     LoadIdentitySsl {
-        source: genmeta_home::identity::ssl::LoadIdentitySslError,
+        source: dhttp_home::identity::ssl::LoadIdentitySslError,
     },
 
     #[snafu(display("failed to build DNS resolvers"))]

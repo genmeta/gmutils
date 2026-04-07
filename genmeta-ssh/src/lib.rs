@@ -10,9 +10,9 @@ pub mod forward;
 pub mod ssh_config;
 
 use clap::Parser;
+use dhttp_home::identity::Name;
 use forward::*;
 use genmeta_common::{bind, dns};
-use genmeta_home::identity::Name;
 use genmeta_ssh_core as ssh3;
 use h3x::error::Code;
 use snafu::{FromString, Report, ResultExt, Snafu};

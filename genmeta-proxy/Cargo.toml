@@ -7,7 +7,7 @@ edition = "2024"
 [dependencies]
 clap = { workspace = true }
 genmeta-common = { workspace = true, features = ["h3-client", "id"] }
-genmeta-home = { workspace = true }
+dhttp-home = { workspace = true }
 h3x = { workspace = true }
 http = { workspace = true }
 snafu = { workspace = true }

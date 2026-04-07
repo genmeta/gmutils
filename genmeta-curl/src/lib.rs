@@ -9,13 +9,13 @@ use std::{
 
 use async_compression::tokio::bufread::{DeflateDecoder, GzipDecoder, ZstdDecoder};
 use clap::Parser;
+use dhttp_home::identity::Name;
 use genmeta_common::{
     bind,
     dns::{self},
     h3_client::{self, SetupH3ClientError},
     id,
 };
-use genmeta_home::identity::Name;
 use h3x::{
     dquic::{H3Client, prelude::ConnectServerError},
     hyper::SendMessageError,
@@ -417,7 +417,7 @@ async fn setup_client(
 ) -> Result<
     (
         H3Client,
-        Option<genmeta_home::identity::IdentityHome>,
+        Option<dhttp_home::identity::IdentityHome>,
         Duration,
         AbortOnDropHandle<()>,
     ),

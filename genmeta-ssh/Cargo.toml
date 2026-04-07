@@ -11,7 +11,7 @@ crossterm = { workspace = true }
 dirs = { workspace = true }
 futures = { workspace = true }
 genmeta-common = { workspace = true, features = ["h3-client", "id"] }
-genmeta-home = { workspace = true }
+dhttp-home = { workspace = true }
 genmeta-ssh-core = { workspace = true, features = ["cli", "config"] }
 http = { workspace = true }
 http-body-util = { workspace = true }
