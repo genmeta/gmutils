@@ -680,9 +680,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let dhttp_home = DhttpHome::load_from_environment()?;
 
     _ = rustls::crypto::ring::default_provider().install_default();
-    let cert_server_url = std::env::var("CERT_SERVER_URL")
-        .unwrap_or_else(|_| DEFAULT_CERT_SERVER_BASE_URL.to_string());
-    let cert_server = CertServer::new(cert_server_url)?;
+    let cert_server = CertServer::new(DEFAULT_CERT_SERVER_BASE_URL)?;
 
     options.run(&dhttp_home, &cert_server).await
 }
