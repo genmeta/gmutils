@@ -10,7 +10,7 @@ use genmeta_common::{
 use h3x::dquic::H3Client;
 use http_body_util::BodyExt;
 use snafu::{Report, ResultExt, Snafu};
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, task::JoinSet};
 use tracing::Instrument;
 use tracing_subscriber::prelude::*;
 
@@ -147,27 +147,7 @@ async fn handle_request(
     tracing::info!(method = %req.method(), uri = %req.uri(), route = ?route, "proxy request");
     match route {
         route::Route::GenmetaPlainHttp { .. } => match h3_forward::forward_h3(req, client).await {
-            Ok(resp) => {
-                let (parts, body) = resp.into_parts();
-                match body.collect().await {
-                    Ok(collected) => {
-                        let bytes = collected.to_bytes();
-                        Ok(hyper::Response::from_parts(
-                            parts,
-                            http_body_util::Full::new(bytes)
-                                .map_err(|never| match never {})
-                                .boxed_unsync(),
-                        ))
-                    }
-                    Err(e) => {
-                        tracing::error!(error = %Report::from_error(&e), "h3 forward body collect failed");
-                        Ok(hyper::Response::builder()
-                            .status(502)
-                            .body(full_body("Bad Gateway"))
-                            .expect("valid static response"))
-                    }
-                }
-            }
+            Ok(resp) => Ok(resp.map(box_body)),
             Err(e) => {
                 tracing::error!(error = %Report::from_error(&e), "h3 forward failed");
                 Ok(hyper::Response::builder()
@@ -294,10 +274,33 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     let router = Arc::new(route::Router::new());
     let client = Arc::new(client);
 
+    let mut tasks = JoinSet::new();
+    for listener in listeners {
+        let client = client.clone();
+        let router = router.clone();
+        tasks.spawn(accept_loop(listener, client, router));
+    }
+
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok(()) => tracing::info!("listener task exited"),
+            Err(e) => tracing::error!(error = %e, "listener task panicked"),
+        }
+    }
+
+    Ok(())
+}
+
+/// Accept loop for a single TCP listener. Runs until the listener is dropped.
+async fn accept_loop(listener: TcpListener, client: Arc<H3Client>, router: Arc<route::Router>) {
     loop {
-        let accepts: Vec<_> = listeners.iter().map(|l| Box::pin(l.accept())).collect();
-        let (result, _, _) = futures::future::select_all(accepts).await;
-        let (stream, addr) = result.context(BindListenerSnafu)?;
+        let (stream, addr) = match listener.accept().await {
+            Ok(accepted) => accepted,
+            Err(e) => {
+                tracing::warn!(error = %e, "accept failed, retrying");
+                continue;
+            }
+        };
         tracing::debug!(%addr, "accepted connection");
         let client = client.clone();
         let router = router.clone();

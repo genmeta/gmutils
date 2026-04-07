@@ -1978,7 +1978,6 @@ dependencies = [
  "clap",
  "daemonize",
  "dhttp-home",
- "futures",
  "genmeta-common",
  "h3x",
  "http",
