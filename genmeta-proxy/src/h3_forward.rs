@@ -112,5 +112,9 @@ pub async fn forward_h3(
 
     let response_parts = response_result?;
     let body = read_stream.into_hyper_body();
-    Ok(Response::from_parts(response_parts, body))
+    let mut resp = Response::from_parts(response_parts, body);
+    // Rewrite version: HTTP/3 responses cannot be sent over an HTTP/1.1
+    // connection — hyper's HTTP/1 codec panics on unknown versions.
+    *resp.version_mut() = http::Version::HTTP_11;
+    Ok(resp)
 }
