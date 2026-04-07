@@ -52,10 +52,10 @@ pub async fn load_identity<'n>(
     load_list: impl IntoIterator<Item = (&dyn fmt::Display, Name<'_>)>,
 ) -> Result<Option<IdentityHome>, Error> {
     if let Some((source, name)) = load_list.into_iter().next() {
-        tracing::debug!("Trying to load identity `{name}` specified by `{source}`");
+        tracing::debug!("trying to load identity `{name}` specified by `{source}`");
         match genmeta_home.load_identity(name.borrow()).await {
             Ok(identity) => {
-                tracing::debug!("Identity `{name}` specified by `{source}` loaded");
+                tracing::debug!("identity `{name}` specified by `{source}` loaded");
                 return Ok(Some(identity));
             }
             Err(_error) => {
@@ -68,14 +68,14 @@ pub async fn load_identity<'n>(
     match genmeta_home.load_default_identity().await {
         Ok(identity) => {
             tracing::debug!(
-                "No identity specified, using default identity `{}`",
+                "no identity specified, using default identity `{}`",
                 identity.name()
             );
             Ok(Some(identity))
         }
         Err(error) => {
             tracing::debug!(
-                "No identity specified, and default identity failed to load: {}",
+                "no identity specified, and default identity failed to load: {}",
                 Report::from_error(error)
             );
             Ok(None)
@@ -101,7 +101,7 @@ pub async fn load_home_and_identity<'n>(
         Err(error) if !genmeta_home_required => {
             tracing::warn!(
                 error = %Report::from_error(error),
-                "Failed to locate GENMETA_HOME, some features may not work"
+                "failed to locate GENMETA_HOME, some features may not work"
             );
             return Ok(None);
         }

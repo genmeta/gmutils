@@ -2,7 +2,7 @@ use bytes::Bytes;
 use http_body_util::Empty;
 use hyper::{Request, Response, body::Incoming, upgrade::on as upgrade_on};
 use hyper_util::rt::TokioIo;
-use snafu::ResultExt;
+use snafu::{Report, ResultExt};
 use tokio::{io::copy_bidirectional, net::TcpStream};
 use tracing::Instrument;
 
@@ -22,7 +22,7 @@ pub async fn tunnel_connect(
     tokio::spawn(async move {
         match upgrade_fut.await.context(crate::TunnelUpgradeSnafu) {
             Err(e) => {
-                tracing::error!(error = %e, "Failed to upgrade tunnel connection");
+                tracing::error!(error = %Report::from_error(&e), "failed to upgrade tunnel connection");
             }
             Ok(upgraded) => {
                 let mut client_io = TokioIo::new(upgraded);
@@ -31,12 +31,12 @@ pub async fn tunnel_connect(
                     .context(crate::TunnelConnectSnafu { addr: &addr })
                 {
                     Err(e) => {
-                        tracing::error!(error = %e, addr = %addr, "Failed to connect to tunnel target");
+                        tracing::error!(error = %Report::from_error(&e), addr = %addr, "failed to connect to tunnel target");
                     }
                     Ok(mut stream) => {
                         // TcpStream implements tokio AsyncRead/AsyncWrite directly
                         if let Err(e) = copy_bidirectional(&mut client_io, &mut stream).await {
-                            tracing::error!(error = %e, addr = %addr, "Tunnel copy error");
+                            tracing::error!(error = %Report::from_error(&e), addr = %addr, "tunnel copy error");
                         }
                     }
                 }

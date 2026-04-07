@@ -95,14 +95,14 @@ impl super::Options {
         };
 
         if username.is_none() {
-            tracing::debug!("User not found in ssh_config, trying to parse from hostname");
+            tracing::debug!("user not found in ssh_config, trying to parse from hostname");
             username = parse_username_from_uri(&uri);
         }
 
         let username = match username {
             Some(username) => username,
             None => {
-                tracing::debug!("User not found in URI, using current user");
+                tracing::debug!("user not found in URI, using current user");
                 whoami::username().unwrap_or_else(|_| "unknown".to_string())
             }
         };
@@ -179,7 +179,7 @@ fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {
     };
     uri_parts.path_and_query = match uri_parts.path_and_query {
         root if root.as_ref().is_none_or(|path| path == "/") => {
-            tracing::debug!("Path is empty, using `/ssh` as default");
+            tracing::debug!("path is empty, using `/ssh` as default");
             Some("/ssh".parse().expect("BUG: `/ssh` is a valid path"))
         }
         path_and_query => path_and_query,

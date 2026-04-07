@@ -9,7 +9,7 @@ use genmeta_common::{
 use genmeta_home::identity::Name;
 use h3x::dquic::H3Client;
 use http_body_util::BodyExt;
-use snafu::{ResultExt, Snafu};
+use snafu::{Report, ResultExt, Snafu};
 use tokio::net::TcpListener;
 use tracing::Instrument;
 use tracing_subscriber::prelude::*;
@@ -160,7 +160,7 @@ async fn handle_request(
                         ))
                     }
                     Err(e) => {
-                        tracing::error!(error = %e, "H3 forward body collect failed");
+                        tracing::error!(error = %Report::from_error(&e), "h3 forward body collect failed");
                         Ok(hyper::Response::builder()
                             .status(502)
                             .body(full_body("Bad Gateway"))
@@ -169,7 +169,7 @@ async fn handle_request(
                 }
             }
             Err(e) => {
-                tracing::error!(error = %e, "H3 forward failed");
+                tracing::error!(error = %Report::from_error(&e), "h3 forward failed");
                 Ok(hyper::Response::builder()
                     .status(502)
                     .body(full_body("Bad Gateway"))
@@ -184,7 +184,7 @@ async fn handle_request(
             match tunnel::tunnel_connect(req, authority.as_str()).await {
                 Ok(resp) => Ok(resp.map(box_body)),
                 Err(e) => {
-                    tracing::error!(error = %e, "Tunnel connect failed");
+                    tracing::error!(error = %Report::from_error(&e), "tunnel connect failed");
                     Ok(hyper::Response::builder()
                         .status(502)
                         .body(full_body("Bad Gateway"))
@@ -195,7 +195,7 @@ async fn handle_request(
         route::Route::StandardForward { .. } => match forward::forward_http(req).await {
             Ok(resp) => Ok(resp.map(box_body)),
             Err(e) => {
-                tracing::error!(error = %e, "HTTP forward failed");
+                tracing::error!(error = %Report::from_error(&e), "http forward failed");
                 Ok(hyper::Response::builder()
                     .status(502)
                     .body(full_body("Bad Gateway"))
@@ -256,7 +256,7 @@ async fn bind_listeners(options: &Options) -> Result<Vec<TcpListener>, Error> {
         })?;
         let addr = SocketAddr::new(ip, b.effective_port());
         let listener = TcpListener::bind(addr).await.context(BindListenerSnafu)?;
-        tracing::info!(%addr, "Proxy listening");
+        tracing::info!(%addr, "proxy listening");
         listeners.push(listener);
     }
     Ok(listeners)
@@ -319,7 +319,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
                     .with_upgrades()
                     .await
                 {
-                    tracing::error!(error = %e, %addr, "connection error");
+                    tracing::error!(error = %Report::from_error(&e), %addr, "connection error");
                 }
             }
             .instrument(span),

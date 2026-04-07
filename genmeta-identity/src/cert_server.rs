@@ -160,7 +160,7 @@ async fn parse_response<T: DeserializeOwned>(response: reqwest::Response) -> Res
         }
     };
     let response = response.bytes().await?;
-    tracing::debug!("Response bytes: {:?}", response);
+    tracing::debug!("response bytes: {:?}", response);
     let response = serde_json::from_slice::<Response<T>>(&response).context(JsonSnafu {})?;
     response.body()
 }

@@ -600,7 +600,7 @@ async fn stream_response_body(
     output: Option<&PathBuf>,
 ) -> Result<u64, Error> {
     if let Some(output_path) = output {
-        tracing::debug!("Dumping output to {}", output_path.display());
+        tracing::debug!("dumping output to {}", output_path.display());
         let mut file = fs::File::create(output_path)
             .await
             .context(error::CreateOutputFileSnafu)?;
@@ -617,7 +617,7 @@ async fn stream_response_body(
         file.flush().await.context(error::FlushOutputSnafu)?;
         Ok(n)
     } else {
-        tracing::debug!("Dumping output to stdout");
+        tracing::debug!("dumping output to stdout");
         let mut stdout = io::stdout();
 
         let n = if decompress {

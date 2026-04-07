@@ -51,7 +51,7 @@ pub mod handy {
     use crate::h3_client::genmeta_root_cert_store;
 
     pub fn mdns_resolvers(bind_ifaces: impl IntoIterator<Item = BindInterface>) -> MdnsResolvers {
-        tracing::debug!("Initializing mDNS resolvers");
+        tracing::debug!("initializing mDNS resolvers");
         let resolvers = MdnsResolvers::new();
         for mdns_iface in bind_ifaces
             .into_iter()
@@ -63,7 +63,7 @@ pub mod handy {
                     .map(|resolver| resolver.service_name() == MDNS_SERVICE)
                     .unwrap_or_default()
             }) {
-                tracing::debug!(bind_uri = %mdns_iface.bind_uri(), "Initializing mDNS resolver for nic");
+                tracing::debug!(bind_uri = %mdns_iface.bind_uri(), "initializing mDNS resolver for nic");
                 resolvers.insert_iface(mdns_iface);
             }
         }
@@ -84,7 +84,7 @@ pub mod handy {
     }
 
     pub fn http_resolver() -> HttpResolver {
-        tracing::debug!("Initializing HTTP DNS resolver with server {HTTP_DNS_SERVER}");
+        tracing::debug!("initializing HTTP DNS resolver with server {HTTP_DNS_SERVER}");
         HttpResolver::new(HTTP_DNS_SERVER).expect("BUG: HTTP_DNS_SERVER is a valid URL")
     }
 
@@ -93,11 +93,11 @@ pub mod handy {
         resolver: Arc<dyn Resolve>,
         id_material: Option<&Identity>,
     ) -> Result<H3Resolver, BuildClientError> {
-        tracing::debug!("Initializing DHTTP/3 DNS resolver with server {H3_DNS_SERVER}");
+        tracing::debug!("initializing DHTTP/3 DNS resolver with server {H3_DNS_SERVER}");
         let h3_client = match id_material {
             Some(id_material) => {
                 tracing::debug!(
-                    "Using preloaded client identity {} for DHTTP/3 DNS resolver",
+                    "using preloaded client identity {} for DHTTP/3 DNS resolver",
                     id_material.name()
                 );
                 H3Client::builder()
@@ -109,7 +109,7 @@ pub mod handy {
                     )?
             }
             None => {
-                tracing::warn!("No client identity provided, DHTTP/3 DNS resolver may not work");
+                tracing::warn!("no client identity provided, DHTTP/3 DNS resolver may not work");
                 H3Client::builder()
                     .with_root_certificates(genmeta_root_cert_store().clone())
                     .without_identity()?

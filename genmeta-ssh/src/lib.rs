@@ -15,7 +15,7 @@ use genmeta_common::{bind, dns};
 use genmeta_home::identity::Name;
 use genmeta_ssh_core as ssh3;
 use h3x::error::Code;
-use snafu::{FromString, ResultExt, Snafu};
+use snafu::{FromString, Report, ResultExt, Snafu};
 use tracing::Instrument;
 use tracing_subscriber::prelude::*;
 
@@ -386,7 +386,7 @@ where
         let (stream, peer) = match listener.accept().await {
             Ok(v) => v,
             Err(e) => {
-                tracing::warn!(error = %e, "accept failed");
+                tracing::warn!(error = %Report::from_error(&e), "accept failed");
                 continue;
             }
         };

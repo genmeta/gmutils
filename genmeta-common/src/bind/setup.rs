@@ -113,13 +113,13 @@ where
 
                     for (key, uri) in &new_map {
                         if !initial_map.contains_key(key) {
-                            tracing::info!("Binding new URI `{uri}` during initial reconcile");
+                            tracing::info!("binding new URI `{uri}` during initial reconcile");
                             bind_fn(uri.clone()).await;
                         }
                     }
                     for (key, uri) in &initial_map {
                         if !new_map.contains_key(key) {
-                            tracing::info!("Unbinding URI `{uri}` during initial reconcile");
+                            tracing::info!("unbinding URI `{uri}` during initial reconcile");
                             unbind_fn(uri.clone());
                         }
                     }
@@ -127,7 +127,7 @@ where
                     new_map
                 }
                 Err(err) => {
-                    tracing::warn!("Failed to compute bind URIs during initial reconcile: {err}");
+                    tracing::warn!("failed to compute bind URIs during initial reconcile: {err}");
                     to_keyed_map(initial_bind_uris)
                 }
             };
@@ -137,7 +137,7 @@ where
                 let new_uris = match binds.to_bind_uris(interfaces.keys().map(String::as_str)) {
                     Ok(uris) => uris,
                     Err(err) => {
-                        tracing::warn!("Failed to compute bind URIs after interface change: {err}");
+                        tracing::warn!("failed to compute bind URIs after interface change: {err}");
                         continue;
                     }
                 };
@@ -146,13 +146,13 @@ where
 
                 for (key, uri) in &current_map {
                     if !new_map.contains_key(key) {
-                        tracing::info!("Unbinding URI `{uri}`");
+                        tracing::info!("unbinding URI `{uri}`");
                         unbind_fn(uri.clone());
                     }
                 }
                 for (key, uri) in &new_map {
                     if !current_map.contains_key(key) {
-                        tracing::info!("Binding new URI `{uri}`");
+                        tracing::info!("binding new URI `{uri}`");
                         bind_fn(uri.clone()).await;
                     }
                 }
