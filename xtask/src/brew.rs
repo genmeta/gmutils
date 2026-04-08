@@ -1,11 +1,10 @@
-use std::{fs, path::Path};
+use std::path::Path;
 
 use flate2::{Compression, write::GzEncoder};
 use snafu::{ResultExt, Whatever};
-use tracing::info;
-use xshell::{Shell, cmd};
+use tracing::{Instrument, info, info_span};
 
-use crate::{BrewTarget, package_meta, sha256_file, target_dir};
+use crate::{BrewTarget, package_meta, run_cmd, sha256_file, target_dir};
 
 const CARGO_NAME: &str = "genmeta";
 
@@ -20,17 +19,13 @@ fn brew_on_block(triple: &str) -> Result<&'static str, Whatever> {
     }
 }
 
-fn check_cargo(sh: &Shell) -> Result<(), Whatever> {
-    cmd!(sh, "which cargo")
-        .quiet()
-        .run()
-        .whatever_context("cargo not found in PATH")?;
-    Ok(())
+async fn check_cargo() -> Result<(), Whatever> {
+    run_cmd(tokio::process::Command::new("which").arg("cargo")).await
 }
 
 /// Create a tar.gz archive from a staging directory.
 fn create_tar_gz(staging: &Path, output: &Path) -> Result<(), Whatever> {
-    let file = fs::File::create(output)
+    let file = std::fs::File::create(output)
         .whatever_context(format!("failed to create {}", output.display()))?;
     let encoder = GzEncoder::new(file, Compression::default());
     let mut archive = tar::Builder::new(encoder);
@@ -96,32 +91,33 @@ fn generate_formula(
     Ok(lines.join("\n"))
 }
 
-pub fn run(targets: &[BrewTarget]) -> Result<(), Whatever> {
+pub async fn run(targets: &[BrewTarget]) -> Result<(), Whatever> {
     let meta = package_meta(CARGO_NAME)?;
     let target_dir = target_dir()?;
     let workspace = std::env::current_dir().whatever_context("failed to get cwd")?;
 
-    let archives: Vec<ArchiveInfo> = std::thread::scope(|s| {
-        let handles: Vec<_> = targets
-            .iter()
-            .map(|&target| {
-                let meta_version = &meta.version;
-                let target_dir = &target_dir;
-                let workspace = &workspace;
-                let triple = target.triple();
-                s.spawn(move || build_one(triple, meta_version, target_dir, workspace))
-            })
-            .collect();
+    let mut tasks = tokio::task::JoinSet::new();
+    for &target in targets {
+        let version = meta.version.clone();
+        let target_dir = target_dir.clone();
+        let workspace = workspace.clone();
+        let triple = target.triple();
+        let span = info_span!("brew", triple);
+        tasks.spawn(
+            async move { build_one(triple, &version, &target_dir, &workspace).await }
+                .instrument(span),
+        );
+    }
 
-        handles
-            .into_iter()
-            .map(|h| h.join().unwrap())
-            .collect::<Result<Vec<_>, _>>()
-    })?;
+    let mut archives = Vec::new();
+    while let Some(result) = tasks.join_next().await {
+        archives.push(result.whatever_context("brew build task panicked")??);
+    }
 
     // Generate aggregated formula
     let content_path = workspace.join("genmeta").join("homebrew_content.rb");
-    let content = fs::read_to_string(&content_path)
+    let content = tokio::fs::read_to_string(&content_path)
+        .await
         .whatever_context(format!("failed to read {}", content_path.display()))?;
 
     let formula = generate_formula(
@@ -135,62 +131,74 @@ pub fn run(targets: &[BrewTarget]) -> Result<(), Whatever> {
     )?;
 
     let formula_dir = target_dir.join("common").join("brew");
-    fs::create_dir_all(&formula_dir)
+    tokio::fs::create_dir_all(&formula_dir)
+        .await
         .whatever_context(format!("failed to create {}", formula_dir.display()))?;
     let formula_path = formula_dir.join(format!("{CARGO_NAME}.rb"));
-    fs::write(&formula_path, &formula)
+    tokio::fs::write(&formula_path, &formula)
+        .await
         .whatever_context(format!("failed to write {}", formula_path.display()))?;
     info!(path = %formula_path.display(), "produced formula");
 
     Ok(())
 }
 
-fn build_one(
+async fn build_one(
     triple: &str,
     version: &str,
-    target_dir: &std::path::Path,
-    workspace: &std::path::Path,
+    target_dir: &Path,
+    workspace: &Path,
 ) -> Result<ArchiveInfo, Whatever> {
-    let _span = tracing::info_span!("brew", triple).entered();
-
-    let sh = Shell::new().whatever_context("failed to create shell")?;
-    check_cargo(&sh)?;
+    check_cargo().await?;
 
     // Build
-    cmd!(
-        sh,
-        "cargo build --release --target {triple} --bin {CARGO_NAME}"
-    )
-    .run()
+    run_cmd(tokio::process::Command::new("cargo").args([
+        "build",
+        "--release",
+        "--target",
+        triple,
+        "--bin",
+        CARGO_NAME,
+    ]))
+    .await
     .whatever_context(format!("cargo build failed for {triple}"))?;
 
     // Stage
     let brew_dir = target_dir.join(triple).join("release").join("brew");
     let staging = brew_dir.join("staging");
-    let _ = fs::remove_dir_all(&staging);
-    fs::create_dir_all(&staging)
+    let _ = tokio::fs::remove_dir_all(&staging).await;
+    tokio::fs::create_dir_all(&staging)
+        .await
         .whatever_context(format!("failed to create {}", staging.display()))?;
 
     // Copy binaries
     let binary = target_dir.join(triple).join("release").join(CARGO_NAME);
-    fs::copy(&binary, staging.join(CARGO_NAME))
+    tokio::fs::copy(&binary, staging.join(CARGO_NAME))
+        .await
         .whatever_context(format!("failed to copy {}", binary.display()))?;
-    fs::copy(
+    tokio::fs::copy(
         workspace.join("genmeta-ssh.sh"),
         staging.join("genmeta-ssh.sh"),
     )
+    .await
     .whatever_context("failed to copy genmeta-ssh.sh")?;
 
     // Create tar.gz
     let archive_name = format!("{CARGO_NAME}-{version}-{triple}.tar.gz");
     let archive_path = brew_dir.join(&archive_name);
-    create_tar_gz(&staging, &archive_path)?;
+    {
+        let staging = staging.clone();
+        let archive_path = archive_path.clone();
+        tokio::task::spawn_blocking(move || create_tar_gz(&staging, &archive_path))
+            .await
+            .whatever_context("tar task panicked")??;
+    }
 
     // Cleanup staging
-    let _ = fs::remove_dir_all(&staging);
+    let _ = tokio::fs::remove_dir_all(&staging).await;
 
     // Hash
-    let sha = sha256_file(&archive_path)?;
+    let sha = sha256_file(&archive_path).await?;
 
     info!(path = %archive_path.display(), "produced archive");
     Ok(ArchiveInfo {

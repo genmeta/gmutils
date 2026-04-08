@@ -159,14 +159,29 @@ fn package_meta(name: &str) -> Result<PackageMeta, Whatever> {
 }
 
 /// Compute SHA-256 hex digest of a file.
-fn sha256_file(path: &std::path::Path) -> Result<String, Whatever> {
-    use sha2::Digest;
-    let mut file =
-        std::fs::File::open(path).whatever_context(format!("failed to open {}", path.display()))?;
-    let mut hasher = sha2::Sha256::new();
-    std::io::copy(&mut file, &mut hasher)
-        .whatever_context(format!("failed to read {}", path.display()))?;
-    Ok(format!("{:x}", hasher.finalize()))
+async fn sha256_file(path: &std::path::Path) -> Result<String, Whatever> {
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || {
+        use sha2::Digest;
+        let mut file = std::fs::File::open(&path)
+            .whatever_context(format!("failed to open {}", path.display()))?;
+        let mut hasher = sha2::Sha256::new();
+        std::io::copy(&mut file, &mut hasher)
+            .whatever_context(format!("failed to read {}", path.display()))?;
+        Ok(format!("{:x}", hasher.finalize()))
+    })
+    .await
+    .whatever_context("sha256 task panicked")?
+}
+
+/// Run an external command, checking its exit status.
+pub async fn run_cmd(cmd: &mut tokio::process::Command) -> Result<(), Whatever> {
+    let status = cmd
+        .status()
+        .await
+        .whatever_context("failed to spawn process")?;
+    snafu::ensure_whatever!(status.success(), "command exited with {status}");
+    Ok(())
 }
 
 fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
@@ -196,8 +211,8 @@ async fn main() -> Result<(), Whatever> {
     match cli.command {
         Command::Dist { format } => match format {
             DistFormat::Deb { targets } => deb::run(&targets).await?,
-            DistFormat::Brew { targets } => brew::run(&targets)?,
-            DistFormat::Scoop { targets } => scoop::run(&targets)?,
+            DistFormat::Brew { targets } => brew::run(&targets).await?,
+            DistFormat::Scoop { targets } => scoop::run(&targets).await?,
         },
     }
     Ok(())

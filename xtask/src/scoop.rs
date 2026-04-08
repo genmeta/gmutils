@@ -1,11 +1,10 @@
-use std::{fs, io::Write, path::Path};
+use std::{io::Write, path::Path};
 
 use serde::Serialize;
 use snafu::{ResultExt, Whatever};
-use tracing::info;
-use xshell::{Shell, cmd};
+use tracing::{Instrument, info, info_span};
 
-use crate::{ScoopTarget, package_meta, sha256_file, target_dir};
+use crate::{ScoopTarget, package_meta, run_cmd, sha256_file, target_dir};
 
 const CARGO_NAME: &str = "genmeta";
 
@@ -20,23 +19,19 @@ fn scoop_arch(triple: &str) -> Result<&'static str, Whatever> {
     }
 }
 
-fn check_cargo_xwin(sh: &Shell) -> Result<(), Whatever> {
-    cmd!(sh, "which cargo-xwin")
-        .quiet()
-        .run()
-        .whatever_context("cargo-xwin not found in PATH")?;
-    Ok(())
+async fn check_cargo_xwin() -> Result<(), Whatever> {
+    run_cmd(tokio::process::Command::new("which").arg("cargo-xwin")).await
 }
 
 /// Create a zip archive from a staging directory.
 fn create_zip(staging: &Path, output: &Path) -> Result<(), Whatever> {
-    let file = fs::File::create(output)
+    let file = std::fs::File::create(output)
         .whatever_context(format!("failed to create {}", output.display()))?;
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
 
-    for entry in fs::read_dir(staging).whatever_context("failed to read staging dir")? {
+    for entry in std::fs::read_dir(staging).whatever_context("failed to read staging dir")? {
         let entry = entry.whatever_context("failed to read dir entry")?;
         let path = entry.path();
         if path.is_file() {
@@ -47,8 +42,8 @@ fn create_zip(staging: &Path, output: &Path) -> Result<(), Whatever> {
                 .into_owned();
             zip.start_file(&name, options)
                 .whatever_context(format!("failed to start zip entry {name}"))?;
-            let data =
-                fs::read(&path).whatever_context(format!("failed to read {}", path.display()))?;
+            let data = std::fs::read(&path)
+                .whatever_context(format!("failed to read {}", path.display()))?;
             zip.write_all(&data)
                 .whatever_context(format!("failed to write zip entry {name}"))?;
         }
@@ -84,28 +79,28 @@ struct ArchiveInfo {
     sha256: String,
 }
 
-pub fn run(targets: &[ScoopTarget]) -> Result<(), Whatever> {
+pub async fn run(targets: &[ScoopTarget]) -> Result<(), Whatever> {
     let meta = package_meta(CARGO_NAME)?;
     let target_dir = target_dir()?;
     let workspace = std::env::current_dir().whatever_context("failed to get cwd")?;
 
-    let archives: Vec<ArchiveInfo> = std::thread::scope(|s| {
-        let handles: Vec<_> = targets
-            .iter()
-            .map(|&target| {
-                let meta_version = &meta.version;
-                let target_dir = &target_dir;
-                let workspace = &workspace;
-                let triple = target.triple();
-                s.spawn(move || build_one(triple, meta_version, target_dir, workspace))
-            })
-            .collect();
+    let mut tasks = tokio::task::JoinSet::new();
+    for &target in targets {
+        let version = meta.version.clone();
+        let target_dir = target_dir.clone();
+        let workspace = workspace.clone();
+        let triple = target.triple();
+        let span = info_span!("scoop", triple);
+        tasks.spawn(
+            async move { build_one(triple, &version, &target_dir, &workspace).await }
+                .instrument(span),
+        );
+    }
 
-        handles
-            .into_iter()
-            .map(|h| h.join().unwrap())
-            .collect::<Result<Vec<_>, _>>()
-    })?;
+    let mut archives = Vec::new();
+    while let Some(result) = tasks.join_next().await {
+        archives.push(result.whatever_context("scoop build task panicked")??);
+    }
 
     // Generate aggregated manifest
     let manifest_name = format!("{CARGO_NAME}.json");
@@ -145,43 +140,48 @@ pub fn run(targets: &[ScoopTarget]) -> Result<(), Whatever> {
     };
 
     let manifest_dir = target_dir.join("common").join("scoop");
-    fs::create_dir_all(&manifest_dir)
+    tokio::fs::create_dir_all(&manifest_dir)
+        .await
         .whatever_context(format!("failed to create {}", manifest_dir.display()))?;
     let manifest_path = manifest_dir.join(&manifest_name);
     let json = serde_json::to_string_pretty(&manifest)
         .whatever_context("failed to serialize scoop manifest")?;
-    fs::write(&manifest_path, json + "\n")
+    tokio::fs::write(&manifest_path, json + "\n")
+        .await
         .whatever_context(format!("failed to write {}", manifest_path.display()))?;
     info!(path = %manifest_path.display(), "produced manifest");
 
     Ok(())
 }
 
-fn build_one(
+async fn build_one(
     triple: &str,
     version: &str,
-    target_dir: &std::path::Path,
-    workspace: &std::path::Path,
+    target_dir: &Path,
+    workspace: &Path,
 ) -> Result<ArchiveInfo, Whatever> {
-    let _span = tracing::info_span!("scoop", triple).entered();
     let arch_key = scoop_arch(triple)?;
 
-    let sh = Shell::new().whatever_context("failed to create shell")?;
-    check_cargo_xwin(&sh)?;
+    check_cargo_xwin().await?;
 
     // Build
-    cmd!(
-        sh,
-        "cargo xwin build --release --target {triple} --bin {CARGO_NAME}"
-    )
-    .run()
+    run_cmd(tokio::process::Command::new("cargo-xwin").args([
+        "build",
+        "--release",
+        "--target",
+        triple,
+        "--bin",
+        CARGO_NAME,
+    ]))
+    .await
     .whatever_context(format!("cargo xwin build failed for {triple}"))?;
 
     // Stage
     let scoop_dir = target_dir.join(triple).join("release").join("scoop");
     let staging = scoop_dir.join("staging");
-    let _ = fs::remove_dir_all(&staging);
-    fs::create_dir_all(&staging)
+    let _ = tokio::fs::remove_dir_all(&staging).await;
+    tokio::fs::create_dir_all(&staging)
+        .await
         .whatever_context(format!("failed to create {}", staging.display()))?;
 
     // Copy artifacts
@@ -189,24 +189,32 @@ fn build_one(
         .join(triple)
         .join("release")
         .join(format!("{CARGO_NAME}.exe"));
-    fs::copy(&binary, staging.join(format!("{CARGO_NAME}.exe")))
+    tokio::fs::copy(&binary, staging.join(format!("{CARGO_NAME}.exe")))
+        .await
         .whatever_context(format!("failed to copy {}", binary.display()))?;
-    fs::copy(
+    tokio::fs::copy(
         workspace.join("genmeta-ssh.bat"),
         staging.join("genmeta-ssh.bat"),
     )
+    .await
     .whatever_context("failed to copy genmeta-ssh.bat")?;
 
     // Create zip
     let archive_name = format!("{CARGO_NAME}-{version}-{triple}.zip");
     let archive_path = scoop_dir.join(&archive_name);
-    create_zip(&staging, &archive_path)?;
+    {
+        let staging = staging.clone();
+        let archive_path = archive_path.clone();
+        tokio::task::spawn_blocking(move || create_zip(&staging, &archive_path))
+            .await
+            .whatever_context("zip task panicked")??;
+    }
 
     // Cleanup staging
-    let _ = fs::remove_dir_all(&staging);
+    let _ = tokio::fs::remove_dir_all(&staging).await;
 
     // Hash
-    let sha = sha256_file(&archive_path)?;
+    let sha = sha256_file(&archive_path).await?;
 
     info!(path = %archive_path.display(), "produced archive");
     Ok(ArchiveInfo {

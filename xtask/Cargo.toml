@@ -19,5 +19,4 @@ tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures-util = "0.3"
 tokio = { version = "1", features = ["full"] }
-xshell = "0.2"
 zip = { version = "4", default-features = false, features = ["deflate"] }
