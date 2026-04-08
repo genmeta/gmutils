@@ -16,6 +16,9 @@ use crate::{DebTarget, package_version, target_dir};
 
 const CARGO_NAME: &str = "genmeta";
 
+/// Distribution package name (differs from the cargo crate name).
+const PACKAGE_NAME: &str = "gmutils";
+
 /// Base Docker image for cross-compilation.
 const BASE_IMAGE: &str = "debian:bookworm";
 
@@ -339,7 +342,7 @@ async fn build_one(
     info!(triple, "ensuring build image");
     let image = ensure_image(docker, triple).await?;
 
-    let deb_name = format!("{CARGO_NAME}_{version}-1_{arch}.deb");
+    let deb_name = format!("{PACKAGE_NAME}_{version}-1_{arch}.deb");
     let out_dir = target_dir.join(triple).join("release").join("deb");
     tokio::fs::create_dir_all(&out_dir)
         .await
@@ -415,7 +418,7 @@ async fn build_one(
 
     // Stage + detect dependencies + build .deb (single exec)
     let control = format_control(&[
-        ("Package", CARGO_NAME),
+        ("Package", PACKAGE_NAME),
         ("Version", &format!("{version}-1")),
         ("Architecture", arch),
         ("Maintainer", "Genmeta Tech Limited <support@genmeta.net>"),

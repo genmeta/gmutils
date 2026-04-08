@@ -8,6 +8,9 @@ use crate::{ScoopTarget, package_meta, run_cmd, run_cmd_quiet, sha256_file, targ
 
 const CARGO_NAME: &str = "genmeta";
 
+/// Distribution package name (differs from the cargo crate name).
+const PACKAGE_NAME: &str = "gmutils";
+
 /// Download URL prefix for Scoop archives.
 const SCOOP_DL_URL: &str = "https://download.genmeta.net/scoop";
 
@@ -106,7 +109,7 @@ pub async fn run(targets: &[ScoopTarget]) -> Result<(), Whatever> {
     }
 
     // Generate aggregated manifest
-    let manifest_name = format!("{CARGO_NAME}.json");
+    let manifest_name = format!("{PACKAGE_NAME}.json");
 
     let mut architecture = serde_json::Map::new();
     let mut autoupdate = serde_json::Map::new();
@@ -207,7 +210,7 @@ async fn build_one(
     .whatever_context("failed to copy genmeta-ssh.bat")?;
 
     // Create zip
-    let archive_name = format!("{CARGO_NAME}-{version}-{triple}.zip");
+    let archive_name = format!("{PACKAGE_NAME}-{version}-{triple}.zip");
     let archive_path = scoop_dir.join(&archive_name);
     {
         let staging = staging.clone();

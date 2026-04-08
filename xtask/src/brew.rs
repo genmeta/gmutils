@@ -8,6 +8,9 @@ use crate::{BrewTarget, package_meta, run_cmd, run_cmd_quiet, sha256_file, targe
 
 const CARGO_NAME: &str = "genmeta";
 
+/// Distribution package name (differs from the cargo crate name).
+const PACKAGE_NAME: &str = "gmutils";
+
 /// Download URL prefix for Homebrew archives.
 const BREW_DL_URL: &str = "https://download.genmeta.net/homebrew";
 
@@ -124,7 +127,7 @@ pub async fn run(targets: &[BrewTarget]) -> Result<(), Whatever> {
         .whatever_context(format!("failed to read {}", content_path.display()))?;
 
     let formula = generate_formula(
-        CARGO_NAME,
+        PACKAGE_NAME,
         &meta.description,
         &meta.version,
         &meta.homepage,
@@ -137,7 +140,7 @@ pub async fn run(targets: &[BrewTarget]) -> Result<(), Whatever> {
     tokio::fs::create_dir_all(&formula_dir)
         .await
         .whatever_context(format!("failed to create {}", formula_dir.display()))?;
-    let formula_path = formula_dir.join(format!("{CARGO_NAME}.rb"));
+    let formula_path = formula_dir.join(format!("{PACKAGE_NAME}.rb"));
     tokio::fs::write(&formula_path, &formula)
         .await
         .whatever_context(format!("failed to write {}", formula_path.display()))?;
@@ -191,7 +194,7 @@ async fn build_one(
     .whatever_context("failed to copy genmeta-ssh.sh")?;
 
     // Create tar.gz
-    let archive_name = format!("{CARGO_NAME}-{version}-{triple}.tar.gz");
+    let archive_name = format!("{PACKAGE_NAME}-{version}-{triple}.tar.gz");
     let archive_path = brew_dir.join(&archive_name);
     {
         let staging = staging.clone();
