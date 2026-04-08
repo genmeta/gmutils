@@ -173,7 +173,8 @@ pub struct CertServer {
 
 impl CertServer {
     pub fn new(base_url: impl Into<Arc<str>>) -> Result<Self, Whatever> {
-        let root_cert = reqwest::Certificate::from_pem(include_bytes!("../../root.crt"))
+        let root_cert =
+            reqwest::Certificate::from_pem(include_bytes!(concat!(env!("OUT_DIR"), "/root.crt")))
             .whatever_context("failed to parse root certificate")?;
         let http_client = reqwest::Client::builder()
             .tls_certs_only([root_cert])

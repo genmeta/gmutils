@@ -23,7 +23,9 @@ use tokio_util::task::AbortOnDropHandle;
 pub fn genmeta_root_cert_store() -> &'static Arc<RootCertStore> {
     static STORE: LazyLock<Arc<RootCertStore>> = LazyLock::new(|| {
         let mut store = RootCertStore::empty();
-        store.add_parsable_certificates(include_bytes!("../../root.crt").to_certificate());
+        store.add_parsable_certificates(
+            include_bytes!(concat!(env!("OUT_DIR"), "/root.crt")).to_certificate(),
+        );
         Arc::new(store)
     });
     &STORE
