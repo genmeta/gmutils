@@ -4,7 +4,7 @@ use serde::Serialize;
 use snafu::{ResultExt, Whatever};
 use tracing::{Instrument, info, info_span};
 
-use crate::{ScoopTarget, package_meta, run_cmd, sha256_file, target_dir};
+use crate::{ScoopTarget, package_meta, run_cmd, run_cmd_quiet, sha256_file, target_dir};
 
 const CARGO_NAME: &str = "genmeta";
 
@@ -20,7 +20,7 @@ fn scoop_arch(triple: &str) -> Result<&'static str, Whatever> {
 }
 
 async fn check_cargo_xwin() -> Result<(), Whatever> {
-    run_cmd(tokio::process::Command::new("which").arg("cargo-xwin")).await
+    run_cmd_quiet(tokio::process::Command::new("which").arg("cargo-xwin")).await
 }
 
 /// Create a zip archive from a staging directory.
@@ -80,6 +80,7 @@ struct ArchiveInfo {
 }
 
 pub async fn run(targets: &[ScoopTarget]) -> Result<(), Whatever> {
+    info!(target_count = targets.len(), "starting scoop dist build");
     let meta = package_meta(CARGO_NAME)?;
     let target_dir = target_dir()?;
     let workspace = std::env::current_dir().whatever_context("failed to get cwd")?;
@@ -90,6 +91,7 @@ pub async fn run(targets: &[ScoopTarget]) -> Result<(), Whatever> {
         let target_dir = target_dir.clone();
         let workspace = workspace.clone();
         let triple = target.triple();
+        info!(triple, "queued scoop target build");
         let span = info_span!("scoop", triple);
         tasks.spawn(
             async move { build_one(triple, &version, &target_dir, &workspace).await }
@@ -98,6 +100,7 @@ pub async fn run(targets: &[ScoopTarget]) -> Result<(), Whatever> {
     }
 
     let mut archives = Vec::new();
+    info!("waiting for scoop target builds to finish");
     while let Some(result) = tasks.join_next().await {
         archives.push(result.whatever_context("scoop build task panicked")??);
     }
@@ -150,6 +153,7 @@ pub async fn run(targets: &[ScoopTarget]) -> Result<(), Whatever> {
         .await
         .whatever_context(format!("failed to write {}", manifest_path.display()))?;
     info!(path = %manifest_path.display(), "produced manifest");
+    info!("finished scoop dist build");
 
     Ok(())
 }
@@ -162,9 +166,11 @@ async fn build_one(
 ) -> Result<ArchiveInfo, Whatever> {
     let arch_key = scoop_arch(triple)?;
 
+    info!(triple, "checking cargo-xwin availability");
     check_cargo_xwin().await?;
 
     // Build
+    info!(triple, "starting cargo-xwin build for scoop target");
     run_cmd(tokio::process::Command::new("cargo-xwin").args([
         "build",
         "--release",
@@ -175,6 +181,7 @@ async fn build_one(
     ]))
     .await
     .whatever_context(format!("cargo xwin build failed for {triple}"))?;
+    info!(triple, "cargo-xwin build finished for scoop target");
 
     // Stage
     let scoop_dir = target_dir.join(triple).join("release").join("scoop");
