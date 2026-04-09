@@ -3,7 +3,7 @@ use std::{borrow::Cow, fmt::Display};
 use dhttp_home::identity::Name;
 
 use crate::{
-    REGISTERABLE_DOMAINS,
+    REGISTERABLE_SUFFIXES,
     cert_server::{CertServer, LoginResponse, RegisterResponse},
     cli::validator,
 };
@@ -53,11 +53,11 @@ macro_rules! sync {
     };
 }
 
-pub(crate) async fn prompt_domain() -> Result<&'static str, inquire::InquireError> {
+pub(crate) async fn prompt_suffix() -> Result<&'static str, inquire::InquireError> {
     sync!(
         inquire::Select::new(
-            "Select a domain suffix for registration",
-            REGISTERABLE_DOMAINS.to_vec()
+            "Select a suffix for registration:",
+            REGISTERABLE_SUFFIXES.to_vec()
         )
         .prompt()
     )
@@ -65,12 +65,12 @@ pub(crate) async fn prompt_domain() -> Result<&'static str, inquire::InquireErro
 
 pub(crate) async fn prompt_available_name(
     cert_server: CertServer,
-    domain: impl Into<Cow<'static, str>> + Send + 'static,
+    suffix: impl Into<Cow<'static, str>> + Send + 'static,
 ) -> Result<String, inquire::InquireError> {
     sync!(
         inquire::Text::new("Enter your desired name:")
             .with_validator(inquire::required!("Name cannot be empty."))
-            .with_validator(validator::UsernameValidator::new(domain))
+            .with_validator(validator::UsernameValidator::new(suffix))
             .with_validator(validator::OnlineAvailableUsernameValidator::new(
                 cert_server
             ))
@@ -108,7 +108,7 @@ pub(crate) async fn prompt_register_catpcha(
     let (validate_captcha, get_response) =
         validator::RegisterCaptchaValidator::new(cert_server, username, email, csr_pem);
     sync!(
-        inquire::Text::new("Enter the registration verification code sent to your email:")
+        inquire::Text::new("Enter the verification code sent to your email:")
             .with_validator(inquire::required!("Verification code cannot be empty."))
             .with_validator(inquire::length!(
                 6,
@@ -127,7 +127,7 @@ pub(crate) async fn prompt_login_catpcha(
     let (validate_captcha, get_response) =
         validator::LoginCaptchaValidator::new(cert_server, email);
     sync!(
-        inquire::Text::new("Enter the login verification code sent to your email:")
+        inquire::Text::new("Enter the verification code sent to your email:")
             .with_validator(inquire::required!("Verification code cannot be empty."))
             .with_validator(inquire::length!(
                 6,
@@ -139,10 +139,10 @@ pub(crate) async fn prompt_login_catpcha(
     Ok(get_response.await)
 }
 
-pub(crate) async fn prompt_select_resign_domains(
-    domains: Vec<Name<'static>>,
+pub(crate) async fn prompt_select_identities(
+    names: Vec<Name<'static>>,
 ) -> Result<Vec<Name<'static>>, inquire::InquireError> {
-    sync!(inquire::MultiSelect::new("Select domains to re-sign:", domains.to_vec()).prompt())
+    sync!(inquire::MultiSelect::new("Select the identities to re-sign:", names.to_vec()).prompt())
 }
 
 pub(crate) async fn prompt_confirm_set_as_default_name(
@@ -152,10 +152,21 @@ pub(crate) async fn prompt_confirm_set_as_default_name(
     sync!(inquire::Confirm::new(&message).with_default(true).prompt())
 }
 
-pub(crate) async fn prompt_confim_update_default_name(
-    current: Name<'_>,
-    new: Name<'_>,
-) -> Result<bool, inquire::InquireError> {
-    let message = format!("Current default identity is {current}, change to {new}?");
-    sync!(inquire::Confirm::new(&message).with_default(false).prompt())
+pub(crate) async fn prompt_select_default_identity(
+    names: Vec<Name<'static>>,
+) -> Result<Option<Name<'static>>, inquire::InquireError> {
+    let mut options: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+    options.push("(skip)".to_string());
+    let selected = sync!(
+        inquire::Select::new(
+            "No default identity configured. Select one as the default identity:",
+            options
+        )
+        .prompt()
+    )?;
+    if selected == "(skip)" {
+        Ok(None)
+    } else {
+        Ok(names.into_iter().find(|n| n.to_string() == selected))
+    }
 }

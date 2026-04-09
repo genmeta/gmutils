@@ -61,20 +61,20 @@ impl StringValidator for OnlineAvailableEmailValidator {
 
 #[derive(Debug, Clone)]
 pub struct UsernameValidator<'d> {
-    domain: Cow<'d, str>,
+    suffix: Cow<'d, str>,
 }
 
 impl<'d> UsernameValidator<'d> {
-    pub fn new(domain: impl Into<Cow<'d, str>>) -> Self {
+    pub fn new(suffix: impl Into<Cow<'d, str>>) -> Self {
         Self {
-            domain: domain.into(),
+            suffix: suffix.into(),
         }
     }
 }
 
 impl StringValidator for UsernameValidator<'_> {
     fn validate(&self, input: &str) -> Result<Validation, inquire::CustomUserError> {
-        let name = format!("{}.{}{}", input, self.domain, Name::SUFFIX);
+        let name = format!("{}.{}{}", input, self.suffix, Name::SUFFIX);
         if let Err(error) = Name::validate(name.as_bytes()) {
             return Ok(validation_failed(error.to_string()));
         }

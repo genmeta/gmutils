@@ -25,14 +25,14 @@ use tracing_subscriber::{
 };
 
 use crate::{
-    DEFAULT_CERT_SERVER_BASE_URL, REGISTERABLE_DOMAINS,
+    DEFAULT_CERT_SERVER_BASE_URL, REGISTERABLE_SUFFIXES,
     cert_server::{
         self, CertServer, LoginResponse, RegisterResponse, RenewResponse, ResignResponse,
     },
     cli::prompt::{
-        prompt_available_email, prompt_available_name, prompt_confim_update_default_name,
-        prompt_confirm_set_as_default_name, prompt_domain, prompt_login_catpcha,
-        prompt_register_catpcha, prompt_select_resign_domains,
+        prompt_available_email, prompt_available_name, prompt_confirm_set_as_default_name,
+        prompt_login_catpcha, prompt_register_catpcha, prompt_select_default_identity,
+        prompt_select_identities, prompt_suffix,
     },
 };
 
@@ -98,16 +98,16 @@ impl snafu::FromString for Error {
 }
 
 fn generate_private_key_and_csr(
-    domain: &Name<'_>,
+    name: &Name<'_>,
 ) -> Result<(impl Deref<Target = String> + use<>, String), Error> {
-    tracing::Span::current().pb_set_message(&format!("Generating private key for {domain}..."));
+    tracing::Span::current().pb_set_message(&format!("Generating private key for {name}..."));
     let key_pem = rankey::generate_secp384r1_key()
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
         .context(GenerateKeySnafu)?;
     tracing::Span::current().pb_set_message(&format!(
-        "Generating Certificate Signing Request (CSR) for {domain}..."
+        "Generating Certificate Signing Request (CSR) for {name}..."
     ));
-    let csr = rankey::generate_csr(&key_pem, "CN", domain.as_full(), &[domain.as_full()])
+    let csr = rankey::generate_csr(&key_pem, "CN", name.as_full(), &[name.as_full()])
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
         .context(GenerateCsrSnafu)?;
     let csr_pem = csr
@@ -115,7 +115,7 @@ fn generate_private_key_and_csr(
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
         .context(EncodeCsrSnafu)?;
     tracing::Span::current().pb_set_message(&format!(
-        "Successfully generated private key and CSR for {domain}."
+        "Successfully generated private key and CSR for {name}."
     ));
     Ok((key_pem, csr_pem))
 }
@@ -131,21 +131,21 @@ async fn acquire_captcha(cert_server: &CertServer, email: &str) -> Result<(), Er
 
 async fn save_identity(
     dhttp_home: &DhttpHome,
-    domain: &Name<'_>,
+    name: &Name<'_>,
     key_pem: &[u8],
     cert_pem: &[u8],
 ) -> Result<(), Error> {
-    let identity_dir = dhttp_home.join_identity_name(domain.borrow());
+    let identity_dir = dhttp_home.join_identity_name(name.borrow());
     tracing::Span::current().pb_set_message(&format!(
-        "Saving identity for {domain} to {}...",
+        "Saving identity for {name} to {}...",
         identity_dir.display()
     ));
     dhttp_home
-        .identity_home(domain.borrow())
+        .identity_home(name.borrow())
         .save_identity(cert_pem, key_pem)
         .await?;
     tracing::Span::current().pb_set_finish_message(&format!(
-        "Identity for {domain} successfully saved to {}",
+        "Identity for {name} successfully saved to {}",
         identity_dir.display()
     ));
     Ok(())
@@ -211,85 +211,84 @@ fn display_cert_info(cert_der: &[u8], indent: &str) -> Result<(), Error> {
 }
 
 #[tracing::instrument(skip(cert_server))]
-async fn resign_domain(
+async fn resign_identity(
     dhttp_home: &DhttpHome,
     cert_server: &CertServer,
     access_token: &str,
-    domain: &Name<'_>,
+    name: &Name<'_>,
 ) -> Result<(), Error> {
-    let (key_pem, csr_pem) = generate_private_key_and_csr(domain)?;
+    let (key_pem, csr_pem) = generate_private_key_and_csr(name)?;
 
-    tracing::Span::current().pb_set_message(&format!("Resigning certificate for {domain}..."));
+    tracing::Span::current().pb_set_message(&format!("Re-signing certificate for {name}..."));
     let ResignResponse { cert_pem } = cert_server
-        .resign_cert(access_token, domain.as_full(), &csr_pem)
+        .resign_cert(access_token, name.as_full(), &csr_pem)
         .await?;
 
-    // 4. save identity
-    save_identity(dhttp_home, domain, key_pem.as_bytes(), &cert_pem).await?;
+    save_identity(dhttp_home, name, key_pem.as_bytes(), &cert_pem).await?;
 
     Ok(())
 }
 
 #[tracing::instrument(skip(cert_server))]
-async fn resign_domains(
+async fn resign_identities(
     dhttp_home: &DhttpHome,
     cert_server: &CertServer,
     access_token: &str,
-    domains: &[Name<'_>],
+    names: &[Name<'_>],
 ) -> Result<(), Error> {
     tracing::Span::current().pb_set_style(
         &ProgressStyle::with_template("{span_child_prefix}{spinner} {msg} {pos}/{len}")
             .expect("BUG: static progress bar template is valid"),
     );
-    tracing::Span::current().pb_set_length(domains.len() as u64);
-    tracing::Span::current().pb_set_message("Resigning certificates for selected domains...");
-    for domain in domains {
-        resign_domain(dhttp_home, cert_server, access_token, domain).await?;
+    tracing::Span::current().pb_set_length(names.len() as u64);
+    tracing::Span::current().pb_set_message("Re-signing certificates for selected identities...");
+    for name in names {
+        resign_identity(dhttp_home, cert_server, access_token, name).await?;
         tracing::Span::current().pb_inc(1);
     }
     tracing::Span::current()
-        .pb_set_finish_message("All selected domains have been successfully resigned.");
+        .pb_set_finish_message("All selected identities have been successfully re-signed.");
     Ok(())
 }
 
 #[tracing::instrument(skip(cert_server))]
-async fn renew_domain(
+async fn renew_identity(
     dhttp_home: &DhttpHome,
     cert_server: &CertServer,
     access_token: &str,
-    domain: &Name<'_>,
+    name: &Name<'_>,
 ) -> Result<(), Error> {
-    let (key_pem, csr_pem) = generate_private_key_and_csr(domain)?;
+    let (key_pem, csr_pem) = generate_private_key_and_csr(name)?;
 
-    tracing::Span::current().pb_set_message(&format!("Renewing certificate for {domain}..."));
+    tracing::Span::current().pb_set_message(&format!("Renewing certificate for {name}..."));
     let RenewResponse { cert_pem } = cert_server
-        .renew_cert(access_token, domain.as_full(), &csr_pem)
+        .renew_cert(access_token, name.as_full(), &csr_pem)
         .await?;
 
-    save_identity(dhttp_home, domain, key_pem.as_bytes(), &cert_pem).await?;
+    save_identity(dhttp_home, name, key_pem.as_bytes(), &cert_pem).await?;
 
     Ok(())
 }
 
 #[tracing::instrument(skip(cert_server))]
-async fn renew_domains(
+async fn renew_identities(
     dhttp_home: &DhttpHome,
     cert_server: &CertServer,
     access_token: &str,
-    domains: &[Name<'_>],
+    names: &[Name<'_>],
 ) -> Result<(), Error> {
     tracing::Span::current().pb_set_style(
         &ProgressStyle::with_template("{span_child_prefix}{spinner} {msg} {pos}/{len}")
             .expect("BUG: static progress bar template is valid"),
     );
-    tracing::Span::current().pb_set_length(domains.len() as u64);
-    tracing::Span::current().pb_set_message("Renewing certificates for selected domains...");
-    for domain in domains {
-        renew_domain(dhttp_home, cert_server, access_token, domain).await?;
+    tracing::Span::current().pb_set_length(names.len() as u64);
+    tracing::Span::current().pb_set_message("Renewing certificates for selected identities...");
+    for name in names {
+        renew_identity(dhttp_home, cert_server, access_token, name).await?;
         tracing::Span::current().pb_inc(1);
     }
     tracing::Span::current()
-        .pb_set_finish_message("All selected domains have been successfully renewed.");
+        .pb_set_finish_message("All selected identities have been successfully renewed.");
     Ok(())
 }
 
@@ -328,6 +327,37 @@ async fn save_default_config(default_config: &DefaultConfigFile) -> Result<(), E
     Ok(())
 }
 
+async fn ensure_default_identity(dhttp_home: &DhttpHome, names: &[Name<'_>]) -> Result<(), Error> {
+    let default_config = load_current_default_config(dhttp_home).await?;
+    if default_config
+        .as_ref()
+        .and_then(|c| c.config().name())
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    let selected = if names.len() == 1 {
+        let confirmed = prompt_confirm_set_as_default_name(names[0].borrow()).await?;
+        if confirmed {
+            Some(names[0].to_owned())
+        } else {
+            None
+        }
+    } else {
+        let owned: Vec<Name<'static>> = names.iter().map(|n| n.to_owned()).collect();
+        prompt_select_default_identity(owned).await?
+    };
+
+    if let Some(name) = selected {
+        let mut config = default_config.unwrap_or_else(|| dhttp_home.new_identity_default_config());
+        config.config_mut().set_name(name);
+        save_default_config(&config).await?;
+    }
+
+    Ok(())
+}
+
 #[tracing::instrument()]
 async fn query_exist_names_list(dhttp_home: &DhttpHome) -> Result<Vec<Name<'static>>, Error> {
     tracing::Span::current().pb_set_message("Querying existing identities...");
@@ -353,7 +383,7 @@ pub struct Create {
     #[arg(short, long)]
     pub name: Option<String>,
     #[arg(short, long)]
-    pub domain: Option<String>,
+    pub suffix: Option<String>,
     #[arg(short, long)]
     pub email: Option<String>,
     #[arg(long)]
@@ -362,25 +392,24 @@ pub struct Create {
 
 impl Create {
     pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
-        let domain: String = match self.domain.as_ref() {
-            // TODO: wait for future cert server domain restrictions
-            Some(domain) if !REGISTERABLE_DOMAINS.contains(&domain.as_str()) => {
-                whatever!("domain `{domain}` is not registerable")
+        let suffix: String = match self.suffix.as_ref() {
+            Some(suffix) if !REGISTERABLE_SUFFIXES.contains(&suffix.as_str()) => {
+                whatever!("`{suffix}` is not a registerable suffix")
             }
-            Some(domain) => domain.into(),
-            None => prompt_domain().await?.into(),
+            Some(suffix) => suffix.into(),
+            None => prompt_suffix().await?.into(),
         };
-        let name = match self.name.clone() {
+        let username = match self.name.clone() {
             Some(name) => name,
-            None => prompt_available_name(cert_server.clone(), domain.clone()).await?,
+            None => prompt_available_name(cert_server.clone(), suffix.clone()).await?,
         };
         let email: String = match self.email.clone() {
             Some(email) => email,
             None => prompt_available_email(cert_server.clone()).await?,
         };
-        let domain = Name::try_from_str_full(format!("{name}.{domain}{}", Name::SUFFIX))
-            .whatever_context::<_, Error>("invalid domain name format")?;
-        let (key_pem, csr_pem) = generate_private_key_and_csr(&domain)?;
+        let name = Name::try_from_str_full(format!("{username}.{suffix}{}", Name::SUFFIX))
+            .whatever_context::<_, Error>("invalid identity name format")?;
+        let (key_pem, csr_pem) = generate_private_key_and_csr(&name)?;
 
         acquire_captcha(cert_server, &email).await?;
 
@@ -388,43 +417,25 @@ impl Create {
         let RegisterResponse { cert_pem } = match self.captcha.clone() {
             Some(captcha) => {
                 cert_server
-                    .register(&name, &email, &captcha, &csr_pem)
+                    .register(&username, &email, &captcha, &csr_pem)
                     .await?
             }
             None => {
-                prompt_register_catpcha(cert_server.clone(), name.clone(), email.clone(), csr_pem)
-                    .await?
+                prompt_register_catpcha(
+                    cert_server.clone(),
+                    username.clone(),
+                    email.clone(),
+                    csr_pem,
+                )
+                .await?
             }
         };
 
-        save_identity(dhttp_home, &domain, key_pem.as_bytes(), &cert_pem)
+        save_identity(dhttp_home, &name, key_pem.as_bytes(), &cert_pem)
             .instrument(info_span!("save_identity"))
             .await?;
 
-        let is_interactive = self.captcha.is_none();
-        let default_config = load_current_default_config(dhttp_home).await?;
-        let current_default_name = default_config
-            .as_ref()
-            .and_then(|config| config.config().name());
-
-        let update_default_name = if is_interactive {
-            match current_default_name.map(|name| name.borrow()) {
-                Some(current) => {
-                    prompt_confim_update_default_name(current, domain.borrow()).await?
-                }
-                None => prompt_confirm_set_as_default_name(domain.borrow()).await?,
-            }
-        } else {
-            // Non-interactive: automatically set as default
-            true
-        };
-
-        if update_default_name {
-            let mut default_config =
-                default_config.unwrap_or_else(|| dhttp_home.new_identity_default_config());
-            default_config.config_mut().set_name(domain.to_owned());
-            save_default_config(&default_config).await?;
-        }
+        ensure_default_identity(dhttp_home, &[name.borrow()]).await?;
 
         Ok(())
     }
@@ -436,7 +447,7 @@ pub struct Apply {
     #[arg(short, long)]
     pub email: Option<String>,
     #[arg(short, long)]
-    pub domains: Option<Vec<Name<'static>>>,
+    pub identities: Option<Vec<Name<'static>>>,
     #[arg(long)]
     pub captcha: Option<String>,
 }
@@ -457,11 +468,12 @@ impl Apply {
             None => prompt_login_catpcha(cert_server.clone(), email).await?,
         };
 
-        let domains: Cow<'_, [Name<'static>]> = match self.domains.as_deref() {
-            Some(domains) => domains.into(),
-            None => prompt_select_resign_domains(domains).await?.into(),
+        let names: Cow<'_, [Name<'static>]> = match self.identities.as_deref() {
+            Some(identities) => identities.into(),
+            None => prompt_select_identities(domains).await?.into(),
         };
-        resign_domains(dhttp_home, cert_server, &access_token, &domains).await?;
+        resign_identities(dhttp_home, cert_server, &access_token, &names).await?;
+        ensure_default_identity(dhttp_home, &names).await?;
 
         Ok(())
     }
@@ -473,7 +485,7 @@ pub struct Renew {
     #[arg(short, long)]
     pub email: Option<String>,
     #[arg(short, long)]
-    pub domains: Option<Vec<Name<'static>>>,
+    pub identities: Option<Vec<Name<'static>>>,
 }
 
 impl Renew {
@@ -489,11 +501,12 @@ impl Renew {
             domains,
         } = prompt_login_catpcha(cert_server.clone(), email).await?;
 
-        let domains: Cow<'_, [Name<'static>]> = match self.domains.as_deref() {
-            Some(domains) => domains.into(),
-            None => prompt_select_resign_domains(domains).await?.into(),
+        let names: Cow<'_, [Name<'static>]> = match self.identities.as_deref() {
+            Some(identities) => identities.into(),
+            None => prompt_select_identities(domains).await?.into(),
         };
-        renew_domains(dhttp_home, cert_server, &access_token, &domains).await?;
+        renew_identities(dhttp_home, cert_server, &access_token, &names).await?;
+        ensure_default_identity(dhttp_home, &names).await?;
 
         Ok(())
     }
@@ -517,7 +530,9 @@ impl Default {
                 let current_config = load_current_default_config(dhttp_home).await?;
                 let name = match current_config.and_then(|c| c.config().name().cloned()) {
                     Some(n) => n,
-                    None => whatever!("no default identity configured"),
+                    None => whatever!(
+                        "no default identity configured, use `genmeta identity default <name>` to set one"
+                    ),
                 };
                 let identity = dhttp_home.load_identity(name.borrow()).await?;
                 println!("{}", identity.name());
@@ -560,7 +575,7 @@ impl List {
             .as_ref()
             .and_then(|c| c.config().name().cloned());
         if names.is_empty() {
-            println!("No identities found.");
+            println!("No local identities found.");
         } else {
             for name in &names {
                 let marker = if default_name
@@ -604,7 +619,9 @@ impl Info {
                 let cfg = load_current_default_config(dhttp_home).await?;
                 match cfg.and_then(|c| c.config().name().cloned()) {
                     Some(n) => n,
-                    None => whatever!("no default identity configured"),
+                    None => whatever!(
+                        "no default identity configured, use `genmeta identity default <name>` to set one"
+                    ),
                 }
             }
         };
