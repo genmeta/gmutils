@@ -221,7 +221,6 @@ fn init_tracing(options: &Options) -> Result<tracing_appender::non_blocking::Wor
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
-                .with_target(false)
                 .with_ansi(use_ansi)
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
                 .with_writer(writer),
