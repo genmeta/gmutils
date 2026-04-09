@@ -1,0 +1,8 @@
+# dpkg-buildpackage artifacts (generated during container builds)
+.debhelper/
+debhelper-build-stamp
+files
+changelog
+*.debhelper.log
+*.substvars
+gmutils/

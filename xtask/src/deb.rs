@@ -25,6 +25,9 @@ const BASE_IMAGE: &str = "debian:bookworm";
 /// Image tag prefix for genmeta deb builds.
 const IMAGE_TAG_PREFIX: &str = "gmutils-deb";
 
+/// Relative path from workspace root to the debian packaging directory.
+const DEBIAN_PKG_DIR: &str = "pkg/debian";
+
 fn deb_arch(triple: &str) -> Result<&'static str, Whatever> {
     match triple {
         "x86_64-unknown-linux-gnu" => Ok("amd64"),
@@ -129,7 +132,7 @@ cargo install cargo-zigbuild
 # cross-compilation libraries
 dpkg --add-architecture {deb}
 apt-get update -qq
-apt-get install --assume-yes -qq libc-dev:{deb} dpkg-dev
+apt-get install --assume-yes -qq libc-dev:{deb} dpkg-dev debhelper fakeroot
 "#
     );
     exec_in_container(docker, &container.id, &["bash", "-c", &setup_script]).await?;
@@ -266,14 +269,29 @@ async fn copy_from_container(
     Ok(())
 }
 
-/// Format a Debian control file from key-value pairs.
-fn format_control(fields: &[(&str, &str)]) -> String {
-    fields
-        .iter()
-        .map(|(k, v)| format!("{k}: {v}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n"
+/// Path to the debian packaging directory within the workspace.
+fn debian_dir() -> Result<std::path::PathBuf, Whatever> {
+    let workspace_dir =
+        std::env::current_dir().whatever_context("failed to get current directory")?;
+    Ok(workspace_dir.join(DEBIAN_PKG_DIR))
+}
+
+/// Generate a debian/changelog from the Cargo.toml version.
+fn generate_changelog(version: &str) -> Result<(), Whatever> {
+    let changelog_path = debian_dir()?.join("changelog");
+    let now = chrono::Utc::now();
+    let timestamp = now.format("%a, %d %b %Y %H:%M:%S +0000");
+    let content = format!(
+        "{PACKAGE_NAME} ({version}-1) unstable; urgency=low\n\
+         \n\
+         \x20 * release {version}\n\
+         \n\
+         \x20-- Genmeta Tech Limited <support@genmeta.net>  {timestamp}\n"
+    );
+    std::fs::write(&changelog_path, content)
+        .whatever_context(format!("failed to write {}", changelog_path.display()))?;
+    info!(version, "generated debian/changelog");
+    Ok(())
 }
 
 /// Bind mounts for the host cargo git/registry cache (read-only).
@@ -306,6 +324,9 @@ pub async fn run(targets: &[DebTarget]) -> Result<(), Whatever> {
 
     let version = package_version(CARGO_NAME)?;
     let target_dir = target_dir()?;
+
+    // Generate debian/changelog from Cargo.toml version before any build
+    generate_changelog(&version)?;
 
     let mut tasks = tokio::task::JoinSet::new();
 
@@ -352,7 +373,7 @@ async fn build_one(
         std::env::current_dir().whatever_context("failed to get current directory")?;
 
     let mut mounts = vec![Mount {
-        target: Some("/workspace".into()),
+        target: Some("/build/gmutils".into()),
         source: Some(workspace_dir.to_string_lossy().into_owned()),
         typ: Some(MountTypeEnum::BIND),
         ..Default::default()
@@ -388,7 +409,7 @@ async fn build_one(
             ContainerCreateBody {
                 image: Some(image.clone()),
                 cmd: Some(vec!["sleep".into(), "infinity".into()]),
-                working_dir: Some("/workspace".into()),
+                working_dir: Some("/build/gmutils".into()),
                 host_config: Some(HostConfig {
                     mounts: Some(mounts),
                     ..Default::default()
@@ -405,66 +426,37 @@ async fn build_one(
         .whatever_context("failed to start build container")?;
     info!(triple, "build container started");
 
-    // Build
-    let build_cmd = format!(
+    // dpkg-buildpackage -B builds only Architecture: any packages
+    // debian/rules reads TRIPLE, ROOT_CA from environment
+    let build_script = format!(
         "source /root/.cargo/env && \
-         export RUSTFLAGS=\"${{RUSTFLAGS:-}} -L /usr/lib/{gnu}\" && \
+         export TRIPLE={triple} && \
+         export DEB_HOST_MULTIARCH={gnu} && \
          {root_ca_env}\
-         cargo zigbuild --release --target {triple} --bin {CARGO_NAME}"
-    );
-    info!(triple, "starting cargo zigbuild inside container");
-    exec_in_container(docker, &container.id, &["bash", "-c", &build_cmd]).await?;
-    info!(triple, "cargo zigbuild finished inside container");
-
-    // Stage + detect dependencies + build .deb (single exec)
-    let control = format_control(&[
-        ("Package", PACKAGE_NAME),
-        ("Version", &format!("{version}-1")),
-        ("Architecture", arch),
-        ("Maintainer", "Genmeta Tech Limited <support@genmeta.net>"),
-        ("Description", "Genmeta Binary Utilities"),
-        ("Section", "utilities"),
-        ("Priority", "optional"),
-    ]);
-
-    let package_script = format!(
-        r#"set -e
-# staging layout
-mkdir -p /staging/usr/bin /staging/DEBIAN
-
-cp /workspace/target/{triple}/release/{CARGO_NAME} /staging/usr/bin/
-cp /workspace/genmeta-ssh.sh /staging/usr/bin/
-chmod 755 /staging/usr/bin/*
-
-# detect shared library dependencies
-DEPS=$(dpkg-shlibdeps -O /staging/usr/bin/{CARGO_NAME} 2>/dev/null | sed 's/^shlibs:Depends=//' || true)
-
-# write control file
-cat > /staging/DEBIAN/control <<'CTRL'
-{control}CTRL
-
-# append auto-detected depends
-if [ -n "$DEPS" ]; then
-    sed -i "/^Architecture:/a Depends: $DEPS" /staging/DEBIAN/control
-fi
-
-# build .deb
-dpkg-deb -b /staging /output/{deb_name}
-"#
+         ln -sfn /build/gmutils/pkg/debian /build/gmutils/debian && \
+         dpkg-buildpackage -B -uc -us -d"
     );
 
-    // Create output dir inside container
-    exec_in_container(docker, &container.id, &["mkdir", "-p", "/output"]).await?;
-    exec_in_container(docker, &container.id, &["bash", "-c", &package_script]).await?;
+    info!(triple, "starting dpkg-buildpackage inside container");
+    exec_in_container(docker, &container.id, &["bash", "-c", &build_script]).await?;
+    info!(triple, "dpkg-buildpackage finished inside container");
 
-    // Copy .deb out
+    // dpkg-buildpackage writes .deb one level above the source directory
     copy_from_container(
         docker,
         &container.id,
-        &format!("/output/{deb_name}"),
+        &format!("/build/{deb_name}"),
         &out_dir,
     )
     .await?;
+
+    // Clean up the debian symlink
+    let _ = exec_in_container(
+        docker,
+        &container.id,
+        &["rm", "-f", "/build/gmutils/debian"],
+    )
+    .await;
 
     // Cleanup
     docker
