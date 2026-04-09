@@ -177,7 +177,7 @@ impl CertServer {
             reqwest::Certificate::from_pem(include_bytes!(concat!(env!("OUT_DIR"), "/root.crt")))
                 .whatever_context("failed to parse root certificate")?;
         let http_client = reqwest::Client::builder()
-            .tls_certs_only([root_cert])
+            .tls_certs_merge([root_cert])
             .gzip(true)
             .zstd(true)
             .build()
