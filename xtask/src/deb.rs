@@ -450,15 +450,26 @@ async fn build_one(
     )
     .await?;
 
-    // Clean up the debian symlink
+    // Clean up dpkg-buildpackage artifacts from the bind-mounted workspace
     let _ = exec_in_container(
         docker,
         &container.id,
-        &["rm", "-f", "/build/gmutils/debian"],
+        &[
+            "bash",
+            "-c",
+            "rm -rf /build/gmutils/debian \
+             /build/gmutils/pkg/debian/.debhelper \
+             /build/gmutils/pkg/debian/debhelper-build-stamp \
+             /build/gmutils/pkg/debian/files \
+             /build/gmutils/pkg/debian/*.substvars \
+             /build/gmutils/pkg/debian/*.debhelper.log \
+             /build/gmutils/pkg/debian/gmutils/ \
+             /build/gmutils_*.buildinfo \
+             /build/gmutils_*.changes",
+        ],
     )
     .await;
 
-    // Cleanup
     docker
         .remove_container(
             &container.id,
