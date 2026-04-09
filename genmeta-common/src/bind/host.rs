@@ -9,7 +9,7 @@ use h3x::dquic::qbase::net::Family;
 /// [`Glob`](BindHost::Glob) with a literal pattern (globset treats them as exact
 /// matches).  [`Exact`](BindHost::Exact) serves as a fallback when `Glob::new`
 /// fails for an unusual input.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum BindHost {
     /// A parsed IP address (IPv4 or IPv6).
     Ip {
@@ -187,6 +187,28 @@ impl PartialEq for BindHost {
 }
 
 impl Eq for BindHost {}
+
+impl fmt::Debug for BindHost {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ip { addr, repr } => f
+                .debug_struct("Ip")
+                .field("addr", addr)
+                .field("repr", repr)
+                .finish(),
+            Self::Glob { family, matcher } => f
+                .debug_struct("Glob")
+                .field("family", family)
+                .field("pattern", &matcher.glob().glob())
+                .finish(),
+            Self::Exact { family, nic } => f
+                .debug_struct("Exact")
+                .field("family", family)
+                .field("nic", nic)
+                .finish(),
+        }
+    }
+}
 
 impl fmt::Display for BindHost {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
