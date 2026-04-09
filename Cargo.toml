@@ -58,7 +58,7 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 
 # security
-rankey = { git = "ssh://git@github.com/genmeta/rankey.git", branch = "fix/lock_versions" }
+rankey = { git = "ssh://git@github.com/genmeta/rankey.git", branch = "master" }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 x509-parser = "0.14"
 
