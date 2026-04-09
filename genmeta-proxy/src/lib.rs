@@ -142,20 +142,36 @@ async fn handle_request(
     req: hyper::Request<hyper::body::Incoming>,
     client: &H3Client,
     router: &route::Router,
+    self_name: Option<&Name<'_>>,
 ) -> Result<hyper::Response<BoxBody>, hyper::Error> {
     let route = router.classify(&req);
     tracing::info!(method = %req.method(), uri = %req.uri(), route = ?route, "proxy request");
     match route {
-        route::Route::GenmetaPlainHttp { .. } => match h3_forward::forward_h3(req, client).await {
-            Ok(resp) => Ok(resp.map(box_body)),
-            Err(e) => {
-                tracing::error!(error = %Report::from_error(&e), "h3 forward failed");
-                Ok(hyper::Response::builder()
-                    .status(502)
-                    .body(full_body("Bad Gateway"))
-                    .expect("valid static response"))
+        route::Route::GenmetaPlainHttp { .. } => {
+            // Expand tilde in URI (e.g., reimu.pilot~ → reimu.pilot.genmeta.net,
+            // bare ~ → self identity)
+            let mut req = req;
+            match id::expand_name_in_uri(req.uri().clone(), self_name) {
+                Ok(uri) => *req.uri_mut() = uri,
+                Err(e) => {
+                    tracing::error!(error = %Report::from_error(&e), "failed to expand name in URI");
+                    return Ok(hyper::Response::builder()
+                        .status(502)
+                        .body(full_body("Bad Gateway"))
+                        .expect("valid static response"));
+                }
             }
-        },
+            match h3_forward::forward_h3(req, client).await {
+                Ok(resp) => Ok(resp.map(box_body)),
+                Err(e) => {
+                    tracing::error!(error = %Report::from_error(&e), "h3 forward failed");
+                    Ok(hyper::Response::builder()
+                        .status(502)
+                        .body(full_body("Bad Gateway"))
+                        .expect("valid static response"))
+                }
+            }
+        }
         route::Route::GenmetaConnect { .. } => Ok(hyper::Response::builder()
             .status(502)
             .body(full_body("HTTPS proxy to .genmeta.net not supported"))
@@ -270,6 +286,8 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     let _watcher = h3_setup.watcher;
     let client = h3_setup.client;
 
+    let self_name = id.as_ref().map(|id| id.name().clone());
+
     let listeners = bind_listeners(&options).await?;
     let router = Arc::new(route::Router::new());
     let client = Arc::new(client);
@@ -278,7 +296,8 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     for listener in listeners {
         let client = client.clone();
         let router = router.clone();
-        tasks.spawn(accept_loop(listener, client, router));
+        let self_name = self_name.clone();
+        tasks.spawn(accept_loop(listener, client, router, self_name));
     }
 
     while let Some(result) = tasks.join_next().await {
@@ -292,7 +311,13 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
 }
 
 /// Accept loop for a single TCP listener. Runs until the listener is dropped.
-async fn accept_loop(listener: TcpListener, client: Arc<H3Client>, router: Arc<route::Router>) {
+async fn accept_loop(
+    listener: TcpListener,
+    client: Arc<H3Client>,
+    router: Arc<route::Router>,
+    self_name: Option<Name<'static>>,
+) {
+    let self_name = Arc::new(self_name);
     loop {
         let (stream, addr) = match listener.accept().await {
             Ok(accepted) => accepted,
@@ -304,6 +329,7 @@ async fn accept_loop(listener: TcpListener, client: Arc<H3Client>, router: Arc<r
         tracing::debug!(%addr, "accepted connection");
         let client = client.clone();
         let router = router.clone();
+        let self_name = self_name.clone();
         let span = tracing::info_span!("conn", %addr);
         tokio::spawn(
             async move {
@@ -316,7 +342,11 @@ async fn accept_loop(listener: TcpListener, client: Arc<H3Client>, router: Arc<r
                         hyper::service::service_fn(move |req| {
                             let client = client.clone();
                             let router = router.clone();
-                            async move { handle_request(req, &client, &router).await }
+                            let self_name = self_name.clone();
+                            async move {
+                                handle_request(req, &client, &router, self_name.as_ref().as_ref())
+                                    .await
+                            }
                         }),
                     )
                     .with_upgrades()

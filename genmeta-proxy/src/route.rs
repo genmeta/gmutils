@@ -41,7 +41,7 @@ impl Router {
     pub fn is_genmeta(&self, host: &str) -> bool {
         // strip port if present
         let host = host.split(':').next().unwrap_or(host);
-        host.ends_with(Name::SUFFIX)
+        host.ends_with(Name::SUFFIX) || host.ends_with('~')
     }
 
     /// Classify an incoming request into a Route variant.

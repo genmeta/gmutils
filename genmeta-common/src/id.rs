@@ -21,9 +21,12 @@ pub enum Error {
 
 #[derive(Debug, Snafu)]
 #[snafu(module)]
-pub enum ExpandUriError {
+pub enum ExpandNameInUriError {
     #[snafu(transparent)]
     InvalidName { source: InvalidName },
+
+    #[snafu(display("bare `~` requires an identity (use --id to specify one)"))]
+    BareTildeWithoutIdentity {},
 
     #[snafu(display("failed to parse expanded authority `{authority}`"))]
     ParseAuthority {
@@ -111,32 +114,55 @@ pub async fn load_home_and_identity<'n>(
     Ok(load_identity(&dhttp_home, load_list).await?)
 }
 
-pub fn expand_uri(uri: Uri) -> Result<Uri, ExpandUriError> {
+/// Expand identity name shorthand in a URI's authority.
+///
+/// - Bare `~` is replaced with `self_name` (the caller's own identity).
+/// - A trailing `~` suffix (e.g. `reimu.pilot~`) is expanded to the full
+///   `.genmeta.net` domain.
+/// - Hostnames that already end with `.genmeta.net` are validated but left
+///   unchanged.
+/// - All other hostnames pass through untouched.
+pub fn expand_name_in_uri(
+    uri: Uri,
+    self_name: Option<&Name<'_>>,
+) -> Result<Uri, ExpandNameInUriError> {
     let mut uri_parts = uri.into_parts();
 
-    if let Some(authority) = &uri_parts.authority
-        && let Some(peer_name) = Name::try_expand_from(authority.host())?
-        && peer_name.as_full() != authority.host()
-    {
-        let user_info_len = authority
-            .as_str()
-            .split_once('@')
-            .map(|(user_info, ..)| user_info.len() + 1)
-            .unwrap_or(0);
-        let host_len = authority.host().len();
+    if let Some(authority) = &uri_parts.authority {
+        let host = authority.host();
 
-        let authority = format!(
-            "{user_info}{host}{port}",
-            user_info = &authority.as_str()[..user_info_len],
-            host = peer_name,
-            port = &authority.as_str()[user_info_len + host_len..]
-        );
-        uri_parts.authority = Some(
-            authority
-                .parse()
-                .context(expand_uri_error::ParseAuthoritySnafu { authority })?,
-        );
+        // bare `~` → current identity; suffix `~` → expand to full domain
+        let expanded: Option<String> = if host == "~" {
+            let name = self_name
+                .ok_or_else(|| expand_name_in_uri_error::BareTildeWithoutIdentitySnafu.build())?;
+            Some(name.as_full().to_owned())
+        } else {
+            Name::try_expand_from(host)?.map(|n| n.as_full().to_owned())
+        };
+
+        if let Some(ref expanded) = expanded
+            && expanded.as_str() != host
+        {
+            let user_info_len = authority
+                .as_str()
+                .split_once('@')
+                .map(|(user_info, ..)| user_info.len() + 1)
+                .unwrap_or(0);
+            let host_len = host.len();
+
+            let authority = format!(
+                "{user_info}{host}{port}",
+                user_info = &authority.as_str()[..user_info_len],
+                host = expanded,
+                port = &authority.as_str()[user_info_len + host_len..]
+            );
+            uri_parts.authority = Some(
+                authority
+                    .parse()
+                    .context(expand_name_in_uri_error::ParseAuthoritySnafu { authority })?,
+            );
+        }
     }
 
-    Uri::from_parts(uri_parts).context(expand_uri_error::ReconstructUriSnafu)
+    Uri::from_parts(uri_parts).context(expand_name_in_uri_error::ReconstructUriSnafu)
 }

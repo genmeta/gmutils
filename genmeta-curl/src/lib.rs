@@ -134,8 +134,8 @@ pub enum Error {
     #[snafu(display("missing authority in URI"))]
     MissingAuthority {},
 
-    #[snafu(display("failed to expand identity in URI"))]
-    ExpandUri { source: id::ExpandUriError },
+    #[snafu(display("failed to expand identity name in URI"))]
+    ExpandNameInUri { source: id::ExpandNameInUriError },
 
     #[snafu(transparent)]
     LoadHomeAndIdentity {
@@ -207,9 +207,10 @@ enum ParseHeaderError {
 
 impl Options {
     #[allow(clippy::result_large_err)]
-    fn expand_uri(&mut self) -> Result<(), Error> {
+    fn expand_name_in_uri(&mut self, self_name: Option<&Name<'_>>) -> Result<(), Error> {
         ensure!(self.uri.authority().is_some(), error::MissingAuthoritySnafu);
-        self.uri = id::expand_uri(self.uri.clone()).context(error::ExpandUriSnafu)?;
+        self.uri = id::expand_name_in_uri(self.uri.clone(), self_name)
+            .context(error::ExpandNameInUriSnafu)?;
         Ok(())
     }
 }
@@ -423,8 +424,6 @@ async fn setup_client(
     ),
     Error,
 > {
-    options.expand_uri()?;
-
     let id = if options.anonymous {
         None
     } else {
@@ -437,6 +436,9 @@ async fn setup_client(
         )
         .await?
     };
+
+    // Expand ~ in URI using loaded identity (--id > default identity)
+    options.expand_name_in_uri(id.as_ref().map(|id| id.name()))?;
 
     let binds = bind::Binds::new(mem::take(&mut options.binds));
 

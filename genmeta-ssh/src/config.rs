@@ -41,6 +41,8 @@ pub enum Error {
     },
     #[snafu(display("identity `{id}` in ssh config is invalid"))]
     InvalidIdInSshConfig { id: String, source: InvalidName },
+    #[snafu(display("failed to expand identity name in URI"))]
+    ExpandNameInUri { source: id::ExpandNameInUriError },
     #[snafu(display("failed to parse path and query `{path_and_query}`"))]
     InvalidPathAndQuery {
         path_and_query: String,
@@ -107,17 +109,17 @@ impl super::Options {
             }
         };
 
-        let uri = complete_uri(uri, &username)?;
+        // Parse ssh_config identity for identity loading below.
+        let ssh_config_id_name: Option<Name<'static>> = ssh_config
+            .id
+            .as_ref()
+            .map(|id| Name::from_str(id).context(config_error::InvalidIdInSshConfigSnafu { id }))
+            .transpose()?;
 
         let cli_id = (self.id.as_ref())
             .map(|id| (&"command line options" as &dyn fmt::Display, id.borrow()));
-        let ssh_config_id = (ssh_config.id.as_ref())
-            .map(|id| {
-                Name::from_str(id)
-                    .context(config_error::InvalidIdInSshConfigSnafu { id })
-                    .map(|name| (&"ssh config" as &dyn fmt::Display, name))
-            })
-            .transpose()?;
+        let ssh_config_id =
+            ssh_config_id_name.map(|name| (&"ssh config" as &dyn fmt::Display, name));
 
         let id = if self.anonymous {
             None
@@ -128,6 +130,12 @@ impl super::Options {
             )
             .await?
         };
+
+        // Expand ~ in URI using loaded identity (--id > ssh_config > default identity)
+        let uri = id::expand_name_in_uri(uri, id.as_ref().map(|id| id.name()))
+            .context(config_error::ExpandNameInUriSnafu)?;
+
+        let uri = complete_uri(uri, &username)?;
 
         let connect_timeout = ssh_config.connect_timeout.unwrap_or(Duration::MAX);
 
