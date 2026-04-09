@@ -22,7 +22,7 @@ use tracing_subscriber::prelude::*;
 const URI_LONG_HELP: &str = "If this argument matches the ssh configuration file, \
 the HostName and User of the matched Host will be used. \
 Otherwise the argument will be parsed as a URI. URIs follow these rules: \
-Scheme is optional, only `ssh3` is accepted. \
+Only `https` scheme is accepted. If not present, `https` is used. \
 Username is optional, if not present, use current user. \
 Path is optional, if not present, use `/ssh` as default.";
 

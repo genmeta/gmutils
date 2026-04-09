@@ -29,7 +29,7 @@ pub enum Error {
         authority: String,
         source: http::uri::InvalidUri,
     },
-    #[snafu(display("unsupported URI scheme `{scheme}`, only `ssh3` is supported"))]
+    #[snafu(display("unsupported URI scheme `{scheme}`, only `https` is supported"))]
     UnsupportedScheme { scheme: String },
     #[snafu(display("missing authority in URI"))]
     MissingAuthority {},
@@ -168,8 +168,8 @@ fn parse_username_from_uri(uri: &Uri) -> Option<String> {
 fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {
     let mut uri_parts = uri.into_parts();
     uri_parts.scheme = match uri_parts.scheme {
-        Some(ref scheme) if scheme.as_str() == "ssh3" => uri_parts.scheme,
-        None => Some("ssh3".parse().expect("BUG: `ssh3` is a valid URI scheme")),
+        Some(ref scheme) if scheme.as_str() == "https" => uri_parts.scheme,
+        None => Some(http::uri::Scheme::HTTPS),
         Some(scheme) => {
             return Err(config_error::UnsupportedSchemeSnafu {
                 scheme: scheme.to_string(),
