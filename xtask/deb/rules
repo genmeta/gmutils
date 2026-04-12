@@ -2,6 +2,9 @@
 
 # dpkg-buildpackage calls this via debian/rules.
 # TRIPLE is passed as an environment variable by xtask.
+#
+# This file lives in xtask/deb/ and is copied into target/.../deb/src/debian/
+# before dpkg-buildpackage runs. All paths use /workspace (the bind mount root).
 
 export DH_VERBOSE = 1
 
@@ -10,7 +13,7 @@ export DH_VERBOSE = 1
 
 override_dh_auto_build:
 ifdef TRIPLE
-	. /root/.cargo/env && \
+	cd /workspace && . /root/.cargo/env && \
 	export RUSTFLAGS="$${RUSTFLAGS:-} -L /usr/lib/$(DEB_HOST_MULTIARCH)" && \
 	$(if $(ROOT_CA),export ROOT_CA=$(ROOT_CA) &&) \
 	cargo zigbuild --release --target $(TRIPLE) --bin genmeta
@@ -19,8 +22,8 @@ endif
 override_dh_auto_install:
 ifdef TRIPLE
 	mkdir -p debian/gmutils/usr/bin
-	cp target/$(TRIPLE)/release/genmeta debian/gmutils/usr/bin/
-	cp genmeta-ssh.sh debian/gmutils/usr/bin/
+	cp /workspace/target/$(TRIPLE)/release/genmeta debian/gmutils/usr/bin/
+	cp /workspace/genmeta-ssh.sh debian/gmutils/usr/bin/
 	chmod 755 debian/gmutils/usr/bin/*
 endif
 

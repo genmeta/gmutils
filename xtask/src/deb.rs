@@ -1,11 +1,9 @@
-use std::path::Path;
-
 use bollard::{
     Docker,
     models::{ContainerConfig, ContainerCreateBody, HostConfig, Mount, MountTypeEnum},
     query_parameters::{
         CommitContainerOptionsBuilder, CreateContainerOptionsBuilder, CreateImageOptionsBuilder,
-        DownloadFromContainerOptionsBuilder, RemoveContainerOptionsBuilder, StartContainerOptions,
+        RemoveContainerOptionsBuilder, StartContainerOptions,
     },
 };
 use futures_util::StreamExt;
@@ -25,8 +23,8 @@ const BASE_IMAGE: &str = "debian:bookworm";
 /// Image tag prefix for genmeta deb builds.
 const IMAGE_TAG_PREFIX: &str = "gmutils-deb";
 
-/// Relative path from workspace root to the debian packaging directory.
-const DEBIAN_PKG_DIR: &str = "pkg/debian";
+/// Relative path from workspace root to the debian packaging source files.
+const DEBIAN_PKG_DIR: &str = "xtask/deb";
 
 fn deb_arch(triple: &str) -> Result<&'static str, Whatever> {
     match triple {
@@ -210,90 +208,6 @@ async fn exec_in_container(
     Ok(())
 }
 
-/// Copy a file from a container to the local filesystem.
-async fn copy_from_container(
-    docker: &Docker,
-    container_id: &str,
-    container_path: &str,
-    local_dir: &Path,
-) -> Result<(), Whatever> {
-    info!(
-        path = container_path,
-        "starting container artifact download"
-    );
-    let mut tar_stream = docker.download_from_container(
-        container_id,
-        Some(
-            DownloadFromContainerOptionsBuilder::default()
-                .path(container_path)
-                .build(),
-        ),
-    );
-
-    let mut tar_data = Vec::new();
-    while let Some(chunk) = tar_stream.next().await {
-        let chunk = chunk.whatever_context("failed to download from container")?;
-        tar_data.extend_from_slice(&chunk);
-    }
-
-    let local_dir = local_dir.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        let mut archive = tar::Archive::new(&tar_data[..]);
-        std::fs::create_dir_all(&local_dir)
-            .whatever_context(format!("failed to create {}", local_dir.display()))?;
-
-        for entry in archive
-            .entries()
-            .whatever_context("failed to read tar entries")?
-        {
-            let mut entry = entry.whatever_context("failed to read tar entry")?;
-            let path = entry
-                .path()
-                .whatever_context("failed to read entry path")?
-                .into_owned();
-            let filename = path.file_name().unwrap_or(path.as_os_str());
-            let dest = local_dir.join(filename);
-            let mut file = std::fs::File::create(&dest)
-                .whatever_context(format!("failed to create {}", dest.display()))?;
-            std::io::copy(&mut entry, &mut file)
-                .whatever_context(format!("failed to write {}", dest.display()))?;
-        }
-
-        Ok::<(), Whatever>(())
-    })
-    .await
-    .whatever_context("artifact extraction task panicked")??;
-
-    info!("finished container artifact extraction");
-
-    Ok(())
-}
-
-/// Path to the debian packaging directory within the workspace.
-fn debian_dir() -> Result<std::path::PathBuf, Whatever> {
-    let workspace_dir =
-        std::env::current_dir().whatever_context("failed to get current directory")?;
-    Ok(workspace_dir.join(DEBIAN_PKG_DIR))
-}
-
-/// Generate a debian/changelog from the Cargo.toml version.
-fn generate_changelog(version: &str) -> Result<(), Whatever> {
-    let changelog_path = debian_dir()?.join("changelog");
-    let now = chrono::Utc::now();
-    let timestamp = now.format("%a, %d %b %Y %H:%M:%S +0000");
-    let content = format!(
-        "{PACKAGE_NAME} ({version}-1) unstable; urgency=low\n\
-         \n\
-         \x20 * release {version}\n\
-         \n\
-         \x20-- Genmeta Tech Limited <support@genmeta.net>  {timestamp}\n"
-    );
-    std::fs::write(&changelog_path, content)
-        .whatever_context(format!("failed to write {}", changelog_path.display()))?;
-    info!(version, "generated debian/changelog");
-    Ok(())
-}
-
 /// Bind mounts for the host cargo git/registry cache (read-only).
 /// This avoids re-downloading crates and allows private git dependencies
 /// to work without SSH credentials in the container.
@@ -324,9 +238,6 @@ pub async fn run(targets: &[DebTarget]) -> Result<(), Whatever> {
 
     let version = package_version(CARGO_NAME)?;
     let target_dir = target_dir()?;
-
-    // Generate debian/changelog from Cargo.toml version before any build
-    generate_changelog(&version)?;
 
     let mut tasks = tokio::task::JoinSet::new();
 
@@ -373,7 +284,7 @@ async fn build_one(
         std::env::current_dir().whatever_context("failed to get current directory")?;
 
     let mut mounts = vec![Mount {
-        target: Some("/build/gmutils".into()),
+        target: Some("/workspace".into()),
         source: Some(workspace_dir.to_string_lossy().into_owned()),
         typ: Some(MountTypeEnum::BIND),
         ..Default::default()
@@ -409,7 +320,6 @@ async fn build_one(
             ContainerCreateBody {
                 image: Some(image.clone()),
                 cmd: Some(vec!["sleep".into(), "infinity".into()]),
-                working_dir: Some("/build/gmutils".into()),
                 host_config: Some(HostConfig {
                     mounts: Some(mounts),
                     ..Default::default()
@@ -426,49 +336,28 @@ async fn build_one(
         .whatever_context("failed to start build container")?;
     info!(triple, "build container started");
 
-    // dpkg-buildpackage -B builds only Architecture: any packages
-    // debian/rules reads TRIPLE, ROOT_CA from environment
+    // dpkg-buildpackage -B builds only Architecture: any packages.
+    // Prepare debian source tree under target/{triple}/release/deb/src/ so that
+    // all temp files and products stay inside target/ (bind-mounted, gitignored).
     let build_script = format!(
-        "source /root/.cargo/env && \
-         export TRIPLE={triple} && \
-         export DEB_HOST_MULTIARCH={gnu} && \
-         {root_ca_env}\
-         ln -sfn /build/gmutils/pkg/debian /build/gmutils/debian && \
-         dpkg-buildpackage -B -uc -us -d"
+        r#"set -e
+source /root/.cargo/env
+export TRIPLE={triple}
+export DEB_HOST_MULTIARCH={gnu}
+{root_ca_env}
+SRC=/workspace/target/{triple}/release/deb/src
+mkdir -p "$SRC/debian"
+cp -r /workspace/{DEBIAN_PKG_DIR}/. "$SRC/debian/"
+printf '{PACKAGE_NAME} ({version}-1) unstable; urgency=low\n\n  * release {version}\n\n -- Genmeta Tech Limited <support@genmeta.net>  %s\n' \
+    "$(date -R)" > "$SRC/debian/changelog"
+cd "$SRC"
+dpkg-buildpackage -B -uc -us -d
+"#
     );
 
     info!(triple, "starting dpkg-buildpackage inside container");
     exec_in_container(docker, &container.id, &["bash", "-c", &build_script]).await?;
     info!(triple, "dpkg-buildpackage finished inside container");
-
-    // dpkg-buildpackage writes .deb one level above the source directory
-    copy_from_container(
-        docker,
-        &container.id,
-        &format!("/build/{deb_name}"),
-        &out_dir,
-    )
-    .await?;
-
-    // Clean up dpkg-buildpackage artifacts from the bind-mounted workspace
-    let _ = exec_in_container(
-        docker,
-        &container.id,
-        &[
-            "bash",
-            "-c",
-            "rm -rf /build/gmutils/debian \
-             /build/gmutils/pkg/debian/.debhelper \
-             /build/gmutils/pkg/debian/debhelper-build-stamp \
-             /build/gmutils/pkg/debian/files \
-             /build/gmutils/pkg/debian/*.substvars \
-             /build/gmutils/pkg/debian/*.debhelper.log \
-             /build/gmutils/pkg/debian/gmutils/ \
-             /build/gmutils_*.buildinfo \
-             /build/gmutils_*.changes",
-        ],
-    )
-    .await;
 
     docker
         .remove_container(
