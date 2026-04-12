@@ -30,6 +30,12 @@ endif
 override_dh_auto_test:
 	# skip tests in cross-compilation environment
 
+override_dh_strip:
+	# skip: cross-compiled binaries cannot be stripped by host strip
+
+override_dh_makeshlibs:
+	# skip: package does not ship shared libraries
+
 override_dh_shlibdeps:
 ifdef TRIPLE
 	dh_shlibdeps -pgmutils -l/usr/lib/$(DEB_HOST_MULTIARCH)

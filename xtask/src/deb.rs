@@ -337,6 +337,7 @@ async fn build_one(
     info!(triple, "build container started");
 
     // dpkg-buildpackage -B builds only Architecture: any packages.
+    // -a{arch} sets the host architecture for cross-compilation.
     // Prepare debian source tree under target/{triple}/release/deb/src/ so that
     // all temp files and products stay inside target/ (bind-mounted, gitignored).
     let build_script = format!(
@@ -345,13 +346,14 @@ source /root/.cargo/env
 export TRIPLE={triple}
 export DEB_HOST_MULTIARCH={gnu}
 {root_ca_env}
+apt-get install -y -qq binutils-{gnu} 2>/dev/null || true
 SRC=/workspace/target/{triple}/release/deb/src
 mkdir -p "$SRC/debian"
 cp -r /workspace/{DEBIAN_PKG_DIR}/. "$SRC/debian/"
 printf '{PACKAGE_NAME} ({version}-1) unstable; urgency=low\n\n  * release {version}\n\n -- Genmeta Tech Limited <support@genmeta.net>  %s\n' \
     "$(date -R)" > "$SRC/debian/changelog"
 cd "$SRC"
-dpkg-buildpackage -B -uc -us -d
+dpkg-buildpackage -B -uc -us -d -a{arch}
 "#
     );
 
