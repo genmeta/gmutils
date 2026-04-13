@@ -9,33 +9,64 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct Error {
-    source: inquire::InquireError,
-}
-
-impl From<inquire::InquireError> for Error {
-    fn from(source: inquire::InquireError) -> Self {
-        Self { source }
-    }
+pub enum Error {
+    /// An inquire prompt error (invariant: never contains NotTTY).
+    Prompt { source: inquire::InquireError },
+    /// The terminal is not interactive and user input is required.
+    NotInteractive { hint: Cow<'static, str> },
 }
 
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Inquire error output is too messy, implement custom display
-        match &self.source {
-            inquire::InquireError::IO(error) => error.fmt(f),
-            inquire::InquireError::Custom(error) => error.fmt(f),
-            source => source.fmt(f),
+        match self {
+            // Inquire error output is too messy, implement custom display
+            Error::Prompt { source } => match source {
+                inquire::InquireError::IO(error) => error.fmt(f),
+                inquire::InquireError::Custom(error) => error.fmt(f),
+                source => source.fmt(f),
+            },
+            Error::NotInteractive { hint } => {
+                write!(f, "non-interactive terminal, use {hint} to provide input")
+            }
         }
     }
 }
 
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match &self.source {
-            inquire::InquireError::IO(error) => error.source(),
-            inquire::InquireError::Custom(error) => error.source(),
-            _ => None,
+        match self {
+            Error::Prompt { source } => match source {
+                inquire::InquireError::IO(error) => error.source(),
+                inquire::InquireError::Custom(error) => error.source(),
+                _ => None,
+            },
+            Error::NotInteractive { .. } => None,
+        }
+    }
+}
+
+pub(crate) trait InquireResultExt<T> {
+    /// On `NotTTY`, return `Ok(default())` instead of propagating the error.
+    fn or_not_tty(self, default: impl FnOnce() -> T) -> Result<T, Error>;
+
+    /// On `NotTTY`, return `Err(Error::NotInteractive { hint })`.
+    fn require_interactive(self, hint: impl Into<Cow<'static, str>>) -> Result<T, Error>;
+}
+
+impl<T> InquireResultExt<T> for Result<T, inquire::InquireError> {
+    fn or_not_tty(self, default: impl FnOnce() -> T) -> Result<T, Error> {
+        match self {
+            Ok(value) => Ok(value),
+            Err(inquire::InquireError::NotTTY) => Ok(default()),
+            Err(source) => Err(Error::Prompt { source }),
+        }
+    }
+
+    fn require_interactive(self, hint: impl Into<Cow<'static, str>>) -> Result<T, Error> {
+        match self {
+            Ok(value) => Ok(value),
+            Err(inquire::InquireError::NotTTY) => Err(Error::NotInteractive { hint: hint.into() }),
+            Err(source) => Err(Error::Prompt { source }),
         }
     }
 }

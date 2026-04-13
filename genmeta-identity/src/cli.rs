@@ -30,9 +30,9 @@ use crate::{
         self, CertServer, LoginResponse, RegisterResponse, RenewResponse, ResignResponse,
     },
     cli::prompt::{
-        prompt_available_email, prompt_available_name, prompt_confirm_set_as_default_name,
-        prompt_login_catpcha, prompt_register_catpcha, prompt_select_default_identity,
-        prompt_select_identities, prompt_suffix,
+        InquireResultExt, prompt_available_email, prompt_available_name,
+        prompt_confirm_set_as_default_name, prompt_login_catpcha, prompt_register_catpcha,
+        prompt_select_default_identity, prompt_select_identities, prompt_suffix,
     },
 };
 
@@ -77,12 +77,6 @@ pub enum Error {
 
     #[snafu(transparent)]
     Whatever { source: Whatever },
-}
-
-impl From<inquire::InquireError> for Error {
-    fn from(source: inquire::InquireError) -> Self {
-        prompt::Error::from(source).into()
-    }
 }
 
 impl snafu::FromString for Error {
@@ -338,7 +332,15 @@ async fn ensure_default_identity(dhttp_home: &DhttpHome, names: &[Name<'_>]) -> 
     }
 
     let selected = if names.len() == 1 {
-        let confirmed = prompt_confirm_set_as_default_name(names[0].borrow()).await?;
+        let confirmed = prompt_confirm_set_as_default_name(names[0].borrow())
+            .await
+            .or_not_tty(|| {
+                tracing::info!(
+                    "no TTY, automatically setting {} as default identity",
+                    names[0]
+                );
+                true
+            })?;
         if confirmed {
             Some(names[0].to_owned())
         } else {
@@ -346,7 +348,15 @@ async fn ensure_default_identity(dhttp_home: &DhttpHome, names: &[Name<'_>]) -> 
         }
     } else {
         let owned: Vec<Name<'static>> = names.iter().map(|n| n.to_owned()).collect();
-        prompt_select_default_identity(owned).await?
+        prompt_select_default_identity(owned.clone())
+            .await
+            .or_not_tty(|| {
+                tracing::info!(
+                    "no TTY, automatically setting {} as default identity",
+                    owned[0]
+                );
+                Some(owned[0].clone())
+            })?
     };
 
     if let Some(name) = selected {
@@ -397,15 +407,22 @@ impl Create {
                 whatever!("`{suffix}` is not a registerable suffix")
             }
             Some(suffix) => suffix.into(),
-            None => prompt_suffix().await?.into(),
+            None => prompt_suffix()
+                .await
+                .require_interactive("--suffix")?
+                .into(),
         };
         let username = match self.name.clone() {
             Some(name) => name,
-            None => prompt_available_name(cert_server.clone(), suffix.clone()).await?,
+            None => prompt_available_name(cert_server.clone(), suffix.clone())
+                .await
+                .require_interactive("--name")?,
         };
         let email: String = match self.email.clone() {
             Some(email) => email,
-            None => prompt_available_email(cert_server.clone()).await?,
+            None => prompt_available_email(cert_server.clone())
+                .await
+                .require_interactive("--email")?,
         };
         let name = Name::try_from_str_full(format!("{username}.{suffix}{}", Name::SUFFIX))
             .whatever_context::<_, Error>("invalid identity name format")?;
@@ -420,15 +437,14 @@ impl Create {
                     .register(&username, &email, &captcha, &csr_pem)
                     .await?
             }
-            None => {
-                prompt_register_catpcha(
-                    cert_server.clone(),
-                    username.clone(),
-                    email.clone(),
-                    csr_pem,
-                )
-                .await?
-            }
+            None => prompt_register_catpcha(
+                cert_server.clone(),
+                username.clone(),
+                email.clone(),
+                csr_pem,
+            )
+            .await
+            .require_interactive("--captcha")?,
         };
 
         save_identity(dhttp_home, &name, key_pem.as_bytes(), &cert_pem)
@@ -456,7 +472,9 @@ impl Apply {
     pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
         let email = match self.email.clone() {
             Some(email) => email,
-            None => prompt::prompt_email().await?,
+            None => prompt::prompt_email()
+                .await
+                .require_interactive("--email")?,
         };
 
         acquire_captcha(cert_server, &email).await?;
@@ -465,12 +483,17 @@ impl Apply {
             domains,
         } = match self.captcha.clone() {
             Some(captcha) => cert_server.login(&email, &captcha).await?,
-            None => prompt_login_catpcha(cert_server.clone(), email).await?,
+            None => prompt_login_catpcha(cert_server.clone(), email)
+                .await
+                .require_interactive("--captcha")?,
         };
 
         let names: Cow<'_, [Name<'static>]> = match self.identities.as_deref() {
             Some(identities) => identities.into(),
-            None => prompt_select_identities(domains).await?.into(),
+            None => prompt_select_identities(domains)
+                .await
+                .require_interactive("--identities")?
+                .into(),
         };
         resign_identities(dhttp_home, cert_server, &access_token, &names).await?;
         ensure_default_identity(dhttp_home, &names).await?;
@@ -486,24 +509,36 @@ pub struct Renew {
     pub email: Option<String>,
     #[arg(short, long)]
     pub identities: Option<Vec<Name<'static>>>,
+    #[arg(long)]
+    pub captcha: Option<String>,
 }
 
 impl Renew {
     pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
         let email = match self.email.clone() {
             Some(email) => email,
-            None => prompt::prompt_email().await?,
+            None => prompt::prompt_email()
+                .await
+                .require_interactive("--email")?,
         };
 
         acquire_captcha(cert_server, &email).await?;
         let LoginResponse {
             access_token,
             domains,
-        } = prompt_login_catpcha(cert_server.clone(), email).await?;
+        } = match self.captcha.clone() {
+            Some(captcha) => cert_server.login(&email, &captcha).await?,
+            None => prompt_login_catpcha(cert_server.clone(), email)
+                .await
+                .require_interactive("--captcha")?,
+        };
 
         let names: Cow<'_, [Name<'static>]> = match self.identities.as_deref() {
             Some(identities) => identities.into(),
-            None => prompt_select_identities(domains).await?.into(),
+            None => prompt_select_identities(domains)
+                .await
+                .require_interactive("--identities")?
+                .into(),
         };
         renew_identities(dhttp_home, cert_server, &access_token, &names).await?;
         ensure_default_identity(dhttp_home, &names).await?;
