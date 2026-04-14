@@ -317,14 +317,38 @@ pub async fn run(options: Options) -> Result<(), Error> {
     // IO relay — use a dedicated OS thread for stdin to avoid blocking
     // tokio runtime shutdown (tokio::io::stdin uses spawn_blocking which
     // cannot be cancelled and hangs the runtime Drop).
-    let exit_result = session
-        .run(
-            ThreadedStdin::new(),
-            tokio::io::stdout(),
-            tokio::io::stderr(),
-        )
-        .await
-        .context(session_error::RunSnafu)?;
+    let interactive = options.pseudo && std::io::stdin().is_terminal();
+    let _raw_guard = if interactive {
+        crossterm::terminal::enable_raw_mode()
+            .map(|()| RawModeGuard)
+            .ok()
+    } else {
+        None
+    };
+
+    let exit_result = if interactive {
+        let resize = sigwinch_stream();
+        session
+            .run_interactive(
+                ThreadedStdin::new(),
+                tokio::io::stdout(),
+                tokio::io::stderr(),
+                resize,
+            )
+            .await
+            .context(session_error::RunSnafu)?
+    } else {
+        session
+            .run(
+                ThreadedStdin::new(),
+                tokio::io::stdout(),
+                tokio::io::stderr(),
+            )
+            .await
+            .context(session_error::RunSnafu)?
+    };
+
+    drop(_raw_guard);
 
     connection.close(Code::H3_NO_ERROR, "");
 
@@ -506,4 +530,39 @@ impl tokio::io::AsyncRead for ThreadedStdin {
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// RawModeGuard — RAII guard for terminal raw mode
+// ---------------------------------------------------------------------------
+
+/// Restores terminal cooked mode on drop.
+struct RawModeGuard;
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SIGWINCH → (cols, rows) stream
+// ---------------------------------------------------------------------------
+
+/// Create an async stream that yields `(cols, rows)` on every `SIGWINCH`.
+fn sigwinch_stream() -> impl futures::Stream<Item = (u16, u16)> + Unpin + Send {
+    let mut sig =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())
+            .expect("failed to register SIGWINCH handler");
+
+    futures::stream::poll_fn(move |cx| {
+        match sig.poll_recv(cx) {
+            std::task::Poll::Ready(Some(())) => {
+                let size = crossterm::terminal::size().ok();
+                std::task::Poll::Ready(size)
+            }
+            std::task::Poll::Ready(None) => std::task::Poll::Ready(None),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    })
 }
