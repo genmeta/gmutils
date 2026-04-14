@@ -82,7 +82,7 @@ async fn ensure_image(docker: &Docker, triple: &str) -> Result<String, Whatever>
     }
 
     // Create temp container from base
-    let container_name = format!("xtask-setup-{triple}");
+    let container_name = format!("{CARGO_NAME}-xtask-setup-{triple}");
     let container = docker
         .create_container(
             Some(
@@ -308,7 +308,7 @@ async fn build_one(
         ""
     };
 
-    let container_name = format!("xtask-deb-{triple}");
+    let container_name = format!("{CARGO_NAME}-xtask-deb-{triple}");
     info!(triple, container = %container_name, "creating build container");
     let container = docker
         .create_container(
