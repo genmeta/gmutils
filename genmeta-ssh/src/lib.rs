@@ -551,18 +551,15 @@ impl Drop for RawModeGuard {
 
 /// Create an async stream that yields `(cols, rows)` on every `SIGWINCH`.
 fn sigwinch_stream() -> impl futures::Stream<Item = (u16, u16)> + Unpin + Send {
-    let mut sig =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())
-            .expect("failed to register SIGWINCH handler");
+    let mut sig = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())
+        .expect("failed to register SIGWINCH handler");
 
-    futures::stream::poll_fn(move |cx| {
-        match sig.poll_recv(cx) {
-            std::task::Poll::Ready(Some(())) => {
-                let size = crossterm::terminal::size().ok();
-                std::task::Poll::Ready(size)
-            }
-            std::task::Poll::Ready(None) => std::task::Poll::Ready(None),
-            std::task::Poll::Pending => std::task::Poll::Pending,
+    futures::stream::poll_fn(move |cx| match sig.poll_recv(cx) {
+        std::task::Poll::Ready(Some(())) => {
+            let size = crossterm::terminal::size().ok();
+            std::task::Poll::Ready(size)
         }
+        std::task::Poll::Ready(None) => std::task::Poll::Ready(None),
+        std::task::Poll::Pending => std::task::Poll::Pending,
     })
 }

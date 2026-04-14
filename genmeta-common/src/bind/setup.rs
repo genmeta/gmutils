@@ -104,40 +104,45 @@ where
             }
 
             // Initial reconcile: handle events that arrived between setup and watcher start
-            let mut current_map: HashMap<String, BindUri> = match binds
-                .to_bind_uris(monitor.interfaces().keys().map(String::as_str))
-            {
-                Ok(new_uris) => {
-                    let new_map = to_keyed_map(new_uris);
-                    let initial_map = to_keyed_map(initial_bind_uris);
+            let mut current_map: HashMap<String, BindUri> =
+                match binds.to_bind_uris(monitor.interfaces().keys().map(String::as_str)) {
+                    Ok(new_uris) => {
+                        let new_map = to_keyed_map(new_uris);
+                        let initial_map = to_keyed_map(initial_bind_uris);
 
-                    for (key, uri) in &new_map {
-                        if !initial_map.contains_key(key) {
-                            tracing::info!("binding new URI `{uri}` during initial reconcile");
-                            bind_fn(uri.clone()).await;
+                        for (key, uri) in &new_map {
+                            if !initial_map.contains_key(key) {
+                                tracing::info!("binding new URI `{uri}` during initial reconcile");
+                                bind_fn(uri.clone()).await;
+                            }
                         }
-                    }
-                    for (key, uri) in &initial_map {
-                        if !new_map.contains_key(key) {
-                            tracing::info!("unbinding URI `{uri}` during initial reconcile");
-                            unbind_fn(uri.clone());
+                        for (key, uri) in &initial_map {
+                            if !new_map.contains_key(key) {
+                                tracing::info!("unbinding URI `{uri}` during initial reconcile");
+                                unbind_fn(uri.clone());
+                            }
                         }
-                    }
 
-                    new_map
-                }
-                Err(err) => {
-                    tracing::warn!("failed to compute bind URIs during initial reconcile: {err}");
-                    to_keyed_map(initial_bind_uris)
-                }
-            };
+                        new_map
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "failed to compute bind URIs during initial reconcile: {}",
+                            snafu::Report::from_error(&err)
+                        );
+                        to_keyed_map(initial_bind_uris)
+                    }
+                };
 
             // Monitor loop: react to interface changes
             while let Some((interfaces, _event)) = monitor.update().await {
                 let new_uris = match binds.to_bind_uris(interfaces.keys().map(String::as_str)) {
                     Ok(uris) => uris,
                     Err(err) => {
-                        tracing::warn!("failed to compute bind URIs after interface change: {err}");
+                        tracing::warn!(
+                            "failed to compute bind URIs after interface change: {}",
+                            snafu::Report::from_error(&err)
+                        );
                         continue;
                     }
                 };

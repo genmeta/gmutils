@@ -2,6 +2,7 @@ use hyper::{Request, Response, body::Incoming};
 use hyper_util::rt::TokioIo;
 use snafu::ResultExt;
 use tokio::net::TcpStream;
+use tracing::Instrument as _;
 
 use crate::{
     Error, ForwardConnectSnafu, ForwardHandshakeSnafu, ForwardInvalidHostSnafu,
@@ -41,7 +42,8 @@ pub async fn forward_http(req: Request<Incoming>) -> Result<Response<Incoming>, 
         .await
         .context(ForwardHandshakeSnafu { addr: addr.clone() })?;
 
-    tokio::spawn(conn);
+    // Terminates when the HTTP/1.1 connection closes.
+    tokio::spawn(conn.in_current_span());
 
     let resp = sender
         .send_request(req)

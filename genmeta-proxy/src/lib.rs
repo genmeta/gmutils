@@ -302,7 +302,9 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     while let Some(result) = tasks.join_next().await {
         match result {
             Ok(()) => tracing::info!("listener task exited"),
-            Err(e) => tracing::error!(error = %e, "listener task panicked"),
+            Err(e) => {
+                tracing::error!(error = %snafu::Report::from_error(&e), "listener task panicked")
+            }
         }
     }
 
@@ -321,7 +323,7 @@ async fn accept_loop(
         let (stream, addr) = match listener.accept().await {
             Ok(accepted) => accepted,
             Err(e) => {
-                tracing::warn!(error = %e, "accept failed, retrying");
+                tracing::warn!(error = %snafu::Report::from_error(&e), "accept failed, retrying");
                 continue;
             }
         };

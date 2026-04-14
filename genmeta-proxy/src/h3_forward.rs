@@ -52,7 +52,7 @@ fn rewrite_request_for_h3(mut req: Request<Incoming>) -> Request<Incoming> {
 /// Failure to close is non-fatal — the response may already be readable.
 async fn close_write_stream(mut write_stream: WriteStream) {
     if let Err(e) = write_stream.close().await {
-        tracing::warn!(error = %e, "failed to close h3 request stream");
+        tracing::warn!(error = %snafu::Report::from_error(&e), "failed to close h3 request stream");
     }
 }
 
