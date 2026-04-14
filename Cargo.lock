@@ -459,9 +459,9 @@ dependencies = [
 
 [[package]]
 name = "bitflags"
-version = "2.11.0"
+version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
+checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 dependencies = [
  "serde_core",
 ]
@@ -2012,7 +2012,7 @@ dependencies = [
 [[package]]
 name = "genmeta-ssh"
 version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/genmeta-ssh.git?branch=main#aaf6d96c1b38653b8930c453cb39552136d19f6f"
+source = "git+ssh://git@github.com/genmeta/genmeta-ssh.git?branch=main#4bb290415e82b41f3aee930db434591242226922"
 dependencies = [
  "base64 0.22.1",
  "bytes",
