@@ -34,8 +34,8 @@ whoami = "2"
 console-subscriber = "0.5"
 
 # network
-gmdns = { git = "ssh://git@github.com/genmeta/gmdns.git", branch = "feat/resolver" }
-h3x = { git = "ssh://git@github.com/genmeta/h3x.git", branch = "feat/v0.5" }
+gmdns = { git = "ssh://git@github.com/genmeta/gmdns.git", branch = "main" }
+h3x = { git = "ssh://git@github.com/genmeta/h3x.git", branch = "main" }
 qinterface = { git = "ssh://git@github.com/genmeta/dquic.git", branch = "feat/v0.5", features = [
     "qudp",
 ] }
