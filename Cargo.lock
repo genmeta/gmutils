@@ -94,7 +94,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -105,7 +105,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1340,7 +1340,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1395,7 +1395,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 [[package]]
 name = "dquic"
 version = "0.4.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#96a7566b161d1aed0e4cdbb0f7af814a12e19f02"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#f484f7db90394f22eb7f8691871f1ac4df914df0"
 dependencies = [
  "bytes",
  "dashmap",
@@ -1502,7 +1502,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2012,7 +2012,7 @@ dependencies = [
 [[package]]
 name = "genmeta-ssh"
 version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/genmeta-ssh.git?branch=main#5b20a02caeecf44a2ddc35cbff87468840eae901"
+source = "git+ssh://git@github.com/genmeta/genmeta-ssh.git?branch=main#ca029a509d62a52cf44c95a11b1400a07b8c356e"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2142,7 +2142,7 @@ dependencies = [
 [[package]]
 name = "gmdns"
 version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/gmdns.git?branch=main#12d5c31050d3484c4ea9a0b44df37e8ed3b0210b"
+source = "git+ssh://git@github.com/genmeta/gmdns.git?branch=main#4f7a6045274904a683bc66e905cd122f747092d4"
 dependencies = [
  "base64 0.22.1",
  "bitfield-struct",
@@ -2194,7 +2194,7 @@ dependencies = [
 [[package]]
 name = "h3x"
 version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/h3x.git?branch=main#e0dc5200438a9f44b920c976c145c79608969275"
+source = "git+ssh://git@github.com/genmeta/h3x.git?branch=main#0ce16e2311f424bd08512a52b409c0ee18afae86"
 dependencies = [
  "bon",
  "bytes",
@@ -2422,9 +2422,9 @@ dependencies = [
 
 [[package]]
 name = "hyper-rustls"
-version = "0.27.8"
+version = "0.27.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2b52f86d1d4bc0d6b4e6826d960b1b333217e07d36b882dca570a5e1c48895b"
+checksum = "33ca68d021ef39cf6463ab54c1d0f5daf03377b70561305bb89a8f83aab66e0f"
 dependencies = [
  "http",
  "hyper",
@@ -2453,7 +2453,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -3098,7 +3098,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3641,7 +3641,7 @@ dependencies = [
 [[package]]
 name = "qbase"
 version = "0.4.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#96a7566b161d1aed0e4cdbb0f7af814a12e19f02"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#f484f7db90394f22eb7f8691871f1ac4df914df0"
 dependencies = [
  "bitflags",
  "bytes",
@@ -3665,7 +3665,7 @@ dependencies = [
 [[package]]
 name = "qcongestion"
 version = "0.4.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#96a7566b161d1aed0e4cdbb0f7af814a12e19f02"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#f484f7db90394f22eb7f8691871f1ac4df914df0"
 dependencies = [
  "qbase",
  "qevent",
@@ -3678,7 +3678,7 @@ dependencies = [
 [[package]]
 name = "qconnection"
 version = "0.4.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#96a7566b161d1aed0e4cdbb0f7af814a12e19f02"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#f484f7db90394f22eb7f8691871f1ac4df914df0"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3706,7 +3706,7 @@ dependencies = [
 [[package]]
 name = "qevent"
 version = "0.4.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#96a7566b161d1aed0e4cdbb0f7af814a12e19f02"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#f484f7db90394f22eb7f8691871f1ac4df914df0"
 dependencies = [
  "bytes",
  "derive_builder",
@@ -3724,7 +3724,7 @@ dependencies = [
 [[package]]
 name = "qinterface"
 version = "0.4.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#96a7566b161d1aed0e4cdbb0f7af814a12e19f02"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#f484f7db90394f22eb7f8691871f1ac4df914df0"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3749,7 +3749,7 @@ dependencies = [
 [[package]]
 name = "qmacro"
 version = "0.4.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#96a7566b161d1aed0e4cdbb0f7af814a12e19f02"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#f484f7db90394f22eb7f8691871f1ac4df914df0"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -3760,7 +3760,7 @@ dependencies = [
 [[package]]
 name = "qrecovery"
 version = "0.4.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#96a7566b161d1aed0e4cdbb0f7af814a12e19f02"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#f484f7db90394f22eb7f8691871f1ac4df914df0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -3778,7 +3778,7 @@ dependencies = [
 [[package]]
 name = "qresolve"
 version = "0.4.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#96a7566b161d1aed0e4cdbb0f7af814a12e19f02"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#f484f7db90394f22eb7f8691871f1ac4df914df0"
 dependencies = [
  "futures",
  "qbase",
@@ -3789,7 +3789,7 @@ dependencies = [
 [[package]]
 name = "qtraversal"
 version = "0.4.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#96a7566b161d1aed0e4cdbb0f7af814a12e19f02"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#f484f7db90394f22eb7f8691871f1ac4df914df0"
 dependencies = [
  "async-trait",
  "bitflags",
@@ -3818,7 +3818,7 @@ dependencies = [
 [[package]]
 name = "qudp"
 version = "0.4.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#96a7566b161d1aed0e4cdbb0f7af814a12e19f02"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#f484f7db90394f22eb7f8691871f1ac4df914df0"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -3852,7 +3852,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3889,7 +3889,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -3897,7 +3897,7 @@ dependencies = [
 [[package]]
 name = "qunreliable"
 version = "0.4.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#96a7566b161d1aed0e4cdbb0f7af814a12e19f02"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5#f484f7db90394f22eb7f8691871f1ac4df914df0"
 dependencies = [
  "bytes",
  "futures",
@@ -4012,7 +4012,7 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 [[package]]
 name = "rankey"
 version = "0.1.1"
-source = "git+ssh://git@github.com/genmeta/rankey.git?branch=master#a58248fa2cd2958763f0c86aec0f16a558698a57"
+source = "git+ssh://git@github.com/genmeta/rankey.git?branch=master#047cb7a07aa45d301ff16c2ce56bd59e132a44e8"
 dependencies = [
  "crypto-bigint",
  "der 0.8.0",
@@ -4377,7 +4377,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4444,7 +4444,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5018,7 +5018,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -5030,7 +5030,7 @@ version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54254b8531cafa275c5e096f62d48c81435d1015405a91198ddb11e967301d40"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -5053,7 +5053,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5557,9 +5557,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.51.1"
+version = "1.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f66bf9585cda4b724d3e78ab34b73fb2bbaba9011b9bfdf69dc836382ea13b8c"
+checksum = "a91135f59b1cbf38c91e73cf3386fca9bb77915c45ce2771460c9d92f0f3d776"
 dependencies = [
  "bytes",
  "libc",
@@ -6211,7 +6211,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
