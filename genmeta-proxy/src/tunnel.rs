@@ -34,6 +34,7 @@ pub async fn tunnel_connect(
                         tracing::error!(error = %Report::from_error(&e), addr = %addr, "failed to connect to tunnel target");
                     }
                     Ok(mut stream) => {
+                        crate::configure_tcp_keepalive(&stream);
                         // TcpStream implements tokio AsyncRead/AsyncWrite directly
                         if let Err(e) = copy_bidirectional(&mut client_io, &mut stream).await {
                             tracing::error!(error = %Report::from_error(&e), addr = %addr, "tunnel copy error");

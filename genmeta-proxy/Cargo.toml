@@ -19,6 +19,7 @@ daemonize = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 http-body-util = { workspace = true }
+socket2 = { workspace = true }
 bytes = { workspace = true }
 
 [features]

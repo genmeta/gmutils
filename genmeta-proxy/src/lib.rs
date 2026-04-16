@@ -1,4 +1,4 @@
-use std::{io::IsTerminal, mem, net::SocketAddr, sync::Arc};
+use std::{io::IsTerminal, mem, net::SocketAddr, sync::Arc, time::Duration};
 
 use clap::Parser;
 use dhttp_home::identity::Name;
@@ -10,7 +10,7 @@ use genmeta_common::{
 use h3x::dquic::H3Client;
 use http_body_util::BodyExt;
 use snafu::{Report, ResultExt, Snafu};
-use tokio::{net::TcpListener, task::JoinSet};
+use tokio::{net::TcpListener, sync::Semaphore, task::JoinSet};
 use tracing::Instrument;
 use tracing_subscriber::prelude::*;
 
@@ -291,12 +291,14 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     let router = Arc::new(route::Router::new());
     let client = Arc::new(client);
 
+    let semaphore = Arc::new(Semaphore::new(1024));
     let mut tasks = JoinSet::new();
     for listener in listeners {
         let client = client.clone();
         let router = router.clone();
         let self_name = self_name.clone();
-        tasks.spawn(accept_loop(listener, client, router, self_name));
+        let semaphore = semaphore.clone();
+        tasks.spawn(accept_loop(listener, client, router, self_name, semaphore));
     }
 
     while let Some(result) = tasks.join_next().await {
@@ -311,12 +313,28 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     Ok(())
 }
 
+/// Configure TCP keepalive on a stream to detect dead peers.
+///
+/// After 60 seconds of idle, sends probes every 10 seconds; 3 consecutive
+/// failures trigger a RST (~90 seconds total).
+fn configure_tcp_keepalive(stream: &tokio::net::TcpStream) {
+    let sock = socket2::SockRef::from(stream);
+    let keepalive = socket2::TcpKeepalive::new()
+        .with_time(Duration::from_secs(60))
+        .with_interval(Duration::from_secs(10))
+        .with_retries(3);
+    if let Err(e) = sock.set_tcp_keepalive(&keepalive) {
+        tracing::warn!(error = %e, "failed to set TCP keepalive");
+    }
+}
+
 /// Accept loop for a single TCP listener. Runs until the listener is dropped.
 async fn accept_loop(
     listener: TcpListener,
     client: Arc<H3Client>,
     router: Arc<route::Router>,
     self_name: Option<Name<'static>>,
+    semaphore: Arc<Semaphore>,
 ) {
     let self_name = Arc::new(self_name);
     loop {
@@ -324,18 +342,29 @@ async fn accept_loop(
             Ok(accepted) => accepted,
             Err(e) => {
                 tracing::warn!(error = %snafu::Report::from_error(&e), "accept failed, retrying");
+                tokio::time::sleep(Duration::from_millis(33)).await;
                 continue;
             }
+        };
+        configure_tcp_keepalive(&stream);
+        let permit = match semaphore.clone().acquire_owned().await {
+            Ok(permit) => permit,
+            Err(_) => break, // semaphore closed
         };
         tracing::debug!(%addr, "accepted connection");
         let client = client.clone();
         let router = router.clone();
         let self_name = self_name.clone();
         let span = tracing::info_span!("conn", %addr);
+        // Inherent termination: TCP keepalive detects dead peers (~90s),
+        // header_read_timeout closes idle keep-alive connections (120s).
         tokio::spawn(
             async move {
+                let _permit = permit;
                 let io = hyper_util::rt::TokioIo::new(stream);
                 if let Err(e) = hyper::server::conn::http1::Builder::new()
+                    .timer(hyper_util::rt::TokioTimer::new())
+                    .header_read_timeout(Some(Duration::from_secs(120)))
                     .preserve_header_case(true)
                     .title_case_headers(true)
                     .serve_connection(

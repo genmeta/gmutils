@@ -36,6 +36,7 @@ pub async fn forward_http(req: Request<Incoming>) -> Result<Response<Incoming>, 
     let stream = TcpStream::connect(&addr)
         .await
         .context(ForwardConnectSnafu { addr: addr.clone() })?;
+    crate::configure_tcp_keepalive(&stream);
     let io = TokioIo::new(stream);
 
     let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
