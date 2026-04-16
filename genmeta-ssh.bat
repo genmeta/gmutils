@@ -7,10 +7,10 @@ if "%~1"=="-V" if "%~2"=="" (
     goto :EOF
 )
 
-REM Call genmeta-ssh3 and pass all arguments
-REM If genmeta ssh3 fails, fall back to traditional ssh for compatibility
-genmeta ssh3 %*
+REM Call genmeta-ssh and pass all arguments
+REM If genmeta ssh fails, fall back to traditional ssh for compatibility
+genmeta ssh %*
 if errorlevel 1 (
-    echo Custom ssh process failed, falling back to regular ssh... >&2
+    echo genmeta ssh process failed, falling back to regular ssh... >&2
     ssh %*
 )
