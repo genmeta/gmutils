@@ -350,6 +350,28 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
     drop(_raw_guard);
 
+    // If forwarding tasks are running (-L/-R/-D), keep the connection alive
+    // until they finish or a termination signal arrives. This is required
+    // for VSCode Remote SSH which uses -D alongside the session.
+    if !forward_tasks.is_empty() {
+        tracing::info!(
+            active_forwards = forward_tasks.len(),
+            "session ended, keeping connection alive for port forwarding"
+        );
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("received interrupt, shutting down forwarding");
+            }
+            // All forward tasks completed on their own (unlikely for listeners,
+            // but handles the case where they all fail).
+            _ = async {
+                while forward_tasks.join_next().await.is_some() {}
+            } => {
+                tracing::info!("all forwarding tasks completed");
+            }
+        }
+    }
+
     connection.close(Code::H3_NO_ERROR, "");
 
     let exit_code = match exit_result {
