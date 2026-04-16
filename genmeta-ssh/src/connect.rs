@@ -156,7 +156,7 @@ pub async fn connect(config: &Config) -> Result<ConnectResult, Error> {
         }
     );
 
-    tracing::info!(
+    tracing::debug!(
         server = %server,
         conversation_id,
         version = %server_version,

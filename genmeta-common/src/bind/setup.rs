@@ -112,7 +112,7 @@ where
 
                         for (key, uri) in &new_map {
                             if !initial_map.contains_key(key) {
-                                tracing::info!("binding new URI `{uri}` during initial reconcile");
+                                tracing::debug!("binding new URI `{uri}` during initial reconcile");
                                 bind_fn(uri.clone()).await;
                             }
                         }
@@ -157,7 +157,7 @@ where
                 }
                 for (key, uri) in &new_map {
                     if !current_map.contains_key(key) {
-                        tracing::info!("binding new URI `{uri}`");
+                        tracing::debug!("binding new URI `{uri}`");
                         bind_fn(uri.clone()).await;
                     }
                 }
