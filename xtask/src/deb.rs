@@ -59,6 +59,40 @@ async fn check_docker(docker: &Docker) -> Result<(), Whatever> {
     Ok(())
 }
 
+/// Remove a container by name if it exists; ignore "no such container" errors.
+///
+/// Used to recover from leaked containers left by a previous failed run
+/// (e.g. a transient network error during toolchain install) that would
+/// otherwise cause a 409 name conflict on the next attempt.
+async fn remove_container_if_exists(docker: &Docker, name: &str) {
+    let opts = RemoveContainerOptionsBuilder::default().force(true).build();
+    match docker.remove_container(name, Some(opts)).await {
+        Ok(()) => {
+            tracing::info!(
+                container = name,
+                "removed stale container from previous run"
+            );
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            if !(msg.contains("No such container") || msg.contains("404")) {
+                tracing::debug!(container = name, error = %msg, "ignored non-404 remove error");
+            }
+        }
+    }
+}
+
+/// Best-effort container removal used for cleanup-on-exit.
+///
+/// Logs but does not propagate errors so that it is safe to call on both
+/// the success and failure paths without masking the original error.
+async fn force_remove_container(docker: &Docker, id: &str) {
+    let opts = RemoveContainerOptionsBuilder::default().force(true).build();
+    if let Err(e) = docker.remove_container(id, Some(opts)).await {
+        tracing::warn!(container = id, error = %e, "failed to remove container on cleanup");
+    }
+}
+
 /// Ensure the build image exists for the given target triple.
 /// If not, pull the base image, create a container, install toolchain, and commit.
 async fn ensure_image(docker: &Docker, triple: &str) -> Result<String, Whatever> {
@@ -89,6 +123,8 @@ async fn ensure_image(docker: &Docker, triple: &str) -> Result<String, Whatever>
 
     // Create temp container from base
     let container_name = format!("{CARGO_NAME}-xtask-setup-{triple}");
+    // Remove a leaked container left by a previous failed run so we can retry.
+    remove_container_if_exists(docker, &container_name).await;
     let container = docker
         .create_container(
             Some(
@@ -104,9 +140,51 @@ async fn ensure_image(docker: &Docker, triple: &str) -> Result<String, Whatever>
         )
         .await
         .whatever_context("failed to create setup container")?;
+    let container_id = container.id.clone();
 
+    // Any failure past this point must still remove the container, otherwise
+    // the name collides on retry. We wrap the fallible work in an inner fn.
+    let result = ensure_image_inner(docker, &container_id, triple, deb).await;
+
+    if result.is_err() {
+        // Do not commit; just clean up and propagate.
+        force_remove_container(docker, &container_id).await;
+        result?;
+        unreachable!();
+    }
+
+    // Commit the container as a new image
+    let repo = tag.split(':').next().unwrap_or(&tag);
+    let img_tag = tag.split(':').nth(1).unwrap_or(IMAGE_TAG_PREFIX);
+    let commit_result = docker
+        .commit_container(
+            CommitContainerOptionsBuilder::default()
+                .container(&container_id)
+                .repo(repo)
+                .tag(img_tag)
+                .build(),
+            ContainerConfig::default(),
+        )
+        .await
+        .whatever_context("failed to commit image");
+
+    // Always remove the setup container before returning, success or not.
+    force_remove_container(docker, &container_id).await;
+    commit_result?;
+
+    info!(tag, "image ready");
+    Ok(tag)
+}
+
+/// Run the toolchain-installation steps inside an already-created container.
+async fn ensure_image_inner(
+    docker: &Docker,
+    container_id: &str,
+    triple: &str,
+    deb: &str,
+) -> Result<(), Whatever> {
     docker
-        .start_container(&container.id, None::<StartContainerOptions>)
+        .start_container(container_id, None::<StartContainerOptions>)
         .await
         .whatever_context("failed to start setup container")?;
 
@@ -145,34 +223,8 @@ apt-get install --assume-yes -qq libc-dev:{deb} dpkg-dev debhelper fakeroot
 chmod -R a+rX {CARGO_HOME} {RUSTUP_HOME}
 "#
     );
-    exec_in_container(docker, &container.id, &["bash", "-c", &setup_script], None).await?;
-
-    // Commit the container as a new image
-    let repo = tag.split(':').next().unwrap_or(&tag);
-    let img_tag = tag.split(':').nth(1).unwrap_or(IMAGE_TAG_PREFIX);
-    docker
-        .commit_container(
-            CommitContainerOptionsBuilder::default()
-                .container(&container.id)
-                .repo(repo)
-                .tag(img_tag)
-                .build(),
-            ContainerConfig::default(),
-        )
-        .await
-        .whatever_context("failed to commit image")?;
-
-    // Cleanup setup container
-    docker
-        .remove_container(
-            &container.id,
-            Some(RemoveContainerOptionsBuilder::default().force(true).build()),
-        )
-        .await
-        .whatever_context("failed to remove setup container")?;
-
-    info!(tag, "image ready");
-    Ok(tag)
+    exec_in_container(docker, container_id, &["bash", "-c", &setup_script], None).await?;
+    Ok(())
 }
 
 /// Get the uid:gid of the workspace directory on the host.
@@ -333,6 +385,8 @@ async fn build_one(
 
     let container_name = format!("{CARGO_NAME}-xtask-deb-{triple}");
     info!(triple, container = %container_name, "creating build container");
+    // Clean up any leftover container from a previous failed run.
+    remove_container_if_exists(docker, &container_name).await;
     let container = docker
         .create_container(
             Some(
@@ -352,18 +406,50 @@ async fn build_one(
         )
         .await
         .whatever_context("failed to create build container")?;
+    let container_id = container.id.clone();
 
+    // Run the actual build; always clean up the container regardless of outcome.
+    let result = build_one_inner(
+        docker,
+        &container_id,
+        triple,
+        version,
+        arch,
+        gnu,
+        root_ca_env,
+    )
+    .await;
+    force_remove_container(docker, &container_id).await;
+    result?;
+
+    info!(deb_name, "produced");
+    Ok(())
+}
+
+async fn build_one_inner(
+    docker: &Docker,
+    container_id: &str,
+    triple: &str,
+    version: &str,
+    arch: &str,
+    gnu: &str,
+    root_ca_env: &str,
+) -> Result<(), Whatever> {
     docker
-        .start_container(&container.id, None::<StartContainerOptions>)
+        .start_container(container_id, None::<StartContainerOptions>)
         .await
         .whatever_context("failed to start build container")?;
     info!(triple, "build container started");
 
     // Install cross-compilation binutils (needs root).
-    let install_binutils = format!(
-        "apt-get install -y -qq binutils-{gnu} 2>/dev/null || true"
-    );
-    exec_in_container(docker, &container.id, &["bash", "-c", &install_binutils], None).await?;
+    let install_binutils = format!("apt-get install -y -qq binutils-{gnu} 2>/dev/null || true");
+    exec_in_container(
+        docker,
+        container_id,
+        &["bash", "-c", &install_binutils],
+        None,
+    )
+    .await?;
 
     // dpkg-buildpackage -B builds only Architecture: any packages.
     // -a{arch} sets the host architecture for cross-compilation.
@@ -391,17 +477,13 @@ dpkg-buildpackage -B -uc -us -d -a{arch}
     );
 
     info!(triple, "starting dpkg-buildpackage inside container");
-    exec_in_container(docker, &container.id, &["bash", "-c", &build_script], Some(&user)).await?;
+    exec_in_container(
+        docker,
+        container_id,
+        &["bash", "-c", &build_script],
+        Some(&user),
+    )
+    .await?;
     info!(triple, "dpkg-buildpackage finished inside container");
-
-    docker
-        .remove_container(
-            &container.id,
-            Some(RemoveContainerOptionsBuilder::default().force(true).build()),
-        )
-        .await
-        .whatever_context("failed to remove build container")?;
-
-    info!(deb_name, "produced");
     Ok(())
 }
