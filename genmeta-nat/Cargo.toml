@@ -11,8 +11,6 @@ genmeta-common = { path = "../genmeta-common", features = ["h3-client", "id"] }
 dhttp-home = { workspace = true }
 gmdns = { workspace = true }
 h3x = { workspace = true }
-qinterface = { workspace = true }
-qtraversal = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

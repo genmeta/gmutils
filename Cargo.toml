@@ -35,14 +35,7 @@ console-subscriber = "0.5"
 
 # network
 gmdns = { git = "ssh://git@github.com/genmeta/gmdns.git", branch = "main" }
-h3x = { git = "ssh://git@github.com/genmeta/h3x.git", branch = "main" }
-qinterface = { git = "ssh://git@github.com/genmeta/dquic.git", branch = "feat/v0.5", features = [
-    "qudp",
-] }
-qtraversal = { git = "ssh://git@github.com/genmeta/dquic.git", branch = "feat/v0.5" }
-qevent = { git = "ssh://git@github.com/genmeta/dquic.git", branch = "feat/v0.5", features = [
-    "telemetry",
-] }
+h3x = { git = "https://github.com/genmeta/h3x.git", branch = "main" }
 http = "1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
@@ -129,6 +122,9 @@ genmeta-proxy = { path = "genmeta-proxy" }
 genmeta-ssh-core = { package = "genmeta-ssh", git = "ssh://git@github.com/genmeta/genmeta-ssh.git", branch = "main", features = [
     "config",
 ] }
+
+[patch."ssh://git@github.com/genmeta/h3x.git"]
+h3x = { git = "https://github.com/genmeta/h3x.git", branch = "main" }
 
 [profile.release]
 opt-level = "z"

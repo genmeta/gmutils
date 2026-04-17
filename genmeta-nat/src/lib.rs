@@ -7,7 +7,7 @@ use genmeta_common::{
     dns::{self, DnsScheme},
     id,
 };
-use h3x::dquic::{BuildClientError, qinterface::io::IO, qresolve};
+use h3x::dquic::{BuildClientError, qinterface::io::IO, qresolve, qtraversal};
 use qtraversal::{
     nat::{client::StunClient, router::StunRouter},
     route::ReceiveAndDeliverPacket,
