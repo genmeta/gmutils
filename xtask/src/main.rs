@@ -36,6 +36,9 @@ pub enum DebTarget {
     /// armv7-unknown-linux-gnueabihf
     #[value(name = "armv7-unknown-linux-gnueabihf")]
     Armv7,
+    /// i686-unknown-linux-gnu
+    #[value(name = "i686-unknown-linux-gnu")]
+    I686,
 }
 
 impl DebTarget {
@@ -44,6 +47,7 @@ impl DebTarget {
             Self::X86_64 => "x86_64-unknown-linux-gnu",
             Self::Aarch64 => "aarch64-unknown-linux-gnu",
             Self::Armv7 => "armv7-unknown-linux-gnueabihf",
+            Self::I686 => "i686-unknown-linux-gnu",
         }
     }
 }
