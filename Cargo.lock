@@ -1404,6 +1404,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 [[package]]
 name = "dquic"
 version = "0.5.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3efd4dda778da20d64c1d38906a234733aeaca3e"
 dependencies = [
  "bytes",
  "dashmap",
@@ -1585,8 +1586,8 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "firewall-base"
-version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/firewall.git?branch=main#961bb48f151425de500897bde11d3231d84e24cf"
+version = "0.2.0"
+source = "git+ssh://git@github.com/genmeta/firewall.git?branch=main#85493bbc847cf3e95d54f5b0b7acbf5d3ca85b56"
 dependencies = [
  "clap",
  "derive_more",
@@ -1603,8 +1604,8 @@ dependencies = [
 
 [[package]]
 name = "firewall-db"
-version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/firewall.git?branch=main#961bb48f151425de500897bde11d3231d84e24cf"
+version = "0.2.0"
+source = "git+ssh://git@github.com/genmeta/firewall.git?branch=main#85493bbc847cf3e95d54f5b0b7acbf5d3ca85b56"
 dependencies = [
  "chrono",
  "derive_more",
@@ -1622,8 +1623,8 @@ dependencies = [
 
 [[package]]
 name = "firewall-migration"
-version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/firewall.git?branch=main#961bb48f151425de500897bde11d3231d84e24cf"
+version = "0.2.0"
+source = "git+ssh://git@github.com/genmeta/firewall.git?branch=main#85493bbc847cf3e95d54f5b0b7acbf5d3ca85b56"
 dependencies = [
  "async-std",
  "sea-orm-migration",
@@ -2014,8 +2015,8 @@ dependencies = [
 
 [[package]]
 name = "genmeta-ssh"
-version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/genmeta-ssh.git?branch=main#63fa695c3f1eedb91c36ae244faa192ef3751302"
+version = "0.2.0"
+source = "git+ssh://git@github.com/genmeta/genmeta-ssh.git?branch=main#a32d6bec27dd3012f5914a9efb83d66cf11c172a"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2044,7 +2045,7 @@ dependencies = [
  "dirs",
  "futures",
  "genmeta-common",
- "genmeta-ssh 0.1.0",
+ "genmeta-ssh 0.2.0",
  "h3x",
  "http",
  "http-body-util",
@@ -2144,6 +2145,7 @@ dependencies = [
 [[package]]
 name = "gmdns"
 version = "0.2.0"
+source = "git+ssh://git@github.com/genmeta/gmdns.git?branch=main#3addc011f01b3ed752621ea8aee06a030dc5bd1e"
 dependencies = [
  "base64 0.22.1",
  "bitfield-struct",
@@ -2193,6 +2195,7 @@ dependencies = [
 [[package]]
 name = "h3x"
 version = "0.2.0"
+source = "git+https://github.com/genmeta/h3x.git?branch=main#a50961b3e64d63f5e827aa50c2761ab03cc7f626"
 dependencies = [
  "arc-swap",
  "async-channel 2.5.0",
@@ -3645,6 +3648,7 @@ dependencies = [
 [[package]]
 name = "qbase"
 version = "0.5.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3efd4dda778da20d64c1d38906a234733aeaca3e"
 dependencies = [
  "bitflags",
  "bytes",
@@ -3668,6 +3672,7 @@ dependencies = [
 [[package]]
 name = "qcongestion"
 version = "0.5.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3efd4dda778da20d64c1d38906a234733aeaca3e"
 dependencies = [
  "qbase",
  "qevent",
@@ -3680,6 +3685,7 @@ dependencies = [
 [[package]]
 name = "qconnection"
 version = "0.5.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3efd4dda778da20d64c1d38906a234733aeaca3e"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3707,6 +3713,7 @@ dependencies = [
 [[package]]
 name = "qdatagram"
 version = "0.5.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3efd4dda778da20d64c1d38906a234733aeaca3e"
 dependencies = [
  "bytes",
  "futures",
@@ -3718,6 +3725,7 @@ dependencies = [
 [[package]]
 name = "qevent"
 version = "0.5.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3efd4dda778da20d64c1d38906a234733aeaca3e"
 dependencies = [
  "bytes",
  "derive_builder",
@@ -3735,6 +3743,7 @@ dependencies = [
 [[package]]
 name = "qinterface"
 version = "0.5.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3efd4dda778da20d64c1d38906a234733aeaca3e"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3759,6 +3768,7 @@ dependencies = [
 [[package]]
 name = "qmacro"
 version = "0.5.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3efd4dda778da20d64c1d38906a234733aeaca3e"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -3769,6 +3779,7 @@ dependencies = [
 [[package]]
 name = "qrecovery"
 version = "0.5.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3efd4dda778da20d64c1d38906a234733aeaca3e"
 dependencies = [
  "bytes",
  "derive_more",
@@ -3786,6 +3797,7 @@ dependencies = [
 [[package]]
 name = "qresolve"
 version = "0.5.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3efd4dda778da20d64c1d38906a234733aeaca3e"
 dependencies = [
  "futures",
  "qbase",
@@ -3796,6 +3808,7 @@ dependencies = [
 [[package]]
 name = "qtraversal"
 version = "0.5.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3efd4dda778da20d64c1d38906a234733aeaca3e"
 dependencies = [
  "async-trait",
  "bitflags",
@@ -3824,6 +3837,7 @@ dependencies = [
 [[package]]
 name = "qudp"
 version = "0.5.0"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3efd4dda778da20d64c1d38906a234733aeaca3e"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -5814,9 +5828,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "typenum"
-version = "1.19.0"
+version = "1.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
+checksum = "40ce102ab67701b8526c123c1bab5cbe42d7040ccfd0f64af1a385808d2f43de"
 
 [[package]]
 name = "unicode-bidi"
@@ -5998,11 +6012,11 @@ dependencies = [
 
 [[package]]
 name = "wasip2"
-version = "1.0.2+wasi-0.2.9"
+version = "1.0.3+wasi-0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9517f9239f02c069db75e65f174b3da828fe5f5b945c4dd26bd25d89c03ebcf5"
+checksum = "20064672db26d7cdc89c7798c48a0fdfac8213434a1186e5ef29fd560ae223d6"
 dependencies = [
- "wit-bindgen",
+ "wit-bindgen 0.57.1",
 ]
 
 [[package]]
@@ -6011,7 +6025,7 @@ version = "0.4.0+wasi-0.3.0-rc-2026-01-06"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5428f8bf88ea5ddc08faddef2ac4a67e390b88186c703ce6dbd955e1c145aca5"
 dependencies = [
- "wit-bindgen",
+ "wit-bindgen 0.51.0",
 ]
 
 [[package]]
@@ -6648,6 +6662,12 @@ checksum = "d7249219f66ced02969388cf2bb044a09756a083d0fab1e566056b04d9fbcaa5"
 dependencies = [
  "wit-bindgen-rust-macro",
 ]
+
+[[package]]
+name = "wit-bindgen"
+version = "0.57.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "wit-bindgen-core"
