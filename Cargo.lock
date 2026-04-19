@@ -124,6 +124,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "1.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a3a1fd6f75306b68087b831f025c712524bcb19aad54e557b1129cfa0a2b207"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1395,7 +1404,6 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 [[package]]
 name = "dquic"
 version = "0.5.0"
-source = "git+https://github.com/genmeta/dquic.git?tag=v0.5.0#e7681a414565561f90a4403bfbf63c86788ced01"
 dependencies = [
  "bytes",
  "dashmap",
@@ -1862,15 +1870,11 @@ version = "0.1.0"
 dependencies = [
  "bon",
  "clap",
- "derive_more",
  "dhttp-home",
- "either",
  "futures",
- "globset",
  "gmdns",
  "h3x",
  "http",
- "peg",
  "rustls",
  "snafu 0.9.0",
  "tokio",
@@ -2139,8 +2143,7 @@ dependencies = [
 
 [[package]]
 name = "gmdns"
-version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/gmdns.git?branch=main#ba1a5757ecf1ae88039051f0a18c202eabe86e44"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "bitfield-struct",
@@ -2189,20 +2192,25 @@ dependencies = [
 
 [[package]]
 name = "h3x"
-version = "0.1.0"
-source = "git+https://github.com/genmeta/h3x.git?branch=main#99d20dda88f68d6c4eb3bee6a022fac17e22f284"
+version = "0.2.0"
 dependencies = [
+ "arc-swap",
+ "async-channel 2.5.0",
  "bon",
  "bytes",
  "dashmap",
+ "derive_more",
  "dquic",
+ "either",
  "futures",
+ "globset",
  "httlib-huffman",
  "http",
  "http-body",
  "http-body-util",
  "hyper",
  "matchit",
+ "peg",
  "pin-project-lite",
  "remoc",
  "ring",
@@ -3637,7 +3645,6 @@ dependencies = [
 [[package]]
 name = "qbase"
 version = "0.5.0"
-source = "git+https://github.com/genmeta/dquic.git?tag=v0.5.0#e7681a414565561f90a4403bfbf63c86788ced01"
 dependencies = [
  "bitflags",
  "bytes",
@@ -3661,7 +3668,6 @@ dependencies = [
 [[package]]
 name = "qcongestion"
 version = "0.5.0"
-source = "git+https://github.com/genmeta/dquic.git?tag=v0.5.0#e7681a414565561f90a4403bfbf63c86788ced01"
 dependencies = [
  "qbase",
  "qevent",
@@ -3674,7 +3680,6 @@ dependencies = [
 [[package]]
 name = "qconnection"
 version = "0.5.0"
-source = "git+https://github.com/genmeta/dquic.git?tag=v0.5.0#e7681a414565561f90a4403bfbf63c86788ced01"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3702,7 +3707,6 @@ dependencies = [
 [[package]]
 name = "qdatagram"
 version = "0.5.0"
-source = "git+https://github.com/genmeta/dquic.git?tag=v0.5.0#e7681a414565561f90a4403bfbf63c86788ced01"
 dependencies = [
  "bytes",
  "futures",
@@ -3714,7 +3718,6 @@ dependencies = [
 [[package]]
 name = "qevent"
 version = "0.5.0"
-source = "git+https://github.com/genmeta/dquic.git?tag=v0.5.0#e7681a414565561f90a4403bfbf63c86788ced01"
 dependencies = [
  "bytes",
  "derive_builder",
@@ -3732,7 +3735,6 @@ dependencies = [
 [[package]]
 name = "qinterface"
 version = "0.5.0"
-source = "git+https://github.com/genmeta/dquic.git?tag=v0.5.0#e7681a414565561f90a4403bfbf63c86788ced01"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3757,7 +3759,6 @@ dependencies = [
 [[package]]
 name = "qmacro"
 version = "0.5.0"
-source = "git+https://github.com/genmeta/dquic.git?tag=v0.5.0#e7681a414565561f90a4403bfbf63c86788ced01"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -3768,7 +3769,6 @@ dependencies = [
 [[package]]
 name = "qrecovery"
 version = "0.5.0"
-source = "git+https://github.com/genmeta/dquic.git?tag=v0.5.0#e7681a414565561f90a4403bfbf63c86788ced01"
 dependencies = [
  "bytes",
  "derive_more",
@@ -3786,7 +3786,6 @@ dependencies = [
 [[package]]
 name = "qresolve"
 version = "0.5.0"
-source = "git+https://github.com/genmeta/dquic.git?tag=v0.5.0#e7681a414565561f90a4403bfbf63c86788ced01"
 dependencies = [
  "futures",
  "qbase",
@@ -3797,7 +3796,6 @@ dependencies = [
 [[package]]
 name = "qtraversal"
 version = "0.5.0"
-source = "git+https://github.com/genmeta/dquic.git?tag=v0.5.0#e7681a414565561f90a4403bfbf63c86788ced01"
 dependencies = [
  "async-trait",
  "bitflags",
@@ -3826,7 +3824,6 @@ dependencies = [
 [[package]]
 name = "qudp"
 version = "0.5.0"
-source = "git+https://github.com/genmeta/dquic.git?tag=v0.5.0#e7681a414565561f90a4403bfbf63c86788ced01"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -4007,8 +4004,8 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rankey"
-version = "0.1.1"
-source = "git+ssh://git@github.com/genmeta/rankey.git?branch=master#047cb7a07aa45d301ff16c2ce56bd59e132a44e8"
+version = "0.2.0"
+source = "git+ssh://git@github.com/genmeta/rankey.git?branch=master#39aaf4fbc774866fadce67ae7eaaf71d1920ba7a"
 dependencies = [
  "crypto-bigint",
  "der 0.8.0",

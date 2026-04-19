@@ -23,17 +23,8 @@ dhttp-home = { workspace = true, optional = true }
 bon = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 
-# feature bind 
-derive_more = { workspace = true, optional = true, features = [
-    "deref",
-    "deref_mut",
-    "from",
-    "into",
-] }
-either = { workspace = true, optional = true }
-globset = { workspace = true, optional = true }
+# feature dns and h3-client
 h3x = { workspace = true, optional = true }
-peg = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["rt"] }
 tokio-util = { workspace = true, optional = true, features = ["rt"] }
@@ -41,21 +32,18 @@ tokio-util = { workspace = true, optional = true, features = ["rt"] }
 [features]
 # dev
 default = ["dns", "id"]
-bind = [
+error = ["dep:snafu"]
+id = ["dep:snafu", "dep:clap", "dep:dhttp-home", "dep:http", "dep:tracing"]
+dns = [
     "dep:clap",
-    "dep:derive_more",
-    "dep:either",
     "dep:futures",
-    "dep:globset",
-    "dep:http",
+    "dep:gmdns",
+    "dep:dhttp-home",
     "dep:h3x",
-    "dep:peg",
+    "dep:http",
     "dep:snafu",
     "dep:tokio",
     "dep:tokio-util",
     "dep:tracing",
 ]
-error = ["dep:snafu"]
-id = ["dep:snafu", "dep:clap", "dep:dhttp-home", "dep:http", "dep:tracing"]
-dns = ["bind", "dep:clap", "dep:gmdns", "dep:dhttp-home", "dep:tracing"]
 h3-client = ["dns", "dep:bon", "dep:rustls"]

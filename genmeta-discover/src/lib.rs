@@ -7,14 +7,14 @@ use std::{
 
 use clap::Parser;
 use futures::{Future, StreamExt};
-use genmeta_common::{
-    bind::{self, Binds},
-    dns,
-};
+use genmeta_common::dns;
 use gmdns::{parser::record::RData, resolvers::MdnsResolvers};
-use h3x::dquic::{
-    prelude::handy::DEFAULT_IO_FACTORY,
-    qinterface::{BindInterface, bind_uri::BindUri},
+use h3x::{
+    dquic::{
+        prelude::handy::DEFAULT_IO_FACTORY,
+        qinterface::{BindInterface, bind_uri::BindUri},
+    },
+    endpoint::binds::{self, Binds},
 };
 use snafu::ResultExt;
 use tokio::sync::Notify;
@@ -30,7 +30,7 @@ pub struct Options {
     /// Bind patterns for local network interfaces
     #[arg(long = "interface", value_name = "bind", default_value = "*",
           hide = cfg!(not(debug_assertions)))]
-    binds: Vec<bind::Bind>,
+    binds: Vec<binds::Bind>,
 }
 
 #[derive(Debug, snafu::Snafu)]
@@ -38,7 +38,7 @@ pub struct Options {
 pub enum Error {
     #[snafu(display("failed to setup bind interfaces"))]
     SetupBind {
-        source: Box<bind::BindConflictError>,
+        source: Box<binds::BindConflictError>,
     },
 }
 
@@ -69,9 +69,10 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     let _guard = init_tracing();
 
     let binds = Binds::new(std::mem::take(&mut options.binds));
-    let bind_setup = bind::setup_bind_interfaces_with(&binds, dns::handy::ensure_default_mdns_prop)
-        .await
-        .context(error::SetupBindSnafu)?;
+    let bind_setup =
+        binds::setup_bind_interfaces_with(&binds, dns::handy::ensure_default_mdns_prop)
+            .await
+            .context(error::SetupBindSnafu)?;
 
     // Build mDNS resolvers using the shared helper.
     // MdnsResolvers holds WeakInterface references — we keep the original
@@ -101,7 +102,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         let notify = notify.clone();
         let iface_manager = bind_setup.iface_manager.clone();
 
-        bind::watch_bind_interfaces(
+        binds::watch_bind_interfaces(
             &binds,
             bind_setup.monitor,
             bind_setup.bind_uris,

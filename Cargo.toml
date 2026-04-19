@@ -35,7 +35,7 @@ console-subscriber = "0.5"
 
 # network
 gmdns = { git = "ssh://git@github.com/genmeta/gmdns.git", branch = "main" }
-h3x = { git = "https://github.com/genmeta/h3x.git", branch = "main" }
+h3x = { git = "https://github.com/genmeta/h3x.git", tag = "v0.2.0" }
 http = "1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
@@ -123,12 +123,25 @@ genmeta-ssh-core = { package = "genmeta-ssh", git = "ssh://git@github.com/genmet
     "config",
 ] }
 
-[patch."ssh://git@github.com/genmeta/h3x.git"]
-h3x = { git = "https://github.com/genmeta/h3x.git", branch = "main" }
-
 [profile.release]
 opt-level = "z"
 lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[patch."ssh://git@github.com/genmeta/h3x.git"]
+h3x = { path = "../h3x" }
+
+# Local development overrides: point h3x and gmdns at the in-tree checkouts
+# so this workspace consumes the unreleased endpoint-API changes.
+[patch."https://github.com/genmeta/h3x.git"]
+h3x = { path = "../h3x" }
+
+[patch."ssh://git@github.com/genmeta/gmdns.git"]
+gmdns = { path = "../gmdns" }
+
+[patch.crates-io]
+# TEMP: use local dquic while h3x's endpoint API consumes unreleased dquic
+# accessors (matches h3x's own Cargo.toml dev-time override).
+dquic = { path = "../dquic/dquic" }

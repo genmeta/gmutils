@@ -1,5 +1,6 @@
 use h3x::{
-    dquic::H3Client,
+    client::Client,
+    endpoint::QuicEndpoint,
     message::stream::{MessageStreamError, WriteStream},
 };
 use http::uri::{self, Uri};
@@ -59,7 +60,7 @@ async fn close_write_stream(mut write_stream: WriteStream) {
 /// Forward a plain HTTP request to a genmeta domain via DHTTP/3.
 pub async fn forward_h3(
     req: Request<Incoming>,
-    client: &H3Client,
+    client: &Client<QuicEndpoint>,
 ) -> Result<Response<impl Body<Data = bytes::Bytes, Error = MessageStreamError> + use<>>, Error> {
     let authority = req
         .uri()

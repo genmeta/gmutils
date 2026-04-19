@@ -5,7 +5,8 @@ use genmeta_common::h3_client::{self, SetupH3ClientError};
 use genmeta_ssh_core as ssh3;
 use h3x::{
     connection::{Connection, ConnectionBuilder},
-    dquic::prelude::{self, ConnectServerError},
+    dquic::prelude,
+    endpoint::ConnectError as EndpointConnectError,
     pool::ConnectError,
     qpack::field::Protocol,
     quic::GetStreamIdExt,
@@ -25,7 +26,7 @@ pub enum Error {
     SetupH3Client { source: SetupH3ClientError },
     #[snafu(display("failed to connect to server"))]
     Connect {
-        source: ConnectError<ConnectServerError>,
+        source: ConnectError<EndpointConnectError>,
     },
     #[snafu(display("authentication failed (HTTP 401)"))]
     AuthenticationFailed,

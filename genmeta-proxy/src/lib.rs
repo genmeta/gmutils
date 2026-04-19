@@ -3,11 +3,14 @@ use std::{io::IsTerminal, mem, net::SocketAddr, sync::Arc, time::Duration};
 use clap::Parser;
 use dhttp_home::identity::Name;
 use genmeta_common::{
-    bind, dns,
+    dns,
     h3_client::{self, SetupH3ClientError},
     id,
 };
-use h3x::dquic::H3Client;
+use h3x::{
+    client::Client,
+    endpoint::{QuicEndpoint, binds},
+};
 use http_body_util::BodyExt;
 use snafu::{Report, ResultExt, Snafu};
 use tokio::{net::TcpListener, sync::Semaphore, task::JoinSet};
@@ -19,7 +22,7 @@ use tracing_subscriber::prelude::*;
 pub struct Options {
     /// Proxy listen address patterns
     #[arg(long = "listen", value_name = "bind", default_values = ["127.0.0.1:16080", "[::1]:16080"])]
-    pub listens: Vec<bind::Bind>,
+    pub listens: Vec<binds::Bind>,
 
     /// Client identity for DHTTP/3 connections
     #[arg(short, long, value_name = "client_identity")]
@@ -35,7 +38,7 @@ pub struct Options {
 
     /// Bind patterns for DHTTP/3 connections
     #[arg(long = "interface", value_name = "bind", default_value = "*", hide = cfg!(not(debug_assertions)))]
-    pub binds: Vec<bind::Bind>,
+    pub binds: Vec<binds::Bind>,
 
     /// Show detailed request logging
     #[arg(short, long)]
@@ -140,7 +143,7 @@ where
 
 async fn handle_request(
     req: hyper::Request<hyper::body::Incoming>,
-    client: &H3Client,
+    client: &Client<QuicEndpoint>,
     router: &route::Router,
     self_name: Option<&Name<'_>>,
 ) -> Result<hyper::Response<BoxBody>, hyper::Error> {
@@ -273,7 +276,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         .await?
     };
 
-    let binds = bind::Binds::new(mem::take(&mut options.binds));
+    let binds = binds::Binds::new(mem::take(&mut options.binds));
 
     let h3_setup = h3_client::setup_h3_client()
         .binds(&binds)
@@ -331,7 +334,7 @@ fn configure_tcp_keepalive(stream: &tokio::net::TcpStream) {
 /// Accept loop for a single TCP listener. Runs until the listener is dropped.
 async fn accept_loop(
     listener: TcpListener,
-    client: Arc<H3Client>,
+    client: Arc<Client<QuicEndpoint>>,
     router: Arc<route::Router>,
     self_name: Option<Name<'static>>,
     semaphore: Arc<Semaphore>,

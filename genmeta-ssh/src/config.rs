@@ -2,10 +2,8 @@ use core::fmt;
 use std::{collections::BTreeSet, str::FromStr, time::Duration};
 
 use dhttp_home::identity::{IdentityHome, InvalidName, Name};
-use genmeta_common::{
-    bind::{self, Binds},
-    dns, id,
-};
+use genmeta_common::{dns, id};
+use h3x::endpoint::binds::{self, Binds};
 use http::{Uri, uri::Authority};
 use snafu::{ResultExt, Snafu};
 
@@ -54,7 +52,7 @@ pub enum Error {
 
 #[derive(Debug)]
 pub struct Config {
-    pub binds: bind::Binds,
+    pub binds: binds::Binds,
     pub dns: BTreeSet<dns::DnsScheme>,
     pub username: String,
     pub uri: Uri,

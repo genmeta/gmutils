@@ -12,9 +12,9 @@ pub mod ssh_config;
 use clap::Parser;
 use dhttp_home::identity::Name;
 use forward::*;
-use genmeta_common::{bind, dns};
+use genmeta_common::dns;
 use genmeta_ssh_core as ssh3;
-use h3x::error::Code;
+use h3x::{endpoint::binds, error::Code};
 use snafu::{FromString, Report, ResultExt, Snafu};
 use tracing::Instrument;
 use tracing_subscriber::prelude::*;
@@ -118,7 +118,7 @@ pub struct Options {
 
     /// Bind patterns for DHTTP/3 connections
     #[arg(long = "interface", value_name = "bind", default_value = "*", hide = cfg!(not(debug_assertions)))]
-    binds: Vec<bind::Bind>,
+    binds: Vec<binds::Bind>,
 
     #[arg(value_name = "HOST/URI", long_help = URI_LONG_HELP)]
     host: String,

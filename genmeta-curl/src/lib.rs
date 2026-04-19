@@ -11,13 +11,13 @@ use async_compression::tokio::bufread::{DeflateDecoder, GzipDecoder, ZstdDecoder
 use clap::Parser;
 use dhttp_home::identity::Name;
 use genmeta_common::{
-    bind,
     dns::{self},
     h3_client::{self, SetupH3ClientError},
     id,
 };
 use h3x::{
-    dquic::{H3Client, prelude::ConnectServerError},
+    client::Client,
+    endpoint::{ConnectError as EndpointConnectError, QuicEndpoint, binds},
     hyper::SendMessageError,
     message::stream::{InitialMessageStreamError, MessageStreamError, WriteStream},
     pool::ConnectError,
@@ -113,7 +113,7 @@ pub struct Options {
 
     /// Bind patterns for DHTTP/3 connections
     #[arg(long = "interface", value_name = "bind", default_value = "*", hide = cfg!(not(debug_assertions)))]
-    binds: Vec<bind::Bind>,
+    binds: Vec<binds::Bind>,
 
     /// Make the operation more talkative
     #[arg(short, long)]
@@ -147,7 +147,7 @@ pub enum Error {
 
     #[snafu(display("failed to connect to server"))]
     Connect {
-        source: ConnectError<ConnectServerError>,
+        source: ConnectError<EndpointConnectError>,
     },
 
     #[snafu(display("connection timed out"))]
@@ -416,7 +416,7 @@ async fn setup_client(
     options: &mut Options,
 ) -> Result<
     (
-        H3Client,
+        Client<QuicEndpoint>,
         Option<dhttp_home::identity::IdentityHome>,
         Duration,
         AbortOnDropHandle<()>,
@@ -439,7 +439,7 @@ async fn setup_client(
     // Expand ~ in URI using loaded identity (--id > default identity)
     options.expand_name_in_uri(id.as_ref().map(|id| id.name()))?;
 
-    let binds = bind::Binds::new(mem::take(&mut options.binds));
+    let binds = binds::Binds::new(mem::take(&mut options.binds));
 
     // Apply -4/-6 address family filter to bind URIs.
     // Both flags set (or neither) means no filtering.
@@ -687,7 +687,7 @@ async fn process_final_response(
 
 /// Connect to the server (with timeout) and open the initial message streams.
 async fn connect_and_open_streams(
-    client: &H3Client,
+    client: &Client<QuicEndpoint>,
     uri: &Uri,
     connect_timeout: Duration,
     timing: &mut Timing,

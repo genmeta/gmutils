@@ -3,11 +3,13 @@ use std::{io::IsTerminal, net::SocketAddr, sync::Arc};
 use clap::Parser;
 use dhttp_home::identity::Name;
 use genmeta_common::{
-    bind::{self, Bind},
     dns::{self, DnsScheme},
     id,
 };
-use h3x::dquic::{BuildClientError, qinterface::io::IO, qresolve, qtraversal};
+use h3x::{
+    dquic::{qinterface::io::IO, qresolve, qtraversal},
+    endpoint::binds::{self, Bind},
+};
 use qtraversal::{
     nat::{client::StunClient, router::StunRouter},
     route::ReceiveAndDeliverPacket,
@@ -51,9 +53,6 @@ pub enum Error {
     LoadIdentitySsl {
         source: dhttp_home::identity::ssl::LoadIdentitySslError,
     },
-
-    #[snafu(display("failed to build DNS resolvers"))]
-    BuildDnsResolvers { source: BuildClientError },
 
     #[snafu(display("failed to detect external address"))]
     DetectExternalAddr {
@@ -124,17 +123,17 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
         None => None,
     };
 
-    let binds = bind::Binds::new(std::mem::take(&mut options.binds));
-    let bind_setup = bind::setup_bind_interfaces_with(&binds, dns::handy::ensure_default_mdns_prop)
-        .await
-        .expect("BUG: wildcard bind should not conflict");
+    let binds = binds::Binds::new(std::mem::take(&mut options.binds));
+    let bind_setup =
+        binds::setup_bind_interfaces_with(&binds, dns::handy::ensure_default_mdns_prop)
+            .await
+            .expect("BUG: wildcard bind should not conflict");
 
     let dns_setup = dns::handy::build_resolvers(
         [DnsScheme::H3],
         &bind_setup.bind_interfaces,
         id_material.as_ref(),
-    )
-    .context(error::BuildDnsResolversSnafu)?;
+    );
 
     // Use the first bound interface for STUN NAT detection.
     let stun_iface = bind_setup

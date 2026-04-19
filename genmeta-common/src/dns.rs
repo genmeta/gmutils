@@ -42,13 +42,17 @@ pub mod handy {
     use gmdns::resolvers::{HttpResolver, MdnsResolver, MdnsResolvers};
     use h3x::dquic::qinterface::BindInterface;
     #[cfg(feature = "h3-client")]
-    use h3x::dquic::{BuildClientError, H3Client, prelude::Resolve};
+    use h3x::{
+        client::Client,
+        dquic::prelude::Resolve,
+        endpoint::{Identity as EndpointIdentity, Network, QuicEndpoint, ServerQuicConfig},
+    };
 
     #[cfg(feature = "h3-client")]
     use super::H3_DNS_SERVER;
     use super::{HTTP_DNS_SERVER, MDNS_SERVICE};
     #[cfg(feature = "h3-client")]
-    use crate::h3_client::genmeta_root_cert_store;
+    use crate::h3_client::{default_client_quic_config, endpoint_identity};
 
     pub fn mdns_resolvers(bind_ifaces: impl IntoIterator<Item = BindInterface>) -> MdnsResolvers {
         tracing::debug!("initializing mDNS resolvers");
@@ -72,7 +76,7 @@ pub mod handy {
 
     /// Ensure all bind URIs default to `mdns=true` when none explicitly
     /// specifies the `mdns` prop. Designed to be passed directly to
-    /// [`setup_bind_interfaces_with`](crate::bind::setup_bind_interfaces_with).
+    /// [`setup_bind_interfaces_with`](h3x::endpoint::binds::setup_bind_interfaces_with).
     pub fn ensure_default_mdns_prop(
         bind_uris: &mut Vec<h3x::dquic::qinterface::bind_uri::BindUri>,
     ) {
@@ -92,33 +96,34 @@ pub mod handy {
     pub fn h3_resolver(
         resolver: Arc<dyn Resolve>,
         id_material: Option<&Identity>,
-    ) -> Result<H3Resolver, BuildClientError> {
+    ) -> H3Resolver<QuicEndpoint> {
         tracing::debug!("initializing DHTTP/3 DNS resolver with server {H3_DNS_SERVER}");
-        let h3_client = match id_material {
-            Some(id_material) => {
+        let identity = match id_material {
+            Some(id) => {
                 tracing::debug!(
                     "using preloaded client identity {} for DHTTP/3 DNS resolver",
-                    id_material.name()
+                    id.name()
                 );
-                H3Client::builder()
-                    .with_root_certificates(genmeta_root_cert_store().clone())
-                    .with_identity(
-                        id_material.name().as_full(),
-                        id_material.certs(),
-                        id_material.key(),
-                    )?
+                endpoint_identity(id)
             }
             None => {
                 tracing::warn!("no client identity provided, DHTTP/3 DNS resolver may not work");
-                H3Client::builder()
-                    .with_root_certificates(genmeta_root_cert_store().clone())
-                    .without_identity()?
+                EndpointIdentity::Anonymous
             }
-        }
-        .with_resolver(resolver)
-        .build();
-
-        Ok(H3Resolver::new(H3_DNS_SERVER, h3_client).expect("BUG: H3_DNS_SERVER is a valid URL"))
+        };
+        // The DNS resolver lives on its own `Network` with all-default
+        // infrastructure (global InterfaceManager, no STUN). Outbound
+        // connections create ephemeral interfaces on demand.
+        let network = Network::builder().build();
+        let endpoint = QuicEndpoint::new(
+            network,
+            identity,
+            resolver,
+            default_client_quic_config(),
+            ServerQuicConfig::default(),
+        );
+        let client = Client::from_quic_client().client(endpoint).build();
+        H3Resolver::new(H3_DNS_SERVER, client).expect("BUG: H3_DNS_SERVER is a valid URL")
     }
 
     /// Placeholder for DHT resolver initialization.
@@ -152,7 +157,7 @@ pub mod handy {
         dns_schemes: impl IntoIterator<Item = super::DnsScheme>,
         bind_interfaces: &[h3x::dquic::qinterface::BindInterface],
         id_material: Option<&Identity>,
-    ) -> Result<ResolversSetup, BuildClientError> {
+    ) -> ResolversSetup {
         use super::DnsScheme;
 
         let mut resolvers = gmdns::resolvers::Resolvers::new();
@@ -174,7 +179,7 @@ pub mod handy {
                             .clone()
                             .with(Arc::new(h3x::dquic::prelude::handy::SystemResolver)),
                     );
-                    let resolver = h3_resolver(snapshot, id_material)?;
+                    let resolver = h3_resolver(snapshot, id_material);
                     resolvers = resolvers.with(Arc::new(resolver));
                 }
                 DnsScheme::Dht => {
@@ -188,10 +193,10 @@ pub mod handy {
         // without going through DNS.
         resolvers = resolvers.with(Arc::new(h3x::dquic::prelude::handy::SystemResolver));
 
-        Ok(ResolversSetup {
+        ResolversSetup {
             resolvers,
             mdns_resolvers: mdns,
-        })
+        }
     }
 
     /// Resolve a domain name to socket addresses using the standard H3 + System
@@ -202,8 +207,7 @@ pub mod handy {
         use futures::StreamExt;
         use h3x::dquic::qresolve::{EndpointAddr, Resolve};
 
-        let setup =
-            build_resolvers([super::DnsScheme::H3], &[], None).map_err(std::io::Error::other)?;
+        let setup = build_resolvers([super::DnsScheme::H3], &[], None);
         let stream = Resolve::lookup(&setup.resolvers, name).await?;
         Ok(stream
             .filter_map(|(_source, ep)| async move {

@@ -7,12 +7,11 @@ use clap::Parser;
 use dhttp_home::identity::Name;
 use futures::StreamExt;
 use genmeta_common::{
-    bind,
     dns::{self, DnsScheme},
     id,
 };
 use gmdns::resolvers::DnsErrors;
-use h3x::dquic::BuildClientError;
+use h3x::endpoint::binds;
 use snafu::{ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
 
@@ -42,7 +41,7 @@ pub struct Options {
     /// Bind patterns for local network interfaces
     #[arg(long = "interface", value_name = "bind", default_value = "*",
           hide = cfg!(not(debug_assertions)))]
-    binds: Vec<bind::Bind>,
+    binds: Vec<binds::Bind>,
 }
 
 #[derive(Debug, Snafu)]
@@ -52,8 +51,6 @@ pub enum Error {
     LoadHomeAndIdentity {
         source: id::LoadHomeAndIdentityError,
     },
-    #[snafu(display("failed to build DNS resolvers"))]
-    BuildDnsResolvers { source: BuildClientError },
     #[snafu(display("failed to load identity ssl material"))]
     LoadIdentitySsl {
         source: dhttp_home::identity::ssl::LoadIdentitySslError,
@@ -105,10 +102,11 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         .await?
     };
 
-    let binds = bind::Binds::new(std::mem::take(&mut options.binds));
-    let bind_setup = bind::setup_bind_interfaces_with(&binds, dns::handy::ensure_default_mdns_prop)
-        .await
-        .expect("BUG: wildcard bind should not conflict");
+    let binds = binds::Binds::new(std::mem::take(&mut options.binds));
+    let bind_setup =
+        binds::setup_bind_interfaces_with(&binds, dns::handy::ensure_default_mdns_prop)
+            .await
+            .expect("BUG: wildcard bind should not conflict");
 
     let id_material = match &id {
         Some(id) => Some(id.identity().await.context(error::LoadIdentitySslSnafu)?),
@@ -119,8 +117,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         options.schemes.into_iter().collect::<BTreeSet<_>>(),
         &bind_setup.bind_interfaces,
         id_material.as_ref(),
-    )
-    .context(error::BuildDnsResolversSnafu)?;
+    );
 
     tracing::debug!(%dns_setup.resolvers);
 
