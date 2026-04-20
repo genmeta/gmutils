@@ -99,6 +99,11 @@ enum DistFormat {
         /// Target triples to build for
         #[arg(long = "target", required = true)]
         targets: Vec<DebTarget>,
+        /// Sibling crate directories to bind-mount into the build container
+        /// at `/{basename}`, matching `path = "../{basename}"` in Cargo.toml.
+        /// Repeatable. Each path must exist and be a directory.
+        #[arg(long = "sibling")]
+        siblings: Vec<PathBuf>,
     },
     /// Build Homebrew archives + formula
     Brew {
@@ -225,7 +230,7 @@ async fn main() -> Result<(), Whatever> {
     let cli = Cli::parse();
     match cli.command {
         Command::Dist { format } => match format {
-            DistFormat::Deb { targets } => deb::run(&targets).await?,
+            DistFormat::Deb { targets, siblings } => deb::run(&targets, &siblings).await?,
             DistFormat::Brew { targets } => brew::run(&targets).await?,
             DistFormat::Scoop { targets } => scoop::run(&targets).await?,
         },
