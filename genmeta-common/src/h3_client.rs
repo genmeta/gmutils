@@ -6,10 +6,7 @@ use std::sync::{Arc, LazyLock};
 use h3x::{
     client::Client,
     connection::ConnectionBuilder,
-    dquic::{
-        prelude::{Connection, handy::ToCertificate},
-        qinterface::BindInterface,
-    },
+    dquic::prelude::{Connection, handy::ToCertificate},
     endpoint::{
         BindsGuard, ClientOnlyConfig, ClientQuicConfig, Identity, NamedIdentity, Network,
         QuicEndpoint, ServerCertVerifierChoice, ServerQuicConfig,
@@ -86,7 +83,7 @@ pub enum SetupH3ClientError {
 }
 
 /// Default STUN server address.
-const DEFAULT_STUN_SERVER: &str = "nat.genmeta.net:20004";
+const DEFAULT_STUN_SERVER: &str = "stun.genmeta.net:20004";
 
 /// Ensure each [`Bind`](h3x::endpoint::Bind) pattern carries an
 /// `mdns=true` query parameter so the bound interfaces participate in mDNS
@@ -184,12 +181,11 @@ pub async fn setup_h3_client(
 
     // Gather the currently-bound interfaces for DNS mDNS resolver
     // construction. `build_resolvers` picks the mdns-enabled subset
-    // internally via each interface's `mdns` property.
-    let bind_interfaces: Vec<BindInterface> = network
-        .current_bind_uris()
-        .into_iter()
-        .filter_map(|uri| network.get_iface(&uri))
-        .collect();
+    // internally via each interface's `mdns` property. Use
+    // `current_bind_interfaces()` to hold strong references — looking
+    // up by URI through `get_iface()` races against `InterfaceManager`
+    // dropping interfaces that no caller kept alive.
+    let bind_interfaces = network.current_bind_interfaces();
 
     let dns_setup = dns::handy::build_resolvers(
         dns_schemes.iter().copied(),
