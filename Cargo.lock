@@ -2016,7 +2016,7 @@ dependencies = [
 [[package]]
 name = "genmeta-ssh"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/genmeta-ssh.git?rev=a32d6bec27dd3012f5914a9efb83d66cf11c172a#a32d6bec27dd3012f5914a9efb83d66cf11c172a"
+source = "git+ssh://git@github.com/genmeta/genmeta-ssh.git?rev=0e3c7130934e493c9a8b7878db0b96163fa1c2d3#0e3c7130934e493c9a8b7878db0b96163fa1c2d3"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2024,8 +2024,6 @@ dependencies = [
  "h3x",
  "http",
  "http-body-util",
- "libc",
- "nix 0.31.2",
  "peg",
  "remoc",
  "serde",
@@ -2145,7 +2143,7 @@ dependencies = [
 [[package]]
 name = "gmdns"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/gmdns.git?rev=3722e28b6c8bb5370517736ec760035ecf980a4f#3722e28b6c8bb5370517736ec760035ecf980a4f"
+source = "git+ssh://git@github.com/genmeta/gmdns.git?rev=99e5ee35ae2c3dabbeac57714e9274d9ca006e6b#99e5ee35ae2c3dabbeac57714e9274d9ca006e6b"
 dependencies = [
  "base64 0.22.1",
  "bitfield-struct",
@@ -2155,7 +2153,7 @@ dependencies = [
  "futures",
  "h3x",
  "http",
- "nix 0.31.2",
+ "libc",
  "nom 8.0.0",
  "rand 0.9.4",
  "reqwest 0.12.28",

@@ -34,7 +34,7 @@ whoami = "2"
 console-subscriber = "0.5"
 
 # network
-gmdns = { git = "ssh://git@github.com/genmeta/gmdns.git", rev = "3722e28b6c8bb5370517736ec760035ecf980a4f" }
+gmdns = { git = "ssh://git@github.com/genmeta/gmdns.git", rev = "99e5ee35ae2c3dabbeac57714e9274d9ca006e6b" }
 h3x = { git = "https://github.com/genmeta/h3x.git", branch = "main" }
 http = "1"
 hyper = { version = "1", features = ["http1", "server"] }
@@ -119,7 +119,7 @@ genmeta-ssh = { path = "genmeta-ssh" }
 genmeta-proxy = { path = "genmeta-proxy" }
 
 # ssh
-genmeta-ssh-core = { package = "genmeta-ssh", git = "ssh://git@github.com/genmeta/genmeta-ssh.git", rev = "a32d6bec27dd3012f5914a9efb83d66cf11c172a", features = [
+genmeta-ssh-core = { package = "genmeta-ssh", git = "ssh://git@github.com/genmeta/genmeta-ssh.git", rev = "0e3c7130934e493c9a8b7878db0b96163fa1c2d3", features = [
     "config",
 ] }
 

@@ -95,6 +95,7 @@ pub enum Error {
     ForwardInvalidHost { source: hyper::header::ToStrError },
 
     #[snafu(display("failed to daemonize"))]
+    #[cfg(unix)]
     Daemonize { source: daemonize::Error },
 
     #[snafu(display("failed to create log file `{}`", path.display()))]
@@ -324,8 +325,19 @@ fn configure_tcp_keepalive(stream: &tokio::net::TcpStream) {
     let sock = socket2::SockRef::from(stream);
     let keepalive = socket2::TcpKeepalive::new()
         .with_time(Duration::from_secs(60))
-        .with_interval(Duration::from_secs(10))
-        .with_retries(3);
+        .with_interval(Duration::from_secs(10));
+    // `with_retries` is only available on platforms that support TCP_KEEPCNT.
+    #[cfg(any(
+        target_os = "android",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "fuchsia",
+        target_os = "illumos",
+        target_os = "linux",
+        target_os = "netbsd",
+        target_vendor = "apple",
+    ))]
+    let keepalive = keepalive.with_retries(3);
     if let Err(e) = sock.set_tcp_keepalive(&keepalive) {
         tracing::warn!(error = %e, "failed to set TCP keepalive");
     }

@@ -572,6 +572,7 @@ impl Drop for RawModeGuard {
 // ---------------------------------------------------------------------------
 
 /// Create an async stream that yields `(cols, rows)` on every `SIGWINCH`.
+#[cfg(unix)]
 fn sigwinch_stream() -> impl futures::Stream<Item = (u16, u16)> + Unpin + Send {
     let mut sig = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())
         .expect("failed to register SIGWINCH handler");
@@ -584,4 +585,10 @@ fn sigwinch_stream() -> impl futures::Stream<Item = (u16, u16)> + Unpin + Send {
         std::task::Poll::Ready(None) => std::task::Poll::Ready(None),
         std::task::Poll::Pending => std::task::Poll::Pending,
     })
+}
+
+/// Windows has no SIGWINCH; return an empty stream.
+#[cfg(not(unix))]
+fn sigwinch_stream() -> impl futures::Stream<Item = (u16, u16)> + Unpin + Send {
+    futures::stream::empty()
 }

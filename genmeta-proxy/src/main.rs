@@ -8,18 +8,27 @@ fn main() -> Result<(), genmeta_proxy::Error> {
     let options = Options::parse();
 
     if options.daemon {
-        let mut d = daemonize::Daemonize::new();
-        if let Some(ref log_path) = options.log {
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(log_path)
-                .context(genmeta_proxy::CreateLogFileSnafu {
-                    path: log_path.clone(),
-                })?;
-            d = d.stderr(file);
+        #[cfg(unix)]
+        {
+            let mut d = daemonize::Daemonize::new();
+            if let Some(ref log_path) = options.log {
+                let file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log_path)
+                    .context(genmeta_proxy::CreateLogFileSnafu {
+                        path: log_path.clone(),
+                    })?;
+                d = d.stderr(file);
+            }
+            d.start().context(genmeta_proxy::DaemonizeSnafu)?;
         }
-        d.start().context(genmeta_proxy::DaemonizeSnafu)?;
+        #[cfg(not(unix))]
+        {
+            return Err(<genmeta_proxy::Error as snafu::FromString>::without_source(
+                "--daemon is not supported on this platform".to_owned(),
+            ));
+        }
     }
 
     tokio::runtime::Builder::new_multi_thread()
