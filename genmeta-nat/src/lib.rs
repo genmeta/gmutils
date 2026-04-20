@@ -133,6 +133,7 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
         [DnsScheme::H3],
         &bind_setup.bind_interfaces,
         id_material.as_ref(),
+        None,
     );
 
     // Use the first bound interface for STUN NAT detection.

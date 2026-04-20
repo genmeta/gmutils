@@ -8,17 +8,16 @@ use h3x::{
     connection::ConnectionBuilder,
     dquic::{
         prelude::{Connection, handy::ToCertificate},
-        qinterface::bind_uri::BindUri,
+        qinterface::BindInterface,
     },
     endpoint::{
-        ClientOnlyConfig, ClientQuicConfig, Identity, NamedIdentity, Network, QuicEndpoint,
-        ServerCertVerifierChoice, ServerQuicConfig,
-        binds::{self, BindConflictError, Binds},
+        BindsGuard, ClientOnlyConfig, ClientQuicConfig, Identity, NamedIdentity, Network,
+        QuicEndpoint, ServerCertVerifierChoice, ServerQuicConfig,
+        binds::{BindConflictError, Binds},
     },
 };
 use rustls::{RootCertStore, client::WebPkiServerVerifier};
 use snafu::{ResultExt, Snafu};
-use tokio_util::task::AbortOnDropHandle;
 
 use crate::dns;
 
@@ -68,8 +67,10 @@ pub fn endpoint_identity(id: &dhttp_home::identity::ssl::Identity) -> Identity {
 pub struct H3ClientSetup {
     /// The constructed H3 client, ready to connect.
     pub client: Client<QuicEndpoint>,
-    /// Background task watching for network interface changes. Drop to stop.
-    pub watcher: AbortOnDropHandle<()>,
+    /// RAII guard owning the bind set installed on the network. Drop to
+    /// cancel the reconcile watcher and unbind every URI registered
+    /// through [`Network::add_binds`].
+    pub binds_guard: BindsGuard,
 }
 
 #[derive(Debug, Snafu)]
@@ -87,16 +88,48 @@ pub enum SetupH3ClientError {
 /// Default STUN server address.
 const DEFAULT_STUN_SERVER: &str = "nat.genmeta.net:20004";
 
+/// Ensure each [`Bind`](h3x::endpoint::Bind) pattern carries an
+/// `mdns=true` query parameter so the bound interfaces participate in mDNS
+/// service discovery. Preserves any explicit caller configuration: if *any*
+/// existing pattern already mentions `mdns=` in its path-and-query, leave
+/// every pattern untouched (matches legacy `ensure_default_mdns_prop`
+/// semantics).
+fn ensure_default_mdns_on_binds(binds: &mut Binds) {
+    use http::uri::PathAndQuery;
+
+    let has_mdns = binds.iter().any(|b| {
+        b.path_and_query_str()
+            .is_some_and(|pq| pq.contains("mdns="))
+    });
+    if has_mdns {
+        return;
+    }
+    for bind in binds.iter_mut() {
+        let new_pq_str = match bind.path_and_query.as_ref() {
+            None => "/?mdns=true".to_string(),
+            Some(existing) => {
+                let s = existing.as_str();
+                if s.contains('?') {
+                    format!("{s}&mdns=true")
+                } else {
+                    format!("{s}?mdns=true")
+                }
+            }
+        };
+        bind.path_and_query = Some(
+            new_pq_str
+                .parse::<PathAndQuery>()
+                .expect("BUG: derived a valid path-and-query"),
+        );
+    }
+}
+
 /// Consolidated H3 client initialization: bind → ssl → dns → stun → endpoint → watch.
 #[bon::builder]
 pub async fn setup_h3_client(
     binds: &Binds,
     dns_schemes: &[dns::DnsScheme],
     identity: Option<&dhttp_home::identity::IdentityHome>,
-    /// Optional filter applied to expanded bind URIs before initial binding.
-    /// Useful for restricting the client-initiated set to IPv4-only or
-    /// IPv6-only addresses.
-    bind_uri_filter: Option<fn(&BindUri) -> bool>,
     /// Optional custom connection builder for registering additional protocol
     /// factories (e.g. `Ssh3ProtocolFactory`).
     connection_builder: Option<Arc<ConnectionBuilder<Connection>>>,
@@ -105,10 +138,6 @@ pub async fn setup_h3_client(
     /// Set to `Some("")` to explicitly disable STUN.
     stun_server: Option<String>,
 ) -> Result<H3ClientSetup, SetupH3ClientError> {
-    let bind_setup =
-        binds::setup_bind_interfaces_with(binds, dns::handy::ensure_default_mdns_prop).await?;
-    let monitor = bind_setup.monitor;
-
     let id_material = match identity {
         Some(id) => Some(
             id.identity()
@@ -118,31 +147,21 @@ pub async fn setup_h3_client(
         None => None,
     };
 
-    let dns_setup = dns::handy::build_resolvers(
-        dns_schemes.iter().copied(),
-        &bind_setup.bind_interfaces,
-        id_material.as_ref(),
-    );
-
-    // `bind_uris` controls the initial client-initiated set (honouring
-    // `bind_uri_filter`); the shared iface_manager still contains every
-    // interface expanded by `bind_setup`, so mdns/dns keep seeing the full
-    // set.
-    let bind_uris: Vec<BindUri> = match bind_uri_filter {
-        Some(f) => bind_setup
-            .bind_uris
-            .iter()
-            .filter(|uri| f(uri))
-            .cloned()
-            .collect(),
-        None => bind_setup.bind_uris.clone(),
-    };
-
-    // Share `bind_setup.iface_manager` with the `Network` so the endpoint
-    // connects out through the same bound interfaces.
+    // Build the main [`Network`] first. Two reasons order matters:
+    //
+    // 1. `NetworkBuilder::build()` installs the connectionless-packet
+    //    dispatcher on the globally-shared [`QuicRouter`]. This must
+    //    happen before any other `Network` is constructed on the same
+    //    router — otherwise NAT-punch Initial packets destined for the
+    //    main endpoint's SNI registry would be routed nowhere (see
+    //    `h3x::endpoint::network::install_dispatcher` for the warning).
+    //
+    // 2. The DHTTP/3 DNS resolver reuses the same [`Network`] (passed
+    //    as `Some(network.clone())` below) so client and resolver share
+    //    one router, one interface manager, and one STUN agent set.
     let effective_stun = stun_server.unwrap_or_else(|| DEFAULT_STUN_SERVER.into());
     let network = {
-        let builder = Network::builder().iface_manager(bind_setup.iface_manager.clone());
+        let builder = Network::builder();
         if effective_stun.is_empty() {
             builder.build()
         } else {
@@ -151,6 +170,33 @@ pub async fn setup_h3_client(
                 .build()
         }
     };
+
+    // Bind every interface through the network — this goes through
+    // `Network::bind` which installs the QUIC router, STUN, forwarder,
+    // and receive-and-deliver components on each interface (unlike a raw
+    // `InterfaceManager::bind` call). `Network::add_binds` also starts a
+    // reconcile watcher that keeps the bind set in sync with network
+    // interface changes, and returns a [`BindsGuard`] that unbinds
+    // everything on drop.
+    let mut binds_owned = binds.clone();
+    ensure_default_mdns_on_binds(&mut binds_owned);
+    let binds_guard = network.add_binds(&binds_owned).await?;
+
+    // Gather the currently-bound interfaces for DNS mDNS resolver
+    // construction. `build_resolvers` picks the mdns-enabled subset
+    // internally via each interface's `mdns` property.
+    let bind_interfaces: Vec<BindInterface> = network
+        .current_bind_uris()
+        .into_iter()
+        .filter_map(|uri| network.get_iface(&uri))
+        .collect();
+
+    let dns_setup = dns::handy::build_resolvers(
+        dns_schemes.iter().copied(),
+        &bind_interfaces,
+        id_material.as_ref(),
+        Some(network.clone()),
+    );
 
     let endpoint = QuicEndpoint::new(
         network,
@@ -171,33 +217,8 @@ pub async fn setup_h3_client(
         }
     };
 
-    let iface_manager = bind_setup.iface_manager.clone();
-    let io_factory = client.quic_client().network.io_factory().clone();
-    let watcher = binds::watch_bind_interfaces(
-        binds,
-        monitor,
-        bind_uris,
-        {
-            let iface_manager = iface_manager.clone();
-            let io_factory = io_factory.clone();
-            move |uri| {
-                let iface_manager = iface_manager.clone();
-                let io_factory = io_factory.clone();
-                Box::pin(async move {
-                    let _ = iface_manager.bind(uri, io_factory).await;
-                })
-            }
-        },
-        {
-            let iface_manager = iface_manager.clone();
-            move |uri| {
-                let iface_manager = iface_manager.clone();
-                tokio::spawn(async move {
-                    iface_manager.unbind(uri).await;
-                });
-            }
-        },
-    );
-
-    Ok(H3ClientSetup { client, watcher })
+    Ok(H3ClientSetup {
+        client,
+        binds_guard,
+    })
 }

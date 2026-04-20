@@ -28,7 +28,6 @@ use tokio::{
     fs,
     io::{self, AsyncRead, AsyncWrite, AsyncWriteExt},
 };
-use tokio_util::task::AbortOnDropHandle;
 use tracing_subscriber::prelude::*;
 
 /// Maximum number of redirects to follow (same default as curl since 8.3.0)
@@ -419,7 +418,7 @@ async fn setup_client(
         Client<QuicEndpoint>,
         Option<dhttp_home::identity::IdentityHome>,
         Duration,
-        AbortOnDropHandle<()>,
+        h3x::endpoint::BindsGuard,
     ),
     Error,
 > {
@@ -441,22 +440,18 @@ async fn setup_client(
 
     let binds = binds::Binds::new(mem::take(&mut options.binds));
 
-    // Apply -4/-6 address family filter to bind URIs.
-    // Both flags set (or neither) means no filtering.
-    let bind_uri_filter: Option<fn(&h3x::dquic::qinterface::bind_uri::BindUri) -> bool> =
-        if options.ipv4 && !options.ipv6 {
-            Some(|uri| uri.as_inet_bind_uri().is_some_and(|a| a.is_ipv4()))
-        } else if options.ipv6 && !options.ipv4 {
-            Some(|uri| uri.as_inet_bind_uri().is_some_and(|a| a.is_ipv6()))
-        } else {
-            None
-        };
-
+    // TODO(-4/-6): the previous address-family filter here (applied post-
+    // expansion on `BindUri`s) was a no-op in practice — it restricted the
+    // watcher's "initial known set" but not the actual bindings, and it
+    // silently rejected all `iface://` URIs because the predicate only
+    // considered `inet://` addresses. Reintroduce this feature at the
+    // `Bind` pattern level (e.g. drop binds whose explicit family tag
+    // mismatches the requested `-4`/`-6`) rather than post-expansion when
+    // it's needed again.
     let h3_setup = h3_client::setup_h3_client()
         .binds(&binds)
         .dns_schemes(&options.dns)
         .maybe_identity(id.as_ref())
-        .maybe_bind_uri_filter(bind_uri_filter)
         .call()
         .await?;
 
@@ -465,7 +460,7 @@ async fn setup_client(
         .map(Duration::from_secs)
         .unwrap_or(Duration::MAX);
 
-    Ok((h3_setup.client, id, connect_timeout, h3_setup.watcher))
+    Ok((h3_setup.client, id, connect_timeout, h3_setup.binds_guard))
 }
 
 /// Build the HTTP request builder with method, headers, and user-agent.

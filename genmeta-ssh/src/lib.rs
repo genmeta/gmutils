@@ -219,7 +219,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     };
 
     let connect_result = connect::connect(&config).await?;
-    let _watcher = connect_result.watcher;
+    let _binds_guard = connect_result.binds_guard;
     let connection = connect_result.connection;
     let conversation = Arc::new(connect_result.conversation);
 

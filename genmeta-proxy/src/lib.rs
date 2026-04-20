@@ -285,7 +285,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         .call()
         .await?;
 
-    let _watcher = h3_setup.watcher;
+    let _binds_guard = h3_setup.binds_guard;
     let client = h3_setup.client;
 
     let self_name = id.as_ref().map(|id| id.name().clone());

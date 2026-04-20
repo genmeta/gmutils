@@ -117,6 +117,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         options.schemes.into_iter().collect::<BTreeSet<_>>(),
         &bind_setup.bind_interfaces,
         id_material.as_ref(),
+        None,
     );
 
     tracing::debug!(%dns_setup.resolvers);

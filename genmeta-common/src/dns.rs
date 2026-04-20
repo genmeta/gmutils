@@ -96,6 +96,7 @@ pub mod handy {
     pub fn h3_resolver(
         resolver: Arc<dyn Resolve>,
         id_material: Option<&Identity>,
+        network: Option<Arc<Network>>,
     ) -> H3Resolver<QuicEndpoint> {
         tracing::debug!("initializing DHTTP/3 DNS resolver with server {H3_DNS_SERVER}");
         let identity = match id_material {
@@ -111,10 +112,15 @@ pub mod handy {
                 EndpointIdentity::Anonymous
             }
         };
-        // The DNS resolver lives on its own `Network` with all-default
-        // infrastructure (global InterfaceManager, no STUN). Outbound
-        // connections create ephemeral interfaces on demand.
-        let network = Network::builder().build();
+        // Prefer reusing the caller-supplied `Network` so the DNS endpoint
+        // and the main client share the same `QuicRouter` (and therefore
+        // the same connectionless-packet dispatcher). Otherwise every
+        // additional `Network` on the global router loses the dispatcher
+        // race, making its server endpoints unreachable for NAT-punch
+        // Initial packets. When no network is provided (e.g. standalone
+        // tools like `genmeta-nslookup` / `genmeta-nat` that don't spin
+        // up a curl client), fall back to a default network.
+        let network = network.unwrap_or_else(|| Network::builder().build());
         let endpoint = QuicEndpoint::new(
             network,
             identity,
@@ -157,6 +163,7 @@ pub mod handy {
         dns_schemes: impl IntoIterator<Item = super::DnsScheme>,
         bind_interfaces: &[h3x::dquic::qinterface::BindInterface],
         id_material: Option<&Identity>,
+        network: Option<Arc<Network>>,
     ) -> ResolversSetup {
         use super::DnsScheme;
 
@@ -179,7 +186,7 @@ pub mod handy {
                             .clone()
                             .with(Arc::new(h3x::dquic::prelude::handy::SystemResolver)),
                     );
-                    let resolver = h3_resolver(snapshot, id_material);
+                    let resolver = h3_resolver(snapshot, id_material, network.clone());
                     resolvers = resolvers.with(Arc::new(resolver));
                 }
                 DnsScheme::Dht => {
@@ -207,7 +214,7 @@ pub mod handy {
         use futures::StreamExt;
         use h3x::dquic::qresolve::{EndpointAddr, Resolve};
 
-        let setup = build_resolvers([super::DnsScheme::H3], &[], None);
+        let setup = build_resolvers([super::DnsScheme::H3], &[], None, None);
         let stream = Resolve::lookup(&setup.resolvers, name).await?;
         Ok(stream
             .filter_map(|(_source, ep)| async move {

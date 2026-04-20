@@ -15,7 +15,6 @@ use h3x::{
 use http::StatusCode;
 use http_body_util::Empty;
 use snafu::prelude::*;
-use tokio_util::task::AbortOnDropHandle;
 
 use crate::config::Config;
 
@@ -59,7 +58,7 @@ impl snafu::FromString for Error {
 }
 
 pub struct ConnectResult {
-    pub watcher: AbortOnDropHandle<()>,
+    pub binds_guard: h3x::endpoint::BindsGuard,
     pub connection: Arc<Connection<prelude::Connection>>,
     pub conversation: ssh3::conversation::Conversation<ssh3::protocol::ConversationHandle>,
 }
@@ -80,7 +79,7 @@ pub async fn connect(config: &Config) -> Result<ConnectResult, Error> {
         .await?;
 
     let client = h3_setup.client;
-    let watcher = h3_setup.watcher;
+    let binds_guard = h3_setup.binds_guard;
 
     let server = config.uri.authority().ok_or_else(|| {
         connect_error::MissingAuthoritySnafu {
@@ -187,7 +186,7 @@ pub async fn connect(config: &Config) -> Result<ConnectResult, Error> {
     );
 
     Ok(ConnectResult {
-        watcher,
+        binds_guard,
         connection,
         conversation,
     })
