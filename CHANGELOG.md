@@ -6,6 +6,126 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.5.0] - 2026-04-20
+
+Major release following the workspace-wide migration to the `h3x`
+ecosystem and the introduction of the `dhttp-home` identity model.
+Compared to v0.4.2, identity management, the DNS stack, several CLI
+shapes, and the crate layout have all changed.
+
+### Added
+
+- **`genmeta-identity` crate** — the sole entry point for managing
+  identities (`genmeta identity create | apply | renew | list | info |
+  default`). Talks to the certificate server over DHTTP/3 with TLS
+  certificate pinning. Supports `--captcha` and the `CERT_SERVER_URL`
+  environment variable for non-interactive enrollment and renewal.
+  Displays key usage and extended key usage, and manages the default
+  identity explicitly.
+- **`dhttp-home` as a first-class dependency** — a DHTTP home holds
+  many identity homes. `genmeta identity` is the only writer; every
+  other tool discovers identities from the same home.
+- **Unified identity-lookup convention across every tool** —
+  `-i/--id <name>` accepts either a partial or fully qualified name
+  (expanded via `Name::try_expand_from`), otherwise the default
+  identity is used. `--anonymous` skips identity loading entirely.
+  The `GENMETA_HOME` environment variable selects an alternate home.
+- **`genmeta-proxy` crate** — a new HTTP/1.1 forward proxy. Routes
+  `.genmeta.net` hosts over DHTTP/3, tunnels `CONNECT` over TCP,
+  supports `--daemon`/`--log`, TCP keepalive, a connection cap, and a
+  header read timeout. Defaults to dual-stack `[::]:16080`.
+- **`genmeta-access` crate** — identity-scoped access rules persisted
+  in SQLite (replaces the former standalone `firewall-bin` CLI).
+- **`xtask` crate** — packaging pipeline using
+  `dpkg-buildpackage` + `debhelper`, cross-compiling to multiple
+  targets in parallel with mounted cargo caches. `--sibling`
+  bind-mounts sibling workspaces for integrated builds.
+- **Dynamic interface rebinding** in `curl`, `ssh`, `nslookup`,
+  `proxy`, and `discover` via `watch_bind_interfaces`, stabilised by
+  `identity_key` so stable endpoints survive interface churn.
+- **Minor CLI features** — `curl -4/-6` address-family selection;
+  `ssh` native raw mode with SIGWINCH resize forwarding; `genmeta
+  nat` resolves its STUN server via gmdns instead of a hard-coded
+  address.
+
+### Changed
+
+- Workspace-wide migration to the **`h3x` ecosystem** (Network +
+  QuicEndpoint API), replacing the previous `h3` / `gm-quic` stack.
+  `dquic` is re-exported through `h3x::dquic`.
+- Default DNS resolver: **`http` → `h3`**, with a system-resolver
+  fallback.
+- SSH URI scheme: **`ssh3://` → `https://`**.
+- Terminology sweep: **`HTTP/3` → `DHTTP/3`** across the codebase.
+- Identity CLI flags: `--domain`/`--domains` **→ `--suffix`/`--identities`**;
+  the `.genmeta.net` suffix is hidden in display output.
+- `genmeta-common` reorganised into `bind` / `dns` / `id` /
+  `h3-client` features, with `bon`-based builder APIs for h3 client
+  setup.
+- A custom root CA (project `root.crt`) is **merged with** the system
+  trust store instead of replacing it.
+- Structured error types across `curl`, `ssh`, `nslookup`, `nat`,
+  `discover`, and `identity`: `Whatever` replaced by named `Error`
+  enums, with `snafu::Report` for consistent error rendering.
+
+### Removed
+
+- `genmeta-profile` crate — identity modelling has moved into
+  `dhttp-home` plus `genmeta-identity`.
+- `genmeta-ssh3` crate — renamed to **`genmeta-ssh`** alongside the
+  URI-scheme change.
+- The system DNS resolver helper in `genmeta-common`.
+- The `STUN_SERVER` environment variable.
+- The legacy buildx / Makefile packaging — superseded by `xtask`.
+
+### Fixed
+
+- Certificate-server client now enforces TLS certificate pinning.
+- Proxy: rewrites upstream HTTP/3 responses to HTTP/1.1 before
+  forwarding; uses the low-level `h3` API for correct stream
+  lifecycle management.
+- SSH: defers `connection.close()` while forwarding tasks are still
+  active; moved stdin reads to a dedicated thread; PTY/flush fixes
+  via updated `genmeta-ssh-core`.
+- Removed panic risks from `unwrap`/`expect` on dynamic data paths.
+- TTY detection gates ANSI colouring in `tracing` output so logs stay
+  clean when redirected.
+
+### Dependencies
+
+- All git dependencies are pinned to specific revisions: `gmdns`,
+  `rankey`, `firewall-base`/`-db`/`-migration`, and `genmeta-ssh-core`.
+- `dhttp-home` tracks `branch = "main"` to stay unified with the
+  transitive usage from `firewall-db`; `Cargo.lock` still locks it
+  to a specific commit.
+- `h3x` is pulled once: the direct dependency tracks `main` over
+  `https://`, with a `[patch."https://github.com/genmeta/h3x.git"]`
+  redirect to `ssh://` at a fixed revision. This unifies the direct
+  dependency with transitive `h3x` uses from `gmdns` and
+  `genmeta-ssh-core`, so exactly one copy is compiled.
+- `h3x` is the only git dependency over `https://`; everything else
+  uses `ssh://`.
+
+### Components
+
+- `genmeta` v0.5.0
+- `genmeta-common` v0.2.0
+- `genmeta-curl` v0.4.0
+- `genmeta-discover` v0.2.0
+- `genmeta-doctor` v0.2.0
+- `genmeta-nat` v0.2.0
+- `genmeta-nslookup` v0.2.0
+- `genmeta-ssh` v0.5.0 (formerly `genmeta-ssh3`)
+- `genmeta-identity` v0.1.0 (new)
+- `genmeta-access` v0.1.0 (new)
+- `genmeta-proxy` v0.1.0 (new)
+
+### Policy
+
+- Starting with v0.5.0, this CHANGELOG is written in English and
+  follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+
 ## [0.4.2] - 2025-11-3
 
 ### Changed
