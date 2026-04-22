@@ -1,5 +1,7 @@
 mod brew;
+mod container;
 mod deb;
+mod rpm;
 mod scoop;
 
 use std::{io::IsTerminal, path::PathBuf, process::Stdio};
@@ -48,6 +50,44 @@ impl DebTarget {
             Self::Aarch64 => "aarch64-unknown-linux-gnu",
             Self::Armv7 => "armv7-unknown-linux-gnueabihf",
             Self::I686 => "i686-unknown-linux-gnu",
+        }
+    }
+}
+
+/// Supported target triples for .rpm builds.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum RpmTarget {
+    /// x86_64-unknown-linux-gnu -> x86_64
+    #[value(name = "x86_64-unknown-linux-gnu")]
+    X86_64,
+    /// aarch64-unknown-linux-gnu -> aarch64
+    #[value(name = "aarch64-unknown-linux-gnu")]
+    Aarch64,
+    /// armv7-unknown-linux-gnueabihf -> armv7hl
+    #[value(name = "armv7-unknown-linux-gnueabihf")]
+    Armv7,
+    /// i686-unknown-linux-gnu -> i686
+    #[value(name = "i686-unknown-linux-gnu")]
+    I686,
+}
+
+impl RpmTarget {
+    pub fn triple(self) -> &'static str {
+        match self {
+            Self::X86_64 => "x86_64-unknown-linux-gnu",
+            Self::Aarch64 => "aarch64-unknown-linux-gnu",
+            Self::Armv7 => "armv7-unknown-linux-gnueabihf",
+            Self::I686 => "i686-unknown-linux-gnu",
+        }
+    }
+
+    /// RPM architecture name (matches rpmbuild --target= value).
+    pub fn rpm_arch(self) -> &'static str {
+        match self {
+            Self::X86_64 => "x86_64",
+            Self::Aarch64 => "aarch64",
+            Self::Armv7 => "armv7hl",
+            Self::I686 => "i686",
         }
     }
 }
@@ -102,6 +142,15 @@ enum DistFormat {
         /// Sibling crate directories to bind-mount into the build container
         /// at `/{basename}`, matching `path = "../{basename}"` in Cargo.toml.
         /// Repeatable. Each path must exist and be a directory.
+        #[arg(long = "sibling")]
+        siblings: Vec<PathBuf>,
+    },
+    /// Build .rpm packages (via Fedora Docker container + cargo-zigbuild + rpmbuild)
+    Rpm {
+        /// Target triples to build for
+        #[arg(long = "target", required = true)]
+        targets: Vec<RpmTarget>,
+        /// Sibling crate directories to bind-mount into the build container.
         #[arg(long = "sibling")]
         siblings: Vec<PathBuf>,
     },
@@ -231,6 +280,7 @@ async fn main() -> Result<(), Whatever> {
     match cli.command {
         Command::Dist { format } => match format {
             DistFormat::Deb { targets, siblings } => deb::run(&targets, &siblings).await?,
+            DistFormat::Rpm { targets, siblings } => rpm::run(&targets, &siblings).await?,
             DistFormat::Brew { targets } => brew::run(&targets).await?,
             DistFormat::Scoop { targets } => scoop::run(&targets).await?,
         },
