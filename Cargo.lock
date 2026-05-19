@@ -94,7 +94,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -105,7 +105,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1157,7 +1157,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 [[package]]
 name = "ddns"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#67593a0101b8351514bc5a59bfe9ae6ac9a2318d"
+source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#8c16a695b4dc874d19bf2b67e6d5d56f58ebec0d"
 dependencies = [
  "bytes",
  "dashmap",
@@ -1180,7 +1180,7 @@ dependencies = [
 [[package]]
 name = "ddns-core"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#67593a0101b8351514bc5a59bfe9ae6ac9a2318d"
+source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#8c16a695b4dc874d19bf2b67e6d5d56f58ebec0d"
 dependencies = [
  "base64 0.22.1",
  "bitfield-struct",
@@ -1425,7 +1425,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1588,7 +1588,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2188,7 +2188,7 @@ dependencies = [
 [[package]]
 name = "gmdns"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#67593a0101b8351514bc5a59bfe9ae6ac9a2318d"
+source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#8c16a695b4dc874d19bf2b67e6d5d56f58ebec0d"
 dependencies = [
  "dashmap",
  "ddns-core",
@@ -2225,7 +2225,7 @@ dependencies = [
 [[package]]
 name = "h3x"
 version = "0.2.0"
-source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#bbe10641b7419263feb252396ec49f589311470b"
+source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#c40651b9811a423ac30ef36b93f056179f465601"
 dependencies = [
  "arc-swap",
  "async-channel 2.5.0",
@@ -2491,7 +2491,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -3138,7 +3138,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3942,7 +3942,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3979,7 +3979,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -4455,7 +4455,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4522,7 +4522,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5087,7 +5087,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -5099,7 +5099,7 @@ version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54254b8531cafa275c5e096f62d48c81435d1015405a91198ddb11e967301d40"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -5122,7 +5122,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6287,7 +6287,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
