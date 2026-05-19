@@ -4,7 +4,6 @@ resolver = "3"
 members = [
     "genmeta",
     "genmeta-access",
-    "genmeta-common",
     "genmeta-curl",
     "genmeta-ssh",
     "genmeta-nslookup",
@@ -111,7 +110,6 @@ firewall-base = { git = "ssh://git@github.com/genmeta/firewall.git", rev = "8549
 firewall-db = { git = "ssh://git@github.com/genmeta/firewall.git", rev = "85493bbc847cf3e95d54f5b0b7acbf5d3ca85b56" }
 firewall-migration = { git = "ssh://git@github.com/genmeta/firewall.git", rev = "85493bbc847cf3e95d54f5b0b7acbf5d3ca85b56" }
 genmeta-access = { path = "genmeta-access" }
-genmeta-common = { path = "genmeta-common" }
 dhttp = { git = "ssh://git@github.com/genmeta/dhttp.git", branch = "main" }
 dhttp-home = { git = "ssh://git@github.com/genmeta/dhttp-home.git", branch = "main" }
 genmeta-curl = { path = "genmeta-curl" }

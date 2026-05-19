@@ -1935,24 +1935,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "genmeta-common"
-version = "0.2.0"
-dependencies = [
- "bon",
- "clap",
- "ddns",
- "dhttp-home",
- "futures",
- "h3x",
- "http",
- "rustls",
- "snafu 0.9.0",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "genmeta-curl"
 version = "0.4.0"
 dependencies = [
