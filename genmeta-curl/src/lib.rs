@@ -19,10 +19,8 @@ use dhttp::{
         message::stream::{InitialMessageStreamError, MessageStreamError, WriteStream},
         pool::ConnectError,
     },
-    home::{
-        self, DhttpHome,
-        identity::{DhttpName, IdentityHome, Name},
-    },
+    home::{self, DhttpHome, identity::IdentityHome},
+    name::{DhttpName, DhttpName as Name},
 };
 use http::{Method, Request, StatusCode, Uri, header::USER_AGENT};
 use snafu::{IntoError, OptionExt, ResultExt, Snafu, ensure};
@@ -139,13 +137,11 @@ pub enum Error {
     BareTildeWithoutIdentity {},
 
     #[snafu(display("failed to expand identity name in uri"))]
-    ExpandNameInUri {
-        source: home::identity::ExpandUriError,
-    },
+    ExpandNameInUri { source: dhttp::name::ExpandUriError },
 
     #[snafu(display("failed to parse identity name in uri"))]
     ExpandUriName {
-        source: home::identity::InvalidDhttpName,
+        source: dhttp::name::InvalidDhttpName,
     },
 
     #[snafu(display("failed to parse expanded authority `{authority}`"))]

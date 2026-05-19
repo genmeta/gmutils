@@ -1,6 +1,6 @@
 use std::{borrow::Cow, fmt::Debug, sync::Arc};
 
-use dhttp_home::identity::Name;
+use dhttp_identity::name::DhttpName as Name;
 use inquire::validator::{StringValidator, Validation};
 use snafu::Report;
 use tokio::sync::mpsc;

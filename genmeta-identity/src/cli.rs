@@ -7,11 +7,11 @@ use clap::Parser;
 use dhttp_home::{
     DhttpHome,
     identity::{
-        Name,
         default::{DefaultConfigFile, LoadDefaultConfigError, SaveDefaultConfigError},
         ssl::{ListIdentitiesError, LoadCertError, LoadIdentityError, SaveIdentityError},
     },
 };
+use dhttp_identity::name::DhttpName as Name;
 use futures::TryStreamExt;
 use indicatif::ProgressStyle;
 use rankey::EncodePem;

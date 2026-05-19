@@ -10,7 +10,7 @@ pub mod forward;
 pub mod ssh_config;
 
 use clap::Parser;
-use dhttp::{ddns, dquic::binds::BindPattern, h3x::error::Code, home::identity::Name};
+use dhttp::{ddns, dquic::binds::BindPattern, h3x::error::Code, name::DhttpName as Name};
 use forward::*;
 use genmeta_ssh_core as ssh3;
 use snafu::{FromString, Report, ResultExt, Snafu};

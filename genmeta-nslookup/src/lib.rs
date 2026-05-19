@@ -9,10 +9,8 @@ use dhttp::{
     ddns::DnsScheme,
     dquic::binds::BindPattern,
     endpoint::Endpoint,
-    home::{
-        self, DhttpHome,
-        identity::{IdentityHome, Name},
-    },
+    home::{self, DhttpHome, identity::IdentityHome},
+    name::DhttpName as Name,
 };
 use futures::StreamExt;
 use snafu::{IntoError, ResultExt, Snafu};

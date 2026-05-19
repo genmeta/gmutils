@@ -5,10 +5,8 @@ use dhttp::{
     ddns,
     dquic::binds::BindPattern,
     endpoint::Endpoint,
-    home::{
-        self, DhttpHome,
-        identity::{DhttpName, IdentityHome, Name},
-    },
+    home::{self, DhttpHome, identity::IdentityHome},
+    name::{DhttpName, DhttpName as Name},
 };
 use http_body_util::BodyExt;
 use snafu::{IntoError, Report, ResultExt, Snafu, ensure};
@@ -59,13 +57,11 @@ pub enum Error {
     BareTildeWithoutIdentity,
 
     #[snafu(display("failed to expand identity name in uri"))]
-    ExpandNameInUri {
-        source: home::identity::ExpandUriError,
-    },
+    ExpandNameInUri { source: dhttp::name::ExpandUriError },
 
     #[snafu(display("failed to parse identity name in uri"))]
     ExpandUriName {
-        source: home::identity::InvalidDhttpName,
+        source: dhttp::name::InvalidDhttpName,
     },
 
     #[snafu(display("failed to parse expanded authority `{authority}`"))]

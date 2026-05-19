@@ -1,6 +1,6 @@
 use std::{borrow::Cow, fmt::Display};
 
-use dhttp_home::identity::Name;
+use dhttp_identity::name::DhttpName as Name;
 
 use crate::{
     REGISTERABLE_SUFFIXES,

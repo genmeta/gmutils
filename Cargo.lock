@@ -1658,7 +1658,6 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 [[package]]
 name = "firewall-base"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/firewall.git?rev=85493bbc847cf3e95d54f5b0b7acbf5d3ca85b56#85493bbc847cf3e95d54f5b0b7acbf5d3ca85b56"
 dependencies = [
  "clap",
  "derive_more",
@@ -1676,11 +1675,11 @@ dependencies = [
 [[package]]
 name = "firewall-db"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/firewall.git?rev=85493bbc847cf3e95d54f5b0b7acbf5d3ca85b56#85493bbc847cf3e95d54f5b0b7acbf5d3ca85b56"
 dependencies = [
  "chrono",
  "derive_more",
  "dhttp-home",
+ "dhttp-identity",
  "firewall-base",
  "firewall-migration",
  "futures",
@@ -1695,7 +1694,6 @@ dependencies = [
 [[package]]
 name = "firewall-migration"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/firewall.git?rev=85493bbc847cf3e95d54f5b0b7acbf5d3ca85b56#85493bbc847cf3e95d54f5b0b7acbf5d3ca85b56"
 dependencies = [
  "async-std",
  "sea-orm-migration",
@@ -1986,6 +1984,7 @@ dependencies = [
  "bytes",
  "clap",
  "dhttp-home",
+ "dhttp-identity",
  "futures",
  "indicatif",
  "inquire",

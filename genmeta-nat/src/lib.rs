@@ -5,10 +5,8 @@ use dhttp::{
     ddns::DnsScheme,
     dquic::{binds::BindPattern, net::IO, qtraversal, resolver::Resolve},
     endpoint::Endpoint,
-    home::{
-        self, DhttpHome,
-        identity::{IdentityHome, Name},
-    },
+    home::{self, DhttpHome, identity::IdentityHome},
+    name::DhttpName as Name,
 };
 use qtraversal::{
     nat::{client::StunClient, router::StunRouter},

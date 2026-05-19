@@ -3,10 +3,8 @@ use std::{collections::BTreeSet, str::FromStr, time::Duration};
 use dhttp::{
     ddns,
     dquic::binds::BindPattern,
-    home::{
-        self, DhttpHome,
-        identity::{DhttpName, IdentityHome, InvalidName, Name},
-    },
+    home::{self, DhttpHome, identity::IdentityHome},
+    name::{DhttpName, DhttpName as Name, InvalidDhttpName as InvalidName},
 };
 use http::{Uri, uri::Authority};
 use snafu::{IntoError, ResultExt, Snafu, ensure};
@@ -49,12 +47,10 @@ pub enum Error {
     #[snafu(display("identity `{id}` in ssh config is invalid"))]
     InvalidIdInSshConfig { id: String, source: InvalidName },
     #[snafu(display("failed to expand identity name in uri"))]
-    ExpandNameInUri {
-        source: home::identity::ExpandUriError,
-    },
+    ExpandNameInUri { source: dhttp::name::ExpandUriError },
     #[snafu(display("failed to parse identity name in uri"))]
     ExpandUriName {
-        source: home::identity::InvalidDhttpName,
+        source: dhttp::name::InvalidDhttpName,
     },
     #[snafu(display("failed to parse expanded authority `{authority}`"))]
     ParseExpandedAuthority {
