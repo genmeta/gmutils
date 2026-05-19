@@ -14,7 +14,6 @@ tracing-indicatif = { workspace = true, optional = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
-genmeta-common = { workspace = true }
 dhttp-home = { workspace = true }
 rankey = { workspace = true }
 reqwest = { workspace = true }

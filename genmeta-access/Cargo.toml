@@ -8,7 +8,6 @@ edition = "2024"
 clap = { workspace = true }
 firewall-base = { workspace = true, features = ["cli"] }
 firewall-db = { workspace = true }
-genmeta-common = { workspace = true, features = ["error"] }
 dhttp-home = { workspace = true }
 sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
 sea-orm-migration = { workspace = true, features = ["sqlx-sqlite"] }

@@ -39,39 +39,19 @@ pub mod handy {
     use dhttp_home::identity::ssl::Identity;
     #[cfg(feature = "h3-client")]
     use gmdns::resolvers::H3Resolver;
-    use gmdns::resolvers::{HttpResolver, MdnsResolver, MdnsResolvers};
-    use h3x::dquic::qinterface::BindInterface;
+    use gmdns::resolvers::{HttpResolver, MdnsResolvers};
+    use h3x::dquic::{Network, QuicEndpoint, qinterface::BindInterface, resolver::Resolve};
     #[cfg(feature = "h3-client")]
-    use h3x::{
-        client::Client,
-        dquic::prelude::Resolve,
-        endpoint::{Identity as EndpointIdentity, Network, QuicEndpoint, ServerQuicConfig},
-    };
+    use h3x::{dquic::server::ServerQuicConfig, endpoint::H3Endpoint};
 
     #[cfg(feature = "h3-client")]
     use super::H3_DNS_SERVER;
-    use super::{HTTP_DNS_SERVER, MDNS_SERVICE};
+    use super::HTTP_DNS_SERVER;
     #[cfg(feature = "h3-client")]
-    use crate::h3_client::{default_client_quic_config, endpoint_identity};
+    use crate::h3_client::default_client_quic_config;
 
-    pub fn mdns_resolvers(bind_ifaces: impl IntoIterator<Item = BindInterface>) -> MdnsResolvers {
-        tracing::debug!("initializing mDNS resolvers");
-        let resolvers = MdnsResolvers::new();
-        for mdns_iface in bind_ifaces
-            .into_iter()
-            .filter(|iface| iface.bind_uri().prop("mdns").is_some_and(|v| v == "true"))
-        {
-            if mdns_iface.with_components_mut(|components, iface| {
-                components
-                    .try_init_with(|| MdnsResolver::from_iface(MDNS_SERVICE, iface))
-                    .map(|resolver| resolver.service_name() == MDNS_SERVICE)
-                    .unwrap_or_default()
-            }) {
-                tracing::debug!(bind_uri = %mdns_iface.bind_uri(), "initializing mDNS resolver for nic");
-                resolvers.insert_iface(mdns_iface);
-            }
-        }
-        resolvers
+    pub fn mdns_resolvers(_bind_ifaces: impl IntoIterator<Item = BindInterface>) -> MdnsResolvers {
+        panic!("genmeta-common mDNS helpers are deprecated; use dhttp::ddns::MdnsResolvers::bind")
     }
 
     /// Ensure all bind URIs default to `mdns=true` when none explicitly
@@ -93,25 +73,20 @@ pub mod handy {
     }
 
     #[cfg(feature = "h3-client")]
-    pub fn h3_resolver(
-        resolver: Arc<dyn Resolve>,
+    pub async fn h3_resolver(
+        resolver: Arc<dyn Resolve + Send + Sync>,
         id_material: Option<&Identity>,
         network: Option<Arc<Network>>,
     ) -> H3Resolver<QuicEndpoint> {
         tracing::debug!("initializing DHTTP/3 DNS resolver with server {H3_DNS_SERVER}");
-        let identity = match id_material {
-            Some(id) => {
-                tracing::debug!(
-                    "using preloaded client identity {} for DHTTP/3 DNS resolver",
-                    id.name()
-                );
-                endpoint_identity(id)
-            }
-            None => {
-                tracing::warn!("no client identity provided, DHTTP/3 DNS resolver may not work");
-                EndpointIdentity::Anonymous
-            }
-        };
+        if let Some(id) = id_material {
+            tracing::debug!(
+                "using preloaded client identity {} for DHTTP/3 DNS resolver",
+                id.name()
+            );
+        } else {
+            tracing::warn!("no client identity provided, DHTTP/3 DNS resolver may not work");
+        }
         // Prefer reusing the caller-supplied `Network` so the DNS endpoint
         // and the main client share the same `QuicRouter` (and therefore
         // the same connectionless-packet dispatcher). Otherwise every
@@ -121,15 +96,16 @@ pub mod handy {
         // tools like `genmeta-nslookup` / `genmeta-nat` that don't spin
         // up a curl client), fall back to a default network.
         let network = network.unwrap_or_else(|| Network::builder().build());
-        let endpoint = QuicEndpoint::new(
-            network,
-            identity,
-            resolver,
-            default_client_quic_config(),
-            ServerQuicConfig::default(),
-        );
-        let client = Client::from_quic_client().client(endpoint).build();
-        H3Resolver::new(H3_DNS_SERVER, client).expect("BUG: H3_DNS_SERVER is a valid URL")
+        let endpoint = QuicEndpoint::builder()
+            .network(network)
+            .maybe_identity(id_material.cloned().map(Arc::new))
+            .resolver(resolver)
+            .client(default_client_quic_config())
+            .server(ServerQuicConfig::default())
+            .build()
+            .await;
+        let h3 = H3Endpoint::new(endpoint);
+        H3Resolver::new(H3_DNS_SERVER, h3).expect("BUG: H3_DNS_SERVER is a valid URL")
     }
 
     /// Placeholder for DHT resolver initialization.
@@ -159,7 +135,7 @@ pub mod handy {
     /// scheme is present. `id` is the optional client identity for the DHTTP/3
     /// DNS resolver.
     #[cfg(feature = "h3-client")]
-    pub fn build_resolvers(
+    pub async fn build_resolvers(
         dns_schemes: impl IntoIterator<Item = super::DnsScheme>,
         bind_interfaces: &[h3x::dquic::qinterface::BindInterface],
         id_material: Option<&Identity>,
@@ -168,14 +144,15 @@ pub mod handy {
         use super::DnsScheme;
 
         let mut resolvers = gmdns::resolvers::Resolvers::new();
-        let mut mdns = None;
+        let mdns = None;
 
         for dns_scheme in dns_schemes {
             match dns_scheme {
                 DnsScheme::Mdns => {
-                    let arc = mdns.get_or_insert_with(|| Arc::new(MdnsResolvers::new()));
-                    arc.merge(&self::mdns_resolvers(bind_interfaces.iter().cloned()));
-                    resolvers = resolvers.with(arc.clone());
+                    let _ = bind_interfaces;
+                    tracing::warn!(
+                        "genmeta-common mDNS resolver builder is deprecated; use dhttp::ddns"
+                    );
                 }
                 DnsScheme::Http => {
                     resolvers = resolvers.with(Arc::new(http_resolver()));
@@ -186,7 +163,7 @@ pub mod handy {
                             .clone()
                             .with(Arc::new(h3x::dquic::prelude::handy::SystemResolver)),
                     );
-                    let resolver = h3_resolver(snapshot, id_material, network.clone());
+                    let resolver = h3_resolver(snapshot, id_material, network.clone()).await;
                     resolvers = resolvers.with(Arc::new(resolver));
                 }
                 DnsScheme::Dht => {
@@ -212,17 +189,12 @@ pub mod handy {
     #[cfg(feature = "h3-client")]
     pub async fn resolve_domain(name: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
         use futures::StreamExt;
-        use h3x::dquic::qresolve::{EndpointAddr, Resolve};
+        use h3x::dquic::qresolve::Resolve;
 
-        let setup = build_resolvers([super::DnsScheme::H3], &[], None, None);
+        let setup = build_resolvers([super::DnsScheme::H3], &[], None, None).await;
         let stream = Resolve::lookup(&setup.resolvers, name).await?;
         Ok(stream
-            .filter_map(|(_source, ep)| async move {
-                match ep {
-                    EndpointAddr::Socket(socket_ep) => Some(socket_ep.addr()),
-                    _ => None,
-                }
-            })
+            .filter_map(|(_source, ep)| async move { Some(ep.addr()) })
             .collect()
             .await)
     }

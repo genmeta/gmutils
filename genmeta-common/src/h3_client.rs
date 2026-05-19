@@ -1,22 +1,25 @@
-//! One-call H3 client setup consolidating the duplicated initialization flow
-//! across consumer crates.
+//! One-call H3 endpoint setup consolidating duplicated initialization flow.
 
 use std::sync::{Arc, LazyLock};
 
 use h3x::{
-    client::Client,
     connection::ConnectionBuilder,
-    dquic::prelude::{Connection, handy::ToCertificate},
-    endpoint::{
-        BindsGuard, ClientOnlyConfig, ClientQuicConfig, Identity, NamedIdentity, Network,
-        QuicEndpoint, ServerCertVerifierChoice, ServerQuicConfig,
-        binds::{BindConflictError, Binds},
+    dquic::{
+        QuicEndpoint,
+        binds::BindPattern,
+        cert::handy::ToCertificate,
+        client::{ClientQuicConfig, ServerCertVerifierChoice},
+        connection::Connection,
+        server::ServerQuicConfig,
     },
+    endpoint::H3Endpoint,
 };
 use rustls::{RootCertStore, client::WebPkiServerVerifier};
 use snafu::{ResultExt, Snafu};
 
 use crate::dns;
+
+pub type H3Client = Arc<H3Endpoint<QuicEndpoint, Connection>>;
 
 /// Lazily-initialized Genmeta root CA certificate store, embedded at compile
 /// time from the project-level `root.crt`.
@@ -40,42 +43,22 @@ pub fn default_client_quic_config() -> ClientQuicConfig {
             .build()
             .expect("BUG: webpki verifier built from fixed genmeta roots")
     });
-    let own = ClientOnlyConfig {
+    ClientQuicConfig {
         verifier: ServerCertVerifierChoice::WebPki(VERIFIER.clone()),
         alpns: vec![b"h3".to_vec()],
-        ..Default::default()
-    };
-    ClientQuicConfig {
-        own: Arc::new(own),
         ..Default::default()
     }
 }
 
-/// Convert a loaded identity into the endpoint form used by [`QuicEndpoint`].
-pub fn endpoint_identity(id: &dhttp_home::identity::ssl::Identity) -> Identity {
-    Identity::Named(Arc::new(NamedIdentity {
-        name: Arc::<str>::from(id.name().as_full()),
-        certs: id.certs().to_vec(),
-        key: Arc::new(id.key().clone_key()),
-    }))
-}
-
 /// Result of [`setup_h3_client`].
 pub struct H3ClientSetup {
-    /// The constructed H3 client, ready to connect.
-    pub client: Client<QuicEndpoint>,
-    /// RAII guard owning the bind set installed on the network. Drop to
-    /// cancel the reconcile watcher and unbind every URI registered
-    /// through [`Network::add_binds`].
-    pub binds_guard: BindsGuard,
+    /// The constructed H3 endpoint, ready to connect.
+    pub client: H3Client,
 }
 
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 pub enum SetupH3ClientError {
-    #[snafu(transparent)]
-    BindConflict { source: Box<BindConflictError> },
-
     #[snafu(display("failed to load identity ssl material"))]
     LoadIdentitySsl {
         source: dhttp_home::identity::ssl::LoadIdentitySslError,
@@ -85,13 +68,7 @@ pub enum SetupH3ClientError {
 /// Default STUN server address.
 const DEFAULT_STUN_SERVER: &str = "stun.genmeta.net:20004";
 
-/// Ensure each [`Bind`](h3x::endpoint::Bind) pattern carries an
-/// `mdns=true` query parameter so the bound interfaces participate in mDNS
-/// service discovery. Preserves any explicit caller configuration: if *any*
-/// existing pattern already mentions `mdns=` in its path-and-query, leave
-/// every pattern untouched (matches legacy `ensure_default_mdns_prop`
-/// semantics).
-fn ensure_default_mdns_on_binds(binds: &mut Binds) {
+fn ensure_default_mdns_on_binds(binds: &mut [BindPattern]) {
     use http::uri::PathAndQuery;
 
     let has_mdns = binds.iter().any(|b| {
@@ -121,10 +98,10 @@ fn ensure_default_mdns_on_binds(binds: &mut Binds) {
     }
 }
 
-/// Consolidated H3 client initialization: bind → ssl → dns → stun → endpoint → watch.
+/// Consolidated H3 client initialization: ssl → DNS → endpoint.
 #[bon::builder]
 pub async fn setup_h3_client(
-    binds: &Binds,
+    binds: &[BindPattern],
     dns_schemes: &[dns::DnsScheme],
     identity: Option<&dhttp_home::identity::IdentityHome>,
     /// Optional custom connection builder for registering additional protocol
@@ -144,21 +121,9 @@ pub async fn setup_h3_client(
         None => None,
     };
 
-    // Build the main [`Network`] first. Two reasons order matters:
-    //
-    // 1. `NetworkBuilder::build()` installs the connectionless-packet
-    //    dispatcher on the globally-shared [`QuicRouter`]. This must
-    //    happen before any other `Network` is constructed on the same
-    //    router — otherwise NAT-punch Initial packets destined for the
-    //    main endpoint's SNI registry would be routed nowhere (see
-    //    `h3x::endpoint::network::install_dispatcher` for the warning).
-    //
-    // 2. The DHTTP/3 DNS resolver reuses the same [`Network`] (passed
-    //    as `Some(network.clone())` below) so client and resolver share
-    //    one router, one interface manager, and one STUN agent set.
     let effective_stun = stun_server.unwrap_or_else(|| DEFAULT_STUN_SERVER.into());
     let network = {
-        let builder = Network::builder();
+        let builder = h3x::dquic::Network::builder();
         if effective_stun.is_empty() {
             builder.build()
         } else {
@@ -168,53 +133,33 @@ pub async fn setup_h3_client(
         }
     };
 
-    // Bind every interface through the network — this goes through
-    // `Network::bind` which installs the QUIC router, STUN, forwarder,
-    // and receive-and-deliver components on each interface (unlike a raw
-    // `InterfaceManager::bind` call). `Network::add_binds` also starts a
-    // reconcile watcher that keeps the bind set in sync with network
-    // interface changes, and returns a [`BindsGuard`] that unbinds
-    // everything on drop.
-    let mut binds_owned = binds.clone();
-    ensure_default_mdns_on_binds(&mut binds_owned);
-    let binds_guard = network.add_binds(&binds_owned).await?;
-
-    // Gather the currently-bound interfaces for DNS mDNS resolver
-    // construction. `build_resolvers` picks the mdns-enabled subset
-    // internally via each interface's `mdns` property. Use
-    // `current_bind_interfaces()` to hold strong references — looking
-    // up by URI through `get_iface()` races against `InterfaceManager`
-    // dropping interfaces that no caller kept alive.
-    let bind_interfaces = network.current_bind_interfaces();
+    let mut bind_patterns = binds.to_vec();
+    ensure_default_mdns_on_binds(&mut bind_patterns);
+    let bind_patterns = Arc::new(bind_patterns);
 
     let dns_setup = dns::handy::build_resolvers(
         dns_schemes.iter().copied(),
-        &bind_interfaces,
+        &[],
         id_material.as_ref(),
         Some(network.clone()),
-    );
+    )
+    .await;
 
-    let endpoint = QuicEndpoint::new(
-        network,
-        id_material
-            .as_ref()
-            .map(endpoint_identity)
-            .unwrap_or(Identity::Anonymous),
-        Arc::new(dns_setup.resolvers),
-        default_client_quic_config(),
-        ServerQuicConfig::default(),
-    );
+    let quic = QuicEndpoint::builder()
+        .network(network)
+        .maybe_identity(id_material.map(Arc::new))
+        .resolver(Arc::new(dns_setup.resolvers))
+        .client(default_client_quic_config())
+        .server(ServerQuicConfig::default())
+        .bind(bind_patterns)
+        .build()
+        .await;
 
-    let client = {
-        let partial = Client::from_quic_client().client(endpoint);
-        match connection_builder {
-            Some(cb) => partial.builder(cb).build(),
-            None => partial.build(),
-        }
+    let endpoint = match connection_builder {
+        Some(builder) => H3Endpoint::builder().quic(quic).builder(builder).build(),
+        None => H3Endpoint::new(quic),
     };
-
     Ok(H3ClientSetup {
-        client,
-        binds_guard,
+        client: Arc::new(endpoint),
     })
 }

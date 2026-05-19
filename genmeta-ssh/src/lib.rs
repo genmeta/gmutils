@@ -10,11 +10,9 @@ pub mod forward;
 pub mod ssh_config;
 
 use clap::Parser;
-use dhttp_home::identity::Name;
+use dhttp::{ddns, dquic::binds::BindPattern, h3x::error::Code, home::identity::Name};
 use forward::*;
-use genmeta_common::dns;
 use genmeta_ssh_core as ssh3;
-use h3x::{endpoint::binds, error::Code};
 use snafu::{FromString, Report, ResultExt, Snafu};
 use tracing::Instrument;
 use tracing_subscriber::prelude::*;
@@ -114,11 +112,11 @@ pub struct Options {
 
     /// DNS resolution schemes
     #[arg(long, value_name = "scheme", default_value = "mdns,h3", value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
-    dns: Vec<dns::DnsScheme>,
+    dns: Vec<ddns::DnsScheme>,
 
     /// Bind patterns for DHTTP/3 connections
     #[arg(long = "interface", value_name = "bind", default_value = "*", hide = cfg!(not(debug_assertions)))]
-    binds: Vec<binds::Bind>,
+    binds: Vec<BindPattern>,
 
     #[arg(value_name = "HOST/URI", long_help = URI_LONG_HELP)]
     host: String,
@@ -219,7 +217,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     };
 
     let connect_result = connect::connect(&config).await?;
-    let _binds_guard = connect_result.binds_guard;
+    let _endpoint = connect_result.endpoint;
     let connection = connect_result.connection;
     let conversation = Arc::new(connect_result.conversation);
 

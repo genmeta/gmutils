@@ -58,10 +58,10 @@ async fn auto_init_creates_store() {
 async fn invalid_identity_input_error() {
     let error =
         Options::try_parse_from(["access", "invalid identity", "rulesets", "list"]).unwrap_err();
+    let error = error.to_string();
     assert!(
-        error
-            .to_string()
-            .contains("name contains invalid characters")
+        error.contains("name contains invalid characters")
+            || error.contains("name is missing required suffix")
     );
 }
 

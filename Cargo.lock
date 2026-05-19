@@ -1155,6 +1155,47 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
+name = "ddns"
+version = "0.2.0"
+dependencies = [
+ "bytes",
+ "dashmap",
+ "ddns-core",
+ "dhttp-identity",
+ "dquic",
+ "futures",
+ "gmdns",
+ "h3x",
+ "http",
+ "nom 8.0.0",
+ "reqwest 0.12.28",
+ "rustls",
+ "snafu 0.8.9",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "ddns-core"
+version = "0.2.0"
+dependencies = [
+ "base64 0.22.1",
+ "bitfield-struct",
+ "bytes",
+ "dhttp-identity",
+ "dquic",
+ "nom 8.0.0",
+ "rand 0.9.4",
+ "ring",
+ "rustls",
+ "rustls-pemfile",
+ "snafu 0.8.9",
+ "tracing",
+ "x509-parser 0.18.1",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1293,10 +1334,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "dhttp"
+version = "0.1.0"
+dependencies = [
+ "bon",
+ "ddns",
+ "dhttp-home",
+ "dhttp-identity",
+ "futures",
+ "h3x",
+ "http",
+ "rustls",
+ "snafu 0.9.0",
+ "tower-service",
+]
+
+[[package]]
 name = "dhttp-home"
 version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/dhttp-home.git?branch=main#780ee2de466d64527fed636e7583bf11aef92f1e"
 dependencies = [
+ "dhttp-identity",
  "dirs",
  "futures",
  "rustls",
@@ -1304,6 +1361,20 @@ dependencies = [
  "snafu 0.9.0",
  "tokio",
  "toml",
+ "x509-parser 0.18.1",
+]
+
+[[package]]
+name = "dhttp-identity"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures",
+ "http",
+ "ring",
+ "rustls",
+ "serde",
+ "snafu 0.9.0",
  "x509-parser 0.18.1",
 ]
 
@@ -1404,8 +1475,8 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 [[package]]
 name = "dquic"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4ece08b8f6aff949780c68e78e4fc22b178c66e9"
 dependencies = [
+ "arc-swap",
  "bytes",
  "dashmap",
  "derive_more",
@@ -1834,7 +1905,6 @@ version = "0.5.0"
 dependencies = [
  "clap",
  "genmeta-access",
- "genmeta-common",
  "genmeta-curl",
  "genmeta-discover",
  "genmeta-doctor",
@@ -1855,7 +1925,6 @@ dependencies = [
  "dhttp-home",
  "firewall-base",
  "firewall-db",
- "genmeta-common",
  "sea-orm",
  "sea-orm-migration",
  "snafu 0.9.0",
@@ -1871,9 +1940,9 @@ version = "0.2.0"
 dependencies = [
  "bon",
  "clap",
+ "ddns",
  "dhttp-home",
  "futures",
- "gmdns",
  "h3x",
  "http",
  "rustls",
@@ -1890,9 +1959,7 @@ dependencies = [
  "async-compression",
  "bytes",
  "clap",
- "dhttp-home",
- "genmeta-common",
- "h3x",
+ "dhttp",
  "http",
  "http-body-util",
  "snafu 0.9.0",
@@ -1909,10 +1976,8 @@ name = "genmeta-discover"
 version = "0.2.0"
 dependencies = [
  "clap",
+ "dhttp",
  "futures",
- "genmeta-common",
- "gmdns",
- "h3x",
  "snafu 0.9.0",
  "tokio",
  "tracing",
@@ -1940,7 +2005,6 @@ dependencies = [
  "clap",
  "dhttp-home",
  "futures",
- "genmeta-common",
  "indicatif",
  "inquire",
  "inquire-derive",
@@ -1962,11 +2026,8 @@ name = "genmeta-nat"
 version = "0.2.0"
 dependencies = [
  "clap",
- "dhttp-home",
+ "dhttp",
  "futures",
- "genmeta-common",
- "gmdns",
- "h3x",
  "snafu 0.9.0",
  "tokio",
  "tracing",
@@ -1979,11 +2040,8 @@ name = "genmeta-nslookup"
 version = "0.2.0"
 dependencies = [
  "clap",
- "dhttp-home",
+ "dhttp",
  "futures",
- "genmeta-common",
- "gmdns",
- "h3x",
  "snafu 0.9.0",
  "tokio",
  "tracing",
@@ -1998,9 +2056,7 @@ dependencies = [
  "bytes",
  "clap",
  "daemonize",
- "dhttp-home",
- "genmeta-common",
- "h3x",
+ "dhttp",
  "http",
  "http-body-util",
  "hyper",
@@ -2039,10 +2095,9 @@ dependencies = [
  "bytes",
  "clap",
  "crossterm",
- "dhttp-home",
+ "dhttp",
  "dirs",
  "futures",
- "genmeta-common",
  "genmeta-ssh 0.2.0",
  "h3x",
  "http",
@@ -2143,32 +2198,18 @@ dependencies = [
 [[package]]
 name = "gmdns"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/gmdns.git?rev=99e5ee35ae2c3dabbeac57714e9274d9ca006e6b#99e5ee35ae2c3dabbeac57714e9274d9ca006e6b"
 dependencies = [
- "base64 0.22.1",
- "bitfield-struct",
- "bytes",
  "dashmap",
+ "ddns-core",
+ "dquic",
  "flume 0.12.0",
  "futures",
  "h3x",
- "http",
  "libc",
- "nom 8.0.0",
- "rand 0.9.4",
- "reqwest 0.12.28",
- "ring",
- "rustls",
- "rustls-pemfile",
- "serde",
- "shellexpand",
  "snafu 0.8.9",
  "socket2 0.5.10",
  "tokio",
- "tokio-util",
  "tracing",
- "url",
- "x509-parser 0.18.1",
 ]
 
 [[package]]
@@ -2193,7 +2234,6 @@ dependencies = [
 [[package]]
 name = "h3x"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/h3x.git?rev=6133d31651b31d4b03956946c370b776c203f4c3#6133d31651b31d4b03956946c370b776c203f4c3"
 dependencies = [
  "arc-swap",
  "async-channel 2.5.0",
@@ -2201,6 +2241,7 @@ dependencies = [
  "bytes",
  "dashmap",
  "derive_more",
+ "dhttp-identity",
  "dquic",
  "either",
  "futures",
@@ -2987,9 +3028,9 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 
 [[package]]
 name = "netdev"
-version = "0.42.0"
+version = "0.43.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e30af1a5073b82356d9317c18226826370b4288eba2f71c7e84e18bae51b3847"
+checksum = "57bacaf873ee4eab5646f99b381b271ec75e716902a67cf962c0f328c5eb5bfb"
 dependencies = [
  "block2",
  "dispatch2",
@@ -3001,6 +3042,8 @@ dependencies = [
  "netlink-packet-route",
  "netlink-sys",
  "objc2-core-foundation",
+ "objc2-core-wlan",
+ "objc2-foundation",
  "objc2-system-configuration",
  "once_cell",
  "plist",
@@ -3200,10 +3243,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-core-wlan"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c71e34919aba0d701380d911702455038a8a3587467fe0141d6a71501e7ffe48"
+dependencies = [
+ "bitflags",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-foundation",
+ "objc2-security",
+ "objc2-security-foundation",
+]
+
+[[package]]
 name = "objc2-encode"
 version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef25abbcd74fb2609453eb695bd2f860d389e457f67dc17cafc8b8cbc89d0c33"
+
+[[package]]
+name = "objc2-foundation"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3e0adef53c21f888deb4fa59fc59f7eb17404926ee8a6f59f5df0fd7f9f3272"
+dependencies = [
+ "bitflags",
+ "block2",
+ "libc",
+ "objc2",
+ "objc2-core-foundation",
+]
 
 [[package]]
 name = "objc2-security"
@@ -3214,6 +3284,16 @@ dependencies = [
  "bitflags",
  "objc2",
  "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-security-foundation"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef76382e9cedd18123099f17638715cc3d81dba3637d4c0d39ab69df2ef345a5"
+dependencies = [
+ "objc2",
+ "objc2-foundation",
 ]
 
 [[package]]
@@ -3646,7 +3726,6 @@ dependencies = [
 [[package]]
 name = "qbase"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4ece08b8f6aff949780c68e78e4fc22b178c66e9"
 dependencies = [
  "bitflags",
  "bytes",
@@ -3670,7 +3749,6 @@ dependencies = [
 [[package]]
 name = "qcongestion"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4ece08b8f6aff949780c68e78e4fc22b178c66e9"
 dependencies = [
  "qbase",
  "qevent",
@@ -3683,7 +3761,6 @@ dependencies = [
 [[package]]
 name = "qconnection"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4ece08b8f6aff949780c68e78e4fc22b178c66e9"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3711,7 +3788,6 @@ dependencies = [
 [[package]]
 name = "qdatagram"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4ece08b8f6aff949780c68e78e4fc22b178c66e9"
 dependencies = [
  "bytes",
  "futures",
@@ -3723,7 +3799,6 @@ dependencies = [
 [[package]]
 name = "qevent"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4ece08b8f6aff949780c68e78e4fc22b178c66e9"
 dependencies = [
  "bytes",
  "derive_builder",
@@ -3741,7 +3816,6 @@ dependencies = [
 [[package]]
 name = "qinterface"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4ece08b8f6aff949780c68e78e4fc22b178c66e9"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3766,7 +3840,6 @@ dependencies = [
 [[package]]
 name = "qmacro"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4ece08b8f6aff949780c68e78e4fc22b178c66e9"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -3777,7 +3850,6 @@ dependencies = [
 [[package]]
 name = "qrecovery"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4ece08b8f6aff949780c68e78e4fc22b178c66e9"
 dependencies = [
  "bytes",
  "derive_more",
@@ -3795,7 +3867,6 @@ dependencies = [
 [[package]]
 name = "qresolve"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4ece08b8f6aff949780c68e78e4fc22b178c66e9"
 dependencies = [
  "futures",
  "qbase",
@@ -3806,7 +3877,6 @@ dependencies = [
 [[package]]
 name = "qtraversal"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4ece08b8f6aff949780c68e78e4fc22b178c66e9"
 dependencies = [
  "async-trait",
  "bitflags",
@@ -3835,12 +3905,12 @@ dependencies = [
 [[package]]
 name = "qudp"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4ece08b8f6aff949780c68e78e4fc22b178c66e9"
 dependencies = [
  "bytes",
  "cfg-if",
  "libc",
  "nix 0.31.2",
+ "qbase",
  "socket2 0.6.3",
  "tokio",
  "tracing",
@@ -4904,15 +4974,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
-]
-
-[[package]]
-name = "shellexpand"
-version = "3.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32824fab5e16e6c4d86dc1ba84489390419a39f97699852b66480bb87d297ed8"
-dependencies = [
- "dirs",
 ]
 
 [[package]]

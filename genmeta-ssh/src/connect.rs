@@ -1,17 +1,18 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use genmeta_common::h3_client::{self, SetupH3ClientError};
-use genmeta_ssh_core as ssh3;
-use h3x::{
-    connection::{Connection, ConnectionBuilder},
-    dquic::prelude,
-    endpoint::ConnectError as EndpointConnectError,
-    pool::ConnectError,
-    qpack::field::Protocol,
-    quic::GetStreamIdExt,
-    stream_id::StreamId,
+use dhttp::{
+    dquic,
+    endpoint::Endpoint,
+    h3x::{
+        connection::{Connection, ConnectionBuilder},
+        pool::ConnectError,
+        qpack::field::Protocol,
+        quic::GetStreamIdExt,
+        stream_id::StreamId,
+    },
 };
+use genmeta_ssh_core as ssh3;
 use http::StatusCode;
 use http_body_util::Empty;
 use snafu::prelude::*;
@@ -21,11 +22,13 @@ use crate::config::Config;
 #[derive(Debug, Snafu)]
 #[snafu(module(connect_error))]
 pub enum Error {
-    #[snafu(transparent)]
-    SetupH3Client { source: SetupH3ClientError },
+    #[snafu(display("failed to load identity certificate and key"))]
+    LoadIdentitySsl {
+        source: dhttp::home::identity::ssl::LoadIdentitySslError,
+    },
     #[snafu(display("failed to connect to server"))]
     Connect {
-        source: ConnectError<EndpointConnectError>,
+        source: ConnectError<dquic::ConnectError>,
     },
     #[snafu(display("authentication failed (HTTP 401)"))]
     AuthenticationFailed,
@@ -58,28 +61,33 @@ impl snafu::FromString for Error {
 }
 
 pub struct ConnectResult {
-    pub binds_guard: h3x::endpoint::BindsGuard,
-    pub connection: Arc<Connection<prelude::Connection>>,
+    pub endpoint: Arc<Endpoint>,
+    pub connection: Arc<Connection<dquic::connection::Connection>>,
     pub conversation: ssh3::conversation::Conversation<ssh3::protocol::ConversationHandle>,
 }
 
 pub async fn connect(config: &Config) -> Result<ConnectResult, Error> {
-    let dns_schemes: Vec<_> = config.dns.iter().copied().collect();
-
     let connection_builder = Arc::new(
         ConnectionBuilder::new(Arc::default()).protocol(ssh3::protocol::Ssh3ProtocolFactory),
     );
 
-    let h3_setup = h3_client::setup_h3_client()
-        .binds(&config.binds)
-        .dns_schemes(&dns_schemes)
-        .maybe_identity(config.id.as_ref())
-        .connection_builder(connection_builder)
-        .call()
-        .await?;
+    let identity = match &config.id {
+        Some(home) => Some(Arc::new(
+            home.identity()
+                .await
+                .context(connect_error::LoadIdentitySslSnafu)?,
+        )),
+        None => None,
+    };
 
-    let client = h3_setup.client;
-    let binds_guard = h3_setup.binds_guard;
+    let mut builder = Endpoint::builder()
+        .bind(Arc::new(config.binds.clone()))
+        .maybe_identity(identity)
+        .connection_builder(connection_builder);
+    for scheme in config.dns.iter().copied() {
+        builder = builder.dns(scheme);
+    }
+    let endpoint = Arc::new(builder.build().await);
 
     let server = config.uri.authority().ok_or_else(|| {
         connect_error::MissingAuthoritySnafu {
@@ -87,7 +95,7 @@ pub async fn connect(config: &Config) -> Result<ConnectResult, Error> {
         }
         .build()
     })?;
-    let connection = client
+    let connection = endpoint
         .connect(server.clone())
         .await
         .context(connect_error::ConnectSnafu)?;
@@ -160,15 +168,15 @@ pub async fn connect(config: &Config) -> Result<ConnectResult, Error> {
         server = %server,
         conversation_id,
         version = %server_version,
-        "SSH3 connection established"
+        "ssh3 connection established"
     );
 
     let session_id = StreamId::try_from(conversation_id)
-        .whatever_context::<_, Error>("invalid stream ID for session")?;
+        .whatever_context::<_, Error>("invalid stream id for session")?;
 
     let handle = connection
         .protocol::<ssh3::protocol::Ssh3Protocol>()
-        .whatever_context::<_, Error>("SSH3 protocol not registered on connection")?
+        .whatever_context::<_, Error>("ssh3 protocol not registered on connection")?
         .register(session_id)
         .context(connect_error::RegisterProtocolSnafu)?;
 
@@ -186,7 +194,7 @@ pub async fn connect(config: &Config) -> Result<ConnectResult, Error> {
     );
 
     Ok(ConnectResult {
-        binds_guard,
+        endpoint,
         connection,
         conversation,
     })

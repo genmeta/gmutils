@@ -16,9 +16,43 @@ use firewall_db::{
         location_service::{LocationService, RemoveRuleFailed},
     },
 };
-use genmeta_common::error::ReportFromStr;
 use snafu::{ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
+
+/// Wrapper for clap that uses [`snafu::Report`] for richer error display.
+///
+/// Use as a clap argument type to get multi-line error chain output when
+/// parsing complex types like [`LocationPattern`] or [`Name`]:
+///
+/// ```ignore
+/// #[derive(clap::Parser)]
+/// struct Cli {
+///     pattern: ReportFromStr<LocationPattern>,
+/// }
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct ReportFromStr<T>(pub T);
+
+#[derive(Debug, Snafu)]
+#[snafu(display("{}", snafu::Report::from_error(source)))]
+pub struct ReportError<E: std::error::Error + 'static> {
+    #[snafu(source(false))]
+    source: E,
+}
+
+impl<T> std::str::FromStr for ReportFromStr<T>
+where
+    T: std::str::FromStr<Err: std::error::Error + 'static>,
+{
+    type Err = ReportError<T::Err>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match T::from_str(s) {
+            Ok(value) => Ok(Self(value)),
+            Err(source) => Err(ReportError { source }),
+        }
+    }
+}
 
 // --- CLI types ---
 

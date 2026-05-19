@@ -1,11 +1,15 @@
-use core::fmt;
 use std::{collections::BTreeSet, str::FromStr, time::Duration};
 
-use dhttp_home::identity::{IdentityHome, InvalidName, Name};
-use genmeta_common::{dns, id};
-use h3x::endpoint::binds::{self, Binds};
+use dhttp::{
+    ddns,
+    dquic::binds::BindPattern,
+    home::{
+        self, DhttpHome,
+        identity::{DhttpName, IdentityHome, InvalidName, Name},
+    },
+};
 use http::{Uri, uri::Authority};
-use snafu::{ResultExt, Snafu};
+use snafu::{IntoError, ResultExt, Snafu, ensure};
 
 use crate::{
     forward::{DynamicForward, LocalForward, RemoteForward},
@@ -27,33 +31,49 @@ pub enum Error {
         authority: String,
         source: http::uri::InvalidUri,
     },
-    #[snafu(display("unsupported URI scheme `{scheme}`, only `https` is supported"))]
+    #[snafu(display("unsupported uri scheme `{scheme}`, only `https` is supported"))]
     UnsupportedScheme { scheme: String },
-    #[snafu(display("missing authority in URI"))]
+    #[snafu(display("missing authority in uri"))]
     MissingAuthority {},
     #[snafu(display("failed to read ssh configuration"))]
     ReadConfig { source: ssh_config::ReadConfigError },
-    #[snafu(transparent)]
-    LoadHomeAndIdentity {
-        source: id::LoadHomeAndIdentityError,
+    #[snafu(display("bare `~` requires an identity"))]
+    BareTildeWithoutIdentity,
+    #[snafu(display("failed to locate dhttp home"))]
+    LocateDhttpHome { source: home::LocateDhttpHomeError },
+    #[snafu(display("failed to load explicit identity `{name}`"))]
+    LoadExplicitIdentity {
+        name: Name<'static>,
+        source: home::identity::ssl::LoadIdentityError,
     },
     #[snafu(display("identity `{id}` in ssh config is invalid"))]
     InvalidIdInSshConfig { id: String, source: InvalidName },
-    #[snafu(display("failed to expand identity name in URI"))]
-    ExpandNameInUri { source: id::ExpandNameInUriError },
+    #[snafu(display("failed to expand identity name in uri"))]
+    ExpandNameInUri {
+        source: home::identity::ExpandUriError,
+    },
+    #[snafu(display("failed to parse identity name in uri"))]
+    ExpandUriName {
+        source: home::identity::InvalidDhttpName,
+    },
+    #[snafu(display("failed to parse expanded authority `{authority}`"))]
+    ParseExpandedAuthority {
+        authority: String,
+        source: http::uri::InvalidUri,
+    },
     #[snafu(display("failed to parse path and query `{path_and_query}`"))]
     InvalidPathAndQuery {
         path_and_query: String,
         source: http::uri::InvalidUri,
     },
-    #[snafu(display("failed to construct URI from parts"))]
+    #[snafu(display("failed to construct uri from parts"))]
     ConstructUri { source: http::uri::InvalidUriParts },
 }
 
 #[derive(Debug)]
 pub struct Config {
-    pub binds: binds::Binds,
-    pub dns: BTreeSet<dns::DnsScheme>,
+    pub binds: Vec<BindPattern>,
+    pub dns: BTreeSet<ddns::DnsScheme>,
     pub username: String,
     pub uri: Uri,
     pub id: Option<IdentityHome>,
@@ -61,6 +81,105 @@ pub struct Config {
     pub local_forwards: Vec<LocalForward>,
     pub remote_forwards: Vec<RemoteForward>,
     pub dynamic_forwards: Vec<DynamicForward>,
+}
+
+fn expand_uri_without_identity(uri: Uri) -> Result<Uri, Error> {
+    let mut parts = uri.into_parts();
+
+    let Some(authority) = &parts.authority else {
+        return Uri::from_parts(parts).context(config_error::ConstructUriSnafu);
+    };
+
+    let host = authority.host();
+    ensure!(host != "~", config_error::BareTildeWithoutIdentitySnafu);
+
+    let Some(expanded) =
+        DhttpName::try_expand_from(host).context(config_error::ExpandUriNameSnafu)?
+    else {
+        return Uri::from_parts(parts).context(config_error::ConstructUriSnafu);
+    };
+
+    let expanded = expanded.as_full();
+    if expanded != host {
+        let user_info_len = authority
+            .as_str()
+            .split_once('@')
+            .map(|(user_info, ..)| user_info.len() + 1)
+            .unwrap_or_default();
+        let host_len = host.len();
+        let authority = format!(
+            "{user_info}{host}{port}",
+            user_info = &authority.as_str()[..user_info_len],
+            host = expanded,
+            port = &authority.as_str()[user_info_len + host_len..],
+        );
+        parts.authority = Some(authority.parse().context(
+            config_error::ParseExpandedAuthoritySnafu {
+                authority: &authority,
+            },
+        )?);
+    }
+
+    Uri::from_parts(parts).context(config_error::ConstructUriSnafu)
+}
+
+fn expand_uri(uri: Uri, self_name: Option<&Name<'_>>) -> Result<Uri, Error> {
+    match self_name {
+        Some(name) => name
+            .expand_uri(uri)
+            .context(config_error::ExpandNameInUriSnafu),
+        None => expand_uri_without_identity(uri),
+    }
+}
+
+async fn load_identity_home(
+    options: &super::Options,
+    ssh_config_id_name: Option<Name<'static>>,
+) -> Result<Option<IdentityHome>, Error> {
+    if options.anonymous {
+        return Ok(None);
+    }
+
+    let explicit = options
+        .id
+        .clone()
+        .map(|name| ("command line options", name))
+        .or_else(|| ssh_config_id_name.map(|name| ("ssh config", name)));
+
+    let home = match DhttpHome::load_from_environment() {
+        Ok(home) => home,
+        Err(source) if explicit.is_none() => {
+            tracing::warn!(
+                error = %snafu::Report::from_error(&source),
+                "failed to locate dhttp home, using anonymous endpoint"
+            );
+            return Ok(None);
+        }
+        Err(source) => return Err(config_error::LocateDhttpHomeSnafu.into_error(source)),
+    };
+
+    if let Some((source_name, name)) = explicit {
+        tracing::debug!(%name, source = source_name, "trying to load explicit identity");
+        return home
+            .load_identity(name.clone())
+            .await
+            .context(config_error::LoadExplicitIdentitySnafu { name })
+            .map(Some);
+    }
+
+    match home.load_default_identity().await {
+        Ok(identity) => {
+            tracing::debug!(name = %identity.name(), "using default identity");
+            Ok(Some(identity))
+        }
+        Err(source) => {
+            tracing::debug!(
+                error = %snafu::Report::from_error(&source),
+                "failed to load default identity, using anonymous endpoint"
+            );
+            Ok(None)
+        }
+    }
 }
 
 // CLI args > config file priority
@@ -114,24 +233,10 @@ impl super::Options {
             .map(|id| Name::from_str(id).context(config_error::InvalidIdInSshConfigSnafu { id }))
             .transpose()?;
 
-        let cli_id = (self.id.as_ref())
-            .map(|id| (&"command line options" as &dyn fmt::Display, id.borrow()));
-        let ssh_config_id =
-            ssh_config_id_name.map(|name| (&"ssh config" as &dyn fmt::Display, name));
-
-        let id = if self.anonymous {
-            None
-        } else {
-            id::load_home_and_identity(
-                cli_id.is_some() || ssh_config_id.is_some(),
-                Option::into_iter(cli_id).chain(ssh_config_id),
-            )
-            .await?
-        };
+        let id = load_identity_home(self, ssh_config_id_name).await?;
 
         // Expand ~ in URI using loaded identity (--id > ssh_config > default identity)
-        let uri = id::expand_name_in_uri(uri, id.as_ref().map(|id| id.name()))
-            .context(config_error::ExpandNameInUriSnafu)?;
+        let uri = expand_uri(uri, id.as_ref().map(|id| id.name()))?;
 
         let uri = complete_uri(uri, &username)?;
 
@@ -146,7 +251,7 @@ impl super::Options {
         dynamic_forwards.extend(ssh_config.dynamic_forwards);
 
         Ok(Config {
-            binds: Binds::new(self.binds.clone()),
+            binds: self.binds.clone(),
             dns: self.dns.iter().cloned().collect(),
             username,
             uri,

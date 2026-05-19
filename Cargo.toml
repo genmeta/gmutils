@@ -34,7 +34,11 @@ whoami = "2"
 console-subscriber = "0.5"
 
 # network
-gmdns = { git = "ssh://git@github.com/genmeta/gmdns.git", rev = "99e5ee35ae2c3dabbeac57714e9274d9ca006e6b" }
+gmdns = { package = "ddns", git = "ssh://git@github.com/genmeta/ddns.git", branch = "endpoint", features = [
+    "h3x-resolver",
+    "http-resolver",
+    "mdns-resolver",
+] }
 h3x = { git = "https://github.com/genmeta/h3x.git", branch = "main" }
 http = "1"
 hyper = { version = "1", features = ["http1", "server"] }
@@ -108,6 +112,7 @@ firewall-db = { git = "ssh://git@github.com/genmeta/firewall.git", rev = "85493b
 firewall-migration = { git = "ssh://git@github.com/genmeta/firewall.git", rev = "85493bbc847cf3e95d54f5b0b7acbf5d3ca85b56" }
 genmeta-access = { path = "genmeta-access" }
 genmeta-common = { path = "genmeta-common" }
+dhttp = { git = "ssh://git@github.com/genmeta/dhttp.git", branch = "main" }
 dhttp-home = { git = "ssh://git@github.com/genmeta/dhttp-home.git", branch = "main" }
 genmeta-curl = { path = "genmeta-curl" }
 genmeta-discover = { path = "genmeta-discover" }
@@ -130,9 +135,21 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
-# Unify h3x: direct dep tracks https://+main to match transitive deps from
-# gmdns and genmeta-ssh-core; this patch redirects to ssh://+rev so exactly
-# one copy of h3x is compiled. The patched source URL must differ from the
-# direct URL (https:// vs ssh://), otherwise cargo rejects the patch.
+# Use the local h3x checkout while this monorepo migration spans crates.
 [patch."https://github.com/genmeta/h3x.git"]
-h3x = { git = "ssh://git@github.com/genmeta/h3x.git", rev = "6133d31651b31d4b03956946c370b776c203f4c3" }
+h3x = { path = "../h3x" }
+
+[patch."ssh://git@github.com/genmeta/dquic.git"]
+dquic = { path = "../dquic/dquic" }
+
+[patch."ssh://git@github.com/genmeta/ddns.git"]
+ddns = { path = "../ddns/ddns" }
+
+[patch."ssh://git@github.com/genmeta/dhttp-home.git"]
+dhttp-home = { path = "../dhttp/home" }
+dhttp-identity = { path = "../dhttp/identity" }
+
+[patch."ssh://git@github.com/genmeta/dhttp.git"]
+dhttp = { path = "../dhttp/dhttp" }
+dhttp-home = { path = "../dhttp/home" }
+dhttp-identity = { path = "../dhttp/identity" }

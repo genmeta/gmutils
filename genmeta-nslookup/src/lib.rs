@@ -1,18 +1,21 @@
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     io::IsTerminal,
+    sync::Arc,
 };
 
 use clap::Parser;
-use dhttp_home::identity::Name;
-use futures::StreamExt;
-use genmeta_common::{
-    dns::{self, DnsScheme},
-    id,
+use dhttp::{
+    ddns::DnsScheme,
+    dquic::binds::BindPattern,
+    endpoint::Endpoint,
+    home::{
+        self, DhttpHome,
+        identity::{IdentityHome, Name},
+    },
 };
-use gmdns::resolvers::DnsErrors;
-use h3x::endpoint::binds;
-use snafu::{ResultExt, Snafu};
+use futures::StreamExt;
+use snafu::{IntoError, ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
 
 #[derive(Parser, Debug, Clone)]
@@ -41,24 +44,27 @@ pub struct Options {
     /// Bind patterns for local network interfaces
     #[arg(long = "interface", value_name = "bind", default_value = "*",
           hide = cfg!(not(debug_assertions)))]
-    binds: Vec<binds::Bind>,
+    binds: Vec<BindPattern>,
 }
 
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 pub enum Error {
-    #[snafu(transparent)]
-    LoadHomeAndIdentity {
-        source: id::LoadHomeAndIdentityError,
+    #[snafu(display("failed to locate dhttp home"))]
+    LocateDhttpHome { source: home::LocateDhttpHomeError },
+    #[snafu(display("failed to load explicit identity `{name}`"))]
+    LoadExplicitIdentity {
+        name: Name<'static>,
+        source: home::identity::ssl::LoadIdentityError,
     },
-    #[snafu(display("failed to load identity ssl material"))]
+    #[snafu(display("failed to load identity certificate and key"))]
     LoadIdentitySsl {
-        source: dhttp_home::identity::ssl::LoadIdentitySslError,
+        source: home::identity::ssl::LoadIdentitySslError,
     },
-    #[snafu(display("failed to lookup DNS records of `{name}`"))]
+    #[snafu(display("failed to lookup dns records of `{name}`"))]
     LookUp {
         name: Name<'static>,
-        source: DnsErrors,
+        source: std::io::Error,
     },
 }
 
@@ -87,43 +93,67 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     guard
 }
 
-pub async fn run(mut options: Options) -> Result<(), Error> {
-    let _guard = init_tracing();
-    let id = if options.anonymous {
-        None
-    } else {
-        id::load_home_and_identity(
-            options.id.is_some(),
-            options
-                .id
-                .as_ref()
-                .map(|id| (&"command line option" as &dyn std::fmt::Display, id.clone())),
-        )
-        .await?
+async fn load_identity_home(options: &Options) -> Result<Option<IdentityHome>, Error> {
+    if options.anonymous {
+        return Ok(None);
+    }
+
+    let home = match DhttpHome::load_from_environment() {
+        Ok(home) => home,
+        Err(source) if options.id.is_none() => {
+            tracing::warn!(
+                error = %snafu::Report::from_error(&source),
+                "failed to locate dhttp home, using anonymous endpoint"
+            );
+            return Ok(None);
+        }
+        Err(source) => return Err(error::LocateDhttpHomeSnafu.into_error(source)),
     };
 
-    let binds = binds::Binds::new(std::mem::take(&mut options.binds));
-    let bind_setup =
-        binds::setup_bind_interfaces_with(&binds, dns::handy::ensure_default_mdns_prop)
+    if let Some(name) = &options.id {
+        tracing::debug!(%name, "trying to load command line identity");
+        return home
+            .load_identity(name.clone())
             .await
-            .expect("BUG: wildcard bind should not conflict");
+            .context(error::LoadExplicitIdentitySnafu { name: name.clone() })
+            .map(Some);
+    }
 
-    let id_material = match &id {
-        Some(id) => Some(id.identity().await.context(error::LoadIdentitySslSnafu)?),
+    match home.load_default_identity().await {
+        Ok(identity) => {
+            tracing::debug!(name = %identity.name(), "using default identity");
+            Ok(Some(identity))
+        }
+        Err(source) => {
+            tracing::debug!(
+                error = %snafu::Report::from_error(&source),
+                "failed to load default identity, using anonymous endpoint"
+            );
+            Ok(None)
+        }
+    }
+}
+
+pub async fn run(options: Options) -> Result<(), Error> {
+    let _guard = init_tracing();
+    let identity_home = load_identity_home(&options).await?;
+    let identity = match &identity_home {
+        Some(home) => Some(Arc::new(
+            home.identity().await.context(error::LoadIdentitySslSnafu)?,
+        )),
         None => None,
     };
 
-    let dns_setup = dns::handy::build_resolvers(
-        options.schemes.into_iter().collect::<BTreeSet<_>>(),
-        &bind_setup.bind_interfaces,
-        id_material.as_ref(),
-        None,
-    );
+    let mut builder = Endpoint::builder()
+        .bind(Arc::new(options.binds.clone()))
+        .maybe_identity(identity);
+    for scheme in options.schemes.iter().copied() {
+        builder = builder.dns(scheme);
+    }
+    let endpoint = builder.build().await;
+    let resolver = endpoint.resolver();
 
-    tracing::debug!(%dns_setup.resolvers);
-
-    let mut lookup = dns_setup
-        .resolvers
+    let mut lookup = resolver
         .lookup(options.name.as_full())
         .await
         .context(error::LookUpSnafu {

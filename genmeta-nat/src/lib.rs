@@ -1,20 +1,20 @@
 use std::{io::IsTerminal, net::SocketAddr, sync::Arc};
 
 use clap::Parser;
-use dhttp_home::identity::Name;
-use genmeta_common::{
-    dns::{self, DnsScheme},
-    id,
-};
-use h3x::{
-    dquic::{qinterface::io::IO, qresolve, qtraversal},
-    endpoint::binds::{self, Bind},
+use dhttp::{
+    ddns::DnsScheme,
+    dquic::{binds::BindPattern, net::IO, qtraversal, resolver::Resolve},
+    endpoint::Endpoint,
+    home::{
+        self, DhttpHome,
+        identity::{IdentityHome, Name},
+    },
 };
 use qtraversal::{
     nat::{client::StunClient, router::StunRouter},
     route::ReceiveAndDeliverPacket,
 };
-use snafu::ResultExt;
+use snafu::{IntoError, ResultExt};
 use tracing_subscriber::prelude::*;
 
 /// Well-known STUN server domain published by pishoo via DNS.
@@ -34,7 +34,7 @@ pub struct Options {
     /// Bind patterns for local network interfaces
     #[arg(long = "interface", value_name = "bind", default_value = "*",
           hide = cfg!(not(debug_assertions)))]
-    pub binds: Vec<Bind>,
+    pub binds: Vec<BindPattern>,
 
     /// Show detailed output
     #[arg(short, long)]
@@ -44,14 +44,18 @@ pub struct Options {
 #[derive(Debug, snafu::Snafu)]
 #[snafu(module)]
 pub enum Error {
-    #[snafu(transparent)]
-    LoadHomeAndIdentity {
-        source: id::LoadHomeAndIdentityError,
+    #[snafu(display("failed to locate dhttp home"))]
+    LocateDhttpHome { source: home::LocateDhttpHomeError },
+
+    #[snafu(display("failed to load explicit identity `{name}`"))]
+    LoadExplicitIdentity {
+        name: Name<'static>,
+        source: home::identity::ssl::LoadIdentityError,
     },
 
-    #[snafu(display("failed to load identity ssl material"))]
+    #[snafu(display("failed to load identity certificate and key"))]
     LoadIdentitySsl {
-        source: dhttp_home::identity::ssl::LoadIdentitySslError,
+        source: home::identity::ssl::LoadIdentitySslError,
     },
 
     #[snafu(display("failed to detect external address"))]
@@ -64,8 +68,8 @@ pub enum Error {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
-    #[snafu(display("failed to resolve STUN server via DNS"))]
-    ResolveStunServer { source: gmdns::resolvers::DnsErrors },
+    #[snafu(display("failed to resolve stun server via dns"))]
+    ResolveStunServer { source: std::io::Error },
 
     #[snafu(display("no STUN server address found via DNS"))]
     NoStunServer,
@@ -99,47 +103,75 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     diagnose_nat(&mut options).await
 }
 
+async fn load_identity_home(options: &Options) -> Result<Option<IdentityHome>, Error> {
+    if options.anonymous {
+        return Ok(None);
+    }
+
+    let home = match DhttpHome::load_from_environment() {
+        Ok(home) => home,
+        Err(source) if options.id.is_none() => {
+            tracing::warn!(
+                error = %snafu::Report::from_error(&source),
+                "failed to locate dhttp home, using anonymous endpoint"
+            );
+            return Ok(None);
+        }
+        Err(source) => return Err(error::LocateDhttpHomeSnafu.into_error(source)),
+    };
+
+    if let Some(name) = &options.id {
+        tracing::debug!(%name, "trying to load command line identity");
+        return home
+            .load_identity(name.clone())
+            .await
+            .context(error::LoadExplicitIdentitySnafu { name: name.clone() })
+            .map(Some);
+    }
+
+    match home.load_default_identity().await {
+        Ok(identity) => {
+            tracing::debug!(name = %identity.name(), "using default identity");
+            Ok(Some(identity))
+        }
+        Err(source) => {
+            tracing::debug!(
+                error = %snafu::Report::from_error(&source),
+                "failed to load default identity, using anonymous endpoint"
+            );
+            Ok(None)
+        }
+    }
+}
+
 async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
     if options.verbose {
         qtraversal::nat::client::VISUALIZE_NAT_DETECTION
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
-    let identity = if options.anonymous {
-        None
-    } else {
-        id::load_home_and_identity(
-            options.id.is_some(),
-            options
-                .id
-                .as_ref()
-                .map(|id| (&"command line option" as &dyn std::fmt::Display, id.clone())),
-        )
-        .await?
-    };
-
-    let id_material = match &identity {
-        Some(id) => Some(id.identity().await.context(error::LoadIdentitySslSnafu)?),
+    let identity_home = load_identity_home(options).await?;
+    let identity = match &identity_home {
+        Some(home) => Some(Arc::new(
+            home.identity().await.context(error::LoadIdentitySslSnafu)?,
+        )),
         None => None,
     };
 
-    let binds = binds::Binds::new(std::mem::take(&mut options.binds));
-    let bind_setup =
-        binds::setup_bind_interfaces_with(&binds, dns::handy::ensure_default_mdns_prop)
-            .await
-            .expect("BUG: wildcard bind should not conflict");
-
-    let dns_setup = dns::handy::build_resolvers(
-        [DnsScheme::H3],
-        &bind_setup.bind_interfaces,
-        id_material.as_ref(),
-        None,
-    );
+    let bind_patterns = Arc::new(options.binds.clone());
+    let builder = Endpoint::builder()
+        .bind(bind_patterns.clone())
+        .maybe_identity(identity)
+        .dns(DnsScheme::H3)
+        .dns(DnsScheme::System);
+    let endpoint = builder.build().await;
 
     // Use the first bound interface for STUN NAT detection.
-    let stun_iface = bind_setup
-        .bind_interfaces
-        .first()
+    let stun_iface = endpoint
+        .network()
+        .interfaces()
+        .into_iter()
+        .next()
         .expect("BUG: at least one interface must be bound");
     let is_ipv4 = stun_iface
         .bind_uri()
@@ -148,8 +180,9 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
         .unwrap_or(true);
     let iface: Arc<dyn IO> = Arc::new(stun_iface.borrow());
 
-    let stun_server = resolve_stun_server(&dns_setup.resolvers, is_ipv4).await?;
-    tracing::info!(%stun_server, "resolved STUN server from DNS");
+    let resolver = endpoint.resolver();
+    let stun_server = resolve_stun_server(resolver.as_ref(), is_ipv4).await?;
+    tracing::info!(%stun_server, "resolved stun server from dns");
 
     let stun_router = StunRouter::new();
     let stun_client = StunClient::new(iface.clone(), stun_router.clone(), stun_server, None);
@@ -177,23 +210,16 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
 }
 
 async fn resolve_stun_server(
-    resolvers: &gmdns::resolvers::Resolvers,
+    resolvers: &(impl Resolve + ?Sized),
     is_ipv4: bool,
 ) -> Result<SocketAddr, Error> {
     use futures::StreamExt;
-    use qresolve::EndpointAddr;
-
     let stream = resolvers
         .lookup(STUN_DOMAIN)
         .await
         .context(error::ResolveStunServerSnafu)?;
     stream
-        .filter_map(|(_source, ep)| async move {
-            match ep {
-                EndpointAddr::Socket(socket_ep) => Some(socket_ep.addr()),
-                _ => None,
-            }
-        })
+        .filter_map(|(_source, ep)| async move { Some(ep.addr()) })
         .filter(|addr| futures::future::ready(addr.is_ipv4() == is_ipv4))
         .boxed()
         .next()

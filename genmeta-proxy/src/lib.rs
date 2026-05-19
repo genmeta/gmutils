@@ -1,18 +1,17 @@
-use std::{io::IsTerminal, mem, net::SocketAddr, sync::Arc, time::Duration};
+use std::{io::IsTerminal, net::SocketAddr, sync::Arc, time::Duration};
 
 use clap::Parser;
-use dhttp_home::identity::Name;
-use genmeta_common::{
-    dns,
-    h3_client::{self, SetupH3ClientError},
-    id,
-};
-use h3x::{
-    client::Client,
-    endpoint::{QuicEndpoint, binds},
+use dhttp::{
+    ddns,
+    dquic::binds::BindPattern,
+    endpoint::Endpoint,
+    home::{
+        self, DhttpHome,
+        identity::{DhttpName, IdentityHome, Name},
+    },
 };
 use http_body_util::BodyExt;
-use snafu::{Report, ResultExt, Snafu};
+use snafu::{IntoError, Report, ResultExt, Snafu, ensure};
 use tokio::{net::TcpListener, sync::Semaphore, task::JoinSet};
 use tracing::Instrument;
 use tracing_subscriber::prelude::*;
@@ -22,7 +21,7 @@ use tracing_subscriber::prelude::*;
 pub struct Options {
     /// Proxy listen address patterns
     #[arg(long = "listen", value_name = "bind", default_values = ["127.0.0.1:16080", "[::1]:16080"])]
-    pub listens: Vec<binds::Bind>,
+    pub listens: Vec<BindPattern>,
 
     /// Client identity for DHTTP/3 connections
     #[arg(short, long, value_name = "client_identity")]
@@ -34,11 +33,11 @@ pub struct Options {
 
     /// DNS resolution schemes
     #[arg(long, value_name = "scheme", default_values = ["mdns", "h3"], value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
-    pub dns: Vec<dns::DnsScheme>,
+    pub dns: Vec<ddns::DnsScheme>,
 
     /// Bind patterns for DHTTP/3 connections
     #[arg(long = "interface", value_name = "bind", default_value = "*", hide = cfg!(not(debug_assertions)))]
-    pub binds: Vec<binds::Bind>,
+    pub binds: Vec<BindPattern>,
 
     /// Show detailed request logging
     #[arg(short, long)]
@@ -56,13 +55,41 @@ pub struct Options {
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
 pub enum Error {
-    #[snafu(transparent)]
-    LoadHomeAndIdentity {
-        source: id::LoadHomeAndIdentityError,
+    #[snafu(display("bare `~` requires an identity"))]
+    BareTildeWithoutIdentity,
+
+    #[snafu(display("failed to expand identity name in uri"))]
+    ExpandNameInUri {
+        source: home::identity::ExpandUriError,
     },
 
-    #[snafu(transparent)]
-    SetupH3Client { source: SetupH3ClientError },
+    #[snafu(display("failed to parse identity name in uri"))]
+    ExpandUriName {
+        source: home::identity::InvalidDhttpName,
+    },
+
+    #[snafu(display("failed to parse expanded authority `{authority}`"))]
+    ParseExpandedAuthority {
+        authority: String,
+        source: http::uri::InvalidUri,
+    },
+
+    #[snafu(display("failed to reconstruct uri with expanded identity name"))]
+    ReconstructExpandedUri { source: http::uri::InvalidUriParts },
+
+    #[snafu(display("failed to locate dhttp home"))]
+    LocateDhttpHome { source: home::LocateDhttpHomeError },
+
+    #[snafu(display("failed to load explicit identity `{name}`"))]
+    LoadExplicitIdentity {
+        name: Name<'static>,
+        source: home::identity::ssl::LoadIdentityError,
+    },
+
+    #[snafu(display("failed to load identity certificate and key"))]
+    LoadIdentitySsl {
+        source: home::identity::ssl::LoadIdentitySslError,
+    },
 
     #[snafu(display("failed to bind proxy listener"))]
     BindListener { source: std::io::Error },
@@ -144,7 +171,7 @@ where
 
 async fn handle_request(
     req: hyper::Request<hyper::body::Incoming>,
-    client: &Client<QuicEndpoint>,
+    client: &Endpoint,
     router: &route::Router,
     self_name: Option<&Name<'_>>,
 ) -> Result<hyper::Response<BoxBody>, hyper::Error> {
@@ -155,10 +182,10 @@ async fn handle_request(
             // Expand tilde in URI (e.g., reimu.pilot~ → reimu.pilot.genmeta.net,
             // bare ~ → self identity)
             let mut req = req;
-            match id::expand_name_in_uri(req.uri().clone(), self_name) {
+            match expand_uri(req.uri().clone(), self_name) {
                 Ok(uri) => *req.uri_mut() = uri,
                 Err(e) => {
-                    tracing::error!(error = %Report::from_error(&e), "failed to expand name in URI");
+                    tracing::error!(error = %Report::from_error(&e), "failed to expand name in uri");
                     return Ok(hyper::Response::builder()
                         .status(502)
                         .body(full_body("Bad Gateway"))
@@ -246,14 +273,14 @@ fn init_tracing(options: &Options) -> Result<tracing_appender::non_blocking::Wor
 /// Bind TCP listeners on the configured listen addresses.
 async fn bind_listeners(options: &Options) -> Result<Vec<TcpListener>, Error> {
     let mut listeners = Vec::new();
-    for b in &options.listens {
-        let ip = b.host.as_ip_addr().ok_or_else(|| {
+    for bind in &options.listens {
+        let ip = bind.host.as_ip_addr().ok_or_else(|| {
             <Error as snafu::FromString>::without_source(format!(
-                "listen bind `{}` must be a concrete IP address",
-                b.host
+                "listen bind `{}` must be a concrete ip address",
+                bind.host
             ))
         })?;
-        let addr = SocketAddr::new(ip, b.effective_port());
+        let addr = SocketAddr::new(ip, bind.effective_port());
         let listener = TcpListener::bind(addr).await.context(BindListenerSnafu)?;
         tracing::info!(%addr, "proxy listening");
         listeners.push(listener);
@@ -261,39 +288,113 @@ async fn bind_listeners(options: &Options) -> Result<Vec<TcpListener>, Error> {
     Ok(listeners)
 }
 
-pub async fn run(mut options: Options) -> Result<(), Error> {
-    let _guard = init_tracing(&options)?;
+fn expand_uri_without_identity(uri: http::Uri) -> Result<http::Uri, Error> {
+    let mut parts = uri.into_parts();
 
-    let id = if options.anonymous {
-        None
-    } else {
-        id::load_home_and_identity(
-            options.id.is_some(),
-            options
-                .id
-                .as_ref()
-                .map(|id| (&"command line option" as &dyn std::fmt::Display, id.clone())),
-        )
-        .await?
+    let Some(authority) = &parts.authority else {
+        return http::Uri::from_parts(parts).context(ReconstructExpandedUriSnafu);
     };
 
-    let binds = binds::Binds::new(mem::take(&mut options.binds));
+    let host = authority.host();
+    ensure!(host != "~", BareTildeWithoutIdentitySnafu);
 
-    let h3_setup = h3_client::setup_h3_client()
-        .binds(&binds)
-        .dns_schemes(&options.dns)
-        .maybe_identity(id.as_ref())
-        .call()
-        .await?;
+    let Some(expanded) = DhttpName::try_expand_from(host).context(ExpandUriNameSnafu)? else {
+        return http::Uri::from_parts(parts).context(ReconstructExpandedUriSnafu);
+    };
 
-    let _binds_guard = h3_setup.binds_guard;
-    let client = h3_setup.client;
+    let expanded = expanded.as_full();
+    if expanded != host {
+        let user_info_len = authority
+            .as_str()
+            .split_once('@')
+            .map(|(user_info, ..)| user_info.len() + 1)
+            .unwrap_or_default();
+        let host_len = host.len();
+        let authority = format!(
+            "{user_info}{host}{port}",
+            user_info = &authority.as_str()[..user_info_len],
+            host = expanded,
+            port = &authority.as_str()[user_info_len + host_len..],
+        );
+        parts.authority = Some(authority.parse().context(ParseExpandedAuthoritySnafu {
+            authority: &authority,
+        })?);
+    }
 
-    let self_name = id.as_ref().map(|id| id.name().clone());
+    http::Uri::from_parts(parts).context(ReconstructExpandedUriSnafu)
+}
+
+fn expand_uri(uri: http::Uri, self_name: Option<&Name<'_>>) -> Result<http::Uri, Error> {
+    match self_name {
+        Some(name) => name.expand_uri(uri).context(ExpandNameInUriSnafu),
+        None => expand_uri_without_identity(uri),
+    }
+}
+
+async fn load_identity_home(options: &Options) -> Result<Option<IdentityHome>, Error> {
+    if options.anonymous {
+        return Ok(None);
+    }
+
+    let home = match DhttpHome::load_from_environment() {
+        Ok(home) => home,
+        Err(source) if options.id.is_none() => {
+            tracing::warn!(
+                error = %snafu::Report::from_error(&source),
+                "failed to locate dhttp home, using anonymous endpoint"
+            );
+            return Ok(None);
+        }
+        Err(source) => return Err(LocateDhttpHomeSnafu.into_error(source)),
+    };
+
+    if let Some(name) = &options.id {
+        tracing::debug!(%name, "trying to load command line identity");
+        return home
+            .load_identity(name.clone())
+            .await
+            .context(LoadExplicitIdentitySnafu { name: name.clone() })
+            .map(Some);
+    }
+
+    match home.load_default_identity().await {
+        Ok(identity) => {
+            tracing::debug!(name = %identity.name(), "using default identity");
+            Ok(Some(identity))
+        }
+        Err(source) => {
+            tracing::debug!(
+                error = %snafu::Report::from_error(&source),
+                "failed to load default identity, using anonymous endpoint"
+            );
+            Ok(None)
+        }
+    }
+}
+
+pub async fn run(options: Options) -> Result<(), Error> {
+    let _guard = init_tracing(&options)?;
+
+    let identity_home = load_identity_home(&options).await?;
+    let identity = match &identity_home {
+        Some(home) => Some(Arc::new(
+            home.identity().await.context(LoadIdentitySslSnafu)?,
+        )),
+        None => None,
+    };
+
+    let mut builder = Endpoint::builder()
+        .bind(Arc::new(options.binds.clone()))
+        .maybe_identity(identity);
+    for scheme in options.dns.iter().copied() {
+        builder = builder.dns(scheme);
+    }
+    let client = Arc::new(builder.build().await);
+
+    let self_name = identity_home.as_ref().map(|id| id.name().clone());
 
     let listeners = bind_listeners(&options).await?;
     let router = Arc::new(route::Router::new());
-    let client = Arc::new(client);
 
     let semaphore = Arc::new(Semaphore::new(1024));
     let mut tasks = JoinSet::new();
@@ -346,7 +447,7 @@ fn configure_tcp_keepalive(stream: &tokio::net::TcpStream) {
 /// Accept loop for a single TCP listener. Runs until the listener is dropped.
 async fn accept_loop(
     listener: TcpListener,
-    client: Arc<Client<QuicEndpoint>>,
+    client: Arc<Endpoint>,
     router: Arc<route::Router>,
     self_name: Option<Name<'static>>,
     semaphore: Arc<Semaphore>,
