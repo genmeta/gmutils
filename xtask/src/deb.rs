@@ -10,7 +10,7 @@ use snafu::{Report, ResultExt, Whatever};
 use tracing::{Instrument, info, info_span};
 
 use crate::{
-    DebTarget,
+    BuildProfile, DebTarget,
     container::{
         CARGO_HOME, RUSTUP_HOME, Sibling, ZIG_GLIBC_VERSION, cargo_cache_mounts, check_docker,
         exec_in_container, force_remove_container, host_uid_gid, remove_container_if_exists,
@@ -204,8 +204,16 @@ chmod -R a+rX {CARGO_HOME} {RUSTUP_HOME}
     Ok(())
 }
 
-pub async fn run(targets: &[DebTarget], siblings: &[std::path::PathBuf]) -> Result<(), Whatever> {
-    info!(target_count = targets.len(), "starting deb dist build");
+pub async fn run(
+    targets: &[DebTarget],
+    profile: BuildProfile,
+    siblings: &[std::path::PathBuf],
+) -> Result<(), Whatever> {
+    info!(
+        target_count = targets.len(),
+        profile = profile.target_dir_name(),
+        "starting deb dist build"
+    );
     let docker = Docker::connect_with_local_defaults()
         .whatever_context("failed to connect to Docker/Podman")?;
     check_docker(&docker).await?;
@@ -225,13 +233,18 @@ pub async fn run(targets: &[DebTarget], siblings: &[std::path::PathBuf]) -> Resu
         let target_dir = target_dir.clone();
         let siblings = siblings.clone();
         let triple = target.triple();
-        info!(triple, "queued deb target build");
+        info!(
+            triple,
+            profile = profile.target_dir_name(),
+            "queued deb target build"
+        );
         let span = info_span!("deb", triple);
         tasks.spawn(
             async move {
-                build_one_with_retry(&docker, triple, &version, &target_dir, &siblings).await
+                build_one_with_retry(&docker, triple, &version, &target_dir, profile, &siblings)
+                    .await
             }
-                .instrument(span),
+            .instrument(span),
         );
     }
 
@@ -250,10 +263,11 @@ async fn build_one_with_retry(
     triple: &str,
     version: &str,
     target_dir: &std::path::Path,
+    profile: BuildProfile,
     siblings: &[Sibling],
 ) -> Result<(), Whatever> {
     for attempt in 1..=BUILD_ATTEMPTS {
-        match build_one(docker, triple, version, target_dir, siblings).await {
+        match build_one(docker, triple, version, target_dir, profile, siblings).await {
             Ok(()) => return Ok(()),
             Err(error) if attempt < BUILD_ATTEMPTS => {
                 let report = Report::from_error(&error);
@@ -276,6 +290,7 @@ async fn build_one(
     triple: &str,
     version: &str,
     target_dir: &std::path::Path,
+    profile: BuildProfile,
     siblings: &[Sibling],
 ) -> Result<(), Whatever> {
     let arch = deb_arch(triple)?;
@@ -284,7 +299,8 @@ async fn build_one(
     let image = ensure_image(docker, triple).await?;
 
     let deb_name = format!("{PACKAGE_NAME}_{version}-1_{arch}.deb");
-    let out_dir = target_dir.join(triple).join("release").join("deb");
+    let profile_dir = profile.target_dir_name();
+    let out_dir = target_dir.join(triple).join(profile_dir).join("deb");
     tokio::fs::create_dir_all(&out_dir)
         .await
         .whatever_context(format!("failed to create {}", out_dir.display()))?;
@@ -361,6 +377,7 @@ async fn build_one(
         version,
         arch,
         gnu,
+        profile,
         root_ca_env,
     )
     .await;
@@ -371,6 +388,7 @@ async fn build_one(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn build_one_inner(
     docker: &Docker,
     container_id: &str,
@@ -378,6 +396,7 @@ async fn build_one_inner(
     version: &str,
     arch: &str,
     gnu: &str,
+    profile: BuildProfile,
     root_ca_env: &str,
 ) -> Result<(), Whatever> {
     start_container(docker, container_id).await?;
@@ -395,10 +414,12 @@ async fn build_one_inner(
 
     // dpkg-buildpackage -B builds only Architecture: any packages.
     // -a{arch} sets the host architecture for cross-compilation.
-    // Prepare debian source tree under target/{triple}/release/deb/src/ so that
+    // Prepare debian source tree under target/{triple}/{profile}/deb/src/ so that
     // all temp files and products stay inside target/ (bind-mounted, gitignored).
     // Runs as host uid:gid so files in target/ are owned by the host user.
     let user = host_uid_gid()?;
+    let profile_dir = profile.target_dir_name();
+    let cargo_profile_args = profile.cargo_profile_args().join(" ");
     let build_script = format!(
         r#"set -e
 export HOME=/tmp
@@ -407,9 +428,11 @@ export RUSTUP_HOME={RUSTUP_HOME}
 export CARGO_HOME={CARGO_HOME}
 export TRIPLE={triple}
 export ZIG_TARGET={triple}.{ZIG_GLIBC_VERSION}
+export BUILD_PROFILE={profile_dir}
+export CARGO_PROFILE_ARGS="{cargo_profile_args}"
 export DEB_HOST_MULTIARCH={gnu}
 {root_ca_env}
-SRC=/workspace/target/{triple}/release/deb/src
+SRC=/workspace/target/{triple}/{profile_dir}/deb/src
 mkdir -p "$SRC/debian"
 cp -r /workspace/{DEBIAN_PKG_DIR}/. "$SRC/debian/"
 printf '{PACKAGE_NAME} ({version}-1) unstable; urgency=low\n\n  * release {version}\n\n -- Genmeta Tech Limited <support@genmeta.net>  %s\n' \

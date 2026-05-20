@@ -9,6 +9,8 @@
 # before dpkg-buildpackage runs. All paths use /workspace (the bind mount root).
 
 export DH_VERBOSE = 1
+BUILD_PROFILE ?= release
+CARGO_PROFILE_ARGS ?= --release
 
 %:
 	dh $@
@@ -18,13 +20,13 @@ ifdef TRIPLE
 	cd /workspace && \
 	export RUSTFLAGS="$${RUSTFLAGS:-} -L /usr/lib/$(DEB_HOST_MULTIARCH)" && \
 	$(if $(ROOT_CA),export ROOT_CA=$(ROOT_CA) &&) \
-	cargo zigbuild --release --target $(ZIG_TARGET) --bin genmeta
+	cargo zigbuild $(CARGO_PROFILE_ARGS) --target $(ZIG_TARGET) --bin genmeta
 endif
 
 override_dh_auto_install:
 ifdef TRIPLE
 	mkdir -p debian/gmutils/usr/bin
-	cp /workspace/target/$(TRIPLE)/release/genmeta debian/gmutils/usr/bin/
+	cp /workspace/target/$(TRIPLE)/$(BUILD_PROFILE)/genmeta debian/gmutils/usr/bin/
 	cp /workspace/genmeta-ssh.sh debian/gmutils/usr/bin/
 	chmod 755 debian/gmutils/usr/bin/*
 endif
