@@ -1157,7 +1157,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 [[package]]
 name = "ddns"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#867950f61298f438939e1594533c6c158b6b917a"
+source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#effe065235743f0ad6fd051ea6a9e200da0fd467"
 dependencies = [
  "bytes",
  "dashmap",
@@ -1182,7 +1182,7 @@ dependencies = [
 [[package]]
 name = "ddns-core"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#867950f61298f438939e1594533c6c158b6b917a"
+source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#effe065235743f0ad6fd051ea6a9e200da0fd467"
 dependencies = [
  "base64 0.22.1",
  "bitfield-struct",
@@ -1486,7 +1486,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 [[package]]
 name = "dquic"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#feedcaf97e6b2d083f2ae3650a60ab4e3eb367b2"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1c90e8c2af0c4c2c3794d983573855c5c3478bd7"
 dependencies = [
  "arc-swap",
  "bytes",
@@ -2194,7 +2194,7 @@ dependencies = [
 [[package]]
 name = "gmdns"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#867950f61298f438939e1594533c6c158b6b917a"
+source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#effe065235743f0ad6fd051ea6a9e200da0fd467"
 dependencies = [
  "dashmap",
  "ddns-core",
@@ -2231,7 +2231,7 @@ dependencies = [
 [[package]]
 name = "h3x"
 version = "0.2.0"
-source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#9927738d966c9a6959d79615cb4c9dde058706b5"
+source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#b4de02c943d69d45ceb4b89af0094e7442f646f9"
 dependencies = [
  "arc-swap",
  "async-channel 2.5.0",
@@ -3724,7 +3724,7 @@ dependencies = [
 [[package]]
 name = "qbase"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#feedcaf97e6b2d083f2ae3650a60ab4e3eb367b2"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1c90e8c2af0c4c2c3794d983573855c5c3478bd7"
 dependencies = [
  "bitflags",
  "bytes",
@@ -3748,7 +3748,7 @@ dependencies = [
 [[package]]
 name = "qcongestion"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#feedcaf97e6b2d083f2ae3650a60ab4e3eb367b2"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1c90e8c2af0c4c2c3794d983573855c5c3478bd7"
 dependencies = [
  "qbase",
  "qevent",
@@ -3761,7 +3761,7 @@ dependencies = [
 [[package]]
 name = "qconnection"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#feedcaf97e6b2d083f2ae3650a60ab4e3eb367b2"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1c90e8c2af0c4c2c3794d983573855c5c3478bd7"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3789,7 +3789,7 @@ dependencies = [
 [[package]]
 name = "qdatagram"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#feedcaf97e6b2d083f2ae3650a60ab4e3eb367b2"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1c90e8c2af0c4c2c3794d983573855c5c3478bd7"
 dependencies = [
  "bytes",
  "futures",
@@ -3801,7 +3801,7 @@ dependencies = [
 [[package]]
 name = "qevent"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#feedcaf97e6b2d083f2ae3650a60ab4e3eb367b2"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1c90e8c2af0c4c2c3794d983573855c5c3478bd7"
 dependencies = [
  "bytes",
  "derive_builder",
@@ -3819,7 +3819,7 @@ dependencies = [
 [[package]]
 name = "qinterface"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#feedcaf97e6b2d083f2ae3650a60ab4e3eb367b2"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1c90e8c2af0c4c2c3794d983573855c5c3478bd7"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3844,7 +3844,7 @@ dependencies = [
 [[package]]
 name = "qmacro"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#feedcaf97e6b2d083f2ae3650a60ab4e3eb367b2"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1c90e8c2af0c4c2c3794d983573855c5c3478bd7"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -3855,7 +3855,7 @@ dependencies = [
 [[package]]
 name = "qrecovery"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#feedcaf97e6b2d083f2ae3650a60ab4e3eb367b2"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1c90e8c2af0c4c2c3794d983573855c5c3478bd7"
 dependencies = [
  "bytes",
  "derive_more",
@@ -3873,7 +3873,7 @@ dependencies = [
 [[package]]
 name = "qresolve"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#feedcaf97e6b2d083f2ae3650a60ab4e3eb367b2"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1c90e8c2af0c4c2c3794d983573855c5c3478bd7"
 dependencies = [
  "futures",
  "qbase",
@@ -3884,7 +3884,7 @@ dependencies = [
 [[package]]
 name = "qtraversal"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#feedcaf97e6b2d083f2ae3650a60ab4e3eb367b2"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1c90e8c2af0c4c2c3794d983573855c5c3478bd7"
 dependencies = [
  "async-trait",
  "bitflags",
@@ -3913,7 +3913,7 @@ dependencies = [
 [[package]]
 name = "qudp"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#feedcaf97e6b2d083f2ae3650a60ab4e3eb367b2"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1c90e8c2af0c4c2c3794d983573855c5c3478bd7"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -6293,7 +6293,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
