@@ -3,7 +3,12 @@ use std::{io::IsTerminal, net::SocketAddr, sync::Arc};
 use clap::Parser;
 use dhttp::{
     ddns::DnsScheme,
-    dquic::{binds::BindPattern, net::IO, qtraversal, resolver::Resolve},
+    dquic::{
+        binds::BindPattern,
+        net::{BindInterface, BindUri, Family, IO},
+        qtraversal,
+        resolver::Resolve,
+    },
     endpoint::{Endpoint, STUN_SERVER},
     home::{self, DhttpHome, identity::IdentityHome},
     name::DhttpName as Name,
@@ -68,6 +73,15 @@ pub enum Error {
 
     #[snafu(display("no STUN server address found via DNS"))]
     NoStunServer,
+
+    #[snafu(display("failed to resolve STUN interface `{bind_uri}`"))]
+    ResolveStunInterface {
+        bind_uri: BindUri,
+        source: std::io::Error,
+    },
+
+    #[snafu(display("no usable STUN interface found among {candidates} candidates"))]
+    NoUsableStunInterface { candidates: usize },
 }
 
 fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
@@ -161,23 +175,13 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
         .dns(DnsScheme::System);
     let endpoint = builder.build().await;
 
-    // Use the first bound interface for STUN NAT detection.
-    let stun_iface = endpoint
-        .network()
-        .interfaces()
-        .into_iter()
-        .next()
-        .expect("BUG: at least one interface must be bound");
-    let is_ipv4 = stun_iface
-        .bind_uri()
-        .as_inet_bind_uri()
-        .map(|addr| addr.is_ipv4())
-        .unwrap_or(true);
+    let resolver = endpoint.resolver();
+    let (stun_iface, stun_server) =
+        select_stun_interface(endpoint.network().interfaces(), resolver.as_ref()).await?;
+    let bind_uri = stun_iface.bind_uri();
     let iface: Arc<dyn IO> = Arc::new(stun_iface.borrow());
 
-    let resolver = endpoint.resolver();
-    let stun_server = resolve_stun_server(resolver.as_ref(), is_ipv4).await?;
-    tracing::info!(%stun_server, "resolved stun server from dns");
+    tracing::info!(%bind_uri, %stun_server, "resolved stun server from dns");
 
     let stun_router = StunRouter::new();
     let stun_client = StunClient::new(iface.clone(), stun_router.clone(), stun_server, None);
@@ -202,6 +206,54 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
     println!("NAT type: {nat_type:?}");
     println!("External IP: {}", external_addr.ip());
     Ok(())
+}
+
+async fn select_stun_interface(
+    interfaces: Vec<BindInterface>,
+    resolvers: &(impl Resolve + ?Sized),
+) -> Result<(BindInterface, SocketAddr), Error> {
+    let candidates = interfaces.len();
+
+    for family in [Family::V4, Family::V6] {
+        let mut found_usable_family_interface = false;
+
+        for iface in interfaces
+            .iter()
+            .filter(|iface| iface.bind_uri().family() == family)
+        {
+            let bind_uri = iface.bind_uri();
+            if let Err(error) =
+                bind_uri
+                    .resolve_binding()
+                    .context(error::ResolveStunInterfaceSnafu {
+                        bind_uri: bind_uri.clone(),
+                    })
+            {
+                tracing::debug!(
+                    %bind_uri,
+                    error = %snafu::Report::from_error(&error),
+                    "skipping unusable stun interface"
+                );
+                continue;
+            }
+
+            found_usable_family_interface = true;
+            match resolve_stun_server(resolvers, family == Family::V4).await {
+                Ok(stun_server) => return Ok((iface.clone(), stun_server)),
+                Err(Error::NoStunServer) => {
+                    tracing::debug!(%family, "no stun server address for interface family");
+                    break;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        if found_usable_family_interface {
+            tracing::debug!(%family, "no usable stun server for interface family");
+        }
+    }
+
+    Err(Error::NoUsableStunInterface { candidates })
 }
 
 async fn resolve_stun_server(
