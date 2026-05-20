@@ -2225,7 +2225,7 @@ dependencies = [
 [[package]]
 name = "h3x"
 version = "0.2.0"
-source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#49fac9865ff0100413eefca5e1f065f642f7cab7"
+source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#a0e2b38b1987269c4f13e167d2744a354545a6fb"
 dependencies = [
  "arc-swap",
  "async-channel 2.5.0",
