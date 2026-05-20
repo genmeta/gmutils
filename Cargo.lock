@@ -1157,7 +1157,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 [[package]]
 name = "ddns"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#dbfc9e57e72d23224a1570e067d97d66e1d23c51"
+source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#867950f61298f438939e1594533c6c158b6b917a"
 dependencies = [
  "bytes",
  "dashmap",
@@ -1168,6 +1168,8 @@ dependencies = [
  "gmdns",
  "h3x",
  "http",
+ "http-body",
+ "http-body-util",
  "nom 8.0.0",
  "reqwest 0.12.28",
  "rustls",
@@ -1180,7 +1182,7 @@ dependencies = [
 [[package]]
 name = "ddns-core"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#dbfc9e57e72d23224a1570e067d97d66e1d23c51"
+source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#867950f61298f438939e1594533c6c158b6b917a"
 dependencies = [
  "base64 0.22.1",
  "bitfield-struct",
@@ -1338,24 +1340,28 @@ dependencies = [
 [[package]]
 name = "dhttp"
 version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/dhttp.git?branch=main#3a8cf7c791555b1b55bcacdbaf2f178174c5b6cf"
+source = "git+ssh://git@github.com/genmeta/dhttp.git?branch=main#a59efd7d698e0a61e7aecaa03cfb4e2ec643c5c5"
 dependencies = [
  "bon",
+ "bytes",
  "ddns",
  "dhttp-home",
  "dhttp-identity",
  "futures",
  "h3x",
  "http",
+ "matchit",
  "rustls",
  "snafu 0.9.0",
+ "tokio",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
 name = "dhttp-home"
 version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/dhttp.git?branch=main#3a8cf7c791555b1b55bcacdbaf2f178174c5b6cf"
+source = "git+ssh://git@github.com/genmeta/dhttp.git?branch=main#a59efd7d698e0a61e7aecaa03cfb4e2ec643c5c5"
 dependencies = [
  "dhttp-identity",
  "dirs",
@@ -1371,7 +1377,7 @@ dependencies = [
 [[package]]
 name = "dhttp-identity"
 version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/dhttp.git?branch=main#3a8cf7c791555b1b55bcacdbaf2f178174c5b6cf"
+source = "git+ssh://git@github.com/genmeta/dhttp.git?branch=main#a59efd7d698e0a61e7aecaa03cfb4e2ec643c5c5"
 dependencies = [
  "bytes",
  "futures",
@@ -2188,7 +2194,7 @@ dependencies = [
 [[package]]
 name = "gmdns"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#dbfc9e57e72d23224a1570e067d97d66e1d23c51"
+source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#867950f61298f438939e1594533c6c158b6b917a"
 dependencies = [
  "dashmap",
  "ddns-core",
@@ -2225,7 +2231,7 @@ dependencies = [
 [[package]]
 name = "h3x"
 version = "0.2.0"
-source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#a0e2b38b1987269c4f13e167d2744a354545a6fb"
+source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#9927738d966c9a6959d79615cb4c9dde058706b5"
 dependencies = [
  "arc-swap",
  "async-channel 2.5.0",
@@ -2491,7 +2497,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -3942,7 +3948,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3979,7 +3985,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -5087,7 +5093,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -5099,7 +5105,7 @@ version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54254b8531cafa275c5e096f62d48c81435d1015405a91198ddb11e967301d40"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -6287,7 +6293,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
