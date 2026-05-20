@@ -32,6 +32,7 @@ use tracing_subscriber::prelude::*;
 
 /// Maximum number of redirects to follow (same default as curl since 8.3.0)
 const MAX_REDIRS_DEFAULT: u32 = 30;
+const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 5;
 
 /// Supported content encodings for --compressed
 const ACCEPT_ENCODING: &str = "deflate, gzip, zstd";
@@ -87,8 +88,10 @@ pub struct Options {
     raw: bool,
 
     /// Maximum time allowed for connection in seconds
-    #[arg(long)]
-    connect_timeout: Option<u64>,
+    ///
+    /// Use 0 to disable the timeout.
+    #[arg(long, default_value_t = DEFAULT_CONNECT_TIMEOUT_SECS)]
+    connect_timeout: u64,
 
     /// Client identity for DHTTP/3 connections
     #[arg(short, long, value_name = "client_identity")]
@@ -547,12 +550,17 @@ async fn setup_client(
     }
     let endpoint = Arc::new(builder.build().await);
 
-    let connect_timeout = options
-        .connect_timeout
-        .map(Duration::from_secs)
-        .unwrap_or(Duration::MAX);
+    let connect_timeout = connect_timeout_from_secs(options.connect_timeout);
 
     Ok((endpoint, identity_home, connect_timeout))
+}
+
+fn connect_timeout_from_secs(seconds: u64) -> Duration {
+    if seconds == 0 {
+        Duration::MAX
+    } else {
+        Duration::from_secs(seconds)
+    }
 }
 
 /// Build the HTTP request builder with method, headers, and user-agent.
@@ -926,4 +934,21 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn connect_timeout_zero_disables_timeout() {
+        assert_eq!(connect_timeout_from_secs(0), Duration::MAX);
+    }
+
+    #[test]
+    fn connect_timeout_uses_seconds() {
+        assert_eq!(connect_timeout_from_secs(5), Duration::from_secs(5));
+    }
 }
