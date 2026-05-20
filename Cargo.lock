@@ -1157,7 +1157,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 [[package]]
 name = "ddns"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#dcc3ccf6cce26da87e19469c26f96f6b87e7942b"
+source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#6bf1f66cd75c858a7eccf52310525d9241d70c13"
 dependencies = [
  "bytes",
  "dashmap",
@@ -1180,7 +1180,7 @@ dependencies = [
 [[package]]
 name = "ddns-core"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#dcc3ccf6cce26da87e19469c26f96f6b87e7942b"
+source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#6bf1f66cd75c858a7eccf52310525d9241d70c13"
 dependencies = [
  "base64 0.22.1",
  "bitfield-struct",
@@ -2188,7 +2188,7 @@ dependencies = [
 [[package]]
 name = "gmdns"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#dcc3ccf6cce26da87e19469c26f96f6b87e7942b"
+source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#6bf1f66cd75c858a7eccf52310525d9241d70c13"
 dependencies = [
  "dashmap",
  "ddns-core",
