@@ -6,7 +6,7 @@ use bollard::{
     },
 };
 use futures_util::StreamExt;
-use snafu::{ResultExt, Whatever};
+use snafu::{Report, ResultExt, Whatever};
 use tracing::{Instrument, info, info_span};
 
 use crate::{
@@ -29,6 +29,7 @@ const BASE_IMAGE: &str = "debian:bookworm";
 
 /// Image tag prefix for genmeta deb builds.
 const IMAGE_TAG_PREFIX: &str = "gmutils-deb-v2";
+const BUILD_ATTEMPTS: usize = 2;
 
 /// Relative path from workspace root to the debian packaging source files.
 const DEBIAN_PKG_DIR: &str = "xtask/deb";
@@ -227,7 +228,9 @@ pub async fn run(targets: &[DebTarget], siblings: &[std::path::PathBuf]) -> Resu
         info!(triple, "queued deb target build");
         let span = info_span!("deb", triple);
         tasks.spawn(
-            async move { build_one(&docker, triple, &version, &target_dir, &siblings).await }
+            async move {
+                build_one_with_retry(&docker, triple, &version, &target_dir, &siblings).await
+            }
                 .instrument(span),
         );
     }
@@ -240,6 +243,32 @@ pub async fn run(targets: &[DebTarget], siblings: &[std::path::PathBuf]) -> Resu
     info!("finished deb dist build");
 
     Ok(())
+}
+
+async fn build_one_with_retry(
+    docker: &Docker,
+    triple: &str,
+    version: &str,
+    target_dir: &std::path::Path,
+    siblings: &[Sibling],
+) -> Result<(), Whatever> {
+    for attempt in 1..=BUILD_ATTEMPTS {
+        match build_one(docker, triple, version, target_dir, siblings).await {
+            Ok(()) => return Ok(()),
+            Err(error) if attempt < BUILD_ATTEMPTS => {
+                let report = Report::from_error(&error);
+                tracing::warn!(
+                    %triple,
+                    attempt,
+                    error = %report,
+                    "deb target build failed, retrying"
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("build attempts loop must return")
 }
 
 async fn build_one(
