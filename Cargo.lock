@@ -1157,7 +1157,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 [[package]]
 name = "ddns"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#6bf1f66cd75c858a7eccf52310525d9241d70c13"
+source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#ddbd56d36873816823c960abcd15c63e39f01c54"
 dependencies = [
  "bytes",
  "dashmap",
@@ -1180,7 +1180,7 @@ dependencies = [
 [[package]]
 name = "ddns-core"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#6bf1f66cd75c858a7eccf52310525d9241d70c13"
+source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#ddbd56d36873816823c960abcd15c63e39f01c54"
 dependencies = [
  "base64 0.22.1",
  "bitfield-struct",
@@ -2188,7 +2188,7 @@ dependencies = [
 [[package]]
 name = "gmdns"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#6bf1f66cd75c858a7eccf52310525d9241d70c13"
+source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#ddbd56d36873816823c960abcd15c63e39f01c54"
 dependencies = [
  "dashmap",
  "ddns-core",
@@ -2225,7 +2225,7 @@ dependencies = [
 [[package]]
 name = "h3x"
 version = "0.2.0"
-source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#406ce90f0675c50b9af2ee1490ed1cd7df1b4686"
+source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#796ff71eccc38623191d6c05149562b90ce1be97"
 dependencies = [
  "arc-swap",
  "async-channel 2.5.0",
