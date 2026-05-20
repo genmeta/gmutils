@@ -56,6 +56,34 @@ fn gnu_arch(triple: &str) -> Result<&'static str, Whatever> {
 
 // (shared docker/container helpers live in crate::container)
 
+/// Ensure the Debian base image is available locally.
+///
+/// Docker's pull API contacts the registry even when the tag already exists
+/// locally. Packaging should only depend on the registry when the local image is
+/// missing; otherwise a transient registry timeout can fail an otherwise
+/// reproducible local build.
+async fn ensure_base_image(docker: &Docker) -> Result<(), Whatever> {
+    if docker.inspect_image(BASE_IMAGE).await.is_ok() {
+        info!(image = BASE_IMAGE, "base image already exists");
+        return Ok(());
+    }
+
+    let mut pull_stream = docker.create_image(
+        Some(
+            CreateImageOptionsBuilder::default()
+                .from_image(BASE_IMAGE)
+                .build(),
+        ),
+        None,
+        None,
+    );
+    while let Some(result) = pull_stream.next().await {
+        result.whatever_context(format!("failed to pull base image {BASE_IMAGE}"))?;
+    }
+
+    Ok(())
+}
+
 /// Ensure the build image exists for the given target triple.
 /// If not, pull the base image, create a container, install toolchain, and commit.
 async fn ensure_image(docker: &Docker, triple: &str) -> Result<String, Whatever> {
@@ -70,19 +98,7 @@ async fn ensure_image(docker: &Docker, triple: &str) -> Result<String, Whatever>
 
     info!(tag, "building image");
 
-    // Ensure base image exists (pull if needed)
-    let mut pull_stream = docker.create_image(
-        Some(
-            CreateImageOptionsBuilder::default()
-                .from_image(BASE_IMAGE)
-                .build(),
-        ),
-        None,
-        None,
-    );
-    while let Some(result) = pull_stream.next().await {
-        result.whatever_context(format!("failed to pull base image {BASE_IMAGE}"))?;
-    }
+    ensure_base_image(docker).await?;
 
     // Create temp container from base
     let container_name = format!("{CARGO_NAME}-xtask-setup-{triple}");
