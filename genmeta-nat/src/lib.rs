@@ -4,7 +4,7 @@ use clap::Parser;
 use dhttp::{
     ddns::DnsScheme,
     dquic::{binds::BindPattern, net::IO, qtraversal, resolver::Resolve},
-    endpoint::Endpoint,
+    endpoint::{Endpoint, STUN_SERVER},
     home::{self, DhttpHome, identity::IdentityHome},
     name::DhttpName as Name,
 };
@@ -14,9 +14,6 @@ use qtraversal::{
 };
 use snafu::{IntoError, ResultExt};
 use tracing_subscriber::prelude::*;
-
-/// Well-known STUN server domain published by pishoo via DNS.
-const STUN_DOMAIN: &str = "stun.genmeta.net";
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "nat-detect", version, about)]
@@ -213,7 +210,7 @@ async fn resolve_stun_server(
 ) -> Result<SocketAddr, Error> {
     use futures::StreamExt;
     let stream = resolvers
-        .lookup(STUN_DOMAIN)
+        .lookup(STUN_SERVER)
         .await
         .context(error::ResolveStunServerSnafu)?;
     stream
