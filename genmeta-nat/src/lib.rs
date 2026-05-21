@@ -5,18 +5,14 @@ use dhttp::{
     ddns::DnsScheme,
     dquic::{
         binds::BindPattern,
-        net::{BindInterface, BindUri, Family, IO},
-        qtraversal,
-        resolver::Resolve,
+        net::{BindInterface, BindUri},
+        qtraversal::{self, nat::client::StunClientsComponent},
     },
-    endpoint::{Endpoint, STUN_SERVER},
+    endpoint::Endpoint,
     home::{self, DhttpHome, identity::IdentityHome},
     name::DhttpName as Name,
 };
-use qtraversal::{
-    nat::{client::StunClient, router::StunRouter},
-    route::ReceiveAndDeliverPacket,
-};
+use futures::StreamExt;
 use snafu::{IntoError, ResultExt};
 use tracing_subscriber::prelude::*;
 
@@ -58,30 +54,37 @@ pub enum Error {
         source: home::identity::ssl::LoadIdentitySslError,
     },
 
-    #[snafu(display("failed to detect external address"))]
+    #[snafu(display(
+        "failed to detect external address on `{bind_uri}` via STUN server {stun_server}"
+    ))]
     DetectExternalAddr {
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
-
-    #[snafu(display("failed to detect NAT type"))]
-    DetectNatType {
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
-
-    #[snafu(display("failed to resolve stun server via dns"))]
-    ResolveStunServer { source: std::io::Error },
-
-    #[snafu(display("no STUN server address found via DNS"))]
-    NoStunServer,
-
-    #[snafu(display("failed to resolve STUN interface `{bind_uri}`"))]
-    ResolveStunInterface {
-        bind_uri: BindUri,
+        bind_uri: Box<BindUri>,
+        stun_server: SocketAddr,
         source: std::io::Error,
     },
 
-    #[snafu(display("no usable STUN interface found among {candidates} candidates"))]
-    NoUsableStunInterface { candidates: usize },
+    #[snafu(display("failed to detect NAT type on `{bind_uri}` via STUN server {stun_server}"))]
+    DetectNatType {
+        bind_uri: Box<BindUri>,
+        stun_server: SocketAddr,
+        source: std::io::Error,
+    },
+
+    #[snafu(display("no STUN client component found on interface `{bind_uri}`"))]
+    NoStunClients { bind_uri: Box<BindUri> },
+
+    #[snafu(display("no STUN agent discovered on interface `{bind_uri}`"))]
+    NoStunAgent { bind_uri: Box<BindUri> },
+
+    #[snafu(display("no NAT observation found among {candidates} candidate interfaces"))]
+    NoNatObservation { candidates: usize },
+}
+
+struct NatObservation {
+    bind_uri: BindUri,
+    stun_server: SocketAddr,
+    external_addr: SocketAddr,
+    nat_type: qtraversal::nat::client::NatType,
 }
 
 fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
@@ -168,108 +171,100 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
     };
 
     let bind_patterns = Arc::new(options.binds.clone());
-    let builder = Endpoint::builder()
-        .bind(bind_patterns.clone())
+    let endpoint = Endpoint::builder()
+        .bind(bind_patterns)
         .maybe_identity(identity)
         .dns(DnsScheme::H3)
-        .dns(DnsScheme::System);
-    let endpoint = builder.build().await;
+        .dns(DnsScheme::System)
+        .build()
+        .await;
 
-    let resolver = endpoint.resolver();
-    let (stun_iface, stun_server) =
-        select_stun_interface(endpoint.network().interfaces(), resolver.as_ref()).await?;
-    let bind_uri = stun_iface.bind_uri();
-    let iface: Arc<dyn IO> = Arc::new(stun_iface.borrow());
+    let interfaces = endpoint.network().interfaces();
+    let candidates = interfaces.len();
+    let observations = observe_interfaces(interfaces).await?;
 
-    tracing::info!(%bind_uri, %stun_server, "resolved stun server from dns");
+    if observations.is_empty() {
+        return error::NoNatObservationSnafu { candidates }.fail();
+    }
 
-    let stun_router = StunRouter::new();
-    let stun_client = StunClient::new(iface.clone(), stun_router.clone(), stun_server, None);
+    for observation in observations {
+        println!("Interface: {}", observation.bind_uri);
+        println!("STUN server: {}", observation.stun_server);
+        println!("NAT type: {:?}", observation.nat_type);
+        println!("External IP: {}", observation.external_addr.ip());
+    }
 
-    let _recv_task = ReceiveAndDeliverPacket::task()
-        .stun_router(stun_router)
-        .iface_ref(iface.clone())
-        .spawn();
-
-    let external_addr = stun_client
-        .outer_addr()
-        .await
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-        .context(error::DetectExternalAddrSnafu)?;
-
-    let nat_type = stun_client
-        .nat_type()
-        .await
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-        .context(error::DetectNatTypeSnafu)?;
-
-    println!("NAT type: {nat_type:?}");
-    println!("External IP: {}", external_addr.ip());
     Ok(())
 }
 
-async fn select_stun_interface(
-    interfaces: Vec<BindInterface>,
-    resolvers: &(impl Resolve + ?Sized),
-) -> Result<(BindInterface, SocketAddr), Error> {
-    let candidates = interfaces.len();
-
-    for family in [Family::V4, Family::V6] {
-        let mut found_usable_family_interface = false;
-
-        for iface in interfaces
-            .iter()
-            .filter(|iface| iface.bind_uri().family() == family)
-        {
-            let bind_uri = iface.bind_uri();
-            if let Err(error) =
-                bind_uri
-                    .resolve_binding()
-                    .context(error::ResolveStunInterfaceSnafu {
-                        bind_uri: bind_uri.clone(),
-                    })
-            {
-                tracing::debug!(
-                    %bind_uri,
-                    error = %snafu::Report::from_error(&error),
-                    "skipping unusable stun interface"
-                );
-                continue;
+async fn observe_interfaces(interfaces: Vec<BindInterface>) -> Result<Vec<NatObservation>, Error> {
+    let mut observations = Vec::new();
+    for iface in interfaces {
+        let bind_uri = iface.bind_uri();
+        match observe_interface(iface).await {
+            Ok(mut iface_observations) => observations.append(&mut iface_observations),
+            Err(Error::NoStunClients { .. } | Error::NoStunAgent { .. }) => {
+                tracing::debug!(%bind_uri, "skipping interface without STUN observation");
             }
-
-            found_usable_family_interface = true;
-            match resolve_stun_server(resolvers, family == Family::V4).await {
-                Ok(stun_server) => return Ok((iface.clone(), stun_server)),
-                Err(Error::NoStunServer) => {
-                    tracing::debug!(%family, "no stun server address for interface family");
-                    break;
-                }
-                Err(error) => return Err(error),
-            }
-        }
-
-        if found_usable_family_interface {
-            tracing::debug!(%family, "no usable stun server for interface family");
+            Err(error) => return Err(error),
         }
     }
-
-    Err(Error::NoUsableStunInterface { candidates })
+    Ok(observations)
 }
 
-async fn resolve_stun_server(
-    resolvers: &(impl Resolve + ?Sized),
-    is_ipv4: bool,
-) -> Result<SocketAddr, Error> {
-    use futures::StreamExt;
-    let stream = resolvers
-        .lookup(STUN_SERVER)
-        .await
-        .context(error::ResolveStunServerSnafu)?;
-    stream
-        .filter_map(|(_source, ep)| async move { Some(ep.addr()) })
-        .filter(|addr| futures::future::ready(addr.is_ipv4() == is_ipv4))
-        .boxed()
-        .next()
-        .await
-        .ok_or(Error::NoStunServer)
+async fn observe_interface(iface: BindInterface) -> Result<Vec<NatObservation>, Error> {
+    let bind_uri = iface.bind_uri();
+    let clients = iface.with_components(|components, _iface| {
+        components.with(|clients: &StunClientsComponent| clients.clone())
+    });
+    let Some(clients) = clients else {
+        return error::NoStunClientsSnafu {
+            bind_uri: Box::new(bind_uri),
+        }
+        .fail();
+    };
+
+    let mut tasks = clients.with_clients(|clients| {
+        clients
+            .values()
+            .cloned()
+            .map(|client| {
+                let bind_uri = bind_uri.clone();
+                async move {
+                    let stun_server = client.agent_addr();
+                    let external_addr =
+                        client
+                            .outer_addr()
+                            .await
+                            .context(error::DetectExternalAddrSnafu {
+                                bind_uri: Box::new(bind_uri.clone()),
+                                stun_server,
+                            })?;
+                    let nat_type = client.nat_type().await.context(error::DetectNatTypeSnafu {
+                        bind_uri: Box::new(bind_uri.clone()),
+                        stun_server,
+                    })?;
+                    Ok(NatObservation {
+                        bind_uri,
+                        stun_server,
+                        external_addr,
+                        nat_type,
+                    })
+                }
+            })
+            .collect::<futures::stream::FuturesUnordered<_>>()
+    });
+
+    if tasks.is_empty() {
+        return error::NoStunAgentSnafu {
+            bind_uri: Box::new(bind_uri),
+        }
+        .fail();
+    }
+
+    let mut observations = Vec::new();
+    while let Some(observation) = tasks.next().await {
+        observations.push(observation?);
+    }
+    Ok(observations)
 }
