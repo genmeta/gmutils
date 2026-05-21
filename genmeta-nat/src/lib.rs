@@ -23,7 +23,7 @@ use dhttp::{
     home::{self, DhttpHome, identity::IdentityHome},
     name::DhttpName as Name,
 };
-use futures::StreamExt;
+use futures::{StreamExt, future::BoxFuture};
 use snafu::{IntoError, ResultExt};
 use tracing_subscriber::prelude::*;
 
@@ -290,27 +290,44 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
     let interfaces = endpoint.network().interfaces();
     let candidates = interfaces.len();
     let show_failed_details = options.verbose || has_explicit_bind_patterns(&options.binds);
+    let mut reports = observe_interfaces(interfaces);
+
+    consume_nat_reports(
+        &mut reports,
+        candidates,
+        show_failed_details,
+        print_nat_report,
+        print_nat_summary,
+    )
+    .await;
+
+    Ok(())
+}
+
+async fn consume_nat_reports(
+    reports: &mut NatReportStream,
+    candidates: usize,
+    show_failed_details: bool,
+    mut on_report: impl FnMut(&NatReport, bool),
+    mut on_summary: impl FnMut(&NatSummary, bool),
+) {
     let mut summary = NatSummary::new(candidates);
     let mut wrote_report = false;
 
-    for iface in interfaces {
-        for report in observe_interface(iface).await {
-            summary.record(&report);
-            if show_failed_details || report.is_ok() {
-                print_nat_report(&report, wrote_report);
-                wrote_report = true;
-            }
+    while let Some(report) = reports.next().await {
+        summary.record(&report);
+        if show_failed_details || report.is_ok() {
+            on_report(&report, wrote_report);
+            wrote_report = true;
         }
     }
 
     if show_failed_details && !wrote_report {
         let report = Err(NatReportError::NoNatObservation { candidates });
-        print_nat_report(&report, false);
+        on_report(&report, false);
     } else if !show_failed_details {
-        print_nat_summary(&summary, wrote_report);
+        on_summary(&summary, wrote_report);
     }
-
-    Ok(())
 }
 
 fn has_explicit_bind_patterns(binds: &[BindPattern]) -> bool {
@@ -318,23 +335,32 @@ fn has_explicit_bind_patterns(binds: &[BindPattern]) -> bool {
     binds != [default_bind]
 }
 
-async fn observe_interface(iface: BindInterface) -> Vec<NatReport> {
+type NatReportFuture = BoxFuture<'static, NatReport>;
+type NatReportStream = futures::stream::FuturesUnordered<NatReportFuture>;
+
+fn observe_interfaces(interfaces: impl IntoIterator<Item = BindInterface>) -> NatReportStream {
+    interfaces.into_iter().flat_map(observe_interface).collect()
+}
+
+fn observe_interface(iface: BindInterface) -> NatReportStream {
     let bind_uri = iface.bind_uri();
     let clients = iface.with_components(|components, _iface| {
         components.with(|clients: &StunClientsComponent| clients.clone())
     });
     let Some(clients) = clients else {
-        return vec![Err(NatReportError::NoStunClients { bind_uri })];
+        return futures::stream::FuturesUnordered::from_iter([ready_report(
+            NatReportError::NoStunClients { bind_uri },
+        )]);
     };
 
-    let mut tasks =
+    let tasks: NatReportStream =
         clients.with_clients(|clients| {
             clients
                 .values()
                 .cloned()
                 .map(|client| {
                     let bind_uri = bind_uri.clone();
-                    async move {
+                    Box::pin(async move {
                         let stun_server = client.agent_addr();
                         let external_addr = client.outer_addr().await.context(
                             nat_report_error::DetectExternalAddrSnafu {
@@ -354,20 +380,22 @@ async fn observe_interface(iface: BindInterface) -> Vec<NatReport> {
                             external_addr,
                             nat_type,
                         })
-                    }
+                    }) as NatReportFuture
                 })
-                .collect::<futures::stream::FuturesUnordered<_>>()
+                .collect()
         });
 
     if tasks.is_empty() {
-        return vec![Err(NatReportError::NoStunAgent { bind_uri })];
+        return futures::stream::FuturesUnordered::from_iter([ready_report(
+            NatReportError::NoStunAgent { bind_uri },
+        )]);
     }
 
-    let mut observations = Vec::new();
-    while let Some(observation) = tasks.next().await {
-        observations.push(observation);
-    }
-    observations
+    tasks
+}
+
+fn ready_report(error: NatReportError) -> NatReportFuture {
+    Box::pin(std::future::ready(Err(error)))
 }
 
 fn print_nat_report(report: &NatReport, needs_separator: bool) {
@@ -696,5 +724,51 @@ mod tests {
         assert!(!output.contains("1 without STUN agent"));
         assert!(!output.contains("1 no STUN response"));
         assert!(!output.contains("1 network unreachable"));
+    }
+
+    #[tokio::test]
+    async fn consume_nat_reports_streams_completed_reports() {
+        let fast_report = Box::pin(async {
+            Ok(NatObservation {
+                bind_uri: BindUri::from("iface://v4.fast0:0"),
+                stun_server: "192.0.2.20:20004".parse().expect("valid socket address"),
+                external_addr: "203.0.113.7:51820".parse().expect("valid socket address"),
+                nat_type: NatType::FullCone,
+            })
+        }) as NatReportFuture;
+        let slow_report = Box::pin(async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            Ok(NatObservation {
+                bind_uri: BindUri::from("iface://v4.slow0:0"),
+                stun_server: "192.0.2.20:20004".parse().expect("valid socket address"),
+                external_addr: "203.0.113.8:51820".parse().expect("valid socket address"),
+                nat_type: NatType::FullCone,
+            })
+        }) as NatReportFuture;
+        let mut reports = futures::stream::FuturesUnordered::from_iter([slow_report, fast_report]);
+        let mut printed = Vec::new();
+        let mut wrote_summary = false;
+
+        consume_nat_reports(
+            &mut reports,
+            2,
+            true,
+            |report, _needs_separator| {
+                if let Ok(observation) = report {
+                    printed.push(observation.bind_uri.to_string());
+                }
+            },
+            |_summary, _needs_separator| wrote_summary = true,
+        )
+        .await;
+
+        assert_eq!(
+            printed,
+            [
+                "iface://v4.fast0:0/".to_owned(),
+                "iface://v4.slow0:0/".to_owned()
+            ]
+        );
+        assert!(!wrote_summary);
     }
 }
