@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     io::{IsTerminal, Write as _},
     net::SocketAddr,
     str::FromStr,
@@ -11,7 +12,12 @@ use dhttp::{
     dquic::{
         binds::BindPattern,
         net::{BindInterface, BindUri},
-        qtraversal::{self, nat::client::StunClientsComponent},
+        qtraversal::{
+            self,
+            nat::client::{
+                DetectNatTypeError, DetectOuterAddrError, StunClientsComponent, StunProbeError,
+            },
+        },
     },
     endpoint::Endpoint,
     home::{self, DhttpHome, identity::IdentityHome},
@@ -58,28 +64,32 @@ pub enum Error {
     LoadIdentitySsl {
         source: home::identity::ssl::LoadIdentitySslError,
     },
+}
 
+#[derive(Debug, snafu::Snafu)]
+#[snafu(module)]
+enum NatReportError {
     #[snafu(display(
         "failed to detect external address on `{bind_uri}` via STUN server {stun_server}"
     ))]
     DetectExternalAddr {
-        bind_uri: Box<BindUri>,
+        bind_uri: BindUri,
         stun_server: SocketAddr,
-        source: std::io::Error,
+        source: DetectOuterAddrError,
     },
 
     #[snafu(display("failed to detect NAT type on `{bind_uri}` via STUN server {stun_server}"))]
     DetectNatType {
-        bind_uri: Box<BindUri>,
+        bind_uri: BindUri,
         stun_server: SocketAddr,
-        source: std::io::Error,
+        source: DetectNatTypeError,
     },
 
     #[snafu(display("no STUN client component found on interface `{bind_uri}`"))]
-    NoStunClients { bind_uri: Box<BindUri> },
+    NoStunClients { bind_uri: BindUri },
 
     #[snafu(display("no STUN agent discovered on interface `{bind_uri}`"))]
-    NoStunAgent { bind_uri: Box<BindUri> },
+    NoStunAgent { bind_uri: BindUri },
 
     #[snafu(display("no NAT observation found among {candidates} candidate interfaces"))]
     NoNatObservation { candidates: usize },
@@ -92,12 +102,13 @@ struct NatObservation {
     nat_type: qtraversal::nat::client::NatType,
 }
 
-type NatReport = Result<NatObservation, Error>;
+type NatReport = Result<NatObservation, NatReportError>;
 
 struct NatSummary {
     candidates: usize,
     successes: usize,
     failures: usize,
+    failure_reasons: BTreeMap<FailureReason, usize>,
 }
 
 impl NatSummary {
@@ -106,13 +117,80 @@ impl NatSummary {
             candidates,
             successes: 0,
             failures: 0,
+            failure_reasons: BTreeMap::new(),
         }
     }
 
     fn record(&mut self, report: &NatReport) {
         match report {
             Ok(_) => self.successes += 1,
-            Err(_) => self.failures += 1,
+            Err(error) => {
+                self.failures += 1;
+                *self
+                    .failure_reasons
+                    .entry(FailureReason::from(error))
+                    .or_default() += 1;
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum FailureReason {
+    NoNatObservation,
+    MissingStunComponent,
+    MissingStunAgent,
+    NoStunResponse,
+    NetworkUnreachable,
+    SendStunRequest,
+    IncompleteStunResponse,
+    LocalAddress,
+    InterfaceRebinded,
+}
+
+impl From<&NatReportError> for FailureReason {
+    fn from(error: &NatReportError) -> Self {
+        match error {
+            NatReportError::DetectExternalAddr { source, .. } => Self::from(source),
+            NatReportError::DetectNatType { source, .. } => Self::from(source),
+            NatReportError::NoStunClients { .. } => Self::MissingStunComponent,
+            NatReportError::NoStunAgent { .. } => Self::MissingStunAgent,
+            NatReportError::NoNatObservation { .. } => Self::NoNatObservation,
+        }
+    }
+}
+
+impl From<&DetectOuterAddrError> for FailureReason {
+    fn from(error: &DetectOuterAddrError) -> Self {
+        match error {
+            DetectOuterAddrError::Rebinded { .. } => Self::InterfaceRebinded,
+            DetectOuterAddrError::Probe { source } => Self::from(source),
+            DetectOuterAddrError::Response { .. } => Self::IncompleteStunResponse,
+        }
+    }
+}
+
+impl From<&DetectNatTypeError> for FailureReason {
+    fn from(error: &DetectNatTypeError) -> Self {
+        match error {
+            DetectNatTypeError::Rebinded { .. } => Self::InterfaceRebinded,
+            DetectNatTypeError::LocalAddr { .. } => Self::LocalAddress,
+            DetectNatTypeError::Probe { source, .. } => Self::from(source),
+            DetectNatTypeError::Response { .. } => Self::IncompleteStunResponse,
+        }
+    }
+}
+
+impl From<&StunProbeError> for FailureReason {
+    fn from(error: &StunProbeError) -> Self {
+        match error {
+            StunProbeError::NoResponse { .. } => Self::NoStunResponse,
+            StunProbeError::SendRequest { source, .. } => match source.kind() {
+                std::io::ErrorKind::NetworkUnreachable | std::io::ErrorKind::HostUnreachable => {
+                    Self::NetworkUnreachable
+                }
+                _ => Self::SendStunRequest,
+            },
         }
     }
 }
@@ -226,7 +304,7 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
     }
 
     if show_failed_details && !wrote_report {
-        let report = Err(Error::NoNatObservation { candidates });
+        let report = Err(NatReportError::NoNatObservation { candidates });
         print_nat_report(&report, false);
     } else if !show_failed_details {
         print_nat_summary(&summary, wrote_report);
@@ -246,46 +324,43 @@ async fn observe_interface(iface: BindInterface) -> Vec<NatReport> {
         components.with(|clients: &StunClientsComponent| clients.clone())
     });
     let Some(clients) = clients else {
-        return vec![Err(Error::NoStunClients {
-            bind_uri: Box::new(bind_uri),
-        })];
+        return vec![Err(NatReportError::NoStunClients { bind_uri })];
     };
 
-    let mut tasks = clients.with_clients(|clients| {
-        clients
-            .values()
-            .cloned()
-            .map(|client| {
-                let bind_uri = bind_uri.clone();
-                async move {
-                    let stun_server = client.agent_addr();
-                    let external_addr =
-                        client
-                            .outer_addr()
-                            .await
-                            .context(error::DetectExternalAddrSnafu {
-                                bind_uri: Box::new(bind_uri.clone()),
+    let mut tasks =
+        clients.with_clients(|clients| {
+            clients
+                .values()
+                .cloned()
+                .map(|client| {
+                    let bind_uri = bind_uri.clone();
+                    async move {
+                        let stun_server = client.agent_addr();
+                        let external_addr = client.outer_addr().await.context(
+                            nat_report_error::DetectExternalAddrSnafu {
+                                bind_uri: bind_uri.clone(),
                                 stun_server,
-                            })?;
-                    let nat_type = client.nat_type().await.context(error::DetectNatTypeSnafu {
-                        bind_uri: Box::new(bind_uri.clone()),
-                        stun_server,
-                    })?;
-                    Ok(NatObservation {
-                        bind_uri,
-                        stun_server,
-                        external_addr,
-                        nat_type,
-                    })
-                }
-            })
-            .collect::<futures::stream::FuturesUnordered<_>>()
-    });
+                            },
+                        )?;
+                        let nat_type = client.nat_type().await.context(
+                            nat_report_error::DetectNatTypeSnafu {
+                                bind_uri: bind_uri.clone(),
+                                stun_server,
+                            },
+                        )?;
+                        Ok(NatObservation {
+                            bind_uri,
+                            stun_server,
+                            external_addr,
+                            nat_type,
+                        })
+                    }
+                })
+                .collect::<futures::stream::FuturesUnordered<_>>()
+        });
 
     if tasks.is_empty() {
-        return vec![Err(Error::NoStunAgent {
-            bind_uri: Box::new(bind_uri),
-        })];
+        return vec![Err(NatReportError::NoStunAgent { bind_uri })];
     }
 
     let mut observations = Vec::new();
@@ -375,6 +450,9 @@ fn write_nat_summary(
         summary.failures,
         plural(summary.failures, "probe", "probes")
     )?;
+    for (reason, count) in &summary.failure_reasons {
+        write_failure_reason(output, *reason, *count)?;
+    }
     writeln!(
         output,
         "Use -v to show failed interface details, or pass --interface <bind-pattern> to select matching interfaces."
@@ -383,41 +461,107 @@ fn write_nat_summary(
     Ok(())
 }
 
+fn write_failure_reason(
+    output: &mut impl std::fmt::Write,
+    reason: FailureReason,
+    count: usize,
+) -> std::fmt::Result {
+    match reason {
+        FailureReason::NoNatObservation => writeln!(
+            output,
+            "{} NAT observation {} did not produce any result.",
+            count,
+            plural(count, "attempt", "attempts")
+        ),
+        FailureReason::MissingStunComponent => writeln!(
+            output,
+            "{} {} did not have a STUN client component.",
+            count,
+            plural(count, "interface", "interfaces")
+        ),
+        FailureReason::MissingStunAgent => writeln!(
+            output,
+            "{} {} did not discover any STUN agent.",
+            count,
+            plural(count, "interface", "interfaces")
+        ),
+        FailureReason::NoStunResponse => writeln!(
+            output,
+            "{} STUN {} did not receive a response from the STUN server.",
+            count,
+            plural(count, "probe", "probes")
+        ),
+        FailureReason::NetworkUnreachable => writeln!(
+            output,
+            "{} STUN {} failed because the network was unreachable.",
+            count,
+            plural(count, "probe", "probes")
+        ),
+        FailureReason::SendStunRequest => writeln!(
+            output,
+            "{} STUN {} failed while sending a request.",
+            count,
+            plural(count, "probe", "probes")
+        ),
+        FailureReason::IncompleteStunResponse => writeln!(
+            output,
+            "{} STUN {} received an incomplete response.",
+            count,
+            plural(count, "probe", "probes")
+        ),
+        FailureReason::LocalAddress => writeln!(
+            output,
+            "{} NAT {} could not read the local interface address.",
+            count,
+            plural(count, "probe", "probes")
+        ),
+        FailureReason::InterfaceRebinded if count == 1 => {
+            writeln!(
+                output,
+                "1 interface was rebound before NAT detection completed."
+            )
+        }
+        FailureReason::InterfaceRebinded => writeln!(
+            output,
+            "{count} interfaces were rebound before NAT detection completed."
+        ),
+    }
+}
+
 fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'static str {
     if count == 1 { singular } else { plural }
 }
 
-fn error_bind_uri(error: &Error) -> Option<&BindUri> {
+fn error_bind_uri(error: &NatReportError) -> Option<&BindUri> {
     match error {
-        Error::DetectExternalAddr { bind_uri, .. }
-        | Error::DetectNatType { bind_uri, .. }
-        | Error::NoStunClients { bind_uri }
-        | Error::NoStunAgent { bind_uri } => Some(bind_uri),
-        Error::LocateDhttpHome { .. }
-        | Error::LoadExplicitIdentity { .. }
-        | Error::LoadIdentitySsl { .. }
-        | Error::NoNatObservation { .. } => None,
+        NatReportError::DetectExternalAddr { bind_uri, .. }
+        | NatReportError::DetectNatType { bind_uri, .. }
+        | NatReportError::NoStunClients { bind_uri }
+        | NatReportError::NoStunAgent { bind_uri } => Some(bind_uri),
+        NatReportError::NoNatObservation { .. } => None,
     }
 }
 
-fn error_stun_server(error: &Error) -> Option<SocketAddr> {
+fn error_stun_server(error: &NatReportError) -> Option<SocketAddr> {
     match error {
-        Error::DetectExternalAddr { stun_server, .. }
-        | Error::DetectNatType { stun_server, .. } => Some(*stun_server),
-        Error::LocateDhttpHome { .. }
-        | Error::LoadExplicitIdentity { .. }
-        | Error::LoadIdentitySsl { .. }
-        | Error::NoStunClients { .. }
-        | Error::NoStunAgent { .. }
-        | Error::NoNatObservation { .. } => None,
+        NatReportError::DetectExternalAddr { stun_server, .. }
+        | NatReportError::DetectNatType { stun_server, .. } => Some(*stun_server),
+        NatReportError::NoStunClients { .. }
+        | NatReportError::NoStunAgent { .. }
+        | NatReportError::NoNatObservation { .. } => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{io, net::SocketAddr};
+    use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 
-    use dhttp::dquic::{net::BindUri, qtraversal::nat::client::NatType};
+    use dhttp::dquic::{
+        net::BindUri,
+        qtraversal::nat::client::{
+            DetectOuterAddrError, NatType, StunProbeError, StunResponseAttribute, StunResponseError,
+        },
+    };
 
     use super::*;
 
@@ -431,10 +575,16 @@ mod tests {
             "192.0.2.20:20004".parse().expect("valid socket address");
 
         let reports = [
-            Err(Error::DetectExternalAddr {
-                bind_uri: Box::new(failed_bind_uri),
+            Err(NatReportError::DetectExternalAddr {
+                bind_uri: failed_bind_uri,
                 stun_server: failed_stun_server,
-                source: io::Error::new(io::ErrorKind::TimedOut, "probe timed out"),
+                source: DetectOuterAddrError::Probe {
+                    source: StunProbeError::NoResponse {
+                        stun_server: failed_stun_server,
+                        retry_times: 3,
+                        timeout: Duration::from_millis(300),
+                    },
+                },
             }),
             Ok(NatObservation {
                 bind_uri: success_bind_uri,
@@ -450,7 +600,8 @@ mod tests {
 
         assert!(output.contains("Interface: iface://v4.fail0:0"));
         assert!(output.contains("Error: failed to detect external address"));
-        assert!(output.contains("probe timed out"));
+        assert!(output.contains("failed to detect outer address"));
+        assert!(output.contains("did not respond"));
         assert!(output.contains("Interface: iface://v4.ok0:0"));
         assert!(output.contains("NAT type: FullCone"));
         assert!(output.contains("External IP: 203.0.113.7"));
@@ -486,18 +637,44 @@ mod tests {
                 external_addr: "203.0.113.7:51820".parse().expect("valid socket address"),
                 nat_type: NatType::FullCone,
             }),
-            Err(Error::NoStunAgent {
-                bind_uri: Box::new(BindUri::from("iface://v4.veth0:0")),
+            Err(NatReportError::NoStunAgent {
+                bind_uri: BindUri::from("iface://v4.veth0:0"),
             }),
-            Err(Error::DetectExternalAddr {
-                bind_uri: Box::new(BindUri::from("iface://v4.br0:0")),
+            Err(NatReportError::DetectExternalAddr {
+                bind_uri: BindUri::from("iface://v4.br0:0"),
                 stun_server: "192.0.2.20:20004".parse().expect("valid socket address"),
-                source: io::Error::new(io::ErrorKind::TimedOut, "probe timed out"),
+                source: DetectOuterAddrError::Probe {
+                    source: StunProbeError::NoResponse {
+                        stun_server: "192.0.2.20:20004".parse().expect("valid socket address"),
+                        retry_times: 3,
+                        timeout: Duration::from_millis(300),
+                    },
+                },
+            }),
+            Err(NatReportError::DetectExternalAddr {
+                bind_uri: BindUri::from("iface://v4.unreachable0:0"),
+                stun_server: "192.0.2.20:20004".parse().expect("valid socket address"),
+                source: DetectOuterAddrError::Probe {
+                    source: StunProbeError::SendRequest {
+                        stun_server: "192.0.2.20:20004".parse().expect("valid socket address"),
+                        source: Arc::new(io::ErrorKind::NetworkUnreachable.into()),
+                    },
+                },
+            }),
+            Err(NatReportError::DetectExternalAddr {
+                bind_uri: BindUri::from("iface://v4.partial0:0"),
+                stun_server: "192.0.2.20:20004".parse().expect("valid socket address"),
+                source: DetectOuterAddrError::Response {
+                    source: StunResponseError::MissingAttribute {
+                        stun_server: "192.0.2.20:20004".parse().expect("valid socket address"),
+                        attribute: StunResponseAttribute::MappedAddress,
+                    },
+                },
             }),
         ];
         let summary = reports
             .iter()
-            .fold(NatSummary::new(3), |mut summary, report| {
+            .fold(NatSummary::new(5), |mut summary, report| {
                 summary.record(report);
                 summary
             });
@@ -506,13 +683,18 @@ mod tests {
         write_nat_summary(&mut output, &summary, true).expect("writing to String cannot fail");
 
         assert!(output.contains("Detected NAT on 1 interface."));
-        assert!(output.contains("Skipped 2 failed interface probes."));
+        assert!(output.contains("Skipped 4 failed interface probes."));
+        assert!(output.contains("1 interface did not discover any STUN agent."));
+        assert!(output.contains("1 STUN probe did not receive a response from the STUN server."));
+        assert!(output.contains("1 STUN probe failed because the network was unreachable."));
+        assert!(output.contains("1 STUN probe received an incomplete response."));
         assert!(
             output.contains(
                 "Use -v to show failed interface details, or pass --interface <bind-pattern> to select matching interfaces."
             )
         );
-        assert!(!output.contains("did not discover a STUN agent"));
-        assert!(!output.contains("did not receive a response from the STUN server"));
+        assert!(!output.contains("1 without STUN agent"));
+        assert!(!output.contains("1 no STUN response"));
+        assert!(!output.contains("1 network unreachable"));
     }
 }
