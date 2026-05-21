@@ -446,7 +446,7 @@ fn write_nat_summary(
 
     writeln!(
         output,
-        "Skipped {} failed interface {}.",
+        "Skipped {} failed interface {}:",
         summary.failures,
         plural(summary.failures, "probe", "probes")
     )?;
@@ -469,61 +469,61 @@ fn write_failure_reason(
     match reason {
         FailureReason::NoNatObservation => writeln!(
             output,
-            "{} NAT observation {} did not produce any result.",
+            "- {} NAT observation {} did not produce any result.",
             count,
             plural(count, "attempt", "attempts")
         ),
         FailureReason::MissingStunComponent => writeln!(
             output,
-            "{} {} did not have a STUN client component.",
+            "- {} {} did not have a STUN client component.",
             count,
             plural(count, "interface", "interfaces")
         ),
         FailureReason::MissingStunAgent => writeln!(
             output,
-            "{} {} did not discover any STUN agent.",
+            "- {} {} did not discover any STUN agent.",
             count,
             plural(count, "interface", "interfaces")
         ),
         FailureReason::NoStunResponse => writeln!(
             output,
-            "{} STUN {} did not receive a response from the STUN server.",
+            "- {} STUN {} did not receive a response from the STUN server.",
             count,
             plural(count, "probe", "probes")
         ),
         FailureReason::NetworkUnreachable => writeln!(
             output,
-            "{} STUN {} failed because the network was unreachable.",
+            "- {} STUN {} failed because the network was unreachable.",
             count,
             plural(count, "probe", "probes")
         ),
         FailureReason::SendStunRequest => writeln!(
             output,
-            "{} STUN {} failed while sending a request.",
+            "- {} STUN {} failed while sending a request.",
             count,
             plural(count, "probe", "probes")
         ),
         FailureReason::IncompleteStunResponse => writeln!(
             output,
-            "{} STUN {} received an incomplete response.",
+            "- {} STUN {} received an incomplete response.",
             count,
             plural(count, "probe", "probes")
         ),
         FailureReason::LocalAddress => writeln!(
             output,
-            "{} NAT {} could not read the local interface address.",
+            "- {} NAT {} could not read the local interface address.",
             count,
             plural(count, "probe", "probes")
         ),
         FailureReason::InterfaceRebinded if count == 1 => {
             writeln!(
                 output,
-                "1 interface was rebound before NAT detection completed."
+                "- 1 interface was rebound before NAT detection completed."
             )
         }
         FailureReason::InterfaceRebinded => writeln!(
             output,
-            "{count} interfaces were rebound before NAT detection completed."
+            "- {count} interfaces were rebound before NAT detection completed."
         ),
     }
 }
@@ -683,11 +683,11 @@ mod tests {
         write_nat_summary(&mut output, &summary, true).expect("writing to String cannot fail");
 
         assert!(output.contains("Detected NAT on 1 interface."));
-        assert!(output.contains("Skipped 4 failed interface probes."));
-        assert!(output.contains("1 interface did not discover any STUN agent."));
-        assert!(output.contains("1 STUN probe did not receive a response from the STUN server."));
-        assert!(output.contains("1 STUN probe failed because the network was unreachable."));
-        assert!(output.contains("1 STUN probe received an incomplete response."));
+        assert!(output.contains("Skipped 4 failed interface probes:"));
+        assert!(output.contains("- 1 interface did not discover any STUN agent."));
+        assert!(output.contains("- 1 STUN probe did not receive a response from the STUN server."));
+        assert!(output.contains("- 1 STUN probe failed because the network was unreachable."));
+        assert!(output.contains("- 1 STUN probe received an incomplete response."));
         assert!(
             output.contains(
                 "Use -v to show failed interface details, or pass --interface <bind-pattern> to select matching interfaces."
