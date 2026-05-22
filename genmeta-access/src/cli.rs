@@ -1,8 +1,7 @@
 use std::str::FromStr;
 
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
-use firewall_base::{expr::exprs::LocationRuleExprs, pattern::LocationPattern};
-use firewall_db::identity::Name;
+use dhttp_access::{db::identity::Name, expr::exprs::LocationRuleExprs, pattern::LocationPattern};
 use snafu::{IntoError, ResultExt, Snafu};
 
 /// Wrapper for clap that uses [`snafu::Report`] for richer error display.

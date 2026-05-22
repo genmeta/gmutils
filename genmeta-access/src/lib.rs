@@ -3,18 +3,22 @@ mod cli;
 use std::io::IsTerminal;
 
 pub use cli::{Options, ParseCommandError, ReportFromStr};
-use dhttp_home::{DhttpHome, LocateDhttpHomeError, identity::default::LoadDefaultConfigError};
-use firewall_base::{
+use dhttp_access::{
     action::RequestAction,
-    error::location::{LocateLocationFailed, MatchLocationFailed},
-};
-use firewall_db::{
-    identity::Name,
-    identity_access_db_path, init_access_database_for, open_access_database,
-    service::{
-        error::Error as ServiceError,
-        location_service::{LocationService, RemoveRuleFailed},
+    db::{
+        identity::Name,
+        identity_access_db_path, init_access_database_for, open_access_database,
+        service::{
+            error::{
+                AppendRuleError, ListAllRulesError, ListRuleSetsError, ListRulesError,
+                RemoveRuleSetError, RemoveRulesError,
+            },
+            location_service::LocationService,
+        },
     },
+};
+use dhttp_config::{
+    DhttpConfig, LocateDhttpConfigError, identity::default::LoadDefaultConfigError,
 };
 use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
@@ -29,8 +33,8 @@ pub enum Error {
     #[snafu(transparent)]
     ParseCommand { source: ParseCommandError },
 
-    #[snafu(display("failed to locate DHTTP_HOME"))]
-    LocateHome { source: LocateDhttpHomeError },
+    #[snafu(display("failed to locate DHTTP_CONFIG"))]
+    LocateHome { source: LocateDhttpConfigError },
 
     #[snafu(display("failed to load default identity config"))]
     LoadDefaultIdentityConfig { source: LoadDefaultConfigError },
@@ -41,31 +45,32 @@ pub enum Error {
     MissingDefaultIdentity,
 
     #[snafu(display("failed to initialize identity access database"))]
-    InitDatabase { source: firewall_db::AccessDbError },
+    InitDatabase {
+        source: dhttp_access::db::AccessDbError,
+    },
 
     #[snafu(display("failed to open identity access database"))]
-    OpenDatabase { source: firewall_db::AccessDbError },
+    OpenDatabase {
+        source: dhttp_access::db::AccessDbError,
+    },
 
     #[snafu(display("failed to list access path rules"))]
-    ListRules {
-        source: ServiceError<MatchLocationFailed>,
-    },
+    ListRules { source: ListRulesError },
 
     #[snafu(display("failed to remove access path"))]
-    RemovePath {
-        source: ServiceError<LocateLocationFailed>,
-    },
+    RemovePath { source: RemoveRuleSetError },
 
     #[snafu(display("failed to remove rules"))]
-    RemoveRules {
-        source: ServiceError<RemoveRuleFailed>,
-    },
+    RemoveRules { source: RemoveRulesError },
 
     #[snafu(display("failed to add rule"))]
-    AddRule { source: sea_orm::DbErr },
+    AddRule { source: AppendRuleError },
 
     #[snafu(display("failed to list access paths"))]
-    ListPaths { source: sea_orm::DbErr },
+    ListPaths { source: ListRuleSetsError },
+
+    #[snafu(display("failed to list access paths"))]
+    ListAllPaths { source: ListAllRulesError },
 }
 
 // --- Logic ---
@@ -91,7 +96,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
 pub async fn run(options: Options) -> Result<(), Error> {
     let _guard = init_tracing();
 
-    let home = DhttpHome::load_from_environment().context(error::LocateHomeSnafu)?;
+    let home = DhttpConfig::load_from_environment().context(error::LocateHomeSnafu)?;
     let output = run_for_home(&home, options).await?;
 
     if !output.is_empty() {
@@ -100,17 +105,17 @@ pub async fn run(options: Options) -> Result<(), Error> {
     Ok(())
 }
 
-pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, Error> {
+pub async fn run_for_home(home: &DhttpConfig, options: Options) -> Result<String, Error> {
     let (identity, command) = options.into_parts()?;
     if let Command::Print { output } = command {
         return Ok(output);
     }
 
     let identity = resolve_identity(home, identity).await?;
-    let identity_home = home.identity_home(identity.borrow());
-    let db_path = identity_access_db_path(&identity_home);
+    let identity_config = home.identity_config(identity.borrow());
+    let db_path = identity_access_db_path(&identity_config);
     let db = if db_path.is_file() {
-        open_access_database(&identity_home)
+        open_access_database(&identity_config)
             .await
             .context(error::OpenDatabaseSnafu)?
     } else {
@@ -118,7 +123,7 @@ pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, 
             "access store not found, initializing at `{}`",
             db_path.display()
         );
-        init_access_database_for(&identity_home)
+        init_access_database_for(&identity_config)
             .await
             .context(error::InitDatabaseSnafu)?
     };
@@ -126,7 +131,7 @@ pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, 
 }
 
 async fn resolve_identity(
-    home: &DhttpHome,
+    home: &DhttpConfig,
     identity: Option<Name<'static>>,
 ) -> Result<Name<'static>, Error> {
     if let Some(identity) = identity {
@@ -158,7 +163,9 @@ async fn run_with(command: Command, db: &sea_orm::DatabaseConnection) -> Result<
         Command::Path { pattern, operation } => match operation {
             PathOperation::List => match location_service.list_rules(&pattern).await {
                 Ok(rules) => return Ok(rules.to_string()),
-                Err(ServiceError::Custom { source }) => return Ok(source.to_string()),
+                Err(ListRulesError::NoMatchedLocation { source }) => {
+                    return Ok(source.to_string());
+                }
                 result => _ = result.context(error::ListRulesSnafu)?,
             },
             PathOperation::Remove { all, sequence } => match all {
@@ -189,7 +196,7 @@ async fn run_with(command: Command, db: &sea_orm::DatabaseConnection) -> Result<
                 return Ok(location_service
                     .list_all_rules()
                     .await
-                    .context(error::ListPathsSnafu)?
+                    .context(error::ListAllPathsSnafu)?
                     .to_string());
             }
             false => {

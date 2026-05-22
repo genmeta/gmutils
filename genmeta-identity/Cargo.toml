@@ -14,7 +14,7 @@ tracing-indicatif = { workspace = true, optional = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
-dhttp-home = { workspace = true }
+dhttp-config = { workspace = true }
 dhttp-identity = { workspace = true }
 rankey = { workspace = true }
 reqwest = { workspace = true }

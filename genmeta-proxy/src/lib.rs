@@ -2,10 +2,10 @@ use std::{io::IsTerminal, net::SocketAddr, sync::Arc, time::Duration};
 
 use clap::Parser;
 use dhttp::{
+    config::{self, DhttpConfig, identity::IdentityConfig},
     ddns,
     dquic::binds::BindPattern,
     endpoint::Endpoint,
-    home::{self, DhttpHome, identity::IdentityHome},
     name::{DhttpName, DhttpName as Name},
 };
 use http_body_util::BodyExt;
@@ -73,18 +73,20 @@ pub enum Error {
     #[snafu(display("failed to reconstruct uri with expanded identity name"))]
     ReconstructExpandedUri { source: http::uri::InvalidUriParts },
 
-    #[snafu(display("failed to locate dhttp home"))]
-    LocateDhttpHome { source: home::LocateDhttpHomeError },
+    #[snafu(display("failed to locate dhttp config"))]
+    LocateDhttpConfig {
+        source: config::LocateDhttpConfigError,
+    },
 
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
         name: Name<'static>,
-        source: home::identity::ssl::LoadIdentityError,
+        source: config::identity::ssl::LoadIdentityError,
     },
 
     #[snafu(display("failed to load identity certificate and key"))]
     LoadIdentitySsl {
-        source: home::identity::ssl::LoadIdentitySslError,
+        source: config::identity::ssl::LoadIdentitySslError,
     },
 
     #[snafu(display("failed to bind proxy listener"))]
@@ -285,39 +287,12 @@ async fn bind_listeners(options: &Options) -> Result<Vec<TcpListener>, Error> {
 }
 
 fn expand_uri_without_identity(uri: http::Uri) -> Result<http::Uri, Error> {
-    let mut parts = uri.into_parts();
-
-    let Some(authority) = &parts.authority else {
-        return http::Uri::from_parts(parts).context(ReconstructExpandedUriSnafu);
+    let Some(authority) = uri.authority() else {
+        return http::Uri::from_parts(uri.into_parts()).context(ReconstructExpandedUriSnafu);
     };
+    ensure!(authority.host() != "~", BareTildeWithoutIdentitySnafu);
 
-    let host = authority.host();
-    ensure!(host != "~", BareTildeWithoutIdentitySnafu);
-
-    let Some(expanded) = DhttpName::try_expand_from(host).context(ExpandUriNameSnafu)? else {
-        return http::Uri::from_parts(parts).context(ReconstructExpandedUriSnafu);
-    };
-
-    let expanded = expanded.as_full();
-    if expanded != host {
-        let user_info_len = authority
-            .as_str()
-            .split_once('@')
-            .map(|(user_info, ..)| user_info.len() + 1)
-            .unwrap_or_default();
-        let host_len = host.len();
-        let authority = format!(
-            "{user_info}{host}{port}",
-            user_info = &authority.as_str()[..user_info_len],
-            host = expanded,
-            port = &authority.as_str()[user_info_len + host_len..],
-        );
-        parts.authority = Some(authority.parse().context(ParseExpandedAuthoritySnafu {
-            authority: &authority,
-        })?);
-    }
-
-    http::Uri::from_parts(parts).context(ReconstructExpandedUriSnafu)
+    DhttpName::expand_uri_with_base(None, uri).context(ExpandNameInUriSnafu)
 }
 
 fn expand_uri(uri: http::Uri, self_name: Option<&Name<'_>>) -> Result<http::Uri, Error> {
@@ -327,21 +302,21 @@ fn expand_uri(uri: http::Uri, self_name: Option<&Name<'_>>) -> Result<http::Uri,
     }
 }
 
-async fn load_identity_home(options: &Options) -> Result<Option<IdentityHome>, Error> {
+async fn load_identity_config(options: &Options) -> Result<Option<IdentityConfig>, Error> {
     if options.anonymous {
         return Ok(None);
     }
 
-    let home = match DhttpHome::load_from_environment() {
+    let home = match DhttpConfig::load_from_environment() {
         Ok(home) => home,
         Err(source) if options.id.is_none() => {
             tracing::warn!(
                 error = %snafu::Report::from_error(&source),
-                "failed to locate dhttp home, using anonymous endpoint"
+                "failed to locate dhttp config, using anonymous endpoint"
             );
             return Ok(None);
         }
-        Err(source) => return Err(LocateDhttpHomeSnafu.into_error(source)),
+        Err(source) => return Err(LocateDhttpConfigSnafu.into_error(source)),
     };
 
     if let Some(name) = &options.id {
@@ -371,8 +346,8 @@ async fn load_identity_home(options: &Options) -> Result<Option<IdentityHome>, E
 pub async fn run(options: Options) -> Result<(), Error> {
     let _guard = init_tracing(&options)?;
 
-    let identity_home = load_identity_home(&options).await?;
-    let identity = match &identity_home {
+    let identity_config = load_identity_config(&options).await?;
+    let identity = match &identity_config {
         Some(home) => Some(Arc::new(
             home.identity().await.context(LoadIdentitySslSnafu)?,
         )),
@@ -387,7 +362,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     }
     let client = Arc::new(builder.build().await);
 
-    let self_name = identity_home.as_ref().map(|id| id.name().clone());
+    let self_name = identity_config.as_ref().map(|id| id.name().clone());
 
     let listeners = bind_listeners(&options).await?;
     let router = Arc::new(route::Router::new());

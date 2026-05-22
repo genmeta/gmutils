@@ -6,10 +6,10 @@ use std::{
 
 use clap::Parser;
 use dhttp::{
+    config::{self, DhttpConfig, identity::IdentityConfig},
     ddns::DnsScheme,
     dquic::binds::BindPattern,
     endpoint::Endpoint,
-    home::{self, DhttpHome, identity::IdentityHome},
     name::DhttpName as Name,
 };
 use futures::StreamExt;
@@ -48,16 +48,18 @@ pub struct Options {
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 pub enum Error {
-    #[snafu(display("failed to locate dhttp home"))]
-    LocateDhttpHome { source: home::LocateDhttpHomeError },
+    #[snafu(display("failed to locate dhttp config"))]
+    LocateDhttpConfig {
+        source: config::LocateDhttpConfigError,
+    },
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
         name: Name<'static>,
-        source: home::identity::ssl::LoadIdentityError,
+        source: config::identity::ssl::LoadIdentityError,
     },
     #[snafu(display("failed to load identity certificate and key"))]
     LoadIdentitySsl {
-        source: home::identity::ssl::LoadIdentitySslError,
+        source: config::identity::ssl::LoadIdentitySslError,
     },
     #[snafu(display("failed to lookup dns records of `{name}`"))]
     LookUp {
@@ -91,21 +93,21 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     guard
 }
 
-async fn load_identity_home(options: &Options) -> Result<Option<IdentityHome>, Error> {
+async fn load_identity_config(options: &Options) -> Result<Option<IdentityConfig>, Error> {
     if options.anonymous {
         return Ok(None);
     }
 
-    let home = match DhttpHome::load_from_environment() {
+    let home = match DhttpConfig::load_from_environment() {
         Ok(home) => home,
         Err(source) if options.id.is_none() => {
             tracing::warn!(
                 error = %snafu::Report::from_error(&source),
-                "failed to locate dhttp home, using anonymous endpoint"
+                "failed to locate dhttp config, using anonymous endpoint"
             );
             return Ok(None);
         }
-        Err(source) => return Err(error::LocateDhttpHomeSnafu.into_error(source)),
+        Err(source) => return Err(error::LocateDhttpConfigSnafu.into_error(source)),
     };
 
     if let Some(name) = &options.id {
@@ -134,8 +136,8 @@ async fn load_identity_home(options: &Options) -> Result<Option<IdentityHome>, E
 
 pub async fn run(options: Options) -> Result<(), Error> {
     let _guard = init_tracing();
-    let identity_home = load_identity_home(&options).await?;
-    let identity = match &identity_home {
+    let identity_config = load_identity_config(&options).await?;
+    let identity = match &identity_config {
         Some(home) => Some(Arc::new(
             home.identity().await.context(error::LoadIdentitySslSnafu)?,
         )),

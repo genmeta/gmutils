@@ -94,7 +94,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -105,7 +105,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -217,27 +217,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-attributes"
-version = "1.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3203e79f4dd9bdda415ed03cf14dae5a2bf775c683a00f94e9cd1faf0f596e5"
-dependencies = [
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "async-channel"
-version = "1.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81953c529336010edd6d8e358f886d9581267795c61b19475b71314bffa46d35"
-dependencies = [
- "concurrent-queue",
- "event-listener 2.5.3",
- "futures-core",
-]
-
-[[package]]
 name = "async-channel"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -262,92 +241,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-executor"
-version = "1.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c96bf972d85afc50bf5ab8fe2d54d1586b4e0b46c97c50a0c9e71e2f7bcd812a"
-dependencies = [
- "async-task",
- "concurrent-queue",
- "fastrand",
- "futures-lite",
- "pin-project-lite",
- "slab",
-]
-
-[[package]]
-name = "async-global-executor"
-version = "2.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05b1b633a2115cd122d73b955eadd9916c18c8f510ec9cd1686404c60ad1c29c"
-dependencies = [
- "async-channel 2.5.0",
- "async-executor",
- "async-io",
- "async-lock",
- "blocking",
- "futures-lite",
- "once_cell",
- "tokio",
-]
-
-[[package]]
-name = "async-io"
-version = "2.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "456b8a8feb6f42d237746d4b3e9a178494627745c3c56c6ea55d92ba50d026fc"
-dependencies = [
- "autocfg",
- "cfg-if",
- "concurrent-queue",
- "futures-io",
- "futures-lite",
- "parking",
- "polling",
- "rustix",
- "slab",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "async-lock"
-version = "3.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "290f7f2596bd5b78a9fec8088ccd89180d7f9f55b94b0576823bbbdc72ee8311"
-dependencies = [
- "event-listener 5.4.1",
- "event-listener-strategy",
- "pin-project-lite",
-]
-
-[[package]]
-name = "async-std"
-version = "1.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c8e079a4ab67ae52b7403632e4618815d6db36d2a010cfe41b02c1b1578f93b"
-dependencies = [
- "async-attributes",
- "async-channel 1.9.0",
- "async-global-executor",
- "async-io",
- "async-lock",
- "crossbeam-utils",
- "futures-channel",
- "futures-core",
- "futures-io",
- "futures-lite",
- "gloo-timers",
- "kv-log-macro",
- "log",
- "memchr",
- "once_cell",
- "pin-project-lite",
- "pin-utils",
- "slab",
- "wasm-bindgen-futures",
-]
-
-[[package]]
 name = "async-stream"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -368,12 +261,6 @@ dependencies = [
  "quote",
  "syn 2.0.117",
 ]
-
-[[package]]
-name = "async-task"
-version = "4.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
 
 [[package]]
 name = "async-trait"
@@ -512,19 +399,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdeb9d870516001442e364c5220d3574d2da8dc765554b4a617230d33fa58ef5"
 dependencies = [
  "objc2",
-]
-
-[[package]]
-name = "blocking"
-version = "1.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e83f8d02be6967315521be875afa792a316e28d57b5a2d401897e2a7921b7f21"
-dependencies = [
- "async-channel 2.5.0",
- "async-task",
- "futures-io",
- "futures-lite",
- "piper",
 ]
 
 [[package]]
@@ -1157,45 +1031,31 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 [[package]]
 name = "ddns"
 version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#eadd8514110b3cfc4b9c8910fc1b5a272aad40a3"
-dependencies = [
- "bytes",
- "dashmap",
- "ddns-core",
- "dhttp-identity",
- "dquic",
- "futures",
- "gmdns",
- "h3x",
- "http",
- "http-body",
- "http-body-util",
- "nom 8.0.0",
- "reqwest 0.12.28",
- "rustls",
- "snafu 0.8.9",
- "tokio",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "ddns-core"
-version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#eadd8514110b3cfc4b9c8910fc1b5a272aad40a3"
 dependencies = [
  "base64 0.22.1",
  "bitfield-struct",
  "bytes",
+ "dashmap",
  "dhttp-identity",
  "dquic",
+ "flume 0.12.0",
+ "futures",
+ "h3x",
+ "http",
+ "http-body",
+ "http-body-util",
+ "libc",
  "nom 8.0.0",
  "rand 0.9.4",
+ "reqwest 0.12.28",
  "ring",
  "rustls",
  "rustls-pemfile",
  "snafu 0.8.9",
+ "socket2 0.5.10",
+ "tokio",
  "tracing",
+ "url",
  "x509-parser 0.18.1",
 ]
 
@@ -1340,12 +1200,11 @@ dependencies = [
 [[package]]
 name = "dhttp"
 version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/dhttp.git?branch=main#a59efd7d698e0a61e7aecaa03cfb4e2ec643c5c5"
 dependencies = [
  "bon",
  "bytes",
  "ddns",
- "dhttp-home",
+ "dhttp-config",
  "dhttp-identity",
  "futures",
  "h3x",
@@ -1359,9 +1218,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "dhttp-home"
+name = "dhttp-access"
 version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/dhttp.git?branch=main#a59efd7d698e0a61e7aecaa03cfb4e2ec643c5c5"
+dependencies = [
+ "chrono",
+ "clap",
+ "derive_more",
+ "dhttp-config",
+ "dhttp-identity",
+ "globset",
+ "peg",
+ "regex",
+ "sea-orm",
+ "sea-orm-migration",
+ "serde",
+ "serde_json",
+ "snafu 0.9.0",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "dhttp-config"
+version = "0.1.0"
 dependencies = [
  "dhttp-identity",
  "dirs",
@@ -1377,7 +1256,6 @@ dependencies = [
 [[package]]
 name = "dhttp-identity"
 version = "0.1.0"
-source = "git+ssh://git@github.com/genmeta/dhttp.git?branch=main#a59efd7d698e0a61e7aecaa03cfb4e2ec643c5c5"
 dependencies = [
  "bytes",
  "futures",
@@ -1431,7 +1309,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1486,7 +1364,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 [[package]]
 name = "dquic"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1a713bfe3cf2e0b4c8d664689e5fa958d5dd2bcc"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3d9824f9a3593f421d10654828ce6c914793c1a8"
 dependencies = [
  "arc-swap",
  "bytes",
@@ -1499,6 +1377,24 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "dssh"
+version = "0.2.0"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "futures",
+ "h3x",
+ "http",
+ "http-body-util",
+ "peg",
+ "remoc",
+ "serde",
+ "snafu 0.9.0",
+ "tokio",
  "tracing",
 ]
 
@@ -1594,7 +1490,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1607,12 +1503,6 @@ dependencies = [
  "home",
  "windows-sys 0.48.0",
 ]
-
-[[package]]
-name = "event-listener"
-version = "2.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
 
 [[package]]
 name = "event-listener"
@@ -1631,7 +1521,7 @@ version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
- "event-listener 5.4.1",
+ "event-listener",
  "pin-project-lite",
 ]
 
@@ -1666,53 +1556,6 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
-
-[[package]]
-name = "firewall-base"
-version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/firewall.git?branch=endpoint#ea5ee62bdc94eb9cbfc63c575409ec9eaf6c0411"
-dependencies = [
- "clap",
- "derive_more",
- "globset",
- "http",
- "peg",
- "regex",
- "sea-orm",
- "sea-orm-migration",
- "serde",
- "serde_json",
- "snafu 0.9.0",
-]
-
-[[package]]
-name = "firewall-db"
-version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/firewall.git?branch=endpoint#ea5ee62bdc94eb9cbfc63c575409ec9eaf6c0411"
-dependencies = [
- "chrono",
- "derive_more",
- "dhttp-home",
- "dhttp-identity",
- "firewall-base",
- "firewall-migration",
- "futures",
- "sea-orm",
- "sea-orm-migration",
- "serde",
- "snafu 0.9.0",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "firewall-migration"
-version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/firewall.git?branch=endpoint#ea5ee62bdc94eb9cbfc63c575409ec9eaf6c0411"
-dependencies = [
- "async-std",
- "sea-orm-migration",
-]
 
 [[package]]
 name = "flagset"
@@ -1841,19 +1684,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cecba35d7ad927e23624b22ad55235f2239cfa44fd10428eecbeba6d6a717718"
 
 [[package]]
-name = "futures-lite"
-version = "2.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f78e10609fe0e0b3f4157ffab1876319b5b0db102a2c60dc4626306dc46b44ad"
-dependencies = [
- "fastrand",
- "futures-core",
- "futures-io",
- "parking",
- "pin-project-lite",
-]
-
-[[package]]
 name = "futures-macro"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1924,7 +1754,7 @@ dependencies = [
  "genmeta-identity",
  "genmeta-nslookup",
  "genmeta-proxy",
- "genmeta-ssh 0.5.0",
+ "genmeta-ssh",
  "snafu 0.9.0",
  "tokio",
  "tracing",
@@ -1935,9 +1765,8 @@ name = "genmeta-access"
 version = "0.1.0"
 dependencies = [
  "clap",
- "dhttp-home",
- "firewall-base",
- "firewall-db",
+ "dhttp-access",
+ "dhttp-config",
  "sea-orm",
  "sea-orm-migration",
  "snafu 0.9.0",
@@ -1998,7 +1827,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "clap",
- "dhttp-home",
+ "dhttp-config",
  "dhttp-identity",
  "futures",
  "indicatif",
@@ -2067,25 +1896,6 @@ dependencies = [
 
 [[package]]
 name = "genmeta-ssh"
-version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/genmeta-ssh.git?branch=endpoint#c577fc3dc89cdcb8ffddbc556db1da91a864aaab"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "futures",
- "h3x",
- "http",
- "http-body-util",
- "peg",
- "remoc",
- "serde",
- "snafu 0.9.0",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "genmeta-ssh"
 version = "0.5.0"
 dependencies = [
  "bytes",
@@ -2093,8 +1903,8 @@ dependencies = [
  "crossterm",
  "dhttp",
  "dirs",
+ "dssh",
  "futures",
- "genmeta-ssh 0.2.0",
  "h3x",
  "http",
  "http-body-util",
@@ -2180,36 +1990,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gloo-timers"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbb143cf96099802033e0d4f4963b19fd2e0b728bcf076cd9cf7f6634f092994"
-dependencies = [
- "futures-channel",
- "futures-core",
- "js-sys",
- "wasm-bindgen",
-]
-
-[[package]]
-name = "gmdns"
-version = "0.2.0"
-source = "git+ssh://git@github.com/genmeta/ddns.git?branch=endpoint#eadd8514110b3cfc4b9c8910fc1b5a272aad40a3"
-dependencies = [
- "dashmap",
- "ddns-core",
- "dquic",
- "flume 0.12.0",
- "futures",
- "h3x",
- "libc",
- "snafu 0.8.9",
- "socket2 0.5.10",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "h2"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2231,10 +2011,10 @@ dependencies = [
 [[package]]
 name = "h3x"
 version = "0.2.0"
-source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#b4de02c943d69d45ceb4b89af0094e7442f646f9"
+source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#482556b43a1f4f086cf952f5c6fb6a336804f222"
 dependencies = [
  "arc-swap",
- "async-channel 2.5.0",
+ "async-channel",
  "bon",
  "bytes",
  "dashmap",
@@ -2316,12 +2096,6 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
-
-[[package]]
-name = "hermit-abi"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
 
 [[package]]
 name = "hex"
@@ -2497,7 +2271,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -2827,15 +2601,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kv-log-macro"
-version = "1.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0de8b303297635ad57c9f5059fd9cee7a47f8e8daa09df0fcd07dd39fb22977f"
-dependencies = [
- "log",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2917,9 +2682,6 @@ name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
-dependencies = [
- "value-bag",
-]
 
 [[package]]
 name = "lru-slab"
@@ -3144,7 +2906,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3499,23 +3261,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
-name = "pin-utils"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
-
-[[package]]
-name = "piper"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c835479a4443ded371d6c535cbfd8d31ad92c5d23ae9770a61bc155e4992a3c1"
-dependencies = [
- "atomic-waker",
- "fastrand",
- "futures-io",
-]
-
-[[package]]
 name = "pkcs1"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3569,20 +3314,6 @@ dependencies = [
  "quick-xml",
  "serde",
  "time",
-]
-
-[[package]]
-name = "polling"
-version = "3.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d0e4f59085d47d8241c88ead0f274e8a0cb551f3625263c05eb8dd897c34218"
-dependencies = [
- "cfg-if",
- "concurrent-queue",
- "hermit-abi",
- "pin-project-lite",
- "rustix",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3724,7 +3455,7 @@ dependencies = [
 [[package]]
 name = "qbase"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1a713bfe3cf2e0b4c8d664689e5fa958d5dd2bcc"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3d9824f9a3593f421d10654828ce6c914793c1a8"
 dependencies = [
  "bitflags",
  "bytes",
@@ -3748,7 +3479,7 @@ dependencies = [
 [[package]]
 name = "qcongestion"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1a713bfe3cf2e0b4c8d664689e5fa958d5dd2bcc"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3d9824f9a3593f421d10654828ce6c914793c1a8"
 dependencies = [
  "qbase",
  "qevent",
@@ -3761,7 +3492,7 @@ dependencies = [
 [[package]]
 name = "qconnection"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1a713bfe3cf2e0b4c8d664689e5fa958d5dd2bcc"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3d9824f9a3593f421d10654828ce6c914793c1a8"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3789,7 +3520,7 @@ dependencies = [
 [[package]]
 name = "qdatagram"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1a713bfe3cf2e0b4c8d664689e5fa958d5dd2bcc"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3d9824f9a3593f421d10654828ce6c914793c1a8"
 dependencies = [
  "bytes",
  "futures",
@@ -3801,7 +3532,7 @@ dependencies = [
 [[package]]
 name = "qevent"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1a713bfe3cf2e0b4c8d664689e5fa958d5dd2bcc"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3d9824f9a3593f421d10654828ce6c914793c1a8"
 dependencies = [
  "bytes",
  "derive_builder",
@@ -3819,7 +3550,7 @@ dependencies = [
 [[package]]
 name = "qinterface"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1a713bfe3cf2e0b4c8d664689e5fa958d5dd2bcc"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3d9824f9a3593f421d10654828ce6c914793c1a8"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3844,7 +3575,7 @@ dependencies = [
 [[package]]
 name = "qmacro"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1a713bfe3cf2e0b4c8d664689e5fa958d5dd2bcc"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3d9824f9a3593f421d10654828ce6c914793c1a8"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -3855,7 +3586,7 @@ dependencies = [
 [[package]]
 name = "qrecovery"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1a713bfe3cf2e0b4c8d664689e5fa958d5dd2bcc"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3d9824f9a3593f421d10654828ce6c914793c1a8"
 dependencies = [
  "bytes",
  "derive_more",
@@ -3873,7 +3604,7 @@ dependencies = [
 [[package]]
 name = "qresolve"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1a713bfe3cf2e0b4c8d664689e5fa958d5dd2bcc"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3d9824f9a3593f421d10654828ce6c914793c1a8"
 dependencies = [
  "futures",
  "qbase",
@@ -3884,7 +3615,7 @@ dependencies = [
 [[package]]
 name = "qtraversal"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1a713bfe3cf2e0b4c8d664689e5fa958d5dd2bcc"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3d9824f9a3593f421d10654828ce6c914793c1a8"
 dependencies = [
  "async-trait",
  "bitflags",
@@ -3914,7 +3645,7 @@ dependencies = [
 [[package]]
 name = "qudp"
 version = "0.5.0"
-source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#1a713bfe3cf2e0b4c8d664689e5fa958d5dd2bcc"
+source = "git+ssh://git@github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#3d9824f9a3593f421d10654828ce6c914793c1a8"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -3949,7 +3680,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3986,7 +3717,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -4462,7 +4193,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4529,7 +4260,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5094,7 +4825,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -5106,7 +4837,7 @@ version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54254b8531cafa275c5e096f62d48c81435d1015405a91198ddb11e967301d40"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -5129,7 +4860,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5187,7 +4918,7 @@ dependencies = [
  "crc",
  "crossbeam-queue",
  "either",
- "event-listener 5.4.1",
+ "event-listener",
  "futures-core",
  "futures-intrusive",
  "futures-io",
@@ -6007,12 +5738,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
-name = "value-bag"
-version = "1.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ba6f5989077681266825251a52748b8c1d8a4ad098cc37e440103d0ea717fc0"
-
-[[package]]
 name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6294,7 +6019,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

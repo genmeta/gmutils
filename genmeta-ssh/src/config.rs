@@ -1,9 +1,9 @@
 use std::{collections::BTreeSet, str::FromStr, time::Duration};
 
 use dhttp::{
+    config::{self, DhttpConfig, identity::IdentityConfig},
     ddns,
     dquic::binds::BindPattern,
-    home::{self, DhttpHome, identity::IdentityHome},
     name::{DhttpName, DhttpName as Name, InvalidDhttpName as InvalidName},
 };
 use http::{Uri, uri::Authority};
@@ -37,12 +37,14 @@ pub enum Error {
     ReadConfig { source: ssh_config::ReadConfigError },
     #[snafu(display("bare `~` requires an identity"))]
     BareTildeWithoutIdentity,
-    #[snafu(display("failed to locate dhttp home"))]
-    LocateDhttpHome { source: home::LocateDhttpHomeError },
+    #[snafu(display("failed to locate dhttp config"))]
+    LocateDhttpConfig {
+        source: config::LocateDhttpConfigError,
+    },
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
         name: Name<'static>,
-        source: home::identity::ssl::LoadIdentityError,
+        source: config::identity::ssl::LoadIdentityError,
     },
     #[snafu(display("identity `{id}` in ssh config is invalid"))]
     InvalidIdInSshConfig { id: String, source: InvalidName },
@@ -72,7 +74,7 @@ pub struct Config {
     pub dns: BTreeSet<ddns::DnsScheme>,
     pub username: String,
     pub uri: Uri,
-    pub id: Option<IdentityHome>,
+    pub id: Option<IdentityConfig>,
     pub connect_timeout: Duration,
     pub local_forwards: Vec<LocalForward>,
     pub remote_forwards: Vec<RemoteForward>,
@@ -80,43 +82,15 @@ pub struct Config {
 }
 
 fn expand_uri_without_identity(uri: Uri) -> Result<Uri, Error> {
-    let mut parts = uri.into_parts();
-
-    let Some(authority) = &parts.authority else {
-        return Uri::from_parts(parts).context(config_error::ConstructUriSnafu);
+    let Some(authority) = uri.authority() else {
+        return Uri::from_parts(uri.into_parts()).context(config_error::ConstructUriSnafu);
     };
+    ensure!(
+        authority.host() != "~",
+        config_error::BareTildeWithoutIdentitySnafu
+    );
 
-    let host = authority.host();
-    ensure!(host != "~", config_error::BareTildeWithoutIdentitySnafu);
-
-    let Some(expanded) =
-        DhttpName::try_expand_from(host).context(config_error::ExpandUriNameSnafu)?
-    else {
-        return Uri::from_parts(parts).context(config_error::ConstructUriSnafu);
-    };
-
-    let expanded = expanded.as_full();
-    if expanded != host {
-        let user_info_len = authority
-            .as_str()
-            .split_once('@')
-            .map(|(user_info, ..)| user_info.len() + 1)
-            .unwrap_or_default();
-        let host_len = host.len();
-        let authority = format!(
-            "{user_info}{host}{port}",
-            user_info = &authority.as_str()[..user_info_len],
-            host = expanded,
-            port = &authority.as_str()[user_info_len + host_len..],
-        );
-        parts.authority = Some(authority.parse().context(
-            config_error::ParseExpandedAuthoritySnafu {
-                authority: &authority,
-            },
-        )?);
-    }
-
-    Uri::from_parts(parts).context(config_error::ConstructUriSnafu)
+    DhttpName::expand_uri_with_base(None, uri).context(config_error::ExpandNameInUriSnafu)
 }
 
 fn expand_uri(uri: Uri, self_name: Option<&Name<'_>>) -> Result<Uri, Error> {
@@ -128,10 +102,10 @@ fn expand_uri(uri: Uri, self_name: Option<&Name<'_>>) -> Result<Uri, Error> {
     }
 }
 
-async fn load_identity_home(
+async fn load_identity_config(
     options: &super::Options,
     ssh_config_id_name: Option<Name<'static>>,
-) -> Result<Option<IdentityHome>, Error> {
+) -> Result<Option<IdentityConfig>, Error> {
     if options.anonymous {
         return Ok(None);
     }
@@ -142,16 +116,16 @@ async fn load_identity_home(
         .map(|name| ("command line options", name))
         .or_else(|| ssh_config_id_name.map(|name| ("ssh config", name)));
 
-    let home = match DhttpHome::load_from_environment() {
+    let home = match DhttpConfig::load_from_environment() {
         Ok(home) => home,
         Err(source) if explicit.is_none() => {
             tracing::warn!(
                 error = %snafu::Report::from_error(&source),
-                "failed to locate dhttp home, using anonymous endpoint"
+                "failed to locate dhttp config, using anonymous endpoint"
             );
             return Ok(None);
         }
-        Err(source) => return Err(config_error::LocateDhttpHomeSnafu.into_error(source)),
+        Err(source) => return Err(config_error::LocateDhttpConfigSnafu.into_error(source)),
     };
 
     if let Some((source_name, name)) = explicit {
@@ -229,7 +203,7 @@ impl super::Options {
             .map(|id| Name::from_str(id).context(config_error::InvalidIdInSshConfigSnafu { id }))
             .transpose()?;
 
-        let id = load_identity_home(self, ssh_config_id_name).await?;
+        let id = load_identity_config(self, ssh_config_id_name).await?;
 
         // Expand ~ in URI using loaded identity (--id > ssh_config > default identity)
         let uri = expand_uri(uri, id.as_ref().map(|id| id.name()))?;

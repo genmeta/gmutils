@@ -6,9 +6,8 @@ edition = "2024"
 
 [dependencies]
 clap = { workspace = true }
-firewall-base = { workspace = true, features = ["cli"] }
-firewall-db = { workspace = true }
-dhttp-home = { workspace = true }
+dhttp-access = { workspace = true, features = ["cli", "orm", "migration"] }
+dhttp-config = { workspace = true }
 sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
 sea-orm-migration = { workspace = true, features = ["sqlx-sqlite"] }
 snafu = { workspace = true }

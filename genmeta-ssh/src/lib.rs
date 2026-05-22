@@ -11,8 +11,8 @@ pub mod ssh_config;
 
 use clap::Parser;
 use dhttp::{ddns, dquic::binds::BindPattern, h3x::error::Code, name::DhttpName as Name};
+use dssh as ssh3;
 use forward::*;
-use genmeta_ssh_core as ssh3;
 use snafu::{FromString, Report, ResultExt, Snafu};
 use tracing::Instrument;
 use tracing_subscriber::prelude::*;

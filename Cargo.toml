@@ -33,7 +33,7 @@ whoami = "2"
 console-subscriber = "0.5"
 
 # network
-gmdns = { package = "ddns", git = "ssh://git@github.com/genmeta/ddns.git", branch = "endpoint", features = [
+ddns = { git = "ssh://git@github.com/genmeta/ddns.git", branch = "endpoint", features = [
     "h3x-resolver",
     "http-resolver",
     "mdns-resolver",
@@ -106,12 +106,10 @@ async-compression = { version = "0.4", features = [
 trust-dns-resolver = "0.23.2"
 
 # workspace
-firewall-base = { git = "ssh://git@github.com/genmeta/firewall.git", branch = "endpoint" }
-firewall-db = { git = "ssh://git@github.com/genmeta/firewall.git", branch = "endpoint" }
-firewall-migration = { git = "ssh://git@github.com/genmeta/firewall.git", branch = "endpoint" }
+dhttp-access = { git = "ssh://git@github.com/genmeta/dhttp.git", branch = "main" }
 genmeta-access = { path = "genmeta-access" }
 dhttp = { git = "ssh://git@github.com/genmeta/dhttp.git", branch = "main" }
-dhttp-home = { git = "ssh://git@github.com/genmeta/dhttp.git", branch = "main" }
+dhttp-config = { git = "ssh://git@github.com/genmeta/dhttp.git", branch = "main" }
 dhttp-identity = { git = "ssh://git@github.com/genmeta/dhttp.git", branch = "main" }
 genmeta-curl = { path = "genmeta-curl" }
 genmeta-discover = { path = "genmeta-discover" }
@@ -123,7 +121,7 @@ genmeta-ssh = { path = "genmeta-ssh" }
 genmeta-proxy = { path = "genmeta-proxy" }
 
 # ssh
-genmeta-ssh-core = { package = "genmeta-ssh", git = "ssh://git@github.com/genmeta/genmeta-ssh.git", branch = "endpoint", features = [
+dssh = { git = "ssh://git@github.com/genmeta/dssh.git", branch = "endpoint", features = [
     "config",
 ] }
 
@@ -134,3 +132,18 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
+
+# Local patches are root-only and keep this workspace buildable while provider
+# branch heads for the dependency rename/consolidation commits are not yet
+# published remotely.
+[patch."ssh://git@github.com/genmeta/dhttp.git"]
+dhttp = { path = "../dhttp/dhttp" }
+dhttp-config = { path = "../dhttp/config" }
+dhttp-identity = { path = "../dhttp/identity" }
+dhttp-access = { path = "../dhttp/access" }
+
+[patch."ssh://git@github.com/genmeta/ddns.git"]
+ddns = { path = "../ddns" }
+
+[patch."ssh://git@github.com/genmeta/dssh.git"]
+dssh = { path = "../dssh" }

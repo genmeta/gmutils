@@ -6,13 +6,12 @@ use dhttp::{
     endpoint::Endpoint,
     h3x::{
         connection::{Connection, ConnectionBuilder},
-        pool::ConnectError,
         qpack::field::Protocol,
         quic::GetStreamIdExt,
         stream_id::StreamId,
     },
 };
-use genmeta_ssh_core as ssh3;
+use dssh as ssh3;
 use http::StatusCode;
 use http_body_util::Empty;
 use snafu::prelude::*;
@@ -24,11 +23,11 @@ use crate::config::Config;
 pub enum Error {
     #[snafu(display("failed to load identity certificate and key"))]
     LoadIdentitySsl {
-        source: dhttp::home::identity::ssl::LoadIdentitySslError,
+        source: dhttp::config::identity::ssl::LoadIdentitySslError,
     },
     #[snafu(display("failed to connect to server"))]
     Connect {
-        source: ConnectError<dquic::ConnectError>,
+        source: dhttp::endpoint::ConnectError,
     },
     #[snafu(display("authentication failed (HTTP 401)"))]
     AuthenticationFailed,
@@ -72,8 +71,9 @@ pub async fn connect(config: &Config) -> Result<ConnectResult, Error> {
     );
 
     let identity = match &config.id {
-        Some(home) => Some(Arc::new(
-            home.identity()
+        Some(config) => Some(Arc::new(
+            config
+                .identity()
                 .await
                 .context(connect_error::LoadIdentitySslSnafu)?,
         )),
