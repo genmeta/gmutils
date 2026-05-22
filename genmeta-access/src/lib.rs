@@ -1,12 +1,12 @@
+mod cli;
+
 use std::io::IsTerminal;
 
-use clap::Parser;
-use dhttp_home::{DhttpHome, LocateDhttpHomeError};
+pub use cli::{Options, ParseCommandError, ReportFromStr};
+use dhttp_home::{DhttpHome, LocateDhttpHomeError, identity::default::LoadDefaultConfigError};
 use firewall_base::{
     action::RequestAction,
     error::location::{LocateLocationFailed, MatchLocationFailed},
-    expr::exprs::LocationRuleExprs,
-    pattern::LocationPattern,
 };
 use firewall_db::{
     identity::Name,
@@ -16,118 +16,29 @@ use firewall_db::{
         location_service::{LocationService, RemoveRuleFailed},
     },
 };
-use snafu::{ResultExt, Snafu};
+use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
 
-/// Wrapper for clap that uses [`snafu::Report`] for richer error display.
-///
-/// Use as a clap argument type to get multi-line error chain output when
-/// parsing complex types like [`LocationPattern`] or [`Name`]:
-///
-/// ```ignore
-/// #[derive(clap::Parser)]
-/// struct Cli {
-///     pattern: ReportFromStr<LocationPattern>,
-/// }
-/// ```
-#[derive(Debug, Clone, Copy)]
-pub struct ReportFromStr<T>(pub T);
-
-#[derive(Debug, Snafu)]
-#[snafu(display("{}", snafu::Report::from_error(source)))]
-pub struct ReportError<E: std::error::Error + 'static> {
-    #[snafu(source(false))]
-    source: E,
-}
-
-impl<T> std::str::FromStr for ReportFromStr<T>
-where
-    T: std::str::FromStr<Err: std::error::Error + 'static>,
-{
-    type Err = ReportError<T::Err>;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match T::from_str(s) {
-            Ok(value) => Ok(Self(value)),
-            Err(source) => Err(ReportError { source }),
-        }
-    }
-}
-
-// --- CLI types ---
-
-#[derive(Parser, Debug, Clone)]
-enum RulesOptions {
-    #[command(visible_alias = "ls")]
-    List {},
-    #[command(visible_alias = "rm")]
-    Remove {
-        #[arg(long, conflicts_with = "sequence")]
-        all: bool,
-        #[arg(num_args = 1.., required_unless_present = "all")]
-        sequence: Vec<usize>,
-    },
-    Clear {},
-}
-
-#[derive(Parser, Debug, Clone)]
-enum RuleSetOptions {
-    Rules {
-        #[command(subcommand)]
-        options: RulesOptions,
-    },
-    Allow {
-        #[command(flatten)]
-        expr: LocationRuleExprs,
-    },
-    Deny {
-        #[command(flatten)]
-        expr: LocationRuleExprs,
-    },
-}
-
-#[derive(Parser, Debug, Clone)]
-enum RuleSetsOptions {
-    #[command(visible_alias = "ls")]
-    List {
-        #[arg(short, long)]
-        wide: bool,
-    },
-    #[command(visible_alias = "rm")]
-    Remove {
-        patterns: Vec<ReportFromStr<LocationPattern>>,
-    },
-}
-
-#[derive(Parser, Debug, Clone)]
-enum Command {
-    Rulesets {
-        #[command(subcommand)]
-        options: RuleSetsOptions,
-    },
-    Ruleset {
-        pattern: ReportFromStr<LocationPattern>,
-        #[command(subcommand)]
-        options: RuleSetOptions,
-    },
-}
-
-#[derive(Parser, Debug, Clone)]
-#[command(version, about)]
-pub struct Options {
-    identity: ReportFromStr<Name<'static>>,
-
-    #[command(subcommand)]
-    command: Command,
-}
+use crate::cli::{Command, PathOperation};
 
 // --- Error ---
 
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 pub enum Error {
+    #[snafu(transparent)]
+    ParseCommand { source: ParseCommandError },
+
     #[snafu(display("failed to locate DHTTP_HOME"))]
     LocateHome { source: LocateDhttpHomeError },
+
+    #[snafu(display("failed to load default identity config"))]
+    LoadDefaultIdentityConfig { source: LoadDefaultConfigError },
+
+    #[snafu(display(
+        "no default identity configured, use `genmeta identity default <name>` to set one"
+    ))]
+    MissingDefaultIdentity,
 
     #[snafu(display("failed to initialize identity access database"))]
     InitDatabase { source: firewall_db::AccessDbError },
@@ -135,13 +46,13 @@ pub enum Error {
     #[snafu(display("failed to open identity access database"))]
     OpenDatabase { source: firewall_db::AccessDbError },
 
-    #[snafu(display("failed to list ruleset rules"))]
+    #[snafu(display("failed to list access path rules"))]
     ListRules {
         source: ServiceError<MatchLocationFailed>,
     },
 
-    #[snafu(display("failed to remove ruleset"))]
-    RemoveRuleSet {
+    #[snafu(display("failed to remove access path"))]
+    RemovePath {
         source: ServiceError<LocateLocationFailed>,
     },
 
@@ -153,8 +64,8 @@ pub enum Error {
     #[snafu(display("failed to add rule"))]
     AddRule { source: sea_orm::DbErr },
 
-    #[snafu(display("failed to list rulesets"))]
-    ListRuleSets { source: sea_orm::DbErr },
+    #[snafu(display("failed to list access paths"))]
+    ListPaths { source: sea_orm::DbErr },
 }
 
 // --- Logic ---
@@ -190,7 +101,12 @@ pub async fn run(options: Options) -> Result<(), Error> {
 }
 
 pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, Error> {
-    let ReportFromStr(identity) = options.identity;
+    let (identity, command) = options.into_parts()?;
+    if let Command::Print { output } = command {
+        return Ok(output);
+    }
+
+    let identity = resolve_identity(home, identity).await?;
     let identity_home = home.identity_home(identity.borrow());
     let db_path = identity_access_db_path(&identity_home);
     let db = if db_path.is_file() {
@@ -206,73 +122,92 @@ pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, 
             .await
             .context(error::InitDatabaseSnafu)?
     };
-    run_with(options.command, &db).await
+    run_with(command, &db).await
+}
+
+async fn resolve_identity(
+    home: &DhttpHome,
+    identity: Option<Name<'static>>,
+) -> Result<Name<'static>, Error> {
+    if let Some(identity) = identity {
+        return Ok(identity);
+    }
+
+    let config = match home.load_identity_default_config().await {
+        Ok(config) => config,
+        Err(LoadDefaultConfigError::Io { source, .. })
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            return error::MissingDefaultIdentitySnafu.fail();
+        }
+        Err(source) => return Err(error::LoadDefaultIdentityConfigSnafu.into_error(source)),
+    };
+
+    config
+        .config()
+        .name()
+        .cloned()
+        .context(error::MissingDefaultIdentitySnafu)
 }
 
 async fn run_with(command: Command, db: &sea_orm::DatabaseConnection) -> Result<String, Error> {
     let location_service = LocationService::new(db);
 
     match command {
-        Command::Ruleset {
-            pattern: ReportFromStr(pattern),
-            options,
-        } => match options {
-            RuleSetOptions::Rules { options } => match options {
-                RulesOptions::List {} => match location_service.list_rules(&pattern).await {
-                    Ok(rules) => return Ok(rules.to_string()),
-                    Err(ServiceError::Custom { source }) => return Ok(source.to_string()),
-                    result => _ = result.context(error::ListRulesSnafu)?,
-                },
-                RulesOptions::Remove { all, sequence } => match all {
-                    true => location_service
-                        .remove_rule_set(&pattern)
-                        .await
-                        .context(error::RemoveRuleSetSnafu)?,
-                    false => location_service
-                        .remove_rules(&pattern, sequence)
-                        .await
-                        .context(error::RemoveRulesSnafu)?,
-                },
-                RulesOptions::Clear {} => location_service
+        Command::Print { output } => return Ok(output),
+        Command::Path { pattern, operation } => match operation {
+            PathOperation::List => match location_service.list_rules(&pattern).await {
+                Ok(rules) => return Ok(rules.to_string()),
+                Err(ServiceError::Custom { source }) => return Ok(source.to_string()),
+                result => _ = result.context(error::ListRulesSnafu)?,
+            },
+            PathOperation::Remove { all, sequence } => match all {
+                true => location_service
                     .remove_rule_set(&pattern)
                     .await
-                    .context(error::RemoveRuleSetSnafu)?,
+                    .context(error::RemovePathSnafu)?,
+                false => location_service
+                    .remove_rules(&pattern, sequence)
+                    .await
+                    .context(error::RemoveRulesSnafu)?,
             },
-            RuleSetOptions::Allow { expr } => location_service
+            PathOperation::Clear => location_service
+                .remove_rule_set(&pattern)
+                .await
+                .context(error::RemovePathSnafu)?,
+            PathOperation::Allow { expr } => location_service
                 .append_rule(&pattern, RequestAction::Allow, expr)
                 .await
                 .context(error::AddRuleSnafu)?,
-            RuleSetOptions::Deny { expr } => location_service
+            PathOperation::Deny { expr } => location_service
                 .append_rule(&pattern, RequestAction::Deny, expr)
                 .await
                 .context(error::AddRuleSnafu)?,
         },
-        Command::Rulesets { options } => match options {
-            RuleSetsOptions::List { wide } => match wide {
-                true => {
-                    return Ok(location_service
-                        .list_all_rules()
-                        .await
-                        .context(error::ListRuleSetsSnafu)?
-                        .to_string());
-                }
-                false => {
-                    return Ok(location_service
-                        .list_rule_sets()
-                        .await
-                        .context(error::ListRuleSetsSnafu)?
-                        .to_string());
-                }
-            },
-            RuleSetsOptions::Remove { patterns } => {
-                for ReportFromStr(pattern) in patterns {
-                    location_service
-                        .remove_rule_set(&pattern)
-                        .await
-                        .context(error::RemoveRuleSetSnafu)?;
-                }
+        Command::List { wide } => match wide {
+            true => {
+                return Ok(location_service
+                    .list_all_rules()
+                    .await
+                    .context(error::ListPathsSnafu)?
+                    .to_string());
+            }
+            false => {
+                return Ok(location_service
+                    .list_rule_sets()
+                    .await
+                    .context(error::ListPathsSnafu)?
+                    .to_string());
             }
         },
+        Command::RemovePaths { patterns } => {
+            for pattern in patterns {
+                location_service
+                    .remove_rule_set(&pattern)
+                    .await
+                    .context(error::RemovePathSnafu)?;
+            }
+        }
     }
 
     Ok(String::new())
