@@ -27,9 +27,21 @@ pub enum StageFormat {
 
 #[derive(Debug, Clone, Args)]
 pub struct PpaOptions {
+    /// APT suite name
+    #[arg(long, default_value = "genmeta")]
+    pub suite: String,
     /// Package components to stage
     #[arg(long = "component", default_values_t = default_components())]
     pub components: Vec<String>,
+    /// ASCII-armored GPG private key file used to sign Release metadata
+    #[arg(long)]
+    pub key_file: PathBuf,
+    /// Expected signing key fingerprint or long key id
+    #[arg(long)]
+    pub fingerprint: String,
+    /// Optional file containing the GPG key passphrase
+    #[arg(long)]
+    pub passphrase_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -130,5 +142,9 @@ pub async fn tap(repo: PathBuf, commit: bool, push: bool) -> Result<(), Whatever
 }
 
 fn default_components() -> Vec<String> {
-    vec!["main".to_owned()]
+    vec![
+        "main".to_owned(),
+        "contrib".to_owned(),
+        "non-free".to_owned(),
+    ]
 }
