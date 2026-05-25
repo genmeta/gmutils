@@ -45,17 +45,7 @@ pub struct PpaOptions {
 }
 
 #[derive(Debug, Clone, Args)]
-pub struct VerifyOptions {
-    /// Staged artifact root to validate
-    #[arg(long, value_enum, default_value_t = PublishRoot::Common)]
-    pub root: PublishRoot,
-}
-
-#[derive(Debug, Clone, ValueEnum)]
-pub enum RemoteKind {
-    /// Amazon S3 compatible remote
-    S3,
-}
+pub struct VerifyOptions {}
 
 #[derive(Debug, Subcommand)]
 pub enum PublishTarget {
@@ -68,53 +58,45 @@ pub enum PublishTarget {
 
 #[derive(Debug, Clone, Args)]
 pub struct S3Options {
+    /// S3 endpoint URL
+    #[arg(long)]
+    pub endpoint_url: String,
     /// S3 bucket name
     #[arg(long)]
     pub bucket: String,
-    /// Prefix inside the bucket
-    #[arg(long, default_value = "")]
-    pub prefix: String,
-    /// AWS region name
+    /// File containing AWS access key id
     #[arg(long)]
-    pub region: Option<String>,
-    /// Custom S3 endpoint URL
+    pub access_key_id_file: PathBuf,
+    /// File containing AWS secret access key
     #[arg(long)]
-    pub endpoint_url: Option<String>,
-    /// AWS profile to use
+    pub secret_access_key_file: PathBuf,
+    /// Upload only selected roots: homebrew, scoop, ppa
+    #[arg(long, value_enum, value_delimiter = ',')]
+    pub only: Vec<PublishRoot>,
+    /// Remote prefix for APT repository files
+    #[arg(long, default_value = "ppa/genmeta")]
+    pub apt_prefix: String,
+    /// Print planned uploads without writing to S3
     #[arg(long)]
-    pub profile: Option<String>,
-    /// AWS access key id
-    #[arg(long)]
-    pub access_key_id: Option<String>,
-    /// AWS secret access key
-    #[arg(long)]
-    pub secret_access_key: Option<String>,
-    /// Staged artifact root to publish
-    #[arg(long, value_enum, default_value_t = PublishRoot::Common)]
-    pub root: PublishRoot,
-    /// Remote provider kind
-    #[arg(long, value_enum, default_value_t = RemoteKind::S3)]
-    pub remote: RemoteKind,
+    pub dry_run: bool,
 }
 
-#[derive(Debug, Clone, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum PublishRoot {
-    /// target/common
-    Common,
+    /// target/common/homebrew
+    Homebrew,
+    /// target/common/scoop
+    Scoop,
+    /// target/common/ppa
+    Ppa,
 }
 
 impl std::fmt::Display for PublishRoot {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Common => formatter.write_str("common"),
-        }
-    }
-}
-
-impl std::fmt::Display for RemoteKind {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::S3 => formatter.write_str("s3"),
+            Self::Homebrew => formatter.write_str("homebrew"),
+            Self::Scoop => formatter.write_str("scoop"),
+            Self::Ppa => formatter.write_str("ppa"),
         }
     }
 }
