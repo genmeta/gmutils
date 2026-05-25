@@ -1,10 +1,7 @@
-use std::{
-    io::ErrorKind,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use snafu::{ResultExt, Whatever};
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::{
     package_meta,
@@ -13,7 +10,7 @@ use crate::{
             ArtifactEntry, ArtifactRoot, ReleaseManifest, copy_artifact, read_manifest,
             sha256_file, write_manifest,
         },
-        paths::{common_paths, recreate_dir},
+        paths::{common_paths, promote_staged_outputs, recreate_dir},
     },
     target_dir,
 };
@@ -151,6 +148,7 @@ pub async fn stage() -> Result<(), Whatever> {
     write_manifest(&manifest_staging, &manifest).await?;
 
     promote_staged_outputs(
+        "homebrew",
         &staging,
         &paths.homebrew,
         &manifest_staging,
@@ -259,171 +257,15 @@ fn merge_homebrew_manifest(
     manifest
 }
 
-async fn promote_staged_outputs(
-    homebrew_staging: &Path,
-    homebrew_destination: &Path,
-    manifest_staging: &Path,
-    manifest_destination: &Path,
-) -> Result<(), Whatever> {
-    let homebrew_backup = homebrew_destination.with_file_name("homebrew.previous");
-    let manifest_backup = manifest_destination.with_file_name("manifest.toml.previous");
-    remove_path_if_exists(&homebrew_backup).await?;
-    remove_path_if_exists(&manifest_backup).await?;
-
-    let mut homebrew_backed_up = false;
-    let mut manifest_backed_up = false;
-    let mut homebrew_promoted = false;
-    let mut manifest_promoted = false;
-
-    let result: Result<(), Whatever> = async {
-        if tokio::fs::try_exists(homebrew_destination)
-            .await
-            .whatever_context(format!(
-                "failed to inspect {}",
-                homebrew_destination.display()
-            ))?
-        {
-            tokio::fs::rename(homebrew_destination, &homebrew_backup)
-                .await
-                .whatever_context(format!(
-                    "failed to move {} to {}",
-                    homebrew_destination.display(),
-                    homebrew_backup.display()
-                ))?;
-            homebrew_backed_up = true;
-        }
-
-        if tokio::fs::try_exists(manifest_destination)
-            .await
-            .whatever_context(format!(
-                "failed to inspect {}",
-                manifest_destination.display()
-            ))?
-        {
-            tokio::fs::rename(manifest_destination, &manifest_backup)
-                .await
-                .whatever_context(format!(
-                    "failed to move {} to {}",
-                    manifest_destination.display(),
-                    manifest_backup.display()
-                ))?;
-            manifest_backed_up = true;
-        }
-
-        tokio::fs::rename(homebrew_staging, homebrew_destination)
-            .await
-            .whatever_context(format!(
-                "failed to move {} to {}",
-                homebrew_staging.display(),
-                homebrew_destination.display()
-            ))?;
-        homebrew_promoted = true;
-
-        tokio::fs::rename(manifest_staging, manifest_destination)
-            .await
-            .whatever_context(format!(
-                "failed to move {} to {}",
-                manifest_staging.display(),
-                manifest_destination.display()
-            ))?;
-        manifest_promoted = true;
-
-        Ok(())
-    }
-    .await;
-
-    if let Err(error) = result {
-        rollback_promoted_outputs(PromotionRollback {
-            homebrew_destination,
-            homebrew_backup: &homebrew_backup,
-            homebrew_backed_up,
-            homebrew_promoted,
-            manifest_destination,
-            manifest_backup: &manifest_backup,
-            manifest_backed_up,
-            manifest_promoted,
-        })
-        .await;
-        return Err(error).whatever_context("failed to promote homebrew staged outputs");
-    }
-
-    if let Err(error) = remove_path_if_exists(&homebrew_backup).await {
-        warn!(error = %snafu::Report::from_error(&error), "failed to remove previous homebrew backup after promotion");
-    }
-    if let Err(error) = remove_path_if_exists(&manifest_backup).await {
-        warn!(error = %snafu::Report::from_error(&error), "failed to remove previous manifest backup after promotion");
-    }
-    Ok(())
-}
-
-struct PromotionRollback<'a> {
-    homebrew_destination: &'a Path,
-    homebrew_backup: &'a Path,
-    homebrew_backed_up: bool,
-    homebrew_promoted: bool,
-    manifest_destination: &'a Path,
-    manifest_backup: &'a Path,
-    manifest_backed_up: bool,
-    manifest_promoted: bool,
-}
-
-async fn rollback_promoted_outputs(rollback: PromotionRollback<'_>) {
-    if rollback.manifest_promoted {
-        remove_path_if_exists(rollback.manifest_destination)
-            .await
-            .unwrap_or_else(
-                |error| warn!(error = %snafu::Report::from_error(&error), "failed to remove promoted manifest during rollback"),
-            );
-    }
-    if rollback.manifest_backed_up {
-        tokio::fs::rename(rollback.manifest_backup, rollback.manifest_destination)
-            .await
-            .unwrap_or_else(
-                |error| warn!(error = %snafu::Report::from_error(&error), "failed to restore previous manifest during rollback"),
-            );
-    }
-
-    if rollback.homebrew_promoted {
-        remove_path_if_exists(rollback.homebrew_destination)
-            .await
-            .unwrap_or_else(|error| warn!(error = %snafu::Report::from_error(&error), "failed to remove promoted homebrew directory during rollback"));
-    }
-    if rollback.homebrew_backed_up {
-        tokio::fs::rename(rollback.homebrew_backup, rollback.homebrew_destination)
-            .await
-            .unwrap_or_else(|error| warn!(error = %snafu::Report::from_error(&error), "failed to restore previous homebrew directory during rollback"));
-    }
-}
-
-async fn remove_path_if_exists(path: &Path) -> Result<(), Whatever> {
-    let metadata = match tokio::fs::symlink_metadata(path).await {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(error).whatever_context(format!("failed to inspect {}", path.display()));
-        }
-    };
-
-    if metadata.is_dir() {
-        tokio::fs::remove_dir_all(path)
-            .await
-            .whatever_context(format!("failed to remove {}", path.display()))
-    } else {
-        tokio::fs::remove_file(path)
-            .await
-            .whatever_context(format!("failed to remove {}", path.display()))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
-    use super::{
-        ArchiveInfo, generate_formula, merge_homebrew_manifest, promote_staged_outputs,
-        validate_homebrew_inputs,
+    use super::{ArchiveInfo, generate_formula, merge_homebrew_manifest, validate_homebrew_inputs};
+    use crate::release::{
+        artifact::{ArtifactEntry, ArtifactRoot, ReleaseManifest, write_manifest},
+        paths::promote_staged_outputs,
     };
-    use crate::release::artifact::{ArtifactEntry, ArtifactRoot, ReleaseManifest, write_manifest};
 
     #[test]
     fn formula_uses_arch_blocks_archives_and_install_content() {
@@ -550,6 +392,7 @@ mod tests {
             .expect("new homebrew sentinel should be written");
 
         let error = promote_staged_outputs(
+            "homebrew",
             &homebrew_staging,
             &homebrew,
             &missing_manifest_staging,

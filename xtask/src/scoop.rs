@@ -1,26 +1,14 @@
 use std::{io::Write, path::Path};
 
-use serde::Serialize;
-use snafu::{ResultExt, Whatever};
+use snafu::{OptionExt, ResultExt, Whatever};
 use tracing::{Instrument, info, info_span};
 
-use crate::{ScoopTarget, package_meta, run_cmd, run_cmd_quiet, sha256_file, target_dir};
+use crate::{ScoopTarget, package_meta, run_cmd, run_cmd_quiet, target_dir};
 
 const CARGO_NAME: &str = "genmeta";
 
 /// Distribution package name (differs from the cargo crate name).
 const PACKAGE_NAME: &str = "gmutils";
-
-/// Download URL prefix for Scoop archives.
-const SCOOP_DL_URL: &str = "https://download.genmeta.net/scoop";
-
-fn scoop_arch(triple: &str) -> Result<&'static str, Whatever> {
-    match triple {
-        "x86_64-pc-windows-msvc" => Ok("64bit"),
-        "i686-pc-windows-msvc" => Ok("32bit"),
-        _ => snafu::whatever!("unsupported scoop target triple: {triple}"),
-    }
-}
 
 async fn check_cargo_xwin() -> Result<(), Whatever> {
     run_cmd_quiet(tokio::process::Command::new("which").arg("cargo-xwin")).await
@@ -40,9 +28,9 @@ fn create_zip(staging: &Path, output: &Path) -> Result<(), Whatever> {
         if path.is_file() {
             let name = path
                 .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned();
+                .and_then(|name| name.to_str())
+                .whatever_context("failed to read zip entry file name as utf-8")?
+                .to_owned();
             zip.start_file(&name, options)
                 .whatever_context(format!("failed to start zip entry {name}"))?;
             let data = std::fs::read(&path)
@@ -55,31 +43,6 @@ fn create_zip(staging: &Path, output: &Path) -> Result<(), Whatever> {
     zip.finish()
         .whatever_context("failed to finalize zip archive")?;
     Ok(())
-}
-
-/// Scoop manifest JSON structure.
-#[derive(Serialize)]
-struct ScoopManifest {
-    version: String,
-    description: String,
-    license: String,
-    homepage: String,
-    architecture: serde_json::Map<String, serde_json::Value>,
-    bin: Vec<String>,
-    checkver: CheckVer,
-    autoupdate: serde_json::Map<String, serde_json::Value>,
-}
-
-#[derive(Serialize)]
-struct CheckVer {
-    url: String,
-    re: String,
-}
-
-struct ArchiveInfo {
-    arch_key: String,
-    archive_name: String,
-    sha256: String,
 }
 
 pub async fn run(targets: &[ScoopTarget]) -> Result<(), Whatever> {
@@ -102,60 +65,10 @@ pub async fn run(targets: &[ScoopTarget]) -> Result<(), Whatever> {
         );
     }
 
-    let mut archives = Vec::new();
     info!("waiting for scoop target builds to finish");
     while let Some(result) = tasks.join_next().await {
-        archives.push(result.whatever_context("scoop build task panicked")??);
+        result.whatever_context("scoop build task panicked")??;
     }
-
-    // Generate aggregated manifest
-    let manifest_name = format!("{PACKAGE_NAME}.json");
-
-    let mut architecture = serde_json::Map::new();
-    let mut autoupdate = serde_json::Map::new();
-
-    for info in &archives {
-        let url = format!("{SCOOP_DL_URL}/{}", info.archive_name);
-        architecture.insert(
-            info.arch_key.clone(),
-            serde_json::json!({
-                "url": url,
-                "hash": info.sha256,
-            }),
-        );
-        autoupdate.insert(
-            info.arch_key.clone(),
-            serde_json::json!({
-                "url": url,
-            }),
-        );
-    }
-
-    let manifest = ScoopManifest {
-        version: meta.version,
-        description: meta.description,
-        license: meta.license,
-        homepage: meta.homepage,
-        architecture,
-        bin: vec![format!("{CARGO_NAME}.exe"), "genmeta-ssh.bat".to_string()],
-        checkver: CheckVer {
-            url: format!("{SCOOP_DL_URL}/{manifest_name}"),
-            re: r#""version"\s*:\s*"([^"]+)""#.to_string(),
-        },
-        autoupdate,
-    };
-
-    let manifest_dir = target_dir.join("common").join("scoop");
-    tokio::fs::create_dir_all(&manifest_dir)
-        .await
-        .whatever_context(format!("failed to create {}", manifest_dir.display()))?;
-    let manifest_path = manifest_dir.join(&manifest_name);
-    let json = serde_json::to_string_pretty(&manifest)
-        .whatever_context("failed to serialize scoop manifest")?;
-    tokio::fs::write(&manifest_path, json + "\n")
-        .await
-        .whatever_context(format!("failed to write {}", manifest_path.display()))?;
-    info!(path = %manifest_path.display(), "produced manifest");
     info!("finished scoop dist build");
 
     Ok(())
@@ -166,9 +79,7 @@ async fn build_one(
     version: &str,
     target_dir: &Path,
     workspace: &Path,
-) -> Result<ArchiveInfo, Whatever> {
-    let arch_key = scoop_arch(triple)?;
-
+) -> Result<(), Whatever> {
     info!(triple, "checking cargo-xwin availability");
     check_cargo_xwin().await?;
 
@@ -223,13 +134,6 @@ async fn build_one(
     // Cleanup staging
     let _ = tokio::fs::remove_dir_all(&staging).await;
 
-    // Hash
-    let sha = sha256_file(&archive_path).await?;
-
     info!(path = %archive_path.display(), "produced archive");
-    Ok(ArchiveInfo {
-        arch_key: arch_key.to_string(),
-        archive_name,
-        sha256: sha,
-    })
+    Ok(())
 }
