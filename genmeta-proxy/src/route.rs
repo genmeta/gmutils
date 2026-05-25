@@ -41,7 +41,9 @@ impl Router {
     pub fn is_genmeta(&self, host: &str) -> bool {
         // strip port if present
         let host = host.split(':').next().unwrap_or(host);
-        host.ends_with(Name::SUFFIX) || host.ends_with('~')
+        host.ends_with('~')
+            || (host.len() >= Name::SUFFIX.len()
+                && host[host.len() - Name::SUFFIX.len()..].eq_ignore_ascii_case(Name::SUFFIX))
     }
 
     /// Classify an incoming request into a Route variant.
@@ -90,6 +92,7 @@ mod tests {
     fn test_is_genmeta_exact_suffix() {
         let r = router();
         assert!(r.is_genmeta("api.genmeta.net"));
+        assert!(r.is_genmeta("API.GenMeta.Net"));
         assert!(r.is_genmeta("test.genmeta.net"));
         assert!(r.is_genmeta("a.b.genmeta.net"));
     }

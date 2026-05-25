@@ -4,10 +4,11 @@ use dhttp::{
     config::{self, DhttpConfig, identity::IdentityConfig},
     ddns,
     dquic::binds::BindPattern,
-    name::{DhttpName, DhttpName as Name, InvalidDhttpName as InvalidName},
+    message::IntoUri,
+    name::{DhttpName as Name, InvalidDhttpName as InvalidName},
 };
 use http::{Uri, uri::Authority};
-use snafu::{IntoError, ResultExt, Snafu, ensure};
+use snafu::{IntoError, ResultExt, Snafu};
 
 use crate::{
     forward::{DynamicForward, LocalForward, RemoteForward},
@@ -35,8 +36,6 @@ pub enum Error {
     MissingAuthority {},
     #[snafu(display("failed to read ssh configuration"))]
     ReadConfig { source: ssh_config::ReadConfigError },
-    #[snafu(display("bare `~` requires an identity"))]
-    BareTildeWithoutIdentity,
     #[snafu(display("failed to locate dhttp config"))]
     LocateDhttpConfig {
         source: config::LocateDhttpConfigError,
@@ -48,16 +47,9 @@ pub enum Error {
     },
     #[snafu(display("identity `{id}` in ssh config is invalid"))]
     InvalidIdInSshConfig { id: String, source: InvalidName },
-    #[snafu(display("failed to expand identity name in uri"))]
-    ExpandNameInUri { source: dhttp::name::ExpandUriError },
-    #[snafu(display("failed to parse identity name in uri"))]
-    ExpandUriName {
-        source: dhttp::name::InvalidDhttpName,
-    },
-    #[snafu(display("failed to parse expanded authority `{authority}`"))]
-    ParseExpandedAuthority {
-        authority: String,
-        source: http::uri::InvalidUri,
+    #[snafu(display("failed to normalize dhttp uri"))]
+    NormalizeUri {
+        source: dhttp::message::IntoUriError,
     },
     #[snafu(display("failed to parse path and query `{path_and_query}`"))]
     InvalidPathAndQuery {
@@ -79,27 +71,6 @@ pub struct Config {
     pub local_forwards: Vec<LocalForward>,
     pub remote_forwards: Vec<RemoteForward>,
     pub dynamic_forwards: Vec<DynamicForward>,
-}
-
-fn expand_uri_without_identity(uri: Uri) -> Result<Uri, Error> {
-    let Some(authority) = uri.authority() else {
-        return Uri::from_parts(uri.into_parts()).context(config_error::ConstructUriSnafu);
-    };
-    ensure!(
-        authority.host() != "~",
-        config_error::BareTildeWithoutIdentitySnafu
-    );
-
-    DhttpName::expand_uri_with_base(None, uri).context(config_error::ExpandNameInUriSnafu)
-}
-
-fn expand_uri(uri: Uri, self_name: Option<&Name<'_>>) -> Result<Uri, Error> {
-    match self_name {
-        Some(name) => name
-            .expand_uri(uri)
-            .context(config_error::ExpandNameInUriSnafu),
-        None => expand_uri_without_identity(uri),
-    }
 }
 
 async fn load_identity_config(
@@ -205,8 +176,10 @@ impl super::Options {
 
         let id = load_identity_config(self, ssh_config_id_name).await?;
 
-        // Expand ~ in URI using loaded identity (--id > ssh_config > default identity)
-        let uri = expand_uri(uri, id.as_ref().map(|id| id.name()))?;
+        // Normalize DHTTP shorthand in URI using loaded identity (--id > ssh_config > default identity).
+        let uri = uri
+            .into_uri(id.as_ref().map(|id| id.name()))
+            .context(config_error::NormalizeUriSnafu)?;
 
         let uri = complete_uri(uri, &username)?;
 

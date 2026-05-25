@@ -6,10 +6,11 @@ use dhttp::{
     ddns,
     dquic::binds::BindPattern,
     endpoint::Endpoint,
-    name::{DhttpName, DhttpName as Name},
+    message::IntoUri,
+    name::DhttpName as Name,
 };
 use http_body_util::BodyExt;
-use snafu::{IntoError, Report, ResultExt, Snafu, ensure};
+use snafu::{IntoError, Report, ResultExt, Snafu};
 use tokio::{net::TcpListener, sync::Semaphore, task::JoinSet};
 use tracing::Instrument;
 use tracing_subscriber::prelude::*;
@@ -53,25 +54,10 @@ pub struct Options {
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
 pub enum Error {
-    #[snafu(display("bare `~` requires an identity"))]
-    BareTildeWithoutIdentity,
-
-    #[snafu(display("failed to expand identity name in uri"))]
-    ExpandNameInUri { source: dhttp::name::ExpandUriError },
-
-    #[snafu(display("failed to parse identity name in uri"))]
-    ExpandUriName {
-        source: dhttp::name::InvalidDhttpName,
+    #[snafu(display("failed to normalize dhttp uri"))]
+    NormalizeUri {
+        source: dhttp::message::IntoUriError,
     },
-
-    #[snafu(display("failed to parse expanded authority `{authority}`"))]
-    ParseExpandedAuthority {
-        authority: String,
-        source: http::uri::InvalidUri,
-    },
-
-    #[snafu(display("failed to reconstruct uri with expanded identity name"))]
-    ReconstructExpandedUri { source: http::uri::InvalidUriParts },
 
     #[snafu(display("failed to locate dhttp config"))]
     LocateDhttpConfig {
@@ -171,19 +157,21 @@ async fn handle_request(
     req: hyper::Request<hyper::body::Incoming>,
     client: &Endpoint,
     router: &route::Router,
-    self_name: Option<&Name<'_>>,
 ) -> Result<hyper::Response<BoxBody>, hyper::Error> {
     let route = router.classify(&req);
     tracing::info!(method = %req.method(), uri = %req.uri(), route = ?route, "proxy request");
     match route {
         route::Route::GenmetaPlainHttp { .. } => {
-            // Expand tilde in URI (e.g., reimu.pilot~ → reimu.pilot.genmeta.net,
-            // bare ~ → self identity)
             let mut req = req;
-            match expand_uri(req.uri().clone(), self_name) {
+            let self_name = client.name();
+            match req.uri().clone().into_uri(self_name.as_ref()) {
                 Ok(uri) => *req.uri_mut() = uri,
                 Err(e) => {
-                    tracing::error!(error = %Report::from_error(&e), "failed to expand name in uri");
+                    let error = NormalizeUriSnafu.into_error(e);
+                    tracing::error!(
+                        error = %Report::from_error(&error),
+                        "failed to normalize dhttp uri"
+                    );
                     return Ok(hyper::Response::builder()
                         .status(502)
                         .body(full_body("Bad Gateway"))
@@ -286,22 +274,6 @@ async fn bind_listeners(options: &Options) -> Result<Vec<TcpListener>, Error> {
     Ok(listeners)
 }
 
-fn expand_uri_without_identity(uri: http::Uri) -> Result<http::Uri, Error> {
-    let Some(authority) = uri.authority() else {
-        return http::Uri::from_parts(uri.into_parts()).context(ReconstructExpandedUriSnafu);
-    };
-    ensure!(authority.host() != "~", BareTildeWithoutIdentitySnafu);
-
-    DhttpName::expand_uri_with_base(None, uri).context(ExpandNameInUriSnafu)
-}
-
-fn expand_uri(uri: http::Uri, self_name: Option<&Name<'_>>) -> Result<http::Uri, Error> {
-    match self_name {
-        Some(name) => name.expand_uri(uri).context(ExpandNameInUriSnafu),
-        None => expand_uri_without_identity(uri),
-    }
-}
-
 async fn load_identity_config(options: &Options) -> Result<Option<IdentityConfig>, Error> {
     if options.anonymous {
         return Ok(None);
@@ -362,8 +334,6 @@ pub async fn run(options: Options) -> Result<(), Error> {
     }
     let client = Arc::new(builder.build().await);
 
-    let self_name = identity_config.as_ref().map(|id| id.name().clone());
-
     let listeners = bind_listeners(&options).await?;
     let router = Arc::new(route::Router::new());
 
@@ -372,9 +342,8 @@ pub async fn run(options: Options) -> Result<(), Error> {
     for listener in listeners {
         let client = client.clone();
         let router = router.clone();
-        let self_name = self_name.clone();
         let semaphore = semaphore.clone();
-        tasks.spawn(accept_loop(listener, client, router, self_name, semaphore));
+        tasks.spawn(accept_loop(listener, client, router, semaphore));
     }
 
     while let Some(result) = tasks.join_next().await {
@@ -420,10 +389,8 @@ async fn accept_loop(
     listener: TcpListener,
     client: Arc<Endpoint>,
     router: Arc<route::Router>,
-    self_name: Option<Name<'static>>,
     semaphore: Arc<Semaphore>,
 ) {
-    let self_name = Arc::new(self_name);
     loop {
         let (stream, addr) = match listener.accept().await {
             Ok(accepted) => accepted,
@@ -441,7 +408,6 @@ async fn accept_loop(
         tracing::debug!(%addr, "accepted connection");
         let client = client.clone();
         let router = router.clone();
-        let self_name = self_name.clone();
         let span = tracing::info_span!("conn", %addr);
         // Inherent termination: TCP keepalive detects dead peers (~90s),
         // header_read_timeout closes idle keep-alive connections (120s).
@@ -459,11 +425,7 @@ async fn accept_loop(
                         hyper::service::service_fn(move |req| {
                             let client = client.clone();
                             let router = router.clone();
-                            let self_name = self_name.clone();
-                            async move {
-                                handle_request(req, &client, &router, self_name.as_ref().as_ref())
-                                    .await
-                            }
+                            async move { handle_request(req, &client, &router).await }
                         }),
                     )
                     .with_upgrades()

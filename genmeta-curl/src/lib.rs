@@ -19,7 +19,8 @@ use dhttp::{
         hyper::SendMessageError,
         message::stream::{InitialMessageStreamError, MessageStreamError, WriteStream},
     },
-    name::{DhttpName, DhttpName as Name},
+    message::IntoUri,
+    name::DhttpName as Name,
 };
 use http::{Method, Request, StatusCode, Uri, header::USER_AGENT};
 use snafu::{IntoError, OptionExt, ResultExt, Snafu, ensure};
@@ -135,25 +136,10 @@ pub enum Error {
     #[snafu(display("missing authority in uri"))]
     MissingAuthority {},
 
-    #[snafu(display("bare `~` requires an identity"))]
-    BareTildeWithoutIdentity {},
-
-    #[snafu(display("failed to expand identity name in uri"))]
-    ExpandNameInUri { source: dhttp::name::ExpandUriError },
-
-    #[snafu(display("failed to parse identity name in uri"))]
-    ExpandUriName {
-        source: dhttp::name::InvalidDhttpName,
+    #[snafu(display("failed to normalize dhttp uri"))]
+    NormalizeUri {
+        source: dhttp::message::IntoUriError,
     },
-
-    #[snafu(display("failed to parse expanded authority `{authority}`"))]
-    ParseExpandedAuthority {
-        authority: String,
-        source: http::uri::InvalidUri,
-    },
-
-    #[snafu(display("failed to reconstruct uri with expanded identity name"))]
-    ReconstructExpandedUri { source: http::uri::InvalidUriParts },
 
     #[snafu(display("failed to locate dhttp config"))]
     LocateDhttpConfig {
@@ -426,26 +412,6 @@ fn init_tracing(options: &Options) -> tracing_appender::non_blocking::WorkerGuar
     guard
 }
 
-fn expand_uri_without_identity(uri: Uri) -> Result<Uri, Error> {
-    let Some(authority) = uri.authority() else {
-        return Uri::from_parts(uri.into_parts()).context(error::ReconstructExpandedUriSnafu);
-    };
-    ensure!(
-        authority.host() != "~",
-        error::BareTildeWithoutIdentitySnafu
-    );
-
-    DhttpName::expand_uri_with_base(None, uri).context(error::ExpandNameInUriSnafu)
-}
-
-fn expand_uri(uri: Uri, self_name: Option<&Name<'_>>) -> Result<Uri, Error> {
-    ensure!(uri.authority().is_some(), error::MissingAuthoritySnafu);
-    match self_name {
-        Some(name) => name.expand_uri(uri).context(error::ExpandNameInUriSnafu),
-        None => expand_uri_without_identity(uri),
-    }
-}
-
 async fn load_identity_config(options: &Options) -> Result<Option<IdentityConfig>, Error> {
     if options.anonymous {
         return Ok(None);
@@ -493,11 +459,16 @@ async fn setup_client(
 ) -> Result<(Arc<Endpoint>, Option<IdentityConfig>, Duration), Error> {
     let identity_config = load_identity_config(options).await?;
 
-    // Expand ~ in URI using loaded identity (--id > default identity).
-    options.uri = expand_uri(
-        options.uri.clone(),
-        identity_config.as_ref().map(|id| id.name()),
-    )?;
+    // Normalize DHTTP shorthand in URI using loaded identity (--id > default identity).
+    ensure!(
+        options.uri.authority().is_some(),
+        error::MissingAuthoritySnafu
+    );
+    options.uri = options
+        .uri
+        .clone()
+        .into_uri(identity_config.as_ref().map(|id| id.name()))
+        .context(error::NormalizeUriSnafu)?;
 
     // TODO(-4/-6): the previous address-family filter here (applied post-
     // expansion on `BindUri`s) was a no-op in practice — it restricted the
