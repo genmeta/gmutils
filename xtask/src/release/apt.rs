@@ -92,7 +92,7 @@ pub async fn stage(options: AptOptions) -> Result<(), Whatever> {
     Ok(())
 }
 
-fn validate_options(options: &AptOptions) -> Result<(), Whatever> {
+pub(super) fn validate_options(options: &AptOptions) -> Result<(), Whatever> {
     validate_path_segment("suite", &options.suite)?;
     snafu::ensure_whatever!(
         !options.components.is_empty(),

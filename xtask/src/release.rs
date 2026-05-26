@@ -149,12 +149,39 @@ where
         section_name.to_owned().into(),
     ];
     argv.extend(args.into_iter().map(Into::into));
-    StageCli::try_parse_from(argv).map(|cli| match cli.format {
-        StageFormat::Homebrew => StageSection::Homebrew,
-        StageFormat::Scoop => StageSection::Scoop,
-        StageFormat::Apt { options } => StageSection::Apt(options),
-        StageFormat::Rpm => StageSection::Rpm,
-    })
+    StageCli::try_parse_from(argv)
+        .map(|cli| match cli.format {
+            StageFormat::Homebrew => StageSection::Homebrew,
+            StageFormat::Scoop => StageSection::Scoop,
+            StageFormat::Rpm => StageSection::Rpm,
+            StageFormat::Apt { options } => StageSection::Apt(options),
+        })
+        .and_then(|section| validate_stage_section(section_name, section))
+}
+
+fn validate_stage_section(
+    section_name: &str,
+    section: StageSection,
+) -> Result<StageSection, clap::Error> {
+    if let StageSection::Apt(options) = &section {
+        apt::validate_options(options).map_err(|error| {
+            stage_section_error(section_name, ErrorKind::ValueValidation, error)
+        })?;
+    }
+    Ok(section)
+}
+
+fn stage_section_error(
+    section_name: &str,
+    kind: ErrorKind,
+    message: impl std::fmt::Display,
+) -> clap::Error {
+    let mut command = StageCli::command().bin_name("xtask stage");
+    command.build();
+    match command.find_subcommand_mut(section_name) {
+        Some(subcommand) => subcommand.error(kind, message),
+        None => command.error(kind, message),
+    }
 }
 
 pub fn parse_stage_sections(tokens: &[OsString]) -> Result<Vec<StageSection>, clap::Error> {
@@ -235,6 +262,33 @@ mod tests {
 
         assert_eq!(error.kind(), ErrorKind::DisplayHelp);
         assert!(error.to_string().contains("Stage APT repository"));
+        assert!(error.to_string().contains("Usage: xtask stage apt"));
+    }
+
+    #[test]
+    fn stage_sections_reject_invalid_later_apt_options_before_execution() {
+        let tokens = [
+            os("homebrew"),
+            os("apt"),
+            os("--suite"),
+            os("../bad"),
+            os("--key-file"),
+            os("key.asc"),
+            os("--fingerprint"),
+            os("00112233445566778899AABBCCDDEEFF00112233"),
+        ];
+
+        let error = match parse_stage_sections(&tokens) {
+            Ok(_) => panic!("later apt semantic validation should stop grouped stage parsing"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), ErrorKind::ValueValidation);
+        assert!(
+            error
+                .to_string()
+                .contains("suite must be a single path segment")
+        );
         assert!(error.to_string().contains("Usage: xtask stage apt"));
     }
 
