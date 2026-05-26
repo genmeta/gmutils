@@ -122,7 +122,7 @@ pub struct S3Options {
     /// File containing AWS secret access key
     #[arg(long)]
     pub secret_access_key_file: PathBuf,
-    /// Upload selected staged roots: homebrew, scoop, apt, rpm
+    /// Upload selected staged roots: homebrew, scoop, apt
     #[arg(long = "root", value_enum, value_delimiter = ',')]
     pub roots: Vec<PublishRoot>,
     /// Remote prefix for APT repository files

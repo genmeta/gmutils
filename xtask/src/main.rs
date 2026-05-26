@@ -669,6 +669,18 @@ mod tests {
     }
 
     #[test]
+    fn publish_s3_help_lists_only_current_publish_roots() {
+        let command = Cli::command();
+        let publish = subcommand(&command, "publish");
+        let s3 = subcommand(publish, "s3");
+
+        let help = s3.clone().render_long_help().to_string();
+
+        assert!(help.contains("Upload selected staged roots: homebrew, scoop, apt"));
+        assert!(!help.contains("apt, rpm"));
+    }
+
+    #[test]
     fn publish_s3_rejects_rpm_root_before_grouped_publish() {
         let error = match Cli::try_parse_from([
             "xtask",
