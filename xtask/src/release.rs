@@ -1,5 +1,7 @@
 pub mod apt;
 pub mod artifact;
+#[allow(dead_code)]
+pub mod grouped;
 pub mod homebrew;
 pub mod paths;
 pub mod s3;
