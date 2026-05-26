@@ -25,8 +25,8 @@ use crate::{
     RpmTarget,
     container::{
         CARGO_HOME, RUSTUP_HOME, Sibling, ZIG_GLIBC_VERSION, cargo_cache_mounts, check_docker,
-        exec_in_container, force_remove_container, host_uid_gid, remove_container_if_exists,
-        resolve_siblings, start_container,
+        dhttp_bootstrap_from_env, exec_in_container, force_remove_container, host_uid_gid,
+        remove_container_if_exists, resolve_siblings, start_container,
     },
     package_version, target_dir,
 };
@@ -239,21 +239,8 @@ async fn build_one(
     }
     mounts.extend(cargo_cache_mounts());
 
-    let root_ca_env = if let Ok(host_path) = std::env::var("ROOT_CA") {
-        let host_path = std::path::Path::new(&host_path)
-            .canonicalize()
-            .whatever_context(format!("ROOT_CA path not found: {host_path}"))?;
-        mounts.push(Mount {
-            target: Some("/root-ca/root.crt".into()),
-            source: Some(host_path.to_string_lossy().into_owned()),
-            typ: Some(MountTypeEnum::BIND),
-            read_only: Some(true),
-            ..Default::default()
-        });
-        "export ROOT_CA=/root-ca/root.crt\n"
-    } else {
-        ""
-    };
+    let bootstrap = dhttp_bootstrap_from_env()?;
+    mounts.extend(bootstrap.mounts);
 
     let container_name = format!("{CARGO_NAME}-xtask-rpm-{triple}");
     remove_container_if_exists(docker, &container_name).await;
@@ -278,7 +265,15 @@ async fn build_one(
         .whatever_context("failed to create rpm build container")?;
     let container_id = container.id.clone();
 
-    let result = build_one_inner(docker, &container_id, triple, version, arch, root_ca_env).await;
+    let result = build_one_inner(
+        docker,
+        &container_id,
+        triple,
+        version,
+        arch,
+        &bootstrap.exports,
+    )
+    .await;
     force_remove_container(docker, &container_id).await;
     result?;
 
@@ -296,7 +291,7 @@ async fn build_one_inner(
     triple: &str,
     version: &str,
     arch: &str,
-    root_ca_env: &str,
+    dhttp_bootstrap_exports: &str,
 ) -> Result<(), Whatever> {
     start_container(docker, container_id).await?;
     info!(triple, "build container started");
@@ -314,7 +309,7 @@ export HOME=/tmp
 export PATH="{CARGO_HOME}/bin:/usr/local/zig:$PATH"
 export RUSTUP_HOME={RUSTUP_HOME}
 export CARGO_HOME={CARGO_HOME}
-{root_ca_env}
+{dhttp_bootstrap_exports}
 cd /workspace
 cargo zigbuild --release --target {triple}.{ZIG_GLIBC_VERSION} --bin genmeta
 
