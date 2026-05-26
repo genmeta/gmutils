@@ -15,7 +15,7 @@ pub struct CommonPaths {
     pub root: PathBuf,
     pub homebrew: PathBuf,
     pub scoop: PathBuf,
-    pub ppa: PathBuf,
+    pub apt: PathBuf,
     pub manifest: PathBuf,
 }
 
@@ -24,7 +24,7 @@ impl CommonPaths {
         Self {
             homebrew: root.join("homebrew"),
             scoop: root.join("scoop"),
-            ppa: root.join("ppa"),
+            apt: root.join("apt"),
             manifest: root.join("manifest.toml"),
             root,
         }
@@ -246,14 +246,14 @@ mod tests {
 
     #[test]
     fn normalize_s3_key_uses_forward_slashes() {
-        let path = Path::new("ppa")
+        let path = Path::new("apt")
             .join("pool")
             .join("main")
             .join("g")
             .join("gmutils.deb");
         assert_eq!(
             normalize_s3_key(&path).unwrap(),
-            "ppa/pool/main/g/gmutils.deb"
+            "apt/pool/main/g/gmutils.deb"
         );
     }
 
@@ -262,7 +262,7 @@ mod tests {
     fn normalize_s3_key_rejects_non_utf8_components() {
         use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
 
-        let path = Path::new("ppa").join(OsStr::from_bytes(b"\xff"));
+        let path = Path::new("apt").join(OsStr::from_bytes(b"\xff"));
 
         let error = normalize_s3_key(&path).expect_err("non-utf8 path should fail");
 

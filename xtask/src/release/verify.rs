@@ -20,7 +20,7 @@ async fn verify_common_root(root: &Path) -> Result<(), Whatever> {
     verify_manifest_artifacts(root, &manifest).await?;
     verify_homebrew(root, &manifest).await?;
     verify_scoop(root).await?;
-    verify_ppa(root).await?;
+    verify_apt(root).await?;
     info!(path = %root.display(), "verified staged release artifacts");
     Ok(())
 }
@@ -52,7 +52,7 @@ fn artifact_path(root: &Path, artifact_root: ArtifactRoot, path: &str) -> PathBu
     match artifact_root {
         ArtifactRoot::Homebrew => root.join("homebrew").join(path),
         ArtifactRoot::Scoop => root.join("scoop").join(path),
-        ArtifactRoot::Ppa => root.join("ppa").join(path),
+        ArtifactRoot::Apt => root.join("apt").join(path),
     }
 }
 
@@ -142,15 +142,15 @@ async fn verify_scoop(root: &Path) -> Result<(), Whatever> {
     Ok(())
 }
 
-async fn verify_ppa(root: &Path) -> Result<(), Whatever> {
-    let ppa = root.join("ppa");
-    if !tokio::fs::try_exists(&ppa)
+async fn verify_apt(root: &Path) -> Result<(), Whatever> {
+    let apt = root.join("apt");
+    if !tokio::fs::try_exists(&apt)
         .await
-        .whatever_context(format!("failed to inspect {}", ppa.display()))?
+        .whatever_context(format!("failed to inspect {}", apt.display()))?
     {
         return Ok(());
     }
-    let dists = ppa.join("dists");
+    let dists = apt.join("dists");
     if !tokio::fs::try_exists(&dists)
         .await
         .whatever_context(format!("failed to inspect {}", dists.display()))?

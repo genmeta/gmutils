@@ -40,17 +40,6 @@ enum Command {
         #[command(subcommand)]
         target: release::PublishTarget,
     },
-    /// Update a Homebrew tap checkout from staged formulae
-    Tap {
-        /// Homebrew tap repository checkout path
-        repo: PathBuf,
-        /// Commit changes after copying formulae
-        #[arg(long)]
-        commit: bool,
-        /// Push the tap repository after committing
-        #[arg(long)]
-        push: bool,
-    },
 }
 
 /// Supported target triples for .deb builds.
@@ -210,13 +199,13 @@ enum DistFormat {
         #[arg(long = "sibling")]
         siblings: Vec<PathBuf>,
     },
-    /// Build Homebrew archives + formula
-    Brew {
+    /// Build Homebrew archives
+    Homebrew {
         /// Target triples to build for
         #[arg(long = "target", required = true)]
         targets: Vec<BrewTarget>,
     },
-    /// Build Scoop archives + manifest
+    /// Build Scoop archives
     Scoop {
         /// Target triples to build for
         #[arg(long = "target", required = true)]
@@ -300,7 +289,7 @@ pub async fn run_cmd(cmd: &mut tokio::process::Command) -> Result<(), Whatever> 
 
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory;
+    use clap::{CommandFactory, Parser};
 
     use super::{BuildProfile, Cli};
 
@@ -327,7 +316,95 @@ mod tests {
         assert!(names.contains(&"stage"));
         assert!(names.contains(&"verify"));
         assert!(names.contains(&"publish"));
-        assert!(names.contains(&"tap"));
+        assert!(!names.contains(&"tap"));
+    }
+
+    #[test]
+    fn release_pipeline_uses_homebrew_and_apt_command_names() {
+        assert!(
+            Cli::try_parse_from([
+                "xtask",
+                "dist",
+                "homebrew",
+                "--target",
+                "aarch64-apple-darwin",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(["xtask", "dist", "brew", "--target", "aarch64-apple-darwin"])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "xtask",
+                "stage",
+                "apt",
+                "--suite",
+                "stable",
+                "--key-file",
+                "private.asc",
+                "--fingerprint",
+                "00112233445566778899AABBCCDDEEFF00112233",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "xtask",
+                "stage",
+                "ppa",
+                "--suite",
+                "stable",
+                "--key-file",
+                "private.asc",
+                "--fingerprint",
+                "00112233445566778899AABBCCDDEEFF00112233",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn release_publish_uses_root_and_nested_tap_command_names() {
+        assert!(
+            Cli::try_parse_from([
+                "xtask",
+                "publish",
+                "s3",
+                "--endpoint-url",
+                "https://example.invalid",
+                "--bucket",
+                "downloads",
+                "--access-key-id-file",
+                "access-key-id",
+                "--secret-access-key-file",
+                "secret-access-key",
+                "--root",
+                "homebrew",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "xtask",
+                "publish",
+                "s3",
+                "--endpoint-url",
+                "https://example.invalid",
+                "--bucket",
+                "downloads",
+                "--access-key-id-file",
+                "access-key-id",
+                "--secret-access-key-file",
+                "secret-access-key",
+                "--only",
+                "homebrew",
+            ])
+            .is_err()
+        );
+        assert!(Cli::try_parse_from(["xtask", "publish", "tap", "/tmp/homebrew-tap"]).is_ok());
+        assert!(Cli::try_parse_from(["xtask", "tap", "/tmp/homebrew-tap"]).is_err());
     }
 }
 
@@ -374,13 +451,12 @@ async fn main() -> Result<(), Whatever> {
                 siblings,
             } => deb::run(&targets, BuildProfile::from_debug(debug), &siblings).await?,
             DistFormat::Rpm { targets, siblings } => rpm::run(&targets, &siblings).await?,
-            DistFormat::Brew { targets } => brew::run(&targets).await?,
+            DistFormat::Homebrew { targets } => brew::run(&targets).await?,
             DistFormat::Scoop { targets } => scoop::run(&targets).await?,
         },
         Command::Stage { format } => release::stage(format).await?,
         Command::Verify { options } => release::verify(options).await?,
         Command::Publish { target } => release::publish(target).await?,
-        Command::Tap { repo, commit, push } => release::tap(repo, commit, push).await?,
     }
     Ok(())
 }

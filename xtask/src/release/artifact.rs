@@ -29,7 +29,7 @@ pub struct ArtifactEntry {
 pub enum ArtifactRoot {
     Homebrew,
     Scoop,
-    Ppa,
+    Apt,
 }
 
 pub async fn sha256_file(path: &Path) -> Result<String, Whatever> {
