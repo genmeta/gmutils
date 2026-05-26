@@ -16,7 +16,9 @@ use walkdir::WalkDir;
 
 use super::{
     PublishRoot, S3Options, S3VerifyOptions,
-    artifact::{ArtifactRoot, ReleaseManifest, read_manifest, relative_path, sha256_file},
+    artifact::{
+        ArtifactEntry, ArtifactRoot, ReleaseManifest, read_manifest, relative_path, sha256_file,
+    },
     grouped,
     paths::common_paths,
 };
@@ -156,6 +158,7 @@ pub async fn verify_remote(
     });
     let common = common_paths()?.root;
     let manifest = read_manifest(&common.join("manifest.toml")).await?;
+    verify_remote_manifest_targets(&manifest, &plans)?;
     let client = client(&options).await?;
 
     verify_remote_artifacts(&client, options.bucket(), &common, &manifest, &plans).await
@@ -168,12 +171,9 @@ async fn verify_remote_artifacts(
     manifest: &ReleaseManifest,
     plans: &[S3TargetPlan],
 ) -> Result<(), Whatever> {
+    verify_remote_manifest_targets(manifest, plans)?;
     for plan in plans {
-        for artifact in manifest
-            .artifacts
-            .iter()
-            .filter(|artifact| artifact.root == plan.root && artifact.immutable)
-        {
+        for artifact in remote_plan_artifacts(manifest, plan) {
             let path = common.join(artifact.root.directory()).join(&artifact.path);
             snafu::ensure_whatever!(
                 tokio::fs::try_exists(&path)
@@ -197,6 +197,31 @@ async fn verify_remote_artifacts(
     Ok(())
 }
 
+fn verify_remote_manifest_targets(
+    manifest: &ReleaseManifest,
+    plans: &[S3TargetPlan],
+) -> Result<(), Whatever> {
+    for plan in plans {
+        snafu::ensure_whatever!(
+            !remote_plan_artifacts(manifest, plan).is_empty(),
+            "remote release target {} has no immutable manifest artifacts",
+            plan.root.directory()
+        );
+    }
+    Ok(())
+}
+
+fn remote_plan_artifacts<'a>(
+    manifest: &'a ReleaseManifest,
+    plan: &S3TargetPlan,
+) -> Vec<&'a ArtifactEntry> {
+    manifest
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.root == plan.root && artifact.immutable)
+        .collect()
+}
+
 async fn remote_artifact_state(
     client: &Client,
     bucket: &str,
@@ -209,33 +234,50 @@ async fn remote_artifact_state(
             snafu::whatever!("failed to fetch remote artifact {key}: {error}");
         }
     };
-    let body = output
-        .body
-        .collect()
-        .await
-        .whatever_context(format!("failed to read remote artifact {key}"))?;
     Ok(RemoteArtifactState::Present {
-        sha256: sha256_bytes(body.into_bytes().as_ref()),
+        sha256: sha256_stream(output.body, key).await?,
     })
 }
 
 fn is_missing_object_error(error: &SdkError<GetObjectError, impl std::fmt::Debug>) -> bool {
     if let Some(service) = error.as_service_error() {
-        if service.is_no_such_key() {
-            return true;
-        }
-        let code = service.meta().code();
-        if matches!(code, Some("NoSuchKey" | "NotFound")) {
-            return true;
-        }
+        let metadata = service.meta();
+        return classify_missing_object(metadata.code(), metadata.message(), None);
     }
-    format!("{error:?}").contains("StatusCode(404)")
+    false
 }
 
-fn sha256_bytes(bytes: &[u8]) -> String {
+fn classify_missing_object(code: Option<&str>, message: Option<&str>, status: Option<u16>) -> bool {
+    if !matches!(status, None | Some(404)) {
+        return false;
+    }
+    match code {
+        Some("NoSuchKey") => true,
+        Some("NotFound") => message
+            .map(classify_not_found_message_as_object_missing)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn classify_not_found_message_as_object_missing(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    if message.contains("bucket") {
+        return false;
+    }
+    message.contains("key") || message.contains("object") || message.contains("not found")
+}
+
+async fn sha256_stream(mut body: ByteStream, key: &str) -> Result<String, Whatever> {
     let mut hasher = sha2::Sha256::new();
-    hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    while let Some(bytes) = body
+        .try_next()
+        .await
+        .whatever_context(format!("failed to read remote artifact {key}"))?
+    {
+        hasher.update(&bytes);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 pub fn verify_immutable_collision(
@@ -470,10 +512,14 @@ fn upload_order(upload: &PlannedUpload) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::{
-        PlannedUpload, RemoteArtifactState, parse_target_plans, plan_uploads, upload_order,
-        verify_immutable_collision,
+        PlannedUpload, RemoteArtifactState, S3TargetPlan, classify_missing_object,
+        parse_target_plans, plan_uploads, upload_order, verify_immutable_collision,
+        verify_remote_manifest_targets,
     };
-    use crate::release::{PublishRoot, artifact::ArtifactRoot};
+    use crate::release::{
+        PublishRoot,
+        artifact::{ArtifactEntry, ArtifactRoot, ReleaseManifest},
+    };
 
     #[test]
     fn apt_pool_file_maps_under_explicit_apt_prefix() {
@@ -657,6 +703,70 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "remote immutable artifact homebrew/file.tar.gz already exists with different sha256 def"
+        );
+    }
+
+    #[test]
+    fn missing_object_classifier_accepts_only_object_missing_errors() {
+        assert!(classify_missing_object(Some("NoSuchKey"), None, Some(404)));
+        assert!(classify_missing_object(
+            Some("NotFound"),
+            Some("object not found"),
+            Some(404)
+        ));
+        assert!(classify_missing_object(
+            Some("NotFound"),
+            Some("key does not exist"),
+            Some(404)
+        ));
+    }
+
+    #[test]
+    fn missing_object_classifier_rejects_bucket_and_generic_404_errors() {
+        assert!(!classify_missing_object(
+            Some("NoSuchBucket"),
+            Some("bucket not found"),
+            Some(404)
+        ));
+        assert!(!classify_missing_object(
+            Some("NotFound"),
+            Some("bucket not found"),
+            Some(404)
+        ));
+        assert!(!classify_missing_object(Some("NotFound"), None, Some(404)));
+        assert!(!classify_missing_object(None, None, Some(404)));
+        assert!(!classify_missing_object(
+            Some("AccessDenied"),
+            None,
+            Some(404)
+        ));
+        assert!(!classify_missing_object(Some("NoSuchKey"), None, Some(500)));
+    }
+
+    #[test]
+    fn remote_verify_target_requires_matching_immutable_manifest_artifact() {
+        let manifest = ReleaseManifest {
+            schema_version: 1,
+            package: "gmutils".to_string(),
+            version: "0.5.1".to_string(),
+            artifacts: vec![ArtifactEntry {
+                root: ArtifactRoot::Rpm,
+                path: "gmutils.rpm".to_string(),
+                sha256: "abc".to_string(),
+                immutable: false,
+            }],
+        };
+        let plans = vec![S3TargetPlan {
+            root: ArtifactRoot::Rpm,
+            prefix: "rpm".to_string(),
+        }];
+
+        let error = verify_remote_manifest_targets(&manifest, &plans)
+            .expect_err("explicit remote target without immutable artifacts should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "remote release target rpm has no immutable manifest artifacts"
         );
     }
 }

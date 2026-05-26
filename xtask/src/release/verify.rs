@@ -78,15 +78,19 @@ pub async fn verify_common_root_for_roots(
     let manifest_path = root.join("manifest.toml");
     let manifest = read_manifest(&manifest_path).await?;
     let selected_roots = selected_roots(&manifest, roots);
+    let explicit_roots = !roots.is_empty();
+    if explicit_roots {
+        verify_selected_roots_have_manifest_artifacts(&manifest, &selected_roots)?;
+    }
     verify_manifest_artifacts(root, &manifest, &selected_roots).await?;
     if selected_roots.contains(&ArtifactRoot::Homebrew) {
-        verify_homebrew(root, &manifest).await?;
+        verify_homebrew(root, &manifest, explicit_roots).await?;
     }
     if selected_roots.contains(&ArtifactRoot::Scoop) {
-        verify_scoop(root).await?;
+        verify_scoop(root, explicit_roots).await?;
     }
     if selected_roots.contains(&ArtifactRoot::Apt) {
-        verify_apt(root).await?;
+        verify_apt(root, explicit_roots).await?;
     }
     if selected_roots.contains(&ArtifactRoot::Rpm) {
         verify_rpm(root, &manifest).await?;
@@ -105,6 +109,23 @@ fn selected_roots(manifest: &ReleaseManifest, roots: &[ArtifactRoot]) -> BTreeSe
     } else {
         roots.iter().copied().collect()
     }
+}
+
+fn verify_selected_roots_have_manifest_artifacts(
+    manifest: &ReleaseManifest,
+    selected_roots: &BTreeSet<ArtifactRoot>,
+) -> Result<(), Whatever> {
+    for root in selected_roots {
+        snafu::ensure_whatever!(
+            manifest
+                .artifacts
+                .iter()
+                .any(|artifact| artifact.root == *root),
+            "selected release target {} has no manifest artifacts",
+            root.directory()
+        );
+    }
+    Ok(())
 }
 
 async fn verify_manifest_artifacts(
@@ -135,15 +156,25 @@ async fn verify_manifest_artifacts(
     Ok(())
 }
 
-async fn verify_homebrew(root: &Path, manifest: &ReleaseManifest) -> Result<(), Whatever> {
+async fn verify_homebrew(
+    root: &Path,
+    manifest: &ReleaseManifest,
+    required: bool,
+) -> Result<(), Whatever> {
     let homebrew = root.join("homebrew");
     if !tokio::fs::try_exists(&homebrew)
         .await
         .whatever_context(format!("failed to inspect {}", homebrew.display()))?
     {
+        snafu::ensure_whatever!(
+            !required,
+            "homebrew target is missing at {}",
+            homebrew.display()
+        );
         return Ok(());
     }
 
+    let mut found_formula = false;
     let mut entries = tokio::fs::read_dir(&homebrew)
         .await
         .whatever_context(format!("failed to read {}", homebrew.display()))?;
@@ -156,6 +187,7 @@ async fn verify_homebrew(root: &Path, manifest: &ReleaseManifest) -> Result<(), 
         if path.extension().and_then(|extension| extension.to_str()) != Some("rb") {
             continue;
         }
+        found_formula = true;
         let package = path
             .file_stem()
             .and_then(|stem| stem.to_str())
@@ -177,6 +209,10 @@ async fn verify_homebrew(root: &Path, manifest: &ReleaseManifest) -> Result<(), 
             );
         }
     }
+    snafu::ensure_whatever!(
+        !required || found_formula,
+        "homebrew target must contain at least one formula"
+    );
     Ok(())
 }
 
@@ -199,13 +235,14 @@ async fn verify_rpm(root: &Path, manifest: &ReleaseManifest) -> Result<(), Whate
     Ok(())
 }
 
-async fn verify_scoop(root: &Path) -> Result<(), Whatever> {
+async fn verify_scoop(root: &Path, required: bool) -> Result<(), Whatever> {
     let scoop = root.join("scoop");
     let manifest_path = scoop.join("gmutils.json");
     if !tokio::fs::try_exists(&manifest_path)
         .await
         .whatever_context(format!("failed to inspect {}", manifest_path.display()))?
     {
+        snafu::ensure_whatever!(!required, "scoop manifest target must contain gmutils.json");
         return Ok(());
     }
 
@@ -240,12 +277,13 @@ async fn verify_scoop(root: &Path) -> Result<(), Whatever> {
     Ok(())
 }
 
-async fn verify_apt(root: &Path) -> Result<(), Whatever> {
+async fn verify_apt(root: &Path, required: bool) -> Result<(), Whatever> {
     let apt = root.join("apt");
     if !tokio::fs::try_exists(&apt)
         .await
         .whatever_context(format!("failed to inspect {}", apt.display()))?
     {
+        snafu::ensure_whatever!(!required, "apt target is missing at {}", apt.display());
         return Ok(());
     }
     let dists = apt.join("dists");
@@ -253,9 +291,15 @@ async fn verify_apt(root: &Path) -> Result<(), Whatever> {
         .await
         .whatever_context(format!("failed to inspect {}", dists.display()))?
     {
+        snafu::ensure_whatever!(
+            !required,
+            "apt target must contain dists metadata at {}",
+            dists.display()
+        );
         return Ok(());
     }
 
+    let mut found_suite = false;
     let mut suites = tokio::fs::read_dir(&dists)
         .await
         .whatever_context(format!("failed to read {}", dists.display()))?;
@@ -272,6 +316,7 @@ async fn verify_apt(root: &Path) -> Result<(), Whatever> {
         if !file_type.is_dir() {
             continue;
         }
+        found_suite = true;
         for name in ["Release", "Release.gpg", "InRelease"] {
             let path = suite.join(name);
             snafu::ensure_whatever!(
@@ -283,6 +328,10 @@ async fn verify_apt(root: &Path) -> Result<(), Whatever> {
             );
         }
     }
+    snafu::ensure_whatever!(
+        !required || found_suite,
+        "apt target must contain at least one suite"
+    );
     Ok(())
 }
 
@@ -407,6 +456,13 @@ mod tests {
         tokio::fs::write(&archive, "archive")
             .await
             .expect("archive should be written");
+        let formula = homebrew.join("gmutils.rb");
+        tokio::fs::write(
+            &formula,
+            "url \"https://download.genmeta.net/homebrew/gmutils-0.5.1-aarch64-apple-darwin.tar.gz\"",
+        )
+        .await
+        .expect("formula should be written");
         let archive_sha = sha256_file(&archive)
             .await
             .expect("archive should be hashed");
@@ -479,16 +535,27 @@ mod tests {
     async fn verify_rpm_requires_manifest_entry() {
         let temp = tempfile::tempdir().expect("temp dir should be created");
         let root = temp.path();
-        tokio::fs::create_dir_all(root.join("rpm"))
+        let rpm = root.join("rpm");
+        tokio::fs::create_dir_all(&rpm)
             .await
             .expect("rpm dir should be created");
+        let file = rpm.join("gmutils-0.5.1-1.x86_64.rpm");
+        tokio::fs::write(&file, "rpm")
+            .await
+            .expect("rpm should be written");
+        let sha = sha256_file(&file).await.expect("rpm should be hashed");
         write_manifest(
             &root.join("manifest.toml"),
             &ReleaseManifest {
                 schema_version: 1,
                 package: "gmutils".to_string(),
                 version: "0.5.1".to_string(),
-                artifacts: Vec::new(),
+                artifacts: vec![ArtifactEntry {
+                    root: ArtifactRoot::Rpm,
+                    path: "gmutils-0.5.1-1.x86_64.rpm".to_string(),
+                    sha256: sha,
+                    immutable: false,
+                }],
             },
         )
         .await
@@ -501,6 +568,72 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "rpm root must contain at least one immutable .rpm artifact"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_explicit_selected_root_requires_manifest_artifacts() {
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let root = temp.path();
+        write_manifest(
+            &root.join("manifest.toml"),
+            &ReleaseManifest {
+                schema_version: 1,
+                package: "gmutils".to_string(),
+                version: "0.5.1".to_string(),
+                artifacts: Vec::new(),
+            },
+        )
+        .await
+        .expect("manifest should be written");
+
+        let error = verify_common_root_for_roots(root, &[ArtifactRoot::Apt])
+            .await
+            .expect_err("explicit selected root without manifest artifacts should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "selected release target apt has no manifest artifacts"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_explicit_scoop_requires_manifest_file() {
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let root = temp.path();
+        let scoop = root.join("scoop");
+        tokio::fs::create_dir_all(&scoop)
+            .await
+            .expect("scoop dir should be created");
+        let archive = scoop.join("gmutils.zip");
+        tokio::fs::write(&archive, "zip")
+            .await
+            .expect("archive should be written");
+        let sha = sha256_file(&archive).await.expect("archive should hash");
+        write_manifest(
+            &root.join("manifest.toml"),
+            &ReleaseManifest {
+                schema_version: 1,
+                package: "gmutils".to_string(),
+                version: "0.5.1".to_string(),
+                artifacts: vec![ArtifactEntry {
+                    root: ArtifactRoot::Scoop,
+                    path: "gmutils.zip".to_string(),
+                    sha256: sha,
+                    immutable: true,
+                }],
+            },
+        )
+        .await
+        .expect("manifest should be written");
+
+        let error = verify_common_root_for_roots(root, &[ArtifactRoot::Scoop])
+            .await
+            .expect_err("explicit scoop without gmutils.json should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "scoop manifest target must contain gmutils.json"
         );
     }
 }
