@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use snafu::{OptionExt, ResultExt, Whatever};
 use tracing::info;
@@ -41,6 +44,7 @@ pub async fn stage() -> Result<(), Whatever> {
     let paths = common_paths()?;
     let rpms = discover_rpms(&target_dir).await?;
     let version = release_version(&rpms)?;
+    validate_unique_artifact_paths(&rpms, &version)?;
     let manifest = read_existing_manifest(&paths.manifest).await?;
     let staging = paths.root.join("rpm.staging");
     recreate_dir(&staging).await?;
@@ -162,6 +166,28 @@ fn rpm_artifact_path(version: &str, filename: &str) -> PathBuf {
     PathBuf::from(PACKAGE_NAME).join(version).join(filename)
 }
 
+fn validate_unique_artifact_paths(rpms: &[RpmSource], version: &str) -> Result<(), Whatever> {
+    let mut seen = HashSet::new();
+    for rpm in rpms {
+        let path = rpm_artifact_path(version, &rpm.filename);
+        let path = path
+            .components()
+            .map(|component| {
+                component
+                    .as_os_str()
+                    .to_str()
+                    .whatever_context("failed to convert rpm artifact path component to utf-8")
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .join("/");
+        snafu::ensure_whatever!(
+            seen.insert(path.clone()),
+            "duplicate rpm artifact path {path}"
+        );
+    }
+    Ok(())
+}
+
 async fn read_existing_manifest(path: &Path) -> Result<ReleaseManifest, Whatever> {
     if tokio::fs::try_exists(path)
         .await
@@ -205,7 +231,7 @@ mod tests {
 
     use super::{
         RpmInfo, RpmSource, merge_rpm_manifest, parse_rpm_filename, release_version,
-        rpm_artifact_path,
+        rpm_artifact_path, validate_unique_artifact_paths,
     };
     use crate::release::artifact::{ArtifactEntry, ArtifactRoot, ReleaseManifest};
 
@@ -249,6 +275,35 @@ mod tests {
             error
                 .to_string()
                 .starts_with("rpm packages contain multiple release versions")
+        );
+    }
+
+    #[test]
+    fn duplicate_rpm_artifact_paths_are_rejected() {
+        let rpms = vec![
+            RpmSource {
+                package: "gmutils".to_string(),
+                version: "0.5.1".to_string(),
+                filename: "gmutils-0.5.1-1.x86_64.rpm".to_string(),
+                source: PathBuf::from(
+                    "x86_64-unknown-linux-gnu/release/rpm/gmutils-0.5.1-1.x86_64.rpm",
+                ),
+            },
+            RpmSource {
+                package: "gmutils".to_string(),
+                version: "0.5.1".to_string(),
+                filename: "gmutils-0.5.1-1.x86_64.rpm".to_string(),
+                source: PathBuf::from("common/release/rpm/gmutils-0.5.1-1.x86_64.rpm"),
+            },
+        ];
+
+        let error =
+            validate_unique_artifact_paths(&rpms, "0.5.1").expect_err("duplicates should fail");
+
+        assert!(
+            error.to_string().starts_with(
+                "duplicate rpm artifact path gmutils/0.5.1/gmutils-0.5.1-1.x86_64.rpm"
+            )
         );
     }
 

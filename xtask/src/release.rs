@@ -186,12 +186,18 @@ fn stage_section_error(
 
 pub fn parse_stage_sections(tokens: &[OsString]) -> Result<Vec<StageSection>, clap::Error> {
     let sections = grouped::parse_grouped_targets(tokens, &["homebrew", "scoop", "apt", "rpm"])
-        .map_err(|error| StageCli::command().error(ErrorKind::ValueValidation, error))?;
+        .map_err(|error| stage_error(ErrorKind::ValueValidation, error))?;
 
     sections
         .into_iter()
         .map(|section| parse_stage_format(&section.name, section.args))
         .collect()
+}
+
+fn stage_error(kind: ErrorKind, message: impl std::fmt::Display) -> clap::Error {
+    StageCli::command()
+        .bin_name("xtask stage")
+        .error(kind, message)
 }
 
 pub async fn stage_sections(tokens: Vec<OsString>) -> Result<(), Whatever> {
@@ -290,6 +296,32 @@ mod tests {
                 .contains("suite must be a single path segment")
         );
         assert!(error.to_string().contains("Usage: xtask stage apt"));
+    }
+
+    #[test]
+    fn stage_sections_unknown_target_error_uses_stage_usage() {
+        let tokens = [os("unknown")];
+
+        let error = parse_stage_sections(&tokens).expect_err("unknown target should fail");
+        let text = error.to_string();
+
+        assert_eq!(error.kind(), ErrorKind::ValueValidation);
+        assert!(text.contains("unknown target unknown"));
+        assert!(text.contains("Usage: xtask stage"));
+        assert!(!text.contains("Usage: xtask <COMMAND>"));
+    }
+
+    #[test]
+    fn stage_sections_argument_before_target_error_uses_stage_usage() {
+        let tokens = [os("--suite"), os("stable"), os("apt")];
+
+        let error = parse_stage_sections(&tokens).expect_err("argument before target should fail");
+        let text = error.to_string();
+
+        assert_eq!(error.kind(), ErrorKind::ValueValidation);
+        assert!(text.contains("expected a target before argument --suite"));
+        assert!(text.contains("Usage: xtask stage"));
+        assert!(!text.contains("Usage: xtask <COMMAND>"));
     }
 
     #[test]
