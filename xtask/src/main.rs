@@ -22,8 +22,9 @@ struct Cli {
 enum Command {
     /// Distribution packaging
     Dist {
-        #[command(subcommand)]
-        format: DistFormat,
+        /// Grouped dist targets: deb/rpm/homebrew/scoop followed by target-local options
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        targets: Vec<std::ffi::OsString>,
     },
     /// Assemble publishable artifacts under target/common
     Stage {
@@ -213,6 +214,12 @@ enum DistFormat {
     },
 }
 
+#[derive(Parser)]
+struct DistCli {
+    #[command(subcommand)]
+    format: DistFormat,
+}
+
 /// Resolve the workspace target directory via cargo_metadata.
 fn target_dir() -> Result<PathBuf, Whatever> {
     let metadata = cargo_metadata::MetadataCommand::new()
@@ -289,9 +296,9 @@ pub async fn run_cmd(cmd: &mut tokio::process::Command) -> Result<(), Whatever> 
 
 #[cfg(test)]
 mod tests {
-    use clap::{CommandFactory, ValueEnum};
+    use clap::{CommandFactory, Parser, ValueEnum};
 
-    use super::{BuildProfile, Cli, release::PublishRoot};
+    use super::{BuildProfile, Cli, Command, release::PublishRoot};
 
     fn subcommand<'a>(command: &'a clap::Command, name: &str) -> &'a clap::Command {
         command
@@ -340,13 +347,56 @@ mod tests {
     #[test]
     fn release_pipeline_uses_homebrew_and_apt_command_names() {
         let command = Cli::command();
-        let dist_names = subcommand_names(subcommand(&command, "dist"));
         let stage_names = subcommand_names(subcommand(&command, "stage"));
 
-        assert!(dist_names.contains(&"homebrew"));
-        assert!(!dist_names.contains(&"brew"));
         assert!(stage_names.contains(&"apt"));
         assert!(!stage_names.contains(&"ppa"));
+    }
+
+    #[test]
+    fn dist_accepts_grouped_targets_as_trailing_args() {
+        let cli = Cli::try_parse_from([
+            "xtask",
+            "dist",
+            "deb",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+            "rpm",
+            "--target",
+            "aarch64-unknown-linux-gnu",
+            "homebrew",
+            "--target",
+            "x86_64-apple-darwin",
+        ])
+        .expect("grouped dist targets should parse at outer level");
+
+        match cli.command {
+            Command::Dist { targets } => {
+                assert_eq!(
+                    targets,
+                    [
+                        "deb",
+                        "--target",
+                        "x86_64-unknown-linux-gnu",
+                        "rpm",
+                        "--target",
+                        "aarch64-unknown-linux-gnu",
+                        "homebrew",
+                        "--target",
+                        "x86_64-apple-darwin",
+                    ]
+                    .map(std::ffi::OsString::from)
+                );
+            }
+            _ => panic!("expected dist command"),
+        }
+    }
+
+    #[test]
+    fn dist_help_mentions_grouped_targets() {
+        let help = Cli::command().render_long_help().to_string();
+
+        assert!(help.contains("dist"));
     }
 
     #[test]
@@ -406,14 +456,19 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     guard
 }
 
-#[snafu::report]
-#[tokio::main]
-async fn main() -> Result<(), Whatever> {
-    let _guard = init_tracing();
+async fn run_dist_sections(tokens: Vec<std::ffi::OsString>) -> Result<(), Whatever> {
+    let sections =
+        release::grouped::parse_grouped_targets(&tokens, &["deb", "rpm", "homebrew", "scoop"])?;
 
-    let cli = Cli::parse();
-    match cli.command {
-        Command::Dist { format } => match format {
+    for section in sections {
+        let mut argv = vec![
+            std::ffi::OsString::from("xtask-dist"),
+            section.name.clone().into(),
+        ];
+        argv.extend(section.args);
+        let format = DistCli::try_parse_from(argv)
+            .whatever_context(format!("failed to parse dist {} options", section.name))?;
+        match format.format {
             DistFormat::Deb {
                 targets,
                 debug,
@@ -422,7 +477,20 @@ async fn main() -> Result<(), Whatever> {
             DistFormat::Rpm { targets, siblings } => rpm::run(&targets, &siblings).await?,
             DistFormat::Homebrew { targets } => brew::run(&targets).await?,
             DistFormat::Scoop { targets } => scoop::run(&targets).await?,
-        },
+        }
+    }
+
+    Ok(())
+}
+
+#[snafu::report]
+#[tokio::main]
+async fn main() -> Result<(), Whatever> {
+    let _guard = init_tracing();
+
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Dist { targets } => run_dist_sections(targets).await?,
         Command::Stage { format } => release::stage(format).await?,
         Command::Verify { options } => release::verify(options).await?,
         Command::Publish { target } => release::publish(target).await?,
