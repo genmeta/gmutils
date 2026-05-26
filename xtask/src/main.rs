@@ -7,7 +7,7 @@ mod scoop;
 
 use std::{io::IsTerminal, path::PathBuf, process::Stdio};
 
-use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
+use clap::{Parser, Subcommand, ValueEnum};
 use snafu::{OptionExt, ResultExt, Whatever};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -296,9 +296,9 @@ pub async fn run_cmd(cmd: &mut tokio::process::Command) -> Result<(), Whatever> 
 
 #[cfg(test)]
 mod tests {
-    use clap::{CommandFactory, Parser, ValueEnum};
+    use clap::{CommandFactory, Parser, ValueEnum, error::ErrorKind};
 
-    use super::{BuildProfile, Cli, Command, ErrorKind, parse_dist_format, release::PublishRoot};
+    use super::{BuildProfile, Cli, Command, parse_dist_format, release::PublishRoot};
 
     fn subcommand<'a>(command: &'a clap::Command, name: &str) -> &'a clap::Command {
         command
@@ -411,6 +411,23 @@ mod tests {
 
         assert_eq!(error.kind(), ErrorKind::DisplayHelp);
         assert!(error.to_string().contains("Build .deb packages"));
+        assert!(error.to_string().contains("Usage: xtask dist deb"));
+    }
+
+    #[test]
+    fn dist_target_local_parse_errors_use_clap_usage() {
+        let error = match parse_dist_format("deb", [std::ffi::OsString::from("--bogus")]) {
+            Ok(_) => panic!("invalid target-local options should be reported as clap errors"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+        assert!(error.to_string().contains("Usage: xtask dist deb"));
+        assert!(
+            !error
+                .to_string()
+                .contains("failed to parse dist deb options")
+        );
     }
 
     #[test]
@@ -476,7 +493,7 @@ where
     T: Into<std::ffi::OsString>,
 {
     let mut argv = vec![
-        std::ffi::OsString::from("xtask-dist"),
+        std::ffi::OsString::from("xtask dist"),
         section_name.to_owned().into(),
     ];
     argv.extend(args.into_iter().map(Into::into));
@@ -488,19 +505,9 @@ async fn run_dist_sections(tokens: Vec<std::ffi::OsString>) -> Result<(), Whatev
         release::grouped::parse_grouped_targets(&tokens, &["deb", "rpm", "homebrew", "scoop"])?;
 
     for section in sections {
-        let format = match parse_dist_format(&section.name, section.args) {
-            Ok(format) => format,
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
-                ) =>
-            {
-                error.exit()
-            }
-            Err(error) => Err(error)
-                .whatever_context(format!("failed to parse dist {} options", section.name))?,
-        };
+        let format = parse_dist_format(&section.name, section.args).unwrap_or_else(|error| {
+            error.exit();
+        });
         match format {
             DistFormat::Deb {
                 targets,
