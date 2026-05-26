@@ -7,7 +7,7 @@ mod scoop;
 
 use std::{io::IsTerminal, path::PathBuf, process::Stdio};
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum, error::ErrorKind};
 use snafu::{OptionExt, ResultExt, Whatever};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -298,7 +298,9 @@ pub async fn run_cmd(cmd: &mut tokio::process::Command) -> Result<(), Whatever> 
 mod tests {
     use clap::{CommandFactory, Parser, ValueEnum, error::ErrorKind};
 
-    use super::{BuildProfile, Cli, Command, parse_dist_format, release::PublishRoot};
+    use super::{
+        BuildProfile, Cli, Command, parse_dist_format, parse_dist_sections, release::PublishRoot,
+    };
 
     fn subcommand<'a>(command: &'a clap::Command, name: &str) -> &'a clap::Command {
         command
@@ -431,6 +433,26 @@ mod tests {
     }
 
     #[test]
+    fn dist_sections_parse_later_help_before_execution() {
+        let tokens = [
+            std::ffi::OsString::from("deb"),
+            std::ffi::OsString::from("--target"),
+            std::ffi::OsString::from("x86_64-unknown-linux-gnu"),
+            std::ffi::OsString::from("rpm"),
+            std::ffi::OsString::from("--help"),
+        ];
+
+        let error = match parse_dist_sections(&tokens) {
+            Ok(_) => panic!("later target-local help should stop grouped dist parsing"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        assert!(error.to_string().contains("Build .rpm packages"));
+        assert!(error.to_string().contains("Usage: xtask dist rpm"));
+    }
+
+    #[test]
     fn release_publish_uses_root_and_nested_tap_command_names() {
         let command = Cli::command();
         let publish = subcommand(&command, "publish");
@@ -500,14 +522,23 @@ where
     DistCli::try_parse_from(argv).map(|cli| cli.format)
 }
 
-async fn run_dist_sections(tokens: Vec<std::ffi::OsString>) -> Result<(), Whatever> {
+fn parse_dist_sections(tokens: &[std::ffi::OsString]) -> Result<Vec<DistFormat>, clap::Error> {
     let sections =
-        release::grouped::parse_grouped_targets(&tokens, &["deb", "rpm", "homebrew", "scoop"])?;
+        release::grouped::parse_grouped_targets(tokens, &["deb", "rpm", "homebrew", "scoop"])
+            .map_err(|error| DistCli::command().error(ErrorKind::ValueValidation, error))?;
 
-    for section in sections {
-        let format = parse_dist_format(&section.name, section.args).unwrap_or_else(|error| {
-            error.exit();
-        });
+    sections
+        .into_iter()
+        .map(|section| parse_dist_format(&section.name, section.args))
+        .collect()
+}
+
+async fn run_dist_sections(tokens: Vec<std::ffi::OsString>) -> Result<(), Whatever> {
+    let formats = parse_dist_sections(&tokens).unwrap_or_else(|error| {
+        error.exit();
+    });
+
+    for format in formats {
         match format {
             DistFormat::Deb {
                 targets,
