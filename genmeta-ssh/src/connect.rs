@@ -25,6 +25,10 @@ pub enum Error {
     LoadIdentitySsl {
         source: dhttp::config::identity::ssl::LoadIdentitySslError,
     },
+    #[snafu(display("failed to build dhttp endpoint"))]
+    BuildEndpoint {
+        source: dhttp::endpoint::InvalidEndpointIdentityError,
+    },
     #[snafu(display("failed to connect to server"))]
     Connect {
         source: dhttp::endpoint::ConnectError,
@@ -87,7 +91,12 @@ pub async fn connect(config: &Config) -> Result<ConnectResult, Error> {
     for scheme in config.dns.iter().copied() {
         builder = builder.dns(scheme);
     }
-    let endpoint = Arc::new(builder.build().await);
+    let endpoint = Arc::new(
+        builder
+            .build()
+            .await
+            .context(connect_error::BuildEndpointSnafu)?,
+    );
 
     let server = config.uri.authority().ok_or_else(|| {
         connect_error::MissingAuthoritySnafu {

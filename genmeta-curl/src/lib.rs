@@ -160,6 +160,11 @@ pub enum Error {
         source: config::identity::ssl::LoadIdentitySslError,
     },
 
+    #[snafu(display("failed to build dhttp endpoint"))]
+    BuildEndpoint {
+        source: dhttp::endpoint::InvalidEndpointIdentityError,
+    },
+
     #[snafu(display("failed to connect to server"))]
     Connect {
         source: dhttp::endpoint::ConnectError,
@@ -508,7 +513,7 @@ async fn setup_client(
     for scheme in options.dns.iter().copied() {
         builder = builder.dns(scheme);
     }
-    let endpoint = Arc::new(builder.build().await);
+    let endpoint = Arc::new(builder.build().await.context(error::BuildEndpointSnafu)?);
 
     let connect_timeout = connect_timeout_from_secs(options.connect_timeout);
 

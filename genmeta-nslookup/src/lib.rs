@@ -61,6 +61,10 @@ pub enum Error {
     LoadIdentitySsl {
         source: config::identity::ssl::LoadIdentitySslError,
     },
+    #[snafu(display("failed to build dhttp endpoint"))]
+    BuildEndpoint {
+        source: dhttp::endpoint::InvalidEndpointIdentityError,
+    },
     #[snafu(display("failed to lookup dns records of `{name}`"))]
     LookUp {
         name: Name<'static>,
@@ -150,7 +154,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     for scheme in options.schemes.iter().copied() {
         builder = builder.dns(scheme);
     }
-    let endpoint = builder.build().await;
+    let endpoint = builder.build().await.context(error::BuildEndpointSnafu)?;
     let resolver = endpoint.resolver();
 
     let mut lookup = resolver

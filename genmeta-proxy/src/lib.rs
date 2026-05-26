@@ -75,6 +75,11 @@ pub enum Error {
         source: config::identity::ssl::LoadIdentitySslError,
     },
 
+    #[snafu(display("failed to build dhttp endpoint"))]
+    BuildEndpoint {
+        source: dhttp::endpoint::InvalidEndpointIdentityError,
+    },
+
     #[snafu(display("failed to bind proxy listener"))]
     BindListener { source: std::io::Error },
 
@@ -332,7 +337,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     for scheme in options.dns.iter().copied() {
         builder = builder.dns(scheme);
     }
-    let client = Arc::new(builder.build().await);
+    let client = Arc::new(builder.build().await.context(BuildEndpointSnafu)?);
 
     let listeners = bind_listeners(&options).await?;
     let router = Arc::new(route::Router::new());

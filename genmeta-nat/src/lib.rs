@@ -66,6 +66,11 @@ pub enum Error {
     LoadIdentitySsl {
         source: config::identity::ssl::LoadIdentitySslError,
     },
+
+    #[snafu(display("failed to build dhttp endpoint"))]
+    BuildEndpoint {
+        source: dhttp::endpoint::InvalidEndpointIdentityError,
+    },
 }
 
 #[derive(Debug, snafu::Snafu)]
@@ -287,7 +292,8 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
         .dns(DnsScheme::H3)
         .dns(DnsScheme::System)
         .build()
-        .await;
+        .await
+        .context(error::BuildEndpointSnafu)?;
 
     let interfaces = endpoint.network().quic().interfaces();
     let candidates = interfaces.len();
