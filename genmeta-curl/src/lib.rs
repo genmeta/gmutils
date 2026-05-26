@@ -141,6 +141,9 @@ pub enum Error {
         source: dhttp::message::IntoUriError,
     },
 
+    #[snafu(display("failed to construct normalized request uri"))]
+    ConstructRequestUri { source: http::uri::InvalidUriParts },
+
     #[snafu(display("failed to locate dhttp config"))]
     LocateDhttpConfig {
         source: config::LocateDhttpConfigError,
@@ -453,6 +456,21 @@ async fn load_identity_config(options: &Options) -> Result<Option<IdentityConfig
     }
 }
 
+fn normalize_cli_uri(
+    uri: Uri,
+    self_name: Option<&dhttp::name::DhttpName<'_>>,
+) -> Result<Uri, Error> {
+    let uri = uri.into_uri(self_name).context(error::NormalizeUriSnafu)?;
+
+    let mut parts = uri.into_parts();
+    if parts.scheme.is_none() && parts.authority.is_some() && parts.path_and_query.is_none() {
+        parts.scheme = Some(http::uri::Scheme::HTTPS);
+        parts.path_and_query = Some(http::uri::PathAndQuery::from_static("/"));
+    }
+
+    Uri::from_parts(parts).context(error::ConstructRequestUriSnafu)
+}
+
 /// Load identity, expand the URI, and construct the DHTTP endpoint.
 async fn setup_client(
     options: &mut Options,
@@ -460,15 +478,14 @@ async fn setup_client(
     let identity_config = load_identity_config(options).await?;
 
     // Normalize DHTTP shorthand in URI using loaded identity (--id > default identity).
+    options.uri = normalize_cli_uri(
+        options.uri.clone(),
+        identity_config.as_ref().map(|id| id.name()),
+    )?;
     ensure!(
         options.uri.authority().is_some(),
         error::MissingAuthoritySnafu
     );
-    options.uri = options
-        .uri
-        .clone()
-        .into_uri(identity_config.as_ref().map(|id| id.name()))
-        .context(error::NormalizeUriSnafu)?;
 
     // TODO(-4/-6): the previous address-family filter here (applied post-
     // expansion on `BindUri`s) was a no-op in practice — it restricted the
@@ -893,5 +910,14 @@ mod tests {
     #[test]
     fn connect_timeout_uses_seconds() {
         assert_eq!(connect_timeout_from_secs(5), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn normalize_cli_uri_expands_bare_authority_to_https_root() {
+        let uri = "reimu.pilot~".parse::<http::Uri>().unwrap();
+
+        let normalized = normalize_cli_uri(uri, None).unwrap();
+
+        assert_eq!(normalized.to_string(), "https://reimu.pilot.genmeta.net/");
     }
 }

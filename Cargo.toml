@@ -145,5 +145,8 @@ dhttp-access = { path = "../dhttp/access" }
 [patch."ssh://git@github.com/genmeta/ddns.git"]
 ddns = { path = "../ddns" }
 
+[patch."https://github.com/genmeta/h3x.git"]
+h3x = { path = "../h3x" }
+
 [patch."ssh://git@github.com/genmeta/dssh.git"]
 dssh = { path = "../dssh" }
