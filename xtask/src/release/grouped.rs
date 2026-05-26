@@ -18,9 +18,16 @@ pub fn parse_grouped_targets(
     let mut current: Option<TargetSection> = None;
 
     for token in tokens {
-        let value = token.to_str().ok_or_else(|| {
-            snafu::FromString::without_source("target arguments must be utf-8".to_string())
-        })?;
+        let Some(value) = token.to_str() else {
+            match &mut current {
+                Some(section) => {
+                    section.args.push(token.clone());
+                    continue;
+                }
+                None => snafu::whatever!("target name must be utf-8"),
+            }
+        };
+
         if known_targets.contains(&value) {
             if let Some(section) = current.take() {
                 sections.push(section);
@@ -115,6 +122,21 @@ mod tests {
                 os("../h3x"),
             ]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preserves_non_utf8_arguments_inside_a_section() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let raw_path = OsString::from_vec(vec![b'.', b'.', b'/', 0xff, b'h', b'3', b'x']);
+        let tokens = [os("deb"), os("--sibling"), raw_path.clone()];
+
+        let sections = parse_grouped_targets(&tokens, &["deb"]).expect("sections should parse");
+
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].name, "deb");
+        assert_eq!(sections[0].args, [os("--sibling"), raw_path]);
     }
 
     #[test]
