@@ -15,7 +15,7 @@ use tracing::info;
 use walkdir::WalkDir;
 
 use super::{
-    PublishRoot, S3Options,
+    PublishRoot, S3Options, S3VerifyOptions,
     artifact::{ReleaseManifest, read_manifest, relative_path, sha256_file},
     grouped,
     paths::common_paths,
@@ -70,6 +70,49 @@ struct PrefixOptions {
     prefix: String,
 }
 
+trait S3ConnectionOptions {
+    fn endpoint_url(&self) -> &str;
+    fn bucket(&self) -> &str;
+    fn access_key_id_file(&self) -> &Path;
+    fn secret_access_key_file(&self) -> &Path;
+}
+
+impl S3ConnectionOptions for S3Options {
+    fn endpoint_url(&self) -> &str {
+        &self.endpoint_url
+    }
+
+    fn bucket(&self) -> &str {
+        &self.bucket
+    }
+
+    fn access_key_id_file(&self) -> &Path {
+        &self.access_key_id_file
+    }
+
+    fn secret_access_key_file(&self) -> &Path {
+        &self.secret_access_key_file
+    }
+}
+
+impl S3ConnectionOptions for S3VerifyOptions {
+    fn endpoint_url(&self) -> &str {
+        &self.endpoint_url
+    }
+
+    fn bucket(&self) -> &str {
+        &self.bucket
+    }
+
+    fn access_key_id_file(&self) -> &Path {
+        &self.access_key_id_file
+    }
+
+    fn secret_access_key_file(&self) -> &Path {
+        &self.secret_access_key_file
+    }
+}
+
 pub async fn publish(options: S3Options) -> Result<(), Whatever> {
     let common = common_paths()?.root;
     let uploads = plan_uploads(&common, &options.roots, options.apt_prefix.as_deref())?;
@@ -104,7 +147,10 @@ pub async fn publish(options: S3Options) -> Result<(), Whatever> {
     Ok(())
 }
 
-pub async fn verify_remote(options: S3Options, targets: Vec<OsString>) -> Result<(), Whatever> {
+pub async fn verify_remote(
+    options: S3VerifyOptions,
+    targets: Vec<OsString>,
+) -> Result<(), Whatever> {
     let plans = parse_target_plans(&targets).unwrap_or_else(|error| {
         error.exit();
     });
@@ -112,7 +158,7 @@ pub async fn verify_remote(options: S3Options, targets: Vec<OsString>) -> Result
     let manifest = read_manifest(&common.join("manifest.toml")).await?;
     let client = client(&options).await?;
 
-    verify_remote_artifacts(&client, &options.bucket, &common, &manifest, &plans).await
+    verify_remote_artifacts(&client, options.bucket(), &common, &manifest, &plans).await
 }
 
 async fn verify_remote_artifacts(
@@ -216,9 +262,9 @@ async fn read_secret(path: &Path) -> Result<String, Whatever> {
     Ok(value.trim().to_string())
 }
 
-async fn client(options: &S3Options) -> Result<Client, Whatever> {
-    let access_key_id = read_secret(&options.access_key_id_file).await?;
-    let secret_access_key = read_secret(&options.secret_access_key_file).await?;
+async fn client(options: &impl S3ConnectionOptions) -> Result<Client, Whatever> {
+    let access_key_id = read_secret(options.access_key_id_file()).await?;
+    let secret_access_key = read_secret(options.secret_access_key_file()).await?;
     let credentials = Credentials::new(
         access_key_id,
         secret_access_key,
@@ -228,7 +274,7 @@ async fn client(options: &S3Options) -> Result<Client, Whatever> {
     );
     let s3_config = aws_sdk_s3::config::Builder::new()
         .region(Region::new("auto"))
-        .endpoint_url(options.endpoint_url.clone())
+        .endpoint_url(options.endpoint_url().to_owned())
         .credentials_provider(credentials)
         .force_path_style(true)
         .build();

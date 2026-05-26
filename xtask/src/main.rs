@@ -549,6 +549,51 @@ mod tests {
     }
 
     #[test]
+    fn verify_remote_s3_help_excludes_publish_only_options() {
+        let command = Cli::command();
+        let verify = subcommand(&command, "verify");
+        let remote = subcommand(verify, "remote");
+        let s3 = subcommand(remote, "s3");
+
+        let help = s3.clone().render_long_help().to_string();
+
+        assert!(help.contains("--endpoint-url"));
+        assert!(help.contains("--bucket"));
+        assert!(help.contains("--access-key-id-file"));
+        assert!(help.contains("--secret-access-key-file"));
+        assert!(!help.contains("--root"));
+        assert!(!help.contains("--apt-prefix"));
+        assert!(!help.contains("--dry-run"));
+    }
+
+    #[test]
+    fn verify_remote_s3_rejects_publish_only_root_option() {
+        let error = match Cli::try_parse_from([
+            "xtask",
+            "verify",
+            "remote",
+            "s3",
+            "--endpoint-url",
+            "https://s3.example.test",
+            "--bucket",
+            "downloads",
+            "--access-key-id-file",
+            "access",
+            "--secret-access-key-file",
+            "secret",
+            "--root",
+            "homebrew",
+            "homebrew",
+        ]) {
+            Ok(_) => panic!("verify remote s3 should reject publish-only --root"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), ErrorKind::ValueValidation);
+        assert!(error.to_string().contains("only supported by publish s3"));
+    }
+
+    #[test]
     fn dist_target_local_help_remains_clap_display_help() {
         let error = match parse_dist_format("deb", [std::ffi::OsString::from("--help")]) {
             Ok(_) => panic!("target-local help should be reported as clap display help"),

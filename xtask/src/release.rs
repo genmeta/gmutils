@@ -82,9 +82,14 @@ pub enum RemoteVerifyTarget {
     /// Verify immutable artifact collisions in S3
     S3 {
         #[command(flatten)]
-        options: S3Options,
+        options: S3VerifyOptions,
         /// Grouped S3 targets: homebrew/scoop/apt/rpm followed by target-local options
-        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        #[arg(
+            required = true,
+            trailing_var_arg = true,
+            allow_hyphen_values = true,
+            value_parser = verify_s3_target_token
+        )]
         targets: Vec<OsString>,
     },
 }
@@ -126,6 +131,34 @@ pub struct S3Options {
     /// Print planned uploads without writing to S3
     #[arg(long)]
     pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct S3VerifyOptions {
+    /// S3 endpoint URL
+    #[arg(long)]
+    pub endpoint_url: String,
+    /// S3 bucket name
+    #[arg(long)]
+    pub bucket: String,
+    /// File containing AWS access key id
+    #[arg(long)]
+    pub access_key_id_file: PathBuf,
+    /// File containing AWS secret access key
+    #[arg(long)]
+    pub secret_access_key_file: PathBuf,
+}
+
+fn verify_s3_target_token(value: &str) -> Result<OsString, String> {
+    if matches!(value, "--root" | "--apt-prefix" | "--dry-run")
+        || value.starts_with("--root=")
+        || value.starts_with("--apt-prefix=")
+    {
+        return Err(format!(
+            "{value} is only supported by publish s3, not verify remote s3"
+        ));
+    }
+    Ok(value.into())
 }
 
 #[derive(Debug, Clone, Args)]
