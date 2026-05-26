@@ -28,8 +28,9 @@ enum Command {
     },
     /// Assemble publishable artifacts under target/common
     Stage {
-        #[command(subcommand)]
-        format: release::StageFormat,
+        /// Grouped stage targets: homebrew/scoop/apt/rpm followed by target-local options
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        targets: Vec<std::ffi::OsString>,
     },
     /// Validate target/common before publishing
     Verify {
@@ -349,10 +350,16 @@ mod tests {
     #[test]
     fn release_pipeline_uses_homebrew_and_apt_command_names() {
         let command = Cli::command();
-        let stage_names = subcommand_names(subcommand(&command, "stage"));
+        let stage = subcommand(&command, "stage");
 
-        assert!(stage_names.contains(&"apt"));
-        assert!(!stage_names.contains(&"ppa"));
+        assert!(
+            stage
+                .clone()
+                .render_long_help()
+                .to_string()
+                .contains("homebrew/scoop/apt/rpm")
+        );
+        assert!(stage.get_subcommands().next().is_none());
     }
 
     #[test]
@@ -402,6 +409,57 @@ mod tests {
             .to_string();
 
         assert!(help.contains("Grouped dist targets: deb/rpm/homebrew/scoop"));
+    }
+
+    #[test]
+    fn stage_accepts_grouped_targets_as_trailing_args() {
+        let cli = Cli::try_parse_from([
+            "xtask",
+            "stage",
+            "homebrew",
+            "scoop",
+            "apt",
+            "--suite",
+            "stable",
+            "--key-file",
+            "key.asc",
+            "--fingerprint",
+            "00112233445566778899AABBCCDDEEFF00112233",
+            "rpm",
+        ])
+        .expect("grouped stage targets should parse at outer level");
+
+        match cli.command {
+            Command::Stage { targets } => {
+                assert_eq!(
+                    targets,
+                    [
+                        "homebrew",
+                        "scoop",
+                        "apt",
+                        "--suite",
+                        "stable",
+                        "--key-file",
+                        "key.asc",
+                        "--fingerprint",
+                        "00112233445566778899AABBCCDDEEFF00112233",
+                        "rpm",
+                    ]
+                    .map(std::ffi::OsString::from)
+                );
+            }
+            _ => panic!("expected stage command"),
+        }
+    }
+
+    #[test]
+    fn stage_help_mentions_grouped_targets() {
+        let help = subcommand(&Cli::command(), "stage")
+            .clone()
+            .render_long_help()
+            .to_string();
+
+        assert!(help.contains("Grouped stage targets: homebrew/scoop/apt/rpm"));
     }
 
     #[test]
@@ -562,7 +620,7 @@ async fn main() -> Result<(), Whatever> {
     let cli = Cli::parse();
     match cli.command {
         Command::Dist { targets } => run_dist_sections(targets).await?,
-        Command::Stage { format } => release::stage(format).await?,
+        Command::Stage { targets } => release::stage_sections(targets).await?,
         Command::Verify { options } => release::verify(options).await?,
         Command::Publish { target } => release::publish(target).await?,
     }

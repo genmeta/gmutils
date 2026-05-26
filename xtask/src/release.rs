@@ -3,14 +3,15 @@ pub mod artifact;
 pub mod grouped;
 pub mod homebrew;
 pub mod paths;
+pub mod rpm;
 pub mod s3;
 pub mod scoop;
 pub mod tap;
 pub mod verify;
 
-use std::path::PathBuf;
+use std::{ffi::OsString, path::PathBuf};
 
-use clap::{Args, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum, error::ErrorKind};
 use snafu::Whatever;
 
 #[derive(Debug, Subcommand)]
@@ -24,6 +25,22 @@ pub enum StageFormat {
         #[command(flatten)]
         options: AptOptions,
     },
+    /// Stage RPM packages
+    Rpm,
+}
+
+#[derive(Debug, Parser)]
+struct StageCli {
+    #[command(subcommand)]
+    format: StageFormat,
+}
+
+#[derive(Debug)]
+pub enum StageSection {
+    Homebrew,
+    Scoop,
+    Apt(AptOptions),
+    Rpm,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -122,12 +139,49 @@ impl std::fmt::Display for PublishRoot {
     }
 }
 
-pub async fn stage(format: StageFormat) -> Result<(), Whatever> {
-    match format {
-        StageFormat::Homebrew => homebrew::stage().await,
-        StageFormat::Scoop => scoop::stage().await,
-        StageFormat::Apt { options } => apt::stage(options).await,
+fn parse_stage_format<I, T>(section_name: &str, args: I) -> Result<StageSection, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString>,
+{
+    let mut argv = vec![
+        OsString::from("xtask stage"),
+        section_name.to_owned().into(),
+    ];
+    argv.extend(args.into_iter().map(Into::into));
+    StageCli::try_parse_from(argv).map(|cli| match cli.format {
+        StageFormat::Homebrew => StageSection::Homebrew,
+        StageFormat::Scoop => StageSection::Scoop,
+        StageFormat::Apt { options } => StageSection::Apt(options),
+        StageFormat::Rpm => StageSection::Rpm,
+    })
+}
+
+pub fn parse_stage_sections(tokens: &[OsString]) -> Result<Vec<StageSection>, clap::Error> {
+    let sections = grouped::parse_grouped_targets(tokens, &["homebrew", "scoop", "apt", "rpm"])
+        .map_err(|error| StageCli::command().error(ErrorKind::ValueValidation, error))?;
+
+    sections
+        .into_iter()
+        .map(|section| parse_stage_format(&section.name, section.args))
+        .collect()
+}
+
+pub async fn stage_sections(tokens: Vec<OsString>) -> Result<(), Whatever> {
+    let sections = parse_stage_sections(&tokens).unwrap_or_else(|error| {
+        error.exit();
+    });
+
+    for section in sections {
+        match section {
+            StageSection::Homebrew => homebrew::stage().await?,
+            StageSection::Scoop => scoop::stage().await?,
+            StageSection::Apt(options) => apt::stage(options).await?,
+            StageSection::Rpm => rpm::stage().await?,
+        }
     }
+
+    Ok(())
 }
 
 pub async fn verify(options: VerifyOptions) -> Result<(), Whatever> {
@@ -143,4 +197,78 @@ pub async fn publish(target: PublishTarget) -> Result<(), Whatever> {
 
 fn default_components() -> Vec<String> {
     vec!["main".to_owned()]
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use clap::error::ErrorKind;
+
+    use super::{StageSection, parse_stage_sections};
+
+    fn os(value: &str) -> OsString {
+        OsString::from(value)
+    }
+
+    #[test]
+    fn stage_sections_parse_later_apt_error_before_execution() {
+        let tokens = [os("homebrew"), os("apt"), os("--bogus"), os("rpm")];
+
+        let error = match parse_stage_sections(&tokens) {
+            Ok(_) => panic!("later target-local parse error should stop grouped stage parsing"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+        assert!(error.to_string().contains("Usage: xtask stage apt"));
+    }
+
+    #[test]
+    fn stage_sections_parse_later_apt_help_before_execution() {
+        let tokens = [os("homebrew"), os("apt"), os("--help"), os("rpm")];
+
+        let error = match parse_stage_sections(&tokens) {
+            Ok(_) => panic!("later target-local help should stop grouped stage parsing"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        assert!(error.to_string().contains("Stage APT repository"));
+        assert!(error.to_string().contains("Usage: xtask stage apt"));
+    }
+
+    #[test]
+    fn stage_sections_reject_no_option_target_arguments() {
+        let tokens = [os("rpm"), os("--prefix"), os("download")];
+
+        let error = match parse_stage_sections(&tokens) {
+            Ok(_) => panic!("rpm does not accept target-local options"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+        assert!(error.to_string().contains("Usage: xtask stage rpm"));
+    }
+
+    #[test]
+    fn stage_sections_preserve_user_order() {
+        let tokens = [
+            os("rpm"),
+            os("homebrew"),
+            os("apt"),
+            os("--suite"),
+            os("stable"),
+            os("--key-file"),
+            os("key.asc"),
+            os("--fingerprint"),
+            os("00112233445566778899AABBCCDDEEFF00112233"),
+        ];
+
+        let sections = parse_stage_sections(&tokens).expect("stage sections should parse");
+
+        assert!(matches!(sections[0], StageSection::Rpm));
+        assert!(matches!(sections[1], StageSection::Homebrew));
+        assert!(matches!(sections[2], StageSection::Apt(_)));
+    }
 }

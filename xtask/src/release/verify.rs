@@ -53,6 +53,7 @@ fn artifact_path(root: &Path, artifact_root: ArtifactRoot, path: &str) -> PathBu
         ArtifactRoot::Homebrew => root.join("homebrew").join(path),
         ArtifactRoot::Scoop => root.join("scoop").join(path),
         ArtifactRoot::Apt => root.join("apt").join(path),
+        ArtifactRoot::Rpm => root.join("rpm").join(path),
     }
 }
 

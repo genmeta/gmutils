@@ -30,6 +30,7 @@ pub enum ArtifactRoot {
     Homebrew,
     Scoop,
     Apt,
+    Rpm,
 }
 
 pub async fn sha256_file(path: &Path) -> Result<String, Whatever> {
@@ -121,6 +122,25 @@ mod tests {
         assert!(text.contains("homebrew"));
         assert!(text.contains("schema-version"));
         assert!(!text.contains("schema_version"));
+    }
+
+    #[test]
+    fn manifest_serializes_rpm_root() {
+        let manifest = ReleaseManifest {
+            schema_version: 1,
+            package: "gmutils".to_string(),
+            version: "0.5.1".to_string(),
+            artifacts: vec![ArtifactEntry {
+                root: ArtifactRoot::Rpm,
+                path: "gmutils/0.5.1/gmutils-0.5.1-1.x86_64.rpm".to_string(),
+                sha256: "abc".to_string(),
+                immutable: true,
+            }],
+        };
+
+        let text = toml::to_string(&manifest).unwrap();
+
+        assert!(text.contains("root = \"rpm\""));
     }
 
     #[test]
