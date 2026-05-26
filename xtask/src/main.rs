@@ -297,11 +297,11 @@ pub async fn run_cmd(cmd: &mut tokio::process::Command) -> Result<(), Whatever> 
 
 #[cfg(test)]
 mod tests {
-    use clap::{CommandFactory, Parser, ValueEnum, error::ErrorKind};
+    use clap::{CommandFactory, Parser, error::ErrorKind};
 
     use super::{
         BuildProfile, Cli, Command, parse_dist_format, parse_dist_sections,
-        release::{PublishRoot, VerifyCommand},
+        release::{PublishTarget, VerifyCommand},
     };
 
     fn subcommand<'a>(command: &'a clap::Command, name: &str) -> &'a clap::Command {
@@ -642,46 +642,53 @@ mod tests {
     }
 
     #[test]
-    fn release_publish_uses_root_and_nested_tap_command_names() {
+    fn release_publish_uses_grouped_s3_targets_and_nested_tap_command_names() {
         let command = Cli::command();
         let publish = subcommand(&command, "publish");
         let publish_names = subcommand_names(publish);
         let s3_options = argument_longs(subcommand(publish, "s3"));
 
+        assert!(publish_names.contains(&"s3"));
         assert!(publish_names.contains(&"tap"));
-        assert!(s3_options.contains(&"root"));
-        assert!(!s3_options.contains(&"only"));
+        assert!(!s3_options.contains(&"root"));
+        assert!(!s3_options.contains(&"apt-prefix"));
     }
 
     #[test]
-    fn publish_roots_are_registered() {
-        let names = PublishRoot::value_variants()
-            .iter()
-            .map(|root| {
-                root.to_possible_value()
-                    .expect("publish root should have a possible value")
-                    .get_name()
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(names, vec!["homebrew", "scoop", "apt"]);
-    }
-
-    #[test]
-    fn publish_s3_help_lists_only_current_publish_roots() {
+    fn publish_s3_help_mentions_grouped_targets_not_legacy_roots() {
         let command = Cli::command();
         let publish = subcommand(&command, "publish");
         let s3 = subcommand(publish, "s3");
 
         let help = s3.clone().render_long_help().to_string();
 
-        assert!(help.contains("Upload selected staged roots: homebrew, scoop, apt"));
-        assert!(!help.contains("apt, rpm"));
+        assert!(help.contains("Grouped S3 targets: homebrew/scoop/apt/rpm"));
+        assert!(!help.contains("--root"));
+        assert!(!help.contains("--apt-prefix"));
     }
 
     #[test]
-    fn publish_s3_rejects_rpm_root_before_grouped_publish() {
+    fn publish_s3_requires_at_least_one_grouped_target() {
+        let error = Cli::try_parse_from([
+            "xtask",
+            "publish",
+            "s3",
+            "--endpoint-url",
+            "https://s3.example.test",
+            "--bucket",
+            "downloads",
+            "--access-key-id-file",
+            "access",
+            "--secret-access-key-file",
+            "secret",
+        ])
+        .expect_err("publish s3 should require grouped targets");
+
+        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn publish_s3_rejects_legacy_root_option() {
         let error = match Cli::try_parse_from([
             "xtask",
             "publish",
@@ -695,13 +702,52 @@ mod tests {
             "--secret-access-key-file",
             "secret",
             "--root",
-            "rpm",
+            "homebrew",
         ]) {
-            Ok(_) => panic!("publish s3 should not accept rpm root before task 6"),
+            Ok(_) => panic!("publish s3 should reject legacy --root"),
             Err(error) => error,
         };
 
-        assert_eq!(error.kind(), ErrorKind::InvalidValue);
+        assert_eq!(error.kind(), ErrorKind::ValueValidation);
+        assert!(
+            error
+                .to_string()
+                .contains("--root has been replaced by grouped s3 targets")
+        );
+    }
+
+    #[test]
+    fn publish_s3_accepts_grouped_rpm_target_with_prefix() {
+        let cli = Cli::try_parse_from([
+            "xtask",
+            "publish",
+            "s3",
+            "--endpoint-url",
+            "https://s3.example.test",
+            "--bucket",
+            "downloads",
+            "--access-key-id-file",
+            "access",
+            "--secret-access-key-file",
+            "secret",
+            "rpm",
+            "--prefix",
+            "rpm/genmeta",
+        ])
+        .expect("publish s3 should accept grouped rpm target");
+
+        match cli.command {
+            Command::Publish {
+                target: PublishTarget::S3 { options, targets },
+            } => {
+                assert_eq!(options.bucket, "downloads");
+                assert_eq!(
+                    targets,
+                    ["rpm", "--prefix", "rpm/genmeta"].map(std::ffi::OsString::from)
+                );
+            }
+            _ => panic!("expected publish s3 command"),
+        }
     }
 }
 

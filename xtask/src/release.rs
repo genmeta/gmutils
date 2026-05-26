@@ -11,7 +11,7 @@ pub mod verify;
 
 use std::{ffi::OsString, path::PathBuf};
 
-use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum, error::ErrorKind};
+use clap::{Args, CommandFactory, Parser, Subcommand, error::ErrorKind};
 use snafu::Whatever;
 
 #[derive(Debug, Subcommand)]
@@ -100,6 +100,14 @@ pub enum PublishTarget {
     S3 {
         #[command(flatten)]
         options: S3Options,
+        /// Grouped S3 targets: homebrew/scoop/apt/rpm followed by target-local options
+        #[arg(
+            required = true,
+            trailing_var_arg = true,
+            allow_hyphen_values = true,
+            value_parser = publish_s3_target_token
+        )]
+        targets: Vec<OsString>,
     },
     /// Publish Homebrew formulae to a tap checkout
     Tap {
@@ -122,12 +130,6 @@ pub struct S3Options {
     /// File containing AWS secret access key
     #[arg(long)]
     pub secret_access_key_file: PathBuf,
-    /// Upload selected staged roots: homebrew, scoop, apt
-    #[arg(long = "root", value_enum, value_delimiter = ',')]
-    pub roots: Vec<PublishRoot>,
-    /// Remote prefix for APT repository files
-    #[arg(long)]
-    pub apt_prefix: Option<String>,
     /// Print planned uploads without writing to S3
     #[arg(long)]
     pub dry_run: bool,
@@ -161,6 +163,16 @@ fn verify_s3_target_token(value: &str) -> Result<OsString, String> {
     Ok(value.into())
 }
 
+fn publish_s3_target_token(value: &str) -> Result<OsString, String> {
+    if matches!(value, "--root" | "--apt-prefix")
+        || value.starts_with("--root=")
+        || value.starts_with("--apt-prefix=")
+    {
+        return Err(format!("{value} has been replaced by grouped s3 targets"));
+    }
+    Ok(value.into())
+}
+
 #[derive(Debug, Clone, Args)]
 pub struct TapOptions {
     /// Homebrew tap repository checkout path
@@ -174,36 +186,6 @@ pub struct TapOptions {
     /// Print planned tap updates without mutating the repository
     #[arg(long)]
     pub dry_run: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum PublishRoot {
-    /// target/common/homebrew
-    Homebrew,
-    /// target/common/scoop
-    Scoop,
-    /// target/common/apt
-    Apt,
-}
-
-impl PublishRoot {
-    pub fn directory(self) -> &'static str {
-        match self {
-            Self::Homebrew => "homebrew",
-            Self::Scoop => "scoop",
-            Self::Apt => "apt",
-        }
-    }
-}
-
-impl std::fmt::Display for PublishRoot {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Homebrew => formatter.write_str("homebrew"),
-            Self::Scoop => formatter.write_str("scoop"),
-            Self::Apt => formatter.write_str("apt"),
-        }
-    }
 }
 
 fn parse_stage_format<I, T>(section_name: &str, args: I) -> Result<StageSection, clap::Error>
@@ -302,7 +284,7 @@ pub async fn verify(command: VerifyCommand) -> Result<(), Whatever> {
 
 pub async fn publish(target: PublishTarget) -> Result<(), Whatever> {
     match target {
-        PublishTarget::S3 { options } => s3::publish(options).await,
+        PublishTarget::S3 { options, targets } => s3::publish(options, targets).await,
         PublishTarget::Tap { options } => tap::publish(options).await,
     }
 }

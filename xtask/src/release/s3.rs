@@ -10,12 +10,12 @@ use aws_sdk_s3::{
 };
 use clap::{Args, CommandFactory, Parser, Subcommand, error::ErrorKind};
 use sha2::Digest;
-use snafu::{OptionExt, ResultExt, Whatever};
+use snafu::{ResultExt, Whatever};
 use tracing::info;
 use walkdir::WalkDir;
 
 use super::{
-    PublishRoot, S3Options, S3VerifyOptions,
+    S3Options, S3VerifyOptions,
     artifact::{
         ArtifactEntry, ArtifactRoot, ReleaseManifest, read_manifest, relative_path, sha256_file,
     },
@@ -115,9 +115,12 @@ impl S3ConnectionOptions for S3VerifyOptions {
     }
 }
 
-pub async fn publish(options: S3Options) -> Result<(), Whatever> {
+pub async fn publish(options: S3Options, targets: Vec<OsString>) -> Result<(), Whatever> {
+    let plans = parse_publish_target_plans(&targets).unwrap_or_else(|error| {
+        error.exit();
+    });
     let common = common_paths()?.root;
-    let uploads = plan_uploads(&common, &options.roots, options.apt_prefix.as_deref())?;
+    let uploads = plan_uploads(&common, &plans)?;
     if options.dry_run {
         for upload in uploads {
             info!(
@@ -130,7 +133,10 @@ pub async fn publish(options: S3Options) -> Result<(), Whatever> {
         return Ok(());
     }
 
+    let manifest = read_manifest(&common.join("manifest.toml")).await?;
     let client = client(&options).await?;
+    verify_remote_artifacts(&client, options.bucket(), &common, &manifest, &plans).await?;
+
     for upload in uploads {
         client
             .put_object()
@@ -322,24 +328,17 @@ async fn client(options: &impl S3ConnectionOptions) -> Result<Client, Whatever> 
     Ok(Client::from_conf(s3_config))
 }
 
-fn plan_uploads(
-    common: &Path,
-    roots: &[PublishRoot],
-    apt_prefix: Option<&str>,
-) -> Result<Vec<PlannedUpload>, Whatever> {
+fn plan_uploads(common: &Path, plans: &[S3TargetPlan]) -> Result<Vec<PlannedUpload>, Whatever> {
     let mut uploads = Vec::new();
-    let explicit_roots = !roots.is_empty();
-    for root in selected_roots(roots) {
-        let directory = root_directory(common, root);
-        if !directory.exists() {
-            snafu::ensure_whatever!(
-                !explicit_roots,
-                "requested publish root {root} is missing at {}",
-                directory.display()
-            );
-            continue;
-        }
-        uploads.extend(plan_root_uploads(common, root, apt_prefix)?);
+    for plan in plans {
+        let directory = common.join(plan.root.directory());
+        snafu::ensure_whatever!(
+            directory.exists(),
+            "requested publish target {} is missing at {}",
+            plan.root.directory(),
+            directory.display()
+        );
+        uploads.extend(plan_root_uploads(&directory, &plan.prefix)?);
     }
     snafu::ensure_whatever!(!uploads.is_empty(), "no staged artifacts found to publish");
     uploads.sort_by(|left, right| {
@@ -350,50 +349,21 @@ fn plan_uploads(
     Ok(uploads)
 }
 
-fn selected_roots(roots: &[PublishRoot]) -> Vec<PublishRoot> {
-    if roots.is_empty() {
-        vec![PublishRoot::Homebrew, PublishRoot::Scoop, PublishRoot::Apt]
-    } else {
-        roots.to_vec()
-    }
-}
-
-fn plan_root_uploads(
-    common: &Path,
-    root: PublishRoot,
-    apt_prefix: Option<&str>,
-) -> Result<Vec<PlannedUpload>, Whatever> {
-    let (directory, key_prefix) = match root {
-        PublishRoot::Homebrew => (common.join("homebrew"), "homebrew".to_string()),
-        PublishRoot::Scoop => (common.join("scoop"), "scoop".to_string()),
-        PublishRoot::Apt => (common.join("apt"), require_apt_prefix(apt_prefix)?),
-    };
-
+fn plan_root_uploads(directory: &Path, key_prefix: &str) -> Result<Vec<PlannedUpload>, Whatever> {
     let mut uploads = Vec::new();
-    for entry in WalkDir::new(&directory) {
+    for entry in WalkDir::new(directory) {
         let entry = entry.whatever_context(format!("failed to walk {}", directory.display()))?;
         if !entry.file_type().is_file() {
             continue;
         }
-        let relative = relative_path(&directory, entry.path())?;
-        let key = join_key(&key_prefix, &relative);
+        let relative = relative_path(directory, entry.path())?;
+        let key = join_key(key_prefix, &relative);
         uploads.push(PlannedUpload {
             path: entry.path().to_path_buf(),
             key,
         });
     }
     Ok(uploads)
-}
-
-fn root_directory(common: &Path, root: PublishRoot) -> PathBuf {
-    common.join(root.directory())
-}
-
-fn require_apt_prefix(apt_prefix: Option<&str>) -> Result<String, Whatever> {
-    let prefix = apt_prefix.whatever_context("apt prefix is required when publishing apt root")?;
-    let prefix = trim_slashes(prefix);
-    snafu::ensure_whatever!(!prefix.is_empty(), "apt prefix must not be empty");
-    Ok(prefix)
 }
 
 fn trim_slashes(value: &str) -> String {
@@ -409,10 +379,22 @@ fn join_key(prefix: &str, relative: &str) -> String {
 }
 
 pub fn parse_target_plans(tokens: &[OsString]) -> Result<Vec<S3TargetPlan>, clap::Error> {
+    parse_target_plans_with_command("xtask verify remote s3", tokens)
+}
+
+fn parse_publish_target_plans(tokens: &[OsString]) -> Result<Vec<S3TargetPlan>, clap::Error> {
+    parse_target_plans_with_command("xtask publish s3", tokens)
+}
+
+fn parse_target_plans_with_command(
+    command_name: &'static str,
+    tokens: &[OsString],
+) -> Result<Vec<S3TargetPlan>, clap::Error> {
     let sections = grouped::parse_grouped_targets(tokens, &["homebrew", "scoop", "apt", "rpm"])
-        .map_err(|error| target_error(ErrorKind::ValueValidation, error))?;
+        .map_err(|error| target_error(command_name, ErrorKind::ValueValidation, error))?;
     if sections.is_empty() {
         return Err(target_error(
+            command_name,
             ErrorKind::MissingRequiredArgument,
             "at least one s3 target is required",
         ));
@@ -420,20 +402,23 @@ pub fn parse_target_plans(tokens: &[OsString]) -> Result<Vec<S3TargetPlan>, clap
 
     sections
         .into_iter()
-        .map(|section| parse_target_plan(&section.name, section.args))
+        .map(|section| parse_target_plan(command_name, &section.name, section.args))
         .collect()
 }
 
-fn parse_target_plan(section_name: &str, args: Vec<OsString>) -> Result<S3TargetPlan, clap::Error> {
-    let mut argv = vec![
-        OsString::from("xtask verify remote s3"),
-        section_name.to_owned().into(),
-    ];
+fn parse_target_plan(
+    command_name: &'static str,
+    section_name: &str,
+    args: Vec<OsString>,
+) -> Result<S3TargetPlan, clap::Error> {
+    let mut argv = vec![OsString::from(command_name), section_name.to_owned().into()];
     argv.extend(args);
-    TargetCli::try_parse_from(argv).and_then(|cli| target_format_to_plan(section_name, cli.target))
+    TargetCli::try_parse_from(argv)
+        .and_then(|cli| target_format_to_plan(command_name, section_name, cli.target))
 }
 
 fn target_format_to_plan(
+    command_name: &'static str,
     section_name: &str,
     target: TargetFormat,
 ) -> Result<S3TargetPlan, clap::Error> {
@@ -448,19 +433,24 @@ fn target_format_to_plan(
         }),
         TargetFormat::Apt { options } => Ok(S3TargetPlan {
             root: ArtifactRoot::Apt,
-            prefix: validate_target_prefix(section_name, options.prefix)?,
+            prefix: validate_target_prefix(command_name, section_name, options.prefix)?,
         }),
         TargetFormat::Rpm { options } => Ok(S3TargetPlan {
             root: ArtifactRoot::Rpm,
-            prefix: validate_target_prefix(section_name, options.prefix)?,
+            prefix: validate_target_prefix(command_name, section_name, options.prefix)?,
         }),
     }
 }
 
-fn validate_target_prefix(section_name: &str, prefix: String) -> Result<String, clap::Error> {
+fn validate_target_prefix(
+    command_name: &'static str,
+    section_name: &str,
+    prefix: String,
+) -> Result<String, clap::Error> {
     let prefix = trim_slashes(&prefix);
     if prefix.is_empty() {
         return Err(target_section_error(
+            command_name,
             section_name,
             ErrorKind::ValueValidation,
             "prefix must not be empty",
@@ -469,18 +459,23 @@ fn validate_target_prefix(section_name: &str, prefix: String) -> Result<String, 
     Ok(prefix)
 }
 
-fn target_error(kind: ErrorKind, message: impl std::fmt::Display) -> clap::Error {
+fn target_error(
+    command_name: &'static str,
+    kind: ErrorKind,
+    message: impl std::fmt::Display,
+) -> clap::Error {
     TargetCli::command()
-        .bin_name("xtask verify remote s3")
+        .bin_name(command_name)
         .error(kind, message)
 }
 
 fn target_section_error(
+    command_name: &'static str,
     section_name: &str,
     kind: ErrorKind,
     message: impl std::fmt::Display,
 ) -> clap::Error {
-    let mut command = TargetCli::command().bin_name("xtask verify remote s3");
+    let mut command = TargetCli::command().bin_name(command_name);
     command.build();
     match command.find_subcommand_mut(section_name) {
         Some(subcommand) => subcommand.error(kind, message),
@@ -513,13 +508,10 @@ fn upload_order(upload: &PlannedUpload) -> u8 {
 mod tests {
     use super::{
         PlannedUpload, RemoteArtifactState, S3TargetPlan, classify_missing_object,
-        parse_target_plans, plan_uploads, upload_order, verify_immutable_collision,
-        verify_remote_manifest_targets,
+        parse_publish_target_plans, parse_target_plans, plan_uploads, upload_order,
+        verify_immutable_collision, verify_remote_manifest_targets,
     };
-    use crate::release::{
-        PublishRoot,
-        artifact::{ArtifactEntry, ArtifactRoot, ReleaseManifest},
-    };
+    use crate::release::artifact::{ArtifactEntry, ArtifactRoot, ReleaseManifest};
 
     #[test]
     fn apt_pool_file_maps_under_explicit_apt_prefix() {
@@ -530,8 +522,14 @@ mod tests {
             .expect("deb parent should be created");
         std::fs::write(&deb, "deb").expect("deb should be written");
 
-        let uploads = plan_uploads(&common, &[PublishRoot::Apt], Some("releases/apt"))
-            .expect("uploads should plan");
+        let uploads = plan_uploads(
+            &common,
+            &[S3TargetPlan {
+                root: ArtifactRoot::Apt,
+                prefix: "releases/apt".to_string(),
+            }],
+        )
+        .expect("uploads should plan");
 
         assert!(
             uploads
@@ -555,7 +553,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_homebrew_root_excludes_scoop_and_apt_roots() {
+    fn explicit_homebrew_target_excludes_scoop_and_apt_roots() {
         let temp = tempfile::tempdir().expect("temp dir should be created");
         let common = temp.path().join("common");
         for path in [
@@ -568,25 +566,37 @@ mod tests {
             std::fs::write(path, "artifact").expect("artifact should be written");
         }
 
-        let uploads =
-            plan_uploads(&common, &[PublishRoot::Homebrew], None).expect("uploads should plan");
+        let uploads = plan_uploads(
+            &common,
+            &[S3TargetPlan {
+                root: ArtifactRoot::Homebrew,
+                prefix: "homebrew".to_string(),
+            }],
+        )
+        .expect("uploads should plan");
 
         assert_eq!(uploads.len(), 1);
         assert_eq!(uploads[0].key, "homebrew/gmutils.rb");
     }
 
     #[test]
-    fn explicit_missing_root_fails() {
+    fn explicit_missing_target_fails() {
         let temp = tempfile::tempdir().expect("temp dir should be created");
         let common = temp.path().join("common");
 
-        let error = plan_uploads(&common, &[PublishRoot::Homebrew], None)
-            .expect_err("missing explicit root should fail");
+        let error = plan_uploads(
+            &common,
+            &[S3TargetPlan {
+                root: ArtifactRoot::Homebrew,
+                prefix: "homebrew".to_string(),
+            }],
+        )
+        .expect_err("missing explicit target should fail");
 
         assert!(
             error
                 .to_string()
-                .starts_with("requested publish root homebrew is missing at")
+                .starts_with("requested publish target homebrew is missing at")
         );
     }
 
@@ -595,26 +605,58 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir should be created");
         let common = temp.path().join("common");
 
-        let error = plan_uploads(&common, &[], None).expect_err("empty plan should fail");
+        let error = plan_uploads(&common, &[]).expect_err("empty plan should fail");
 
         assert_eq!(error.to_string(), "no staged artifacts found to publish");
     }
 
     #[test]
-    fn apt_root_requires_explicit_apt_prefix() {
+    fn grouped_publish_plans_each_target_under_its_prefix() {
         let temp = tempfile::tempdir().expect("temp dir should be created");
         let common = temp.path().join("common");
-        let release = common.join("apt/dists/stable/InRelease");
-        std::fs::create_dir_all(release.parent().expect("release should have a parent"))
-            .expect("release parent should be created");
-        std::fs::write(release, "release").expect("release should be written");
+        for path in [
+            common.join("homebrew/gmutils.rb"),
+            common.join("scoop/gmutils.json"),
+            common.join("apt/pool/main/g/gmutils/file.deb"),
+            common.join("rpm/gmutils/0.5.1/file.rpm"),
+        ] {
+            std::fs::create_dir_all(path.parent().expect("path should have a parent"))
+                .expect("parent should be created");
+            std::fs::write(path, "artifact").expect("artifact should be written");
+        }
+        let plans = [
+            S3TargetPlan {
+                root: ArtifactRoot::Homebrew,
+                prefix: "homebrew".to_string(),
+            },
+            S3TargetPlan {
+                root: ArtifactRoot::Scoop,
+                prefix: "scoop".to_string(),
+            },
+            S3TargetPlan {
+                root: ArtifactRoot::Apt,
+                prefix: "apt/genmeta".to_string(),
+            },
+            S3TargetPlan {
+                root: ArtifactRoot::Rpm,
+                prefix: "rpm/genmeta".to_string(),
+            },
+        ];
 
-        let error = plan_uploads(&common, &[PublishRoot::Apt], None)
-            .expect_err("apt root without prefix should fail");
+        let uploads = plan_uploads(&common, &plans).expect("uploads should plan");
+        let keys = uploads
+            .iter()
+            .map(|upload| upload.key.as_str())
+            .collect::<Vec<_>>();
 
         assert_eq!(
-            error.to_string(),
-            "apt prefix is required when publishing apt root"
+            keys,
+            vec![
+                "apt/genmeta/pool/main/g/gmutils/file.deb",
+                "rpm/genmeta/gmutils/0.5.1/file.rpm",
+                "homebrew/gmutils.rb",
+                "scoop/gmutils.json",
+            ]
         );
     }
 
@@ -669,6 +711,15 @@ mod tests {
                 .to_string()
                 .contains("Usage: xtask verify remote s3 rpm")
         );
+    }
+
+    #[test]
+    fn publish_s3_targets_apt_requires_prefix_with_publish_usage() {
+        let error = parse_publish_target_plans(&[std::ffi::OsString::from("apt")])
+            .expect_err("apt publish target without prefix should fail");
+
+        assert!(error.to_string().contains("--prefix"));
+        assert!(error.to_string().contains("Usage: xtask publish s3 apt"));
     }
 
     #[test]
