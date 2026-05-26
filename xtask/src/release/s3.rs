@@ -49,16 +49,16 @@ struct TargetCli {
 
 #[derive(Debug, Subcommand)]
 enum TargetFormat {
-    /// Verify Homebrew artifacts under the homebrew prefix
+    /// Homebrew artifacts under the homebrew prefix
     Homebrew,
-    /// Verify Scoop artifacts under the scoop prefix
+    /// Scoop artifacts under the scoop prefix
     Scoop,
-    /// Verify APT artifacts under an explicit prefix
+    /// APT artifacts under an explicit prefix
     Apt {
         #[command(flatten)]
         options: PrefixOptions,
     },
-    /// Verify RPM artifacts under an explicit prefix
+    /// RPM artifacts under an explicit prefix
     Rpm {
         #[command(flatten)]
         options: PrefixOptions,
@@ -506,6 +506,8 @@ fn upload_order(upload: &PlannedUpload) -> u8 {
 
 #[cfg(test)]
 mod tests {
+    use clap::error::ErrorKind;
+
     use super::{
         PlannedUpload, RemoteArtifactState, S3TargetPlan, classify_missing_object,
         parse_publish_target_plans, parse_target_plans, plan_uploads, upload_order,
@@ -685,6 +687,36 @@ mod tests {
         assert_eq!(plans[2].prefix, "download/apt");
         assert_eq!(plans[3].root, ArtifactRoot::Rpm);
         assert_eq!(plans[3].prefix, "download/rpm");
+    }
+
+    #[test]
+    fn s3_target_help_is_neutral_for_verify_and_publish() {
+        let verify = parse_target_plans(&[
+            std::ffi::OsString::from("homebrew"),
+            std::ffi::OsString::from("--help"),
+        ])
+        .expect_err("verify target-local help should be returned");
+        let publish = parse_publish_target_plans(&[
+            std::ffi::OsString::from("apt"),
+            std::ffi::OsString::from("--help"),
+        ])
+        .expect_err("publish target-local help should be returned");
+
+        assert_eq!(verify.kind(), ErrorKind::DisplayHelp);
+        assert!(
+            verify
+                .to_string()
+                .contains("Homebrew artifacts under the homebrew prefix")
+        );
+        assert!(!verify.to_string().contains("Verify Homebrew"));
+        assert_eq!(publish.kind(), ErrorKind::DisplayHelp);
+        assert!(
+            publish
+                .to_string()
+                .contains("APT artifacts under an explicit prefix")
+        );
+        assert!(!publish.to_string().contains("Verify APT"));
+        assert!(publish.to_string().contains("Usage: xtask publish s3 apt"));
     }
 
     #[test]

@@ -567,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_remote_s3_rejects_publish_only_root_option() {
+    fn verify_remote_s3_rejects_legacy_root_option_with_grouped_target_message() {
         let error = match Cli::try_parse_from([
             "xtask",
             "verify",
@@ -585,12 +585,46 @@ mod tests {
             "homebrew",
             "homebrew",
         ]) {
-            Ok(_) => panic!("verify remote s3 should reject publish-only --root"),
+            Ok(_) => panic!("verify remote s3 should reject legacy --root"),
             Err(error) => error,
         };
 
         assert_eq!(error.kind(), ErrorKind::ValueValidation);
-        assert!(error.to_string().contains("only supported by publish s3"));
+        assert!(
+            error
+                .to_string()
+                .contains("--root has been replaced by grouped s3 targets")
+        );
+    }
+
+    #[test]
+    fn verify_remote_s3_rejects_dry_run_as_publish_only() {
+        let error = match Cli::try_parse_from([
+            "xtask",
+            "verify",
+            "remote",
+            "s3",
+            "--endpoint-url",
+            "https://s3.example.test",
+            "--bucket",
+            "downloads",
+            "--access-key-id-file",
+            "access",
+            "--secret-access-key-file",
+            "secret",
+            "--dry-run",
+            "homebrew",
+        ]) {
+            Ok(_) => panic!("verify remote s3 should reject publish-only --dry-run"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), ErrorKind::ValueValidation);
+        assert!(
+            error
+                .to_string()
+                .contains("--dry-run is only supported by publish s3")
+        );
     }
 
     #[test]

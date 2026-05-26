@@ -152,25 +152,34 @@ pub struct S3VerifyOptions {
 }
 
 fn verify_s3_target_token(value: &str) -> Result<OsString, String> {
-    if matches!(value, "--root" | "--apt-prefix" | "--dry-run")
-        || value.starts_with("--root=")
-        || value.starts_with("--apt-prefix=")
-    {
+    if value == "--dry-run" {
         return Err(format!(
             "{value} is only supported by publish s3, not verify remote s3"
         ));
+    }
+    if is_legacy_s3_publish_option(value) {
+        return Err(legacy_s3_publish_option_error(value));
     }
     Ok(value.into())
 }
 
 fn publish_s3_target_token(value: &str) -> Result<OsString, String> {
-    if matches!(value, "--root" | "--apt-prefix")
-        || value.starts_with("--root=")
-        || value.starts_with("--apt-prefix=")
-    {
-        return Err(format!("{value} has been replaced by grouped s3 targets"));
+    if is_legacy_s3_publish_option(value) {
+        return Err(legacy_s3_publish_option_error(value));
     }
     Ok(value.into())
+}
+
+fn is_legacy_s3_publish_option(value: &str) -> bool {
+    matches!(value, "--root" | "--apt-prefix")
+        || value.starts_with("--root=")
+        || value.starts_with("--apt-prefix=")
+}
+
+fn legacy_s3_publish_option_error(value: &str) -> String {
+    format!(
+        "{value} has been replaced by grouped s3 targets; use target-local apt --prefix or rpm --prefix for repository prefixes"
+    )
 }
 
 #[derive(Debug, Clone, Args)]
