@@ -665,7 +665,31 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(names, vec!["homebrew", "scoop", "apt", "rpm"]);
+        assert_eq!(names, vec!["homebrew", "scoop", "apt"]);
+    }
+
+    #[test]
+    fn publish_s3_rejects_rpm_root_before_grouped_publish() {
+        let error = match Cli::try_parse_from([
+            "xtask",
+            "publish",
+            "s3",
+            "--endpoint-url",
+            "https://s3.example.test",
+            "--bucket",
+            "downloads",
+            "--access-key-id-file",
+            "access",
+            "--secret-access-key-file",
+            "secret",
+            "--root",
+            "rpm",
+        ]) {
+            Ok(_) => panic!("publish s3 should not accept rpm root before task 6"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), ErrorKind::InvalidValue);
     }
 }
 

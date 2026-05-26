@@ -184,22 +184,15 @@ pub enum PublishRoot {
     Scoop,
     /// target/common/apt
     Apt,
-    /// target/common/rpm
-    Rpm,
 }
 
 impl PublishRoot {
-    pub fn artifact_root(self) -> artifact::ArtifactRoot {
-        match self {
-            Self::Homebrew => artifact::ArtifactRoot::Homebrew,
-            Self::Scoop => artifact::ArtifactRoot::Scoop,
-            Self::Apt => artifact::ArtifactRoot::Apt,
-            Self::Rpm => artifact::ArtifactRoot::Rpm,
-        }
-    }
-
     pub fn directory(self) -> &'static str {
-        self.artifact_root().directory()
+        match self {
+            Self::Homebrew => "homebrew",
+            Self::Scoop => "scoop",
+            Self::Apt => "apt",
+        }
     }
 }
 
@@ -209,7 +202,6 @@ impl std::fmt::Display for PublishRoot {
             Self::Homebrew => formatter.write_str("homebrew"),
             Self::Scoop => formatter.write_str("scoop"),
             Self::Apt => formatter.write_str("apt"),
-            Self::Rpm => formatter.write_str("rpm"),
         }
     }
 }

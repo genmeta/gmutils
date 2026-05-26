@@ -16,7 +16,7 @@ use walkdir::WalkDir;
 
 use super::{
     PublishRoot, S3Options, S3VerifyOptions,
-    artifact::{ReleaseManifest, read_manifest, relative_path, sha256_file},
+    artifact::{ArtifactRoot, ReleaseManifest, read_manifest, relative_path, sha256_file},
     grouped,
     paths::common_paths,
 };
@@ -29,7 +29,7 @@ struct PlannedUpload {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct S3TargetPlan {
-    pub root: PublishRoot,
+    pub root: ArtifactRoot,
     pub prefix: String,
 }
 
@@ -169,11 +169,10 @@ async fn verify_remote_artifacts(
     plans: &[S3TargetPlan],
 ) -> Result<(), Whatever> {
     for plan in plans {
-        let artifact_root = plan.root.artifact_root();
         for artifact in manifest
             .artifacts
             .iter()
-            .filter(|artifact| artifact.root == artifact_root && artifact.immutable)
+            .filter(|artifact| artifact.root == plan.root && artifact.immutable)
         {
             let path = common.join(artifact.root.directory()).join(&artifact.path);
             snafu::ensure_whatever!(
@@ -326,7 +325,6 @@ fn plan_root_uploads(
         PublishRoot::Homebrew => (common.join("homebrew"), "homebrew".to_string()),
         PublishRoot::Scoop => (common.join("scoop"), "scoop".to_string()),
         PublishRoot::Apt => (common.join("apt"), require_apt_prefix(apt_prefix)?),
-        PublishRoot::Rpm => (common.join("rpm"), "rpm".to_string()),
     };
 
     let mut uploads = Vec::new();
@@ -399,19 +397,19 @@ fn target_format_to_plan(
 ) -> Result<S3TargetPlan, clap::Error> {
     match target {
         TargetFormat::Homebrew => Ok(S3TargetPlan {
-            root: PublishRoot::Homebrew,
+            root: ArtifactRoot::Homebrew,
             prefix: "homebrew".to_string(),
         }),
         TargetFormat::Scoop => Ok(S3TargetPlan {
-            root: PublishRoot::Scoop,
+            root: ArtifactRoot::Scoop,
             prefix: "scoop".to_string(),
         }),
         TargetFormat::Apt { options } => Ok(S3TargetPlan {
-            root: PublishRoot::Apt,
+            root: ArtifactRoot::Apt,
             prefix: validate_target_prefix(section_name, options.prefix)?,
         }),
         TargetFormat::Rpm { options } => Ok(S3TargetPlan {
-            root: PublishRoot::Rpm,
+            root: ArtifactRoot::Rpm,
             prefix: validate_target_prefix(section_name, options.prefix)?,
         }),
     }
@@ -475,7 +473,7 @@ mod tests {
         PlannedUpload, RemoteArtifactState, parse_target_plans, plan_uploads, upload_order,
         verify_immutable_collision,
     };
-    use crate::release::PublishRoot;
+    use crate::release::{PublishRoot, artifact::ArtifactRoot};
 
     #[test]
     fn apt_pool_file_maps_under_explicit_apt_prefix() {
@@ -591,13 +589,13 @@ mod tests {
         let plans = parse_target_plans(&targets).expect("s3 targets should parse");
 
         assert_eq!(plans.len(), 4);
-        assert_eq!(plans[0].root, PublishRoot::Homebrew);
+        assert_eq!(plans[0].root, ArtifactRoot::Homebrew);
         assert_eq!(plans[0].prefix, "homebrew");
-        assert_eq!(plans[1].root, PublishRoot::Scoop);
+        assert_eq!(plans[1].root, ArtifactRoot::Scoop);
         assert_eq!(plans[1].prefix, "scoop");
-        assert_eq!(plans[2].root, PublishRoot::Apt);
+        assert_eq!(plans[2].root, ArtifactRoot::Apt);
         assert_eq!(plans[2].prefix, "download/apt");
-        assert_eq!(plans[3].root, PublishRoot::Rpm);
+        assert_eq!(plans[3].root, ArtifactRoot::Rpm);
         assert_eq!(plans[3].prefix, "download/rpm");
     }
 
