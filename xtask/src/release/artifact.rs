@@ -24,13 +24,24 @@ pub struct ArtifactEntry {
     pub immutable: bool,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "kebab-case")]
 pub enum ArtifactRoot {
     Homebrew,
     Scoop,
     Apt,
     Rpm,
+}
+
+impl ArtifactRoot {
+    pub fn directory(self) -> &'static str {
+        match self {
+            Self::Homebrew => "homebrew",
+            Self::Scoop => "scoop",
+            Self::Apt => "apt",
+            Self::Rpm => "rpm",
+        }
+    }
 }
 
 pub async fn sha256_file(path: &Path) -> Result<String, Whatever> {

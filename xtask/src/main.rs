@@ -11,14 +11,14 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum, error::ErrorKind};
 use snafu::{OptionExt, ResultExt, Whatever};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 #[command(name = "xtask", about = "Build & packaging tasks for gmutils")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum Command {
     /// Distribution packaging
     Dist {
@@ -34,8 +34,8 @@ enum Command {
     },
     /// Validate target/common before publishing
     Verify {
-        #[command(flatten)]
-        options: release::VerifyOptions,
+        #[command(subcommand)]
+        command: release::VerifyCommand,
     },
     /// Publish staged artifacts
     Publish {
@@ -300,7 +300,8 @@ mod tests {
     use clap::{CommandFactory, Parser, ValueEnum, error::ErrorKind};
 
     use super::{
-        BuildProfile, Cli, Command, parse_dist_format, parse_dist_sections, release::PublishRoot,
+        BuildProfile, Cli, Command, parse_dist_format, parse_dist_sections,
+        release::{PublishRoot, VerifyCommand},
     };
 
     fn subcommand<'a>(command: &'a clap::Command, name: &str) -> &'a clap::Command {
@@ -463,6 +464,91 @@ mod tests {
     }
 
     #[test]
+    fn verify_local_accepts_grouped_targets_as_trailing_args() {
+        let cli = Cli::try_parse_from(["xtask", "verify", "local", "homebrew", "rpm"])
+            .expect("grouped verify local targets should parse at outer level");
+
+        match cli.command {
+            Command::Verify {
+                command: VerifyCommand::Local { targets },
+            } => {
+                assert_eq!(targets, ["homebrew", "rpm"].map(std::ffi::OsString::from));
+            }
+            _ => panic!("expected verify local command"),
+        }
+    }
+
+    #[test]
+    fn verify_remote_s3_accepts_global_options_before_grouped_targets() {
+        let cli = Cli::try_parse_from([
+            "xtask",
+            "verify",
+            "remote",
+            "s3",
+            "--endpoint-url",
+            "https://s3.example.test",
+            "--bucket",
+            "downloads",
+            "--access-key-id-file",
+            "access",
+            "--secret-access-key-file",
+            "secret",
+            "apt",
+            "--prefix",
+            "apt/stable",
+            "rpm",
+            "--prefix",
+            "rpm/stable",
+        ])
+        .expect("grouped verify remote s3 targets should parse at outer level");
+
+        match cli.command {
+            Command::Verify {
+                command:
+                    VerifyCommand::Remote {
+                        target: crate::release::RemoteVerifyTarget::S3 { options, targets },
+                    },
+            } => {
+                assert_eq!(options.bucket, "downloads");
+                assert_eq!(
+                    targets,
+                    [
+                        "apt",
+                        "--prefix",
+                        "apt/stable",
+                        "rpm",
+                        "--prefix",
+                        "rpm/stable"
+                    ]
+                    .map(std::ffi::OsString::from)
+                );
+            }
+            _ => panic!("expected verify remote s3 command"),
+        }
+    }
+
+    #[test]
+    fn verify_remote_s3_requires_at_least_one_target() {
+        let error = Cli::try_parse_from([
+            "xtask",
+            "verify",
+            "remote",
+            "s3",
+            "--endpoint-url",
+            "https://s3.example.test",
+            "--bucket",
+            "downloads",
+            "--access-key-id-file",
+            "access",
+            "--secret-access-key-file",
+            "secret",
+        ])
+        .expect_err("verify remote s3 should require grouped targets");
+
+        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
     fn dist_target_local_help_remains_clap_display_help() {
         let error = match parse_dist_format("deb", [std::ffi::OsString::from("--help")]) {
             Ok(_) => panic!("target-local help should be reported as clap display help"),
@@ -534,7 +620,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(names, vec!["homebrew", "scoop", "apt"]);
+        assert_eq!(names, vec!["homebrew", "scoop", "apt", "rpm"]);
     }
 }
 
@@ -621,7 +707,7 @@ async fn main() -> Result<(), Whatever> {
     match cli.command {
         Command::Dist { targets } => run_dist_sections(targets).await?,
         Command::Stage { targets } => release::stage_sections(targets).await?,
-        Command::Verify { options } => release::verify(options).await?,
+        Command::Verify { command } => release::verify(command).await?,
         Command::Publish { target } => release::publish(target).await?,
     }
     Ok(())

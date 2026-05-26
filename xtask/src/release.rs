@@ -62,8 +62,32 @@ pub struct AptOptions {
     pub passphrase_file: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Args)]
-pub struct VerifyOptions {}
+#[derive(Debug, Subcommand)]
+pub enum VerifyCommand {
+    /// Verify selected staged roots on local disk
+    Local {
+        /// Grouped verify targets: homebrew/scoop/apt/rpm
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        targets: Vec<OsString>,
+    },
+    /// Verify selected staged roots against a remote destination
+    Remote {
+        #[command(subcommand)]
+        target: RemoteVerifyTarget,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RemoteVerifyTarget {
+    /// Verify immutable artifact collisions in S3
+    S3 {
+        #[command(flatten)]
+        options: S3Options,
+        /// Grouped S3 targets: homebrew/scoop/apt/rpm followed by target-local options
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        targets: Vec<OsString>,
+    },
+}
 
 #[derive(Debug, Subcommand)]
 pub enum PublishTarget {
@@ -93,7 +117,7 @@ pub struct S3Options {
     /// File containing AWS secret access key
     #[arg(long)]
     pub secret_access_key_file: PathBuf,
-    /// Upload selected staged roots: homebrew, scoop, apt
+    /// Upload selected staged roots: homebrew, scoop, apt, rpm
     #[arg(long = "root", value_enum, value_delimiter = ',')]
     pub roots: Vec<PublishRoot>,
     /// Remote prefix for APT repository files
@@ -127,6 +151,23 @@ pub enum PublishRoot {
     Scoop,
     /// target/common/apt
     Apt,
+    /// target/common/rpm
+    Rpm,
+}
+
+impl PublishRoot {
+    pub fn artifact_root(self) -> artifact::ArtifactRoot {
+        match self {
+            Self::Homebrew => artifact::ArtifactRoot::Homebrew,
+            Self::Scoop => artifact::ArtifactRoot::Scoop,
+            Self::Apt => artifact::ArtifactRoot::Apt,
+            Self::Rpm => artifact::ArtifactRoot::Rpm,
+        }
+    }
+
+    pub fn directory(self) -> &'static str {
+        self.artifact_root().directory()
+    }
 }
 
 impl std::fmt::Display for PublishRoot {
@@ -135,6 +176,7 @@ impl std::fmt::Display for PublishRoot {
             Self::Homebrew => formatter.write_str("homebrew"),
             Self::Scoop => formatter.write_str("scoop"),
             Self::Apt => formatter.write_str("apt"),
+            Self::Rpm => formatter.write_str("rpm"),
         }
     }
 }
@@ -217,8 +259,20 @@ pub async fn stage_sections(tokens: Vec<OsString>) -> Result<(), Whatever> {
     Ok(())
 }
 
-pub async fn verify(options: VerifyOptions) -> Result<(), Whatever> {
-    verify::run(options).await
+pub async fn verify(command: VerifyCommand) -> Result<(), Whatever> {
+    match command {
+        VerifyCommand::Local { targets } => {
+            let roots = verify::parse_local_targets(&targets).unwrap_or_else(|error| {
+                error.exit();
+            });
+            verify::run_local(&roots).await
+        }
+        VerifyCommand::Remote { target } => match target {
+            RemoteVerifyTarget::S3 { options, targets } => {
+                s3::verify_remote(options, targets).await
+            }
+        },
+    }
 }
 
 pub async fn publish(target: PublishTarget) -> Result<(), Whatever> {

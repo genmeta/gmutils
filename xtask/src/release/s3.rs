@@ -1,17 +1,73 @@
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
 use aws_credential_types::Credentials;
-use aws_sdk_s3::{Client, config::Region, primitives::ByteStream};
+use aws_sdk_s3::{
+    Client, config::Region, error::SdkError, operation::get_object::GetObjectError,
+    primitives::ByteStream,
+};
+use clap::{Args, CommandFactory, Parser, Subcommand, error::ErrorKind};
+use sha2::Digest;
 use snafu::{OptionExt, ResultExt, Whatever};
 use tracing::info;
 use walkdir::WalkDir;
 
-use super::{PublishRoot, S3Options, artifact::relative_path, paths::common_paths};
+use super::{
+    PublishRoot, S3Options,
+    artifact::{ReleaseManifest, read_manifest, relative_path, sha256_file},
+    grouped,
+    paths::common_paths,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlannedUpload {
     path: PathBuf,
     key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct S3TargetPlan {
+    pub root: PublishRoot,
+    pub prefix: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteArtifactState {
+    Missing,
+    Present { sha256: String },
+}
+
+#[derive(Debug, Parser)]
+struct TargetCli {
+    #[command(subcommand)]
+    target: TargetFormat,
+}
+
+#[derive(Debug, Subcommand)]
+enum TargetFormat {
+    /// Verify Homebrew artifacts under the homebrew prefix
+    Homebrew,
+    /// Verify Scoop artifacts under the scoop prefix
+    Scoop,
+    /// Verify APT artifacts under an explicit prefix
+    Apt {
+        #[command(flatten)]
+        options: PrefixOptions,
+    },
+    /// Verify RPM artifacts under an explicit prefix
+    Rpm {
+        #[command(flatten)]
+        options: PrefixOptions,
+    },
+}
+
+#[derive(Debug, Clone, Args)]
+struct PrefixOptions {
+    /// Remote prefix for this target
+    #[arg(long)]
+    prefix: String,
 }
 
 pub async fn publish(options: S3Options) -> Result<(), Whatever> {
@@ -46,6 +102,111 @@ pub async fn publish(options: S3Options) -> Result<(), Whatever> {
         info!(key = %upload.key, "uploaded staged artifact");
     }
     Ok(())
+}
+
+pub async fn verify_remote(options: S3Options, targets: Vec<OsString>) -> Result<(), Whatever> {
+    let plans = parse_target_plans(&targets).unwrap_or_else(|error| {
+        error.exit();
+    });
+    let common = common_paths()?.root;
+    let manifest = read_manifest(&common.join("manifest.toml")).await?;
+    let client = client(&options).await?;
+
+    verify_remote_artifacts(&client, &options.bucket, &common, &manifest, &plans).await
+}
+
+async fn verify_remote_artifacts(
+    client: &Client,
+    bucket: &str,
+    common: &Path,
+    manifest: &ReleaseManifest,
+    plans: &[S3TargetPlan],
+) -> Result<(), Whatever> {
+    for plan in plans {
+        let artifact_root = plan.root.artifact_root();
+        for artifact in manifest
+            .artifacts
+            .iter()
+            .filter(|artifact| artifact.root == artifact_root && artifact.immutable)
+        {
+            let path = common.join(artifact.root.directory()).join(&artifact.path);
+            snafu::ensure_whatever!(
+                tokio::fs::try_exists(&path)
+                    .await
+                    .whatever_context(format!("failed to inspect {}", path.display()))?,
+                "artifact {} is missing",
+                artifact.path
+            );
+            let actual = sha256_file(&path).await?;
+            snafu::ensure_whatever!(
+                actual == artifact.sha256,
+                "sha256 mismatch for {}",
+                artifact.path
+            );
+
+            let key = join_key(&plan.prefix, &artifact.path);
+            let remote = remote_artifact_state(client, bucket, &key).await?;
+            verify_immutable_collision(&key, &actual, remote)?;
+        }
+    }
+    Ok(())
+}
+
+async fn remote_artifact_state(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+) -> Result<RemoteArtifactState, Whatever> {
+    let output = match client.get_object().bucket(bucket).key(key).send().await {
+        Ok(output) => output,
+        Err(error) if is_missing_object_error(&error) => return Ok(RemoteArtifactState::Missing),
+        Err(error) => {
+            snafu::whatever!("failed to fetch remote artifact {key}: {error}");
+        }
+    };
+    let body = output
+        .body
+        .collect()
+        .await
+        .whatever_context(format!("failed to read remote artifact {key}"))?;
+    Ok(RemoteArtifactState::Present {
+        sha256: sha256_bytes(body.into_bytes().as_ref()),
+    })
+}
+
+fn is_missing_object_error(error: &SdkError<GetObjectError, impl std::fmt::Debug>) -> bool {
+    if let Some(service) = error.as_service_error() {
+        if service.is_no_such_key() {
+            return true;
+        }
+        let code = service.meta().code();
+        if matches!(code, Some("NoSuchKey" | "NotFound")) {
+            return true;
+        }
+    }
+    format!("{error:?}").contains("StatusCode(404)")
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+pub fn verify_immutable_collision(
+    artifact_path: &str,
+    local_sha256: &str,
+    remote: RemoteArtifactState,
+) -> Result<(), Whatever> {
+    match remote {
+        RemoteArtifactState::Missing => Ok(()),
+        RemoteArtifactState::Present { sha256 } if sha256 == local_sha256 => Ok(()),
+        RemoteArtifactState::Present { sha256 } => {
+            snafu::whatever!(
+                "remote immutable artifact {artifact_path} already exists with different sha256 {sha256}"
+            )
+        }
+    }
 }
 
 async fn read_secret(path: &Path) -> Result<String, Whatever> {
@@ -119,6 +280,7 @@ fn plan_root_uploads(
         PublishRoot::Homebrew => (common.join("homebrew"), "homebrew".to_string()),
         PublishRoot::Scoop => (common.join("scoop"), "scoop".to_string()),
         PublishRoot::Apt => (common.join("apt"), require_apt_prefix(apt_prefix)?),
+        PublishRoot::Rpm => (common.join("rpm"), "rpm".to_string()),
     };
 
     let mut uploads = Vec::new();
@@ -138,11 +300,7 @@ fn plan_root_uploads(
 }
 
 fn root_directory(common: &Path, root: PublishRoot) -> PathBuf {
-    match root {
-        PublishRoot::Homebrew => common.join("homebrew"),
-        PublishRoot::Scoop => common.join("scoop"),
-        PublishRoot::Apt => common.join("apt"),
-    }
+    common.join(root.directory())
 }
 
 fn require_apt_prefix(apt_prefix: Option<&str>) -> Result<String, Whatever> {
@@ -161,6 +319,86 @@ fn join_key(prefix: &str, relative: &str) -> String {
         relative.to_string()
     } else {
         format!("{prefix}/{relative}")
+    }
+}
+
+pub fn parse_target_plans(tokens: &[OsString]) -> Result<Vec<S3TargetPlan>, clap::Error> {
+    let sections = grouped::parse_grouped_targets(tokens, &["homebrew", "scoop", "apt", "rpm"])
+        .map_err(|error| target_error(ErrorKind::ValueValidation, error))?;
+    if sections.is_empty() {
+        return Err(target_error(
+            ErrorKind::MissingRequiredArgument,
+            "at least one s3 target is required",
+        ));
+    }
+
+    sections
+        .into_iter()
+        .map(|section| parse_target_plan(&section.name, section.args))
+        .collect()
+}
+
+fn parse_target_plan(section_name: &str, args: Vec<OsString>) -> Result<S3TargetPlan, clap::Error> {
+    let mut argv = vec![
+        OsString::from("xtask verify remote s3"),
+        section_name.to_owned().into(),
+    ];
+    argv.extend(args);
+    TargetCli::try_parse_from(argv).and_then(|cli| target_format_to_plan(section_name, cli.target))
+}
+
+fn target_format_to_plan(
+    section_name: &str,
+    target: TargetFormat,
+) -> Result<S3TargetPlan, clap::Error> {
+    match target {
+        TargetFormat::Homebrew => Ok(S3TargetPlan {
+            root: PublishRoot::Homebrew,
+            prefix: "homebrew".to_string(),
+        }),
+        TargetFormat::Scoop => Ok(S3TargetPlan {
+            root: PublishRoot::Scoop,
+            prefix: "scoop".to_string(),
+        }),
+        TargetFormat::Apt { options } => Ok(S3TargetPlan {
+            root: PublishRoot::Apt,
+            prefix: validate_target_prefix(section_name, options.prefix)?,
+        }),
+        TargetFormat::Rpm { options } => Ok(S3TargetPlan {
+            root: PublishRoot::Rpm,
+            prefix: validate_target_prefix(section_name, options.prefix)?,
+        }),
+    }
+}
+
+fn validate_target_prefix(section_name: &str, prefix: String) -> Result<String, clap::Error> {
+    let prefix = trim_slashes(&prefix);
+    if prefix.is_empty() {
+        return Err(target_section_error(
+            section_name,
+            ErrorKind::ValueValidation,
+            "prefix must not be empty",
+        ));
+    }
+    Ok(prefix)
+}
+
+fn target_error(kind: ErrorKind, message: impl std::fmt::Display) -> clap::Error {
+    TargetCli::command()
+        .bin_name("xtask verify remote s3")
+        .error(kind, message)
+}
+
+fn target_section_error(
+    section_name: &str,
+    kind: ErrorKind,
+    message: impl std::fmt::Display,
+) -> clap::Error {
+    let mut command = TargetCli::command().bin_name("xtask verify remote s3");
+    command.build();
+    match command.find_subcommand_mut(section_name) {
+        Some(subcommand) => subcommand.error(kind, message),
+        None => command.error(kind, message),
     }
 }
 
@@ -187,7 +425,10 @@ fn upload_order(upload: &PlannedUpload) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use super::{PlannedUpload, plan_uploads, upload_order};
+    use super::{
+        PlannedUpload, RemoteArtifactState, parse_target_plans, plan_uploads, upload_order,
+        verify_immutable_collision,
+    };
     use crate::release::PublishRoot;
 
     #[test]
@@ -284,6 +525,94 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "apt prefix is required when publishing apt root"
+        );
+    }
+
+    #[test]
+    fn s3_targets_parse_prefixes_per_target() {
+        let targets = [
+            "homebrew",
+            "scoop",
+            "apt",
+            "--prefix",
+            "/download/apt/",
+            "rpm",
+            "--prefix",
+            "download/rpm",
+        ]
+        .map(std::ffi::OsString::from);
+
+        let plans = parse_target_plans(&targets).expect("s3 targets should parse");
+
+        assert_eq!(plans.len(), 4);
+        assert_eq!(plans[0].root, PublishRoot::Homebrew);
+        assert_eq!(plans[0].prefix, "homebrew");
+        assert_eq!(plans[1].root, PublishRoot::Scoop);
+        assert_eq!(plans[1].prefix, "scoop");
+        assert_eq!(plans[2].root, PublishRoot::Apt);
+        assert_eq!(plans[2].prefix, "download/apt");
+        assert_eq!(plans[3].root, PublishRoot::Rpm);
+        assert_eq!(plans[3].prefix, "download/rpm");
+    }
+
+    #[test]
+    fn s3_targets_apt_requires_prefix() {
+        let error = parse_target_plans(&[std::ffi::OsString::from("apt")])
+            .expect_err("apt target without prefix should fail");
+
+        assert!(error.to_string().contains("--prefix"));
+        assert!(
+            error
+                .to_string()
+                .contains("Usage: xtask verify remote s3 apt")
+        );
+    }
+
+    #[test]
+    fn s3_targets_rpm_requires_prefix() {
+        let error = parse_target_plans(&[std::ffi::OsString::from("rpm")])
+            .expect_err("rpm target without prefix should fail");
+
+        assert!(error.to_string().contains("--prefix"));
+        assert!(
+            error
+                .to_string()
+                .contains("Usage: xtask verify remote s3 rpm")
+        );
+    }
+
+    #[test]
+    fn immutable_collision_missing_passes() {
+        verify_immutable_collision("homebrew/file.tar.gz", "abc", RemoteArtifactState::Missing)
+            .expect("missing remote artifact should pass");
+    }
+
+    #[test]
+    fn immutable_collision_same_hash_passes() {
+        verify_immutable_collision(
+            "homebrew/file.tar.gz",
+            "abc",
+            RemoteArtifactState::Present {
+                sha256: "abc".to_string(),
+            },
+        )
+        .expect("matching remote artifact should pass");
+    }
+
+    #[test]
+    fn immutable_collision_different_hash_fails() {
+        let error = verify_immutable_collision(
+            "homebrew/file.tar.gz",
+            "abc",
+            RemoteArtifactState::Present {
+                sha256: "def".to_string(),
+            },
+        )
+        .expect_err("different remote artifact should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "remote immutable artifact homebrew/file.tar.gz already exists with different sha256 def"
         );
     }
 }
