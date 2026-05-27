@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use bollard::{
     Docker,
     models::{ContainerConfig, ContainerCreateBody, HostConfig, Mount, MountTypeEnum},

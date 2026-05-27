@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::path::Path;
 
 use flate2::{Compression, write::GzEncoder};

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! RPM (.rpm) packaging via a Fedora 40 Docker container and cargo-zigbuild.
 //!
 //! Flow per target triple:

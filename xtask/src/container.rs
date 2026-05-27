@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Shared helpers for running cross-compilation builds inside Docker/Podman
 //! containers. Used by both the deb and rpm packaging flows.
 

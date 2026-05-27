@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod apt;
 pub mod artifact;
 pub mod grouped;

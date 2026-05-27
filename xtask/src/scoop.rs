@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::{io::Write, path::Path};
 
 use snafu::{OptionExt, ResultExt, Whatever};
