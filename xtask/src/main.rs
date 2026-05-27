@@ -1,6 +1,7 @@
 mod brew;
 mod container;
 mod deb;
+mod grouped;
 mod package;
 mod publish;
 mod release;

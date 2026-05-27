@@ -8,7 +8,7 @@ use clap::{CommandFactory, Parser, Subcommand, error::ErrorKind};
 pub use manifest::{ArtifactKind, PackageArtifact, PackageManifest};
 use snafu::Whatever;
 
-use crate::{BrewTarget, DebTarget, RpmTarget, ScoopTarget, release::grouped};
+use crate::{BrewTarget, DebTarget, RpmTarget, ScoopTarget, grouped};
 
 pub const KNOWN_PACKAGE_TARGETS: &[&str] = &["deb", "rpm", "brew", "scoop"];
 
