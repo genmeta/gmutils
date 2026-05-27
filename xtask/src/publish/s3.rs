@@ -1,10 +1,27 @@
-use std::ffi::OsString;
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
-use clap::Args;
-use snafu::Whatever;
+use aws_credential_types::Credentials;
+use aws_sdk_s3::{
+    Client, config::Region, error::SdkError, operation::get_object::GetObjectError,
+    primitives::ByteStream,
+};
+use clap::{Args, CommandFactory, Parser, Subcommand, error::ErrorKind};
+use sha2::Digest;
+use snafu::{ResultExt, Whatever};
+use tracing::info;
 
+use crate::{
+    grouped,
+    package::manifest::{ArtifactKind, PackageManifest, validate_manifest},
+};
+
+pub mod brew;
 pub mod key;
 pub mod plan;
+pub mod scoop;
 
 #[derive(Debug, Clone, Args)]
 pub struct S3Options {
@@ -29,6 +46,327 @@ pub struct S3Options {
     pub dry_run: bool,
 }
 
-pub async fn run(_options: S3Options, _targets: Vec<OsString>) -> Result<(), Whatever> {
-    snafu::whatever!("s3 publish execution is not wired yet")
+#[derive(Debug, Clone)]
+pub(crate) struct BrewPublishTarget {
+    pub prefix: key::RemotePrefix,
+    pub public_base_url: key::PublicBaseUrl,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ScoopPublishTarget {
+    pub prefix: key::RemotePrefix,
+    pub public_base_url: key::PublicBaseUrl,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) enum S3Target {
+    Brew(BrewPublishTarget),
+    Scoop(ScoopPublishTarget),
+    Deb {
+        prefix: key::RemotePrefix,
+        suite: String,
+        fingerprint: String,
+    },
+    Rpm {
+        prefix: key::RemotePrefix,
+    },
+}
+
+#[derive(Debug, Parser)]
+struct S3TargetCli {
+    #[command(subcommand)]
+    target: S3TargetFormat,
+}
+
+#[derive(Debug, Subcommand)]
+enum S3TargetFormat {
+    Brew {
+        #[arg(long)]
+        prefix: String,
+        #[arg(long = "public-base-url")]
+        public_base_url: String,
+    },
+    Scoop {
+        #[arg(long)]
+        prefix: String,
+        #[arg(long = "public-base-url")]
+        public_base_url: String,
+    },
+    Deb {
+        #[arg(long)]
+        prefix: String,
+        #[arg(long)]
+        suite: String,
+        #[arg(long)]
+        fingerprint: String,
+    },
+    Rpm {
+        #[arg(long)]
+        prefix: String,
+    },
+}
+
+pub async fn run(options: S3Options, targets: Vec<OsString>) -> Result<(), Whatever> {
+    let targets = parse_s3_targets(&targets).unwrap_or_else(|error| error.exit());
+    let client = client(&options).await?;
+    for target in targets {
+        match target {
+            S3Target::Brew(target) => brew::run(&options, &client, target).await?,
+            S3Target::Scoop(target) => scoop::run(&options, &client, target).await?,
+            S3Target::Deb { .. } | S3Target::Rpm { .. } => {
+                snafu::whatever!("linux s3 publish execution is not wired yet")
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parse_s3_targets(tokens: &[OsString]) -> Result<Vec<S3Target>, clap::Error> {
+    let sections = match grouped::parse_grouped_targets(tokens, &["deb", "rpm", "brew", "scoop"]) {
+        Ok(sections) => sections,
+        Err(error) => return Err(target_error(ErrorKind::ValueValidation, error)),
+    };
+    if sections.is_empty() {
+        return Err(target_error(
+            ErrorKind::MissingRequiredArgument,
+            "at least one s3 target is required",
+        ));
+    }
+    sections
+        .into_iter()
+        .map(|section| parse_s3_target(&section.name, section.args))
+        .collect()
+}
+
+fn parse_s3_target(section_name: &str, args: Vec<OsString>) -> Result<S3Target, clap::Error> {
+    let mut argv = vec!["xtask publish s3".into(), section_name.to_owned().into()];
+    argv.extend(args);
+    S3TargetCli::try_parse_from(argv)
+        .and_then(|cli| target_format_to_target(section_name, cli.target))
+}
+
+fn target_format_to_target(
+    section_name: &str,
+    target: S3TargetFormat,
+) -> Result<S3Target, clap::Error> {
+    match target {
+        S3TargetFormat::Brew {
+            prefix,
+            public_base_url,
+        } => Ok(S3Target::Brew(BrewPublishTarget {
+            prefix: parse_prefix(section_name, &prefix)?,
+            public_base_url: parse_public_base_url(section_name, &public_base_url)?,
+        })),
+        S3TargetFormat::Scoop {
+            prefix,
+            public_base_url,
+        } => Ok(S3Target::Scoop(ScoopPublishTarget {
+            prefix: parse_prefix(section_name, &prefix)?,
+            public_base_url: parse_public_base_url(section_name, &public_base_url)?,
+        })),
+        S3TargetFormat::Deb {
+            prefix,
+            suite,
+            fingerprint,
+        } => Ok(S3Target::Deb {
+            prefix: parse_prefix(section_name, &prefix)?,
+            suite,
+            fingerprint,
+        }),
+        S3TargetFormat::Rpm { prefix } => Ok(S3Target::Rpm {
+            prefix: parse_prefix(section_name, &prefix)?,
+        }),
+    }
+}
+
+fn parse_prefix(section_name: &str, value: &str) -> Result<key::RemotePrefix, clap::Error> {
+    match key::RemotePrefix::parse(value) {
+        Ok(prefix) => Ok(prefix),
+        Err(error) => Err(target_section_error(
+            section_name,
+            ErrorKind::ValueValidation,
+            error.to_string(),
+        )),
+    }
+}
+
+fn parse_public_base_url(
+    section_name: &str,
+    value: &str,
+) -> Result<key::PublicBaseUrl, clap::Error> {
+    match key::PublicBaseUrl::parse(value) {
+        Ok(public_base_url) => Ok(public_base_url),
+        Err(error) => Err(target_section_error(
+            section_name,
+            ErrorKind::ValueValidation,
+            error.to_string(),
+        )),
+    }
+}
+
+fn target_error(kind: ErrorKind, message: impl std::fmt::Display) -> clap::Error {
+    S3TargetCli::command()
+        .bin_name("xtask publish s3")
+        .error(kind, message)
+}
+
+fn target_section_error(
+    section_name: &str,
+    kind: ErrorKind,
+    message: impl std::fmt::Display,
+) -> clap::Error {
+    let mut command = S3TargetCli::command().bin_name("xtask publish s3");
+    command.build();
+    match command.find_subcommand_mut(section_name) {
+        Some(subcommand) => subcommand.error(kind, message),
+        None => command.error(kind, message),
+    }
+}
+
+pub(crate) struct LoadedManifest {
+    pub target_dir: PathBuf,
+    pub manifest: PackageManifest,
+}
+
+pub(crate) async fn load_manifest(kind: ArtifactKind) -> Result<LoadedManifest, Whatever> {
+    let target_dir = crate::target_dir()?;
+    let manifest_path = target_dir
+        .join("common")
+        .join(kind.directory())
+        .join("manifest.toml");
+    let manifest = crate::package::manifest::read_manifest(&manifest_path)
+        .await
+        .whatever_context(format!("failed to read {}", manifest_path.display()))?;
+    validate_manifest(&manifest).whatever_context("package manifest validation failed")?;
+    snafu::ensure_whatever!(
+        manifest.kind == kind,
+        "package manifest kind does not match publish target"
+    );
+    Ok(LoadedManifest {
+        target_dir,
+        manifest,
+    })
+}
+
+pub(crate) fn artifact_path(
+    target_dir: &Path,
+    artifact: &crate::package::PackageArtifact,
+) -> PathBuf {
+    target_dir.join(&artifact.path)
+}
+
+pub(crate) async fn upload_file(
+    client: &Client,
+    bucket: &str,
+    path: &Path,
+    key: &str,
+) -> Result<(), Whatever> {
+    client
+        .put_object()
+        .bucket(bucket)
+        .key(key)
+        .body(
+            ByteStream::from_path(path)
+                .await
+                .whatever_context("failed to read upload body")?,
+        )
+        .send()
+        .await
+        .whatever_context(format!("failed to upload {key}"))?;
+    info!(key, path = %path.display(), "uploaded package artifact");
+    Ok(())
+}
+
+pub(crate) async fn remote_artifact_state(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+) -> Result<plan::RemoteArtifactState, Whatever> {
+    let output = match client.get_object().bucket(bucket).key(key).send().await {
+        Ok(output) => output,
+        Err(error) if is_missing_object_error(&error) => {
+            return Ok(plan::RemoteArtifactState::Missing);
+        }
+        Err(error) => {
+            snafu::whatever!("failed to fetch remote artifact {key}: {error}");
+        }
+    };
+    Ok(plan::RemoteArtifactState::Present {
+        sha256: sha256_stream(output.body, key).await?,
+    })
+}
+
+fn is_missing_object_error(error: &SdkError<GetObjectError, impl std::fmt::Debug>) -> bool {
+    if let Some(service) = error.as_service_error() {
+        let metadata = service.meta();
+        return classify_missing_object(metadata.code(), metadata.message(), None);
+    }
+    false
+}
+
+fn classify_missing_object(code: Option<&str>, message: Option<&str>, status: Option<u16>) -> bool {
+    if !matches!(status, None | Some(404)) {
+        return false;
+    }
+    match code {
+        Some("NoSuchKey") => true,
+        Some("NotFound") => message
+            .map(classify_not_found_message_as_object_missing)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn classify_not_found_message_as_object_missing(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    if message.contains("bucket") {
+        return false;
+    }
+    message.contains("key") || message.contains("object") || message.contains("not found")
+}
+
+async fn sha256_stream(mut body: ByteStream, key: &str) -> Result<String, Whatever> {
+    let mut hasher = sha2::Sha256::new();
+    while let Some(bytes) = body
+        .try_next()
+        .await
+        .whatever_context(format!("failed to read remote artifact {key}"))?
+    {
+        hasher.update(&bytes);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+async fn client(options: &S3Options) -> Result<Client, Whatever> {
+    let credentials = Credentials::new(
+        options.access_key_id.trim().to_string(),
+        options.secret_access_key.trim().to_string(),
+        None,
+        None,
+        "xtask-release",
+    );
+    let s3_config = aws_sdk_s3::config::Builder::new()
+        .region(Region::new("auto"))
+        .endpoint_url(options.endpoint_url.to_owned())
+        .credentials_provider(credentials)
+        .force_path_style(true)
+        .build();
+    Ok(Client::from_conf(s3_config))
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::error::ErrorKind;
+
+    use super::parse_s3_targets;
+
+    #[test]
+    fn brew_requires_public_base_url() {
+        let targets = ["brew", "--prefix", "brew/gmutils"].map(std::ffi::OsString::from);
+        let error = parse_s3_targets(&targets).expect_err("missing public url should fail");
+
+        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
+        assert!(error.to_string().contains("--public-base-url"));
+    }
 }
