@@ -3,6 +3,9 @@ use std::ffi::OsString;
 use clap::Args;
 use snafu::Whatever;
 
+pub mod key;
+pub mod plan;
+
 #[derive(Debug, Clone, Args)]
 pub struct S3Options {
     /// S3 endpoint URL
