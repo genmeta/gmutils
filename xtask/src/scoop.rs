@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 
-use std::{io::Write, path::Path};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use snafu::{OptionExt, ResultExt, Whatever};
 use tracing::{Instrument, info, info_span};
@@ -11,6 +14,13 @@ const CARGO_NAME: &str = "genmeta";
 
 /// Distribution package name (differs from the cargo crate name).
 const PACKAGE_NAME: &str = "gmutils";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScoopArchive {
+    pub target: String,
+    pub archive_name: String,
+    pub path: PathBuf,
+}
 
 async fn check_cargo_xwin() -> Result<(), Whatever> {
     run_cmd_quiet(tokio::process::Command::new("which").arg("cargo-xwin")).await
@@ -47,7 +57,7 @@ fn create_zip(staging: &Path, output: &Path) -> Result<(), Whatever> {
     Ok(())
 }
 
-pub async fn run(targets: &[ScoopTarget]) -> Result<(), Whatever> {
+pub async fn run(targets: &[ScoopTarget]) -> Result<Vec<ScoopArchive>, Whatever> {
     info!(target_count = targets.len(), "starting scoop dist build");
     let meta = package_meta(CARGO_NAME)?;
     let target_dir = target_dir()?;
@@ -68,12 +78,14 @@ pub async fn run(targets: &[ScoopTarget]) -> Result<(), Whatever> {
     }
 
     info!("waiting for scoop target builds to finish");
+    let mut archives = Vec::new();
     while let Some(result) = tasks.join_next().await {
-        result.whatever_context("scoop build task panicked")??;
+        archives.push(result.whatever_context("scoop build task panicked")??);
     }
+    archives.sort_by(|left, right| left.target.cmp(&right.target));
     info!("finished scoop dist build");
 
-    Ok(())
+    Ok(archives)
 }
 
 async fn build_one(
@@ -81,7 +93,7 @@ async fn build_one(
     version: &str,
     target_dir: &Path,
     workspace: &Path,
-) -> Result<(), Whatever> {
+) -> Result<ScoopArchive, Whatever> {
     info!(triple, "checking cargo-xwin availability");
     check_cargo_xwin().await?;
 
@@ -137,5 +149,9 @@ async fn build_one(
     let _ = tokio::fs::remove_dir_all(&staging).await;
 
     info!(path = %archive_path.display(), "produced archive");
-    Ok(())
+    Ok(ScoopArchive {
+        target: triple.to_string(),
+        archive_name,
+        path: archive_path,
+    })
 }

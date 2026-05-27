@@ -1,5 +1,7 @@
+pub mod brew;
 pub mod manifest;
 pub mod prompt;
+pub mod scoop;
 
 use std::ffi::OsString;
 
@@ -77,11 +79,14 @@ pub async fn run(options: PackageOptions) -> Result<(), Whatever> {
     let _ = options.overwrite_manifest;
     if let Some(format) = formats.into_iter().next() {
         match format {
-            PackageFormat::Deb { .. }
-            | PackageFormat::Rpm { .. }
-            | PackageFormat::Brew { .. }
-            | PackageFormat::Scoop { .. } => {
+            PackageFormat::Deb { .. } | PackageFormat::Rpm { .. } => {
                 snafu::whatever!("package target execution is not wired yet")
+            }
+            PackageFormat::Brew { targets } => {
+                brew::run(&targets, options.overwrite_manifest).await?
+            }
+            PackageFormat::Scoop { targets } => {
+                scoop::run(&targets, options.overwrite_manifest).await?
             }
         }
     }

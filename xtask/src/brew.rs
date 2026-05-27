@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use flate2::{Compression, write::GzEncoder};
 use snafu::{ResultExt, Whatever};
@@ -12,6 +12,13 @@ const CARGO_NAME: &str = "genmeta";
 
 /// Distribution package name (differs from the cargo crate name).
 const PACKAGE_NAME: &str = "gmutils";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrewArchive {
+    pub target: String,
+    pub archive_name: String,
+    pub path: PathBuf,
+}
 
 async fn check_cargo() -> Result<(), Whatever> {
     run_cmd_quiet(tokio::process::Command::new("which").arg("cargo")).await
@@ -32,7 +39,7 @@ fn create_tar_gz(staging: &Path, output: &Path) -> Result<(), Whatever> {
     Ok(())
 }
 
-pub async fn run(targets: &[BrewTarget]) -> Result<(), Whatever> {
+pub async fn run(targets: &[BrewTarget]) -> Result<Vec<BrewArchive>, Whatever> {
     info!(target_count = targets.len(), "starting brew dist build");
     let meta = package_meta(CARGO_NAME)?;
     let target_dir = target_dir()?;
@@ -53,12 +60,14 @@ pub async fn run(targets: &[BrewTarget]) -> Result<(), Whatever> {
     }
 
     info!("waiting for brew target builds to finish");
+    let mut archives = Vec::new();
     while let Some(result) = tasks.join_next().await {
-        result.whatever_context("brew build task panicked")??;
+        archives.push(result.whatever_context("brew build task panicked")??);
     }
+    archives.sort_by(|left, right| left.target.cmp(&right.target));
 
     info!("finished brew dist build");
-    Ok(())
+    Ok(archives)
 }
 
 async fn build_one(
@@ -66,7 +75,7 @@ async fn build_one(
     version: &str,
     target_dir: &Path,
     workspace: &Path,
-) -> Result<(), Whatever> {
+) -> Result<BrewArchive, Whatever> {
     info!(triple, "checking cargo availability");
     check_cargo().await?;
 
@@ -120,5 +129,9 @@ async fn build_one(
 
     let sha256 = sha256_file(&archive_path).await?;
     info!(path = %archive_path.display(), sha256, "produced archive");
-    Ok(())
+    Ok(BrewArchive {
+        target: triple.to_string(),
+        archive_name,
+        path: archive_path,
+    })
 }
