@@ -10,7 +10,7 @@ use aws_sdk_s3::{
 };
 use clap::{Args, CommandFactory, Parser, Subcommand, error::ErrorKind};
 use sha2::Digest;
-use snafu::{ResultExt, Whatever};
+use snafu::{OptionExt, ResultExt, Whatever};
 use tracing::info;
 
 use crate::{
@@ -283,6 +283,72 @@ pub(crate) async fn upload_file(
         .whatever_context(format!("failed to upload {key}"))?;
     info!(key, path = %path.display(), "uploaded package artifact");
     Ok(())
+}
+
+pub(crate) async fn get_object_bytes(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+) -> Result<Option<Vec<u8>>, Whatever> {
+    let output = match client.get_object().bucket(bucket).key(key).send().await {
+        Ok(output) => output,
+        Err(error) if is_missing_object_error(&error) => return Ok(None),
+        Err(error) => {
+            snafu::whatever!("failed to fetch remote object {key}: {error}");
+        }
+    };
+    let mut bytes = Vec::new();
+    let mut body = output.body;
+    while let Some(chunk) = body
+        .try_next()
+        .await
+        .whatever_context(format!("failed to read remote object {key}"))?
+    {
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(Some(bytes))
+}
+
+pub(crate) async fn download_object(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    path: &Path,
+) -> Result<(), Whatever> {
+    let bytes = get_object_bytes(client, bucket, key)
+        .await?
+        .whatever_context(format!("remote object {key} is missing"))?;
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .whatever_context(format!("failed to create {}", parent.display()))?;
+    }
+    tokio::fs::write(path, bytes)
+        .await
+        .whatever_context(format!("failed to write {}", path.display()))
+}
+
+pub(crate) async fn list_object_keys(
+    client: &Client,
+    bucket: &str,
+    prefix: &str,
+) -> Result<Vec<String>, Whatever> {
+    let mut paginator = client
+        .list_objects_v2()
+        .bucket(bucket)
+        .prefix(prefix)
+        .into_paginator()
+        .send();
+    let mut keys = Vec::new();
+    while let Some(page) = paginator.next().await {
+        let page = page.whatever_context(format!("failed to list s3 prefix {prefix}"))?;
+        for object in page.contents() {
+            if let Some(key) = object.key() {
+                keys.push(key.to_string());
+            }
+        }
+    }
+    Ok(keys)
 }
 
 pub(crate) async fn remote_artifact_state(
