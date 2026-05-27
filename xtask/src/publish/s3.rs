@@ -19,8 +19,10 @@ use crate::{
 };
 
 pub mod brew;
+pub mod deb;
 pub mod key;
 pub mod plan;
+pub mod rpm;
 pub mod scoop;
 
 #[derive(Debug, Clone, Args)]
@@ -59,18 +61,24 @@ pub(crate) struct ScoopPublishTarget {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct DebPublishTarget {
+    pub prefix: key::RemotePrefix,
+    pub suite: String,
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RpmPublishTarget {
+    pub prefix: key::RemotePrefix,
+}
+
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub(crate) enum S3Target {
     Brew(BrewPublishTarget),
     Scoop(ScoopPublishTarget),
-    Deb {
-        prefix: key::RemotePrefix,
-        suite: String,
-        fingerprint: String,
-    },
-    Rpm {
-        prefix: key::RemotePrefix,
-    },
+    Deb(DebPublishTarget),
+    Rpm(RpmPublishTarget),
 }
 
 #[derive(Debug, Parser)]
@@ -114,9 +122,8 @@ pub async fn run(options: S3Options, targets: Vec<OsString>) -> Result<(), Whate
         match target {
             S3Target::Brew(target) => brew::run(&options, &client, target).await?,
             S3Target::Scoop(target) => scoop::run(&options, &client, target).await?,
-            S3Target::Deb { .. } | S3Target::Rpm { .. } => {
-                snafu::whatever!("linux s3 publish execution is not wired yet")
-            }
+            S3Target::Deb(target) => deb::run(&options, &client, target).await?,
+            S3Target::Rpm(target) => rpm::run(&options, &client, target).await?,
         }
     }
     Ok(())
@@ -169,14 +176,14 @@ fn target_format_to_target(
             prefix,
             suite,
             fingerprint,
-        } => Ok(S3Target::Deb {
+        } => Ok(S3Target::Deb(DebPublishTarget {
             prefix: parse_prefix(section_name, &prefix)?,
             suite,
             fingerprint,
-        }),
-        S3TargetFormat::Rpm { prefix } => Ok(S3Target::Rpm {
+        })),
+        S3TargetFormat::Rpm { prefix } => Ok(S3Target::Rpm(RpmPublishTarget {
             prefix: parse_prefix(section_name, &prefix)?,
-        }),
+        })),
     }
 }
 
