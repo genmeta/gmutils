@@ -86,9 +86,17 @@ fn enable_help_for_subcommands(mut cmd: ClapCommand) -> ClapCommand {
     cmd
 }
 
+fn install_process_crypto_provider() {
+    match rustls::crypto::ring::default_provider().install_default() {
+        Ok(()) | Err(_) => {}
+    }
+}
+
 #[tokio::main]
 #[snafu::report]
 async fn main() -> Result<(), Error> {
+    install_process_crypto_provider();
+
     let mut cmd = Options::command();
 
     for name in ["access", "curl", "discover", "nslookup", "proxy", "ssh"] {
@@ -118,4 +126,16 @@ async fn run(options: Options) -> Result<(), Error> {
         Options::Version {} => println!("{}", env!("CARGO_PKG_VERSION")),
     };
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::install_process_crypto_provider;
+
+    #[test]
+    fn installs_rustls_crypto_provider() {
+        install_process_crypto_provider();
+
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+    }
 }
