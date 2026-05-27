@@ -7590,6 +7590,7 @@ dependencies = [
  "clap",
  "flate2",
  "futures-util",
+ "inquire",
  "serde",
  "serde_json",
  "sha2 0.10.9",

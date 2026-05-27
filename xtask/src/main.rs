@@ -1,6 +1,7 @@
 mod brew;
 mod container;
 mod deb;
+mod package;
 mod release;
 mod rpm;
 mod scoop;
