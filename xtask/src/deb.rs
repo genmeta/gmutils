@@ -36,6 +36,12 @@ const BUILD_ATTEMPTS: usize = 2;
 /// Relative path from workspace root to the debian packaging source files.
 const DEBIAN_PKG_DIR: &str = "xtask/deb";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebArtifact {
+    pub target: String,
+    pub path: std::path::PathBuf,
+}
+
 fn deb_arch(triple: &str) -> Result<&'static str, Whatever> {
     match triple {
         "x86_64-unknown-linux-gnu" => Ok("amd64"),
@@ -210,7 +216,7 @@ pub async fn run(
     targets: &[DebTarget],
     profile: BuildProfile,
     siblings: &[std::path::PathBuf],
-) -> Result<(), Whatever> {
+) -> Result<Vec<DebArtifact>, Whatever> {
     info!(
         target_count = targets.len(),
         profile = profile.target_dir_name(),
@@ -251,13 +257,15 @@ pub async fn run(
     }
 
     info!("waiting for deb target builds to finish");
+    let mut artifacts = Vec::new();
     while let Some(result) = tasks.join_next().await {
-        result.whatever_context("deb build task panicked")??;
+        artifacts.push(result.whatever_context("deb build task panicked")??);
     }
+    artifacts.sort_by(|left, right| left.target.cmp(&right.target));
 
     info!("finished deb dist build");
 
-    Ok(())
+    Ok(artifacts)
 }
 
 async fn build_one_with_retry(
@@ -267,10 +275,10 @@ async fn build_one_with_retry(
     target_dir: &std::path::Path,
     profile: BuildProfile,
     siblings: &[Sibling],
-) -> Result<(), Whatever> {
+) -> Result<DebArtifact, Whatever> {
     for attempt in 1..=BUILD_ATTEMPTS {
         match build_one(docker, triple, version, target_dir, profile, siblings).await {
-            Ok(()) => return Ok(()),
+            Ok(artifact) => return Ok(artifact),
             Err(error) if attempt < BUILD_ATTEMPTS => {
                 let report = Report::from_error(&error);
                 tracing::warn!(
@@ -294,7 +302,7 @@ async fn build_one(
     target_dir: &std::path::Path,
     profile: BuildProfile,
     siblings: &[Sibling],
-) -> Result<(), Whatever> {
+) -> Result<DebArtifact, Whatever> {
     let arch = deb_arch(triple)?;
     let gnu = gnu_arch(triple)?;
     info!(triple, "ensuring build image");
@@ -373,7 +381,10 @@ async fn build_one(
     result?;
 
     info!(deb_name, "produced");
-    Ok(())
+    Ok(DebArtifact {
+        target: triple.to_string(),
+        path: out_dir.join(deb_name),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

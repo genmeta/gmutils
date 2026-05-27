@@ -12,6 +12,8 @@
 //! 5. Move the produced `.rpm` next to the `.deb` outputs under
 //!    `target/{triple}/release/rpm/`.
 
+use std::path::{Path, PathBuf};
+
 use bollard::{
     Docker,
     models::{ContainerConfig, ContainerCreateBody, HostConfig, Mount, MountTypeEnum},
@@ -53,6 +55,31 @@ const RPM_VENDOR: &str = "Genmeta Tech Limited";
 const RPM_DESCRIPTION: &str =
     "Genmeta command-line tools for DHTTP/3, SSH3, DNS, and identity management.";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RpmArtifact {
+    pub target: String,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, snafu::Snafu)]
+#[snafu(module)]
+enum FindRpmArtifactError {
+    #[snafu(display("failed to read rpm artifact directory"))]
+    ReadDir {
+        source: std::io::Error,
+        path: PathBuf,
+    },
+    #[snafu(display("failed to read rpm artifact directory entry"))]
+    ReadEntry {
+        source: std::io::Error,
+        path: PathBuf,
+    },
+    #[snafu(display("rpm build produced no artifact"))]
+    NoArtifact { path: PathBuf },
+    #[snafu(display("rpm build produced multiple artifacts"))]
+    MultipleArtifacts { path: PathBuf },
+}
+
 /// Map a Rust target triple to the rpm arch name.
 fn rpm_arch(triple: &str) -> Result<&'static str, Whatever> {
     match triple {
@@ -64,7 +91,10 @@ fn rpm_arch(triple: &str) -> Result<&'static str, Whatever> {
     }
 }
 
-pub async fn run(targets: &[RpmTarget], siblings: &[std::path::PathBuf]) -> Result<(), Whatever> {
+pub async fn run(
+    targets: &[RpmTarget],
+    siblings: &[std::path::PathBuf],
+) -> Result<Vec<RpmArtifact>, Whatever> {
     info!(target_count = targets.len(), "starting rpm dist build");
     let docker = Docker::connect_with_local_defaults()
         .whatever_context("failed to connect to Docker/Podman")?;
@@ -89,12 +119,14 @@ pub async fn run(targets: &[RpmTarget], siblings: &[std::path::PathBuf]) -> Resu
         );
     }
 
+    let mut artifacts = Vec::new();
     while let Some(result) = tasks.join_next().await {
-        result.whatever_context("rpm build task panicked")??;
+        artifacts.push(result.whatever_context("rpm build task panicked")??);
     }
+    artifacts.sort_by(|left, right| left.target.cmp(&right.target));
 
     info!("finished rpm dist build");
-    Ok(())
+    Ok(artifacts)
 }
 
 /// Build the image if missing, then produce the rpm for this triple.
@@ -210,9 +242,9 @@ async fn build_one(
     docker: &Docker,
     triple: &str,
     version: &str,
-    target_dir: &std::path::Path,
+    target_dir: &Path,
     siblings: &[Sibling],
-) -> Result<(), Whatever> {
+) -> Result<RpmArtifact, Whatever> {
     let arch = rpm_arch(triple)?;
     info!(triple, arch, "ensuring build image");
     let image = ensure_image(docker, triple).await?;
@@ -284,7 +316,44 @@ async fn build_one(
         out = %out_dir.display(),
         "produced rpm"
     );
-    Ok(())
+    let path = find_rpm_artifact(&out_dir)
+        .await
+        .whatever_context("failed to find rpm artifact")?;
+    Ok(RpmArtifact {
+        target: triple.to_string(),
+        path,
+    })
+}
+
+async fn find_rpm_artifact(out_dir: &Path) -> Result<PathBuf, FindRpmArtifactError> {
+    let mut entries =
+        tokio::fs::read_dir(out_dir)
+            .await
+            .context(find_rpm_artifact_error::ReadDirSnafu {
+                path: out_dir.to_path_buf(),
+            })?;
+    let mut artifact = None;
+    while let Some(entry) =
+        entries
+            .next_entry()
+            .await
+            .context(find_rpm_artifact_error::ReadEntrySnafu {
+                path: out_dir.to_path_buf(),
+            })?
+    {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("rpm") {
+            continue;
+        }
+        if artifact.replace(path).is_some() {
+            return Err(FindRpmArtifactError::MultipleArtifacts {
+                path: out_dir.to_path_buf(),
+            });
+        }
+    }
+    artifact.ok_or_else(|| FindRpmArtifactError::NoArtifact {
+        path: out_dir.to_path_buf(),
+    })
 }
 
 async fn build_one_inner(
