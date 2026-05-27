@@ -4,7 +4,6 @@ mod deb;
 mod grouped;
 mod package;
 mod publish;
-mod release;
 mod rpm;
 mod scoop;
 
@@ -194,12 +193,9 @@ fn package_version(name: &str) -> Result<String, Whatever> {
     Ok(pkg.version.to_string())
 }
 
-/// Package metadata (version, description, homepage, license).
+/// Package metadata.
 struct PackageMeta {
     version: String,
-    description: String,
-    homepage: String,
-    license: String,
 }
 
 fn package_meta(name: &str) -> Result<PackageMeta, Whatever> {
@@ -214,9 +210,6 @@ fn package_meta(name: &str) -> Result<PackageMeta, Whatever> {
         .whatever_context(format!("package {name} not found in workspace"))?;
     Ok(PackageMeta {
         version: pkg.version.to_string(),
-        description: pkg.description.clone().unwrap_or_default(),
-        homepage: pkg.homepage.clone().unwrap_or_default(),
-        license: pkg.license.clone().unwrap_or_default(),
     })
 }
 
