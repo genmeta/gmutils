@@ -14,7 +14,7 @@ dhttp = { workspace = true }
 dssh = { workspace = true, features = ["cli", "client", "config"] }
 http = { workspace = true }
 http-body-util = { workspace = true }
-h3x = { workspace = true }
+h3x = { workspace = true, features = ["webtransport"] }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "rt"] }
