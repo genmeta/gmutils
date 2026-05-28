@@ -33,7 +33,7 @@ whoami = "2"
 console-subscriber = "0.5"
 
 # network
-ddns = { git = "ssh://git@github.com/genmeta/ddns.git", branch = "endpoint", features = [
+ddns = { git = "https://github.com/genmeta/ddns.git", branch = "endpoint", features = [
     "h3x-resolver",
     "http-resolver",
     "mdns-resolver",
@@ -54,7 +54,7 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 
 # security
-rankey = { git = "ssh://git@github.com/genmeta/rankey.git", rev = "39aaf4fbc774866fadce67ae7eaaf71d1920ba7a" }
+rankey = { git = "https://github.com/genmeta/rankey.git", rev = "39aaf4fbc774866fadce67ae7eaaf71d1920ba7a" }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 x509-parser = "0.14"
 
@@ -106,11 +106,11 @@ async-compression = { version = "0.4", features = [
 trust-dns-resolver = "0.23.2"
 
 # workspace
-dhttp-access = { git = "ssh://git@github.com/genmeta/dhttp.git", branch = "main" }
+dhttp-access = { git = "https://github.com/genmeta/dhttp.git", branch = "main" }
 genmeta-access = { path = "genmeta-access" }
-dhttp = { git = "ssh://git@github.com/genmeta/dhttp.git", branch = "main" }
-dhttp-config = { git = "ssh://git@github.com/genmeta/dhttp.git", branch = "main" }
-dhttp-identity = { git = "ssh://git@github.com/genmeta/dhttp.git", branch = "main" }
+dhttp = { git = "https://github.com/genmeta/dhttp.git", branch = "main" }
+dhttp-config = { git = "https://github.com/genmeta/dhttp.git", branch = "main" }
+dhttp-identity = { git = "https://github.com/genmeta/dhttp.git", branch = "main" }
 genmeta-curl = { path = "genmeta-curl" }
 genmeta-discover = { path = "genmeta-discover" }
 genmeta-doctor = { path = "genmeta-doctor" }
@@ -121,7 +121,7 @@ genmeta-ssh = { path = "genmeta-ssh" }
 genmeta-proxy = { path = "genmeta-proxy" }
 
 # ssh
-dssh = { git = "ssh://git@github.com/genmeta/dssh.git", branch = "endpoint", features = [
+dssh = { git = "https://github.com/genmeta/dssh.git", branch = "endpoint", features = [
     "config",
 ] }
 
@@ -136,17 +136,17 @@ strip = true
 # Local patches are root-only and keep this workspace buildable while provider
 # branch heads for the dependency rename/consolidation commits are not yet
 # published remotely.
-[patch."ssh://git@github.com/genmeta/dhttp.git"]
+[patch."https://github.com/genmeta/dhttp.git"]
 dhttp = { path = "../dhttp/dhttp" }
 dhttp-config = { path = "../dhttp/config" }
 dhttp-identity = { path = "../dhttp/identity" }
 dhttp-access = { path = "../dhttp/access" }
 
-[patch."ssh://git@github.com/genmeta/ddns.git"]
+[patch."https://github.com/genmeta/ddns.git"]
 ddns = { path = "../ddns" }
 
 [patch."https://github.com/genmeta/h3x.git"]
 h3x = { path = "../h3x" }
 
-[patch."ssh://git@github.com/genmeta/dssh.git"]
+[patch."https://github.com/genmeta/dssh.git"]
 dssh = { path = "../dssh" }
