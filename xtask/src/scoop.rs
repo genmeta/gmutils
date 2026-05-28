@@ -63,24 +63,22 @@ pub async fn run(targets: &[ScoopTarget]) -> Result<Vec<ScoopArchive>, Whatever>
     let target_dir = target_dir()?;
     let workspace = std::env::current_dir().whatever_context("failed to get cwd")?;
 
-    let mut tasks = tokio::task::JoinSet::new();
-    for &target in targets {
-        let version = meta.version.clone();
-        let target_dir = target_dir.clone();
-        let workspace = workspace.clone();
-        let triple = target.triple();
-        info!(triple, "queued scoop target build");
-        let span = info_span!("scoop", triple);
-        tasks.spawn(
-            async move { build_one(triple, &version, &target_dir, &workspace).await }
-                .instrument(span),
-        );
-    }
+    check_cargo_xwin().await?;
 
-    info!("waiting for scoop target builds to finish");
-    let mut archives = Vec::new();
-    while let Some(result) = tasks.join_next().await {
-        archives.push(result.whatever_context("scoop build task panicked")??);
+    // cargo-xwin 0.22 has multiple unsynchronized check-then-write steps in its
+    // per-build setup (MSVC CRT splat, `clang-cl` symlink, ...) that race when
+    // two `cargo xwin build` invocations run concurrently against the shared
+    // `~/.cache/cargo-xwin/` directory. Build targets sequentially so the first
+    // build populates the cache (and writes the DONE marker) and subsequent
+    // builds skip setup entirely.
+    let mut archives = Vec::with_capacity(targets.len());
+    for &target in targets {
+        let triple = target.triple();
+        let span = info_span!("scoop", triple);
+        let archive = build_one(target, &meta.version, &target_dir, &workspace)
+            .instrument(span)
+            .await?;
+        archives.push(archive);
     }
     archives.sort_by(|left, right| left.target.cmp(&right.target));
     info!("finished scoop dist build");
@@ -89,15 +87,12 @@ pub async fn run(targets: &[ScoopTarget]) -> Result<Vec<ScoopArchive>, Whatever>
 }
 
 async fn build_one(
-    triple: &str,
+    target: ScoopTarget,
     version: &str,
     target_dir: &Path,
     workspace: &Path,
 ) -> Result<ScoopArchive, Whatever> {
-    info!(triple, "checking cargo-xwin availability");
-    check_cargo_xwin().await?;
-
-    // Build
+    let triple = target.triple();
     info!(triple, "starting cargo-xwin build for scoop target");
     run_cmd(tokio::process::Command::new("cargo-xwin").args([
         "build",
