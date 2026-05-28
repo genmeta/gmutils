@@ -1,0 +1,395 @@
+name: Release Dry Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      bucket:
+        description: S3/R2 bucket name.
+        required: true
+        default: download
+      apt_suite:
+        description: APT suite to render and sign.
+        required: true
+        default: stable
+      apt_prefix:
+        description: Remote prefix for gmutils APT repository objects.
+        required: true
+        default: apt/gmutils
+      rpm_prefix:
+        description: Remote prefix for gmutils RPM repository objects.
+        required: true
+        default: rpm/gmutils
+      brew_prefix:
+        description: Remote prefix for gmutils Homebrew archives and formula.
+        required: true
+        default: brew/gmutils
+      brew_public_base_url:
+        description: Public base URL corresponding to brew_prefix.
+        required: true
+        default: https://download.genmeta.net/brew/gmutils
+      scoop_prefix:
+        description: Remote prefix for gmutils Scoop archives and manifest.
+        required: true
+        default: scoop/gmutils
+      scoop_public_base_url:
+        description: Public base URL corresponding to scoop_prefix.
+        required: true
+        default: https://download.genmeta.net/scoop/gmutils
+      linux_targets:
+        description: Space-separated Linux Rust targets for deb/rpm package build; override to all supported targets for a full Linux dry run.
+        required: true
+        default: x86_64-unknown-linux-gnu
+      create_homebrew_tap_pr:
+        description: Create or update a Homebrew tap pull request from the generated formula.
+        required: true
+        type: boolean
+        default: true
+      homebrew_tap_repository:
+        description: GitHub repository that owns the Homebrew tap.
+        required: true
+        default: genmeta/homebrew-tap
+      homebrew_tap_base_branch:
+        description: Base branch for Homebrew tap pull requests.
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-dry-run-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  DHTTP_STUN_SERVER: nat.genmeta.net:20004
+  DHTTP_H3_DNS_SERVER: https://dns.genmeta.net:4433
+  DHTTP_HTTP_DNS_SERVER: https://dns.genmeta.net
+  DHTTP_MDNS_SERVICE: _genmeta.local
+
+jobs:
+  linux:
+    name: Linux packages and S3 dry run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      DHTTP_ROOT_CA: ${{ github.workspace }}/gmutils/keychain/root.crt
+      RELEASE_BUCKET: ${{ inputs.bucket }}
+      APT_SUITE: ${{ inputs.apt_suite }}
+      APT_PREFIX: ${{ inputs.apt_prefix }}
+      RPM_PREFIX: ${{ inputs.rpm_prefix }}
+      SCOOP_PREFIX: ${{ inputs.scoop_prefix }}
+      SCOOP_PUBLIC_BASE_URL: ${{ inputs.scoop_public_base_url }}
+      LINUX_TARGETS: ${{ inputs.linux_targets }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: gmutils
+    steps:
+      - name: Checkout gmutils
+        uses: actions/checkout@v6
+        with:
+          path: gmutils
+          persist-credentials: false
+
+      - name: Checkout dhttp
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/dhttp
+          ref: main
+          path: dhttp
+          persist-credentials: false
+
+      - name: Checkout ddns
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/ddns
+          ref: endpoint
+          path: ddns
+          persist-credentials: false
+
+      - name: Checkout h3x
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/h3x
+          ref: endpoint
+          path: h3x
+          persist-credentials: false
+
+      - name: Checkout dssh
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/dssh
+          ref: endpoint
+          path: dssh
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add x86_64-pc-windows-msvc i686-pc-windows-msvc
+
+      - name: Cache cargo downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            ~/.cargo/bin/cargo-xwin
+            ~/.cache/cargo-xwin
+          key: gmutils-linux-cargo-${{ hashFiles('gmutils/Cargo.lock', 'dhttp/Cargo.lock', 'ddns/Cargo.lock', 'h3x/Cargo.lock', 'dssh/Cargo.lock') }}
+          restore-keys: |
+            gmutils-linux-cargo-
+
+      - name: Install Linux package tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --assume-yes --no-install-recommends gpg rpm
+          docker info
+
+      - name: Install cargo-xwin
+        run: |
+          if ! command -v cargo-xwin >/dev/null 2>&1; then
+            cargo install cargo-xwin --locked
+          fi
+
+      - name: Check release secrets and derive APT fingerprint
+        id: apt_key
+        env:
+          XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
+          XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
+          XTASK_RELEASE_S3_ENDPOINT_URL: ${{ secrets.XTASK_RELEASE_S3_ENDPOINT_URL }}
+          XTASK_RELEASE_APT_SIGNING_KEY: ${{ secrets.XTASK_RELEASE_APT_SIGNING_KEY }}
+        run: |
+          : "${XTASK_RELEASE_S3_ACCESS_KEY_ID:?missing XTASK_RELEASE_S3_ACCESS_KEY_ID}"
+          : "${XTASK_RELEASE_S3_SECRET_ACCESS_KEY:?missing XTASK_RELEASE_S3_SECRET_ACCESS_KEY}"
+          : "${XTASK_RELEASE_S3_ENDPOINT_URL:?missing XTASK_RELEASE_S3_ENDPOINT_URL}"
+          : "${XTASK_RELEASE_APT_SIGNING_KEY:?missing XTASK_RELEASE_APT_SIGNING_KEY}"
+
+          key_file="$RUNNER_TEMP/apt-signing-key.asc"
+          install -m 700 -d "$(dirname "$key_file")"
+          printf '%s' "$XTASK_RELEASE_APT_SIGNING_KEY" > "$key_file"
+          fingerprint="$(gpg --batch --import-options show-only --with-colons --import "$key_file" \
+            | awk -F: '$1 == "fpr" { print toupper($10); exit }')"
+          rm -f "$key_file"
+          if [ -z "$fingerprint" ]; then
+            echo "failed to derive APT signing key fingerprint" >&2
+            exit 1
+          fi
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+
+      - name: Package Linux artifacts
+        run: |
+          deb_args=()
+          rpm_args=()
+          for target in ${LINUX_TARGETS}; do
+            deb_args+=(--target "$target")
+            rpm_args+=(--target "$target")
+          done
+          if [ "${#deb_args[@]}" -eq 0 ]; then
+            echo "linux_targets must not be empty" >&2
+            exit 1
+          fi
+
+          cargo xtask package --overwrite-manifest \
+            deb "${deb_args[@]}" \
+              --sibling ../dhttp \
+              --sibling ../ddns \
+              --sibling ../h3x \
+              --sibling ../dssh \
+            rpm "${rpm_args[@]}" \
+              --sibling ../dhttp \
+              --sibling ../ddns \
+              --sibling ../h3x \
+              --sibling ../dssh \
+            scoop \
+              --target x86_64-pc-windows-msvc \
+              --target i686-pc-windows-msvc
+
+      - name: Publish S3 dry run for Linux artifacts
+        env:
+          XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
+          XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
+          XTASK_RELEASE_S3_ENDPOINT_URL: ${{ secrets.XTASK_RELEASE_S3_ENDPOINT_URL }}
+          XTASK_RELEASE_APT_SIGNING_KEY: ${{ secrets.XTASK_RELEASE_APT_SIGNING_KEY }}
+          APT_SIGNING_PASSPHRASE: ${{ secrets.XTASK_RELEASE_APT_SIGNING_PASSPHRASE }}
+          APT_SIGNING_FINGERPRINT: ${{ steps.apt_key.outputs.fingerprint }}
+        run: |
+          if [ -n "${APT_SIGNING_PASSPHRASE:-}" ]; then
+            export XTASK_RELEASE_APT_SIGNING_PASSPHRASE="$APT_SIGNING_PASSPHRASE"
+          else
+            unset XTASK_RELEASE_APT_SIGNING_PASSPHRASE
+          fi
+
+          cargo xtask publish s3 --dry-run \
+            --endpoint-url "$XTASK_RELEASE_S3_ENDPOINT_URL" \
+            --bucket "$RELEASE_BUCKET" \
+            deb --prefix "$APT_PREFIX" --suite "$APT_SUITE" --fingerprint "$APT_SIGNING_FINGERPRINT" \
+            rpm --prefix "$RPM_PREFIX" \
+            scoop --prefix "$SCOOP_PREFIX" --public-base-url "$SCOOP_PUBLIC_BASE_URL"
+
+      - name: Upload Linux dry-run manifests
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gmutils-linux-release-dry-run
+          if-no-files-found: ignore
+          path: |
+            gmutils/target/common/**
+
+  macos:
+    name: Homebrew package and S3 dry run
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      DHTTP_ROOT_CA: ${{ github.workspace }}/gmutils/keychain/root.crt
+      RELEASE_BUCKET: ${{ inputs.bucket }}
+      BREW_PREFIX: ${{ inputs.brew_prefix }}
+      BREW_PUBLIC_BASE_URL: ${{ inputs.brew_public_base_url }}
+      CREATE_HOMEBREW_TAP_PR: ${{ inputs.create_homebrew_tap_pr }}
+      HOMEBREW_TAP_REPOSITORY: ${{ inputs.homebrew_tap_repository }}
+      HOMEBREW_TAP_BASE_BRANCH: ${{ inputs.homebrew_tap_base_branch }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: gmutils
+    steps:
+      - name: Checkout gmutils
+        uses: actions/checkout@v6
+        with:
+          path: gmutils
+          persist-credentials: false
+
+      - name: Checkout dhttp
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/dhttp
+          ref: main
+          path: dhttp
+          persist-credentials: false
+
+      - name: Checkout ddns
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/ddns
+          ref: endpoint
+          path: ddns
+          persist-credentials: false
+
+      - name: Checkout h3x
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/h3x
+          ref: endpoint
+          path: h3x
+          persist-credentials: false
+
+      - name: Checkout dssh
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/dssh
+          ref: endpoint
+          path: dssh
+          persist-credentials: false
+
+      - name: Checkout Homebrew tap
+        if: ${{ inputs.create_homebrew_tap_pr }}
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.homebrew_tap_repository }}
+          ref: ${{ inputs.homebrew_tap_base_branch }}
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Cache cargo downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+          key: gmutils-macos-cargo-${{ hashFiles('gmutils/Cargo.lock', 'dhttp/Cargo.lock', 'ddns/Cargo.lock', 'h3x/Cargo.lock', 'dssh/Cargo.lock') }}
+          restore-keys: |
+            gmutils-macos-cargo-
+
+      - name: Check release secrets
+        env:
+          XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
+          XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
+          XTASK_RELEASE_S3_ENDPOINT_URL: ${{ secrets.XTASK_RELEASE_S3_ENDPOINT_URL }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          : "${XTASK_RELEASE_S3_ACCESS_KEY_ID:?missing XTASK_RELEASE_S3_ACCESS_KEY_ID}"
+          : "${XTASK_RELEASE_S3_SECRET_ACCESS_KEY:?missing XTASK_RELEASE_S3_SECRET_ACCESS_KEY}"
+          : "${XTASK_RELEASE_S3_ENDPOINT_URL:?missing XTASK_RELEASE_S3_ENDPOINT_URL}"
+          if [ "$CREATE_HOMEBREW_TAP_PR" = "true" ]; then
+            : "${HOMEBREW_TAP_GITHUB_TOKEN:?missing HOMEBREW_TAP_GITHUB_TOKEN}"
+          fi
+
+      - name: Package Homebrew artifacts
+        run: |
+          cargo xtask package --overwrite-manifest \
+            brew \
+              --target aarch64-apple-darwin \
+              --target x86_64-apple-darwin
+
+      - name: Publish S3 dry run for Homebrew artifacts
+        env:
+          XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
+          XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
+          XTASK_RELEASE_S3_ENDPOINT_URL: ${{ secrets.XTASK_RELEASE_S3_ENDPOINT_URL }}
+        run: |
+          cargo xtask publish s3 --dry-run \
+            --endpoint-url "$XTASK_RELEASE_S3_ENDPOINT_URL" \
+            --bucket "$RELEASE_BUCKET" \
+            brew --prefix "$BREW_PREFIX" --public-base-url "$BREW_PUBLIC_BASE_URL"
+
+      - name: Create Homebrew tap pull request
+        if: ${{ inputs.create_homebrew_tap_pr }}
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          FORMULA_NAME: gmutils.rb
+        run: |
+          set -euo pipefail
+          tap_dir="$GITHUB_WORKSPACE/homebrew-tap"
+          formula_source="$PWD/target/common/brew/$FORMULA_NAME"
+          formula_dest="$tap_dir/Formula/$FORMULA_NAME"
+          test -f "$formula_source"
+
+          mkdir -p "$tap_dir/Formula"
+          cp "$formula_source" "$formula_dest"
+
+          cd "$tap_dir"
+          if git diff --quiet -- "Formula/$FORMULA_NAME"; then
+            echo "homebrew tap formula is unchanged"
+            exit 0
+          fi
+
+          branch="release-dry-run/${GITHUB_REPOSITORY##*/}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add "Formula/$FORMULA_NAME"
+          git commit -m "brew: update $FORMULA_NAME"
+          git push origin "$branch"
+          gh pr create \
+            --repo "$HOMEBREW_TAP_REPOSITORY" \
+            --base "$HOMEBREW_TAP_BASE_BRANCH" \
+            --head "$branch" \
+            --title "brew: update $FORMULA_NAME from gmutils dry run" \
+            --body "Generated by $GITHUB_REPOSITORY release dry run $GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT."
+
+      - name: Upload Homebrew dry-run manifests
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gmutils-homebrew-release-dry-run
+          if-no-files-found: ignore
+          path: |
+            gmutils/target/common/**

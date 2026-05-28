@@ -106,6 +106,10 @@ pub async fn run(
             .then_with(|| left.key.cmp(&right.key))
     });
 
+    tokio::fs::write(&formula_path, formula)
+        .await
+        .whatever_context(format!("failed to write {}", formula_path.display()))?;
+
     if options.dry_run {
         for upload in &uploads {
             info!(
@@ -117,9 +121,6 @@ pub async fn run(
         return Ok(());
     }
 
-    tokio::fs::write(&formula_path, formula)
-        .await
-        .whatever_context(format!("failed to write {}", formula_path.display()))?;
     for upload in uploads {
         super::upload_file(client, &options.bucket, &upload.path, &upload.key).await?;
     }
