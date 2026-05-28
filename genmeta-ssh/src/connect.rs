@@ -14,7 +14,7 @@ type DquicConnection = dquic::connection::Connection;
 pub enum Error {
     #[snafu(display("failed to load identity certificate and key"))]
     LoadIdentitySsl {
-        source: dhttp::config::identity::ssl::LoadIdentitySslError,
+        source: dhttp::home::identity::ssl::LoadIdentityError,
     },
     #[snafu(display("failed to build dhttp endpoint"))]
     BuildEndpoint {
@@ -53,7 +53,7 @@ pub async fn connect(config: &Config) -> Result<ConnectResult, Error> {
     let identity = match &config.id {
         Some(config) => Some(Arc::new(
             config
-                .identity()
+                .load_identity()
                 .await
                 .context(connect_error::LoadIdentitySslSnafu)?,
         )),

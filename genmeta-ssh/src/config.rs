@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, str::FromStr, time::Duration};
 
 use dhttp::{
-    config::{self, DhttpConfig, identity::IdentityConfig},
+    home::{self, DhttpHome, identity::IdentityProfile},
     ddns,
     dquic::binds::BindPattern,
     message::IntoUri,
@@ -37,13 +37,13 @@ pub enum Error {
     #[snafu(display("failed to read ssh configuration"))]
     ReadConfig { source: ssh_config::ReadConfigError },
     #[snafu(display("failed to locate dhttp config"))]
-    LocateDhttpConfig {
-        source: config::LocateDhttpConfigError,
+    LocateDhttpHome {
+        source: home::LocateDhttpHomeError,
     },
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
         name: Name<'static>,
-        source: config::identity::ssl::LoadIdentityError,
+        source: home::identity::ssl::ResolveIdentityProfileError,
     },
     #[snafu(display("identity `{id}` in ssh config is invalid"))]
     InvalidIdInSshConfig { id: String, source: InvalidName },
@@ -66,17 +66,17 @@ pub struct Config {
     pub dns: BTreeSet<ddns::DnsScheme>,
     pub username: String,
     pub uri: Uri,
-    pub id: Option<IdentityConfig>,
+    pub id: Option<IdentityProfile>,
     pub connect_timeout: Duration,
     pub local_forwards: Vec<LocalForward>,
     pub remote_forwards: Vec<RemoteForward>,
     pub dynamic_forwards: Vec<DynamicForward>,
 }
 
-async fn load_identity_config(
+async fn load_identity_profile(
     options: &super::Options,
     ssh_config_id_name: Option<Name<'static>>,
-) -> Result<Option<IdentityConfig>, Error> {
+) -> Result<Option<IdentityProfile>, Error> {
     if options.anonymous {
         return Ok(None);
     }
@@ -87,7 +87,7 @@ async fn load_identity_config(
         .map(|name| ("command line options", name))
         .or_else(|| ssh_config_id_name.map(|name| ("ssh config", name)));
 
-    let home = match DhttpConfig::load_from_environment() {
+    let home = match DhttpHome::load_from_environment() {
         Ok(home) => home,
         Err(source) if explicit.is_none() => {
             tracing::warn!(
@@ -96,19 +96,19 @@ async fn load_identity_config(
             );
             return Ok(None);
         }
-        Err(source) => return Err(config_error::LocateDhttpConfigSnafu.into_error(source)),
+        Err(source) => return Err(config_error::LocateDhttpHomeSnafu.into_error(source)),
     };
 
     if let Some((source_name, name)) = explicit {
         tracing::debug!(%name, source = source_name, "trying to load explicit identity");
         return home
-            .load_identity(name.clone())
+            .resolve_identity_profile(name.clone())
             .await
             .context(config_error::LoadExplicitIdentitySnafu { name })
             .map(Some);
     }
 
-    match home.load_default_identity().await {
+    match home.resolve_default_identity_profile().await {
         Ok(identity) => {
             tracing::debug!(name = %identity.name(), "using default identity");
             Ok(Some(identity))
@@ -174,7 +174,7 @@ impl super::Options {
             .map(|id| Name::from_str(id).context(config_error::InvalidIdInSshConfigSnafu { id }))
             .transpose()?;
 
-        let id = load_identity_config(self, ssh_config_id_name).await?;
+        let id = load_identity_profile(self, ssh_config_id_name).await?;
 
         // Normalize DHTTP shorthand in URI using loaded identity (--id > ssh_config > default identity).
         let uri = uri

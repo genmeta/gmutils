@@ -1790,7 +1790,7 @@ dependencies = [
  "bon",
  "bytes",
  "ddns",
- "dhttp-config",
+ "dhttp-home",
  "dhttp-identity",
  "futures",
  "h3x",
@@ -1810,7 +1810,7 @@ dependencies = [
  "chrono",
  "clap",
  "derive_more",
- "dhttp-config",
+ "dhttp-home",
  "dhttp-identity",
  "globset",
  "peg",
@@ -1825,7 +1825,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dhttp-config"
+name = "dhttp-home"
 version = "0.1.0"
 dependencies = [
  "dhttp-identity",
@@ -2407,7 +2407,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "dhttp-access",
- "dhttp-config",
+ "dhttp-home",
  "sea-orm",
  "sea-orm-migration",
  "snafu 0.9.0",
@@ -2468,7 +2468,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "clap",
- "dhttp-config",
+ "dhttp-home",
  "dhttp-identity",
  "futures",
  "indicatif",

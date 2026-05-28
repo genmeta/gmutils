@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser};
 use dhttp_access::db::{identity::Name, identity_access_db_path};
-use dhttp_config::{DhttpConfig, identity::default::SaveDefaultConfigError};
+use dhttp_home::{DhttpHome, identity::settings::SaveDhttpSettingsError};
 use genmeta_access::{Options, run_for_home};
 use snafu::Report;
 
@@ -23,8 +23,8 @@ impl TestHome {
         Self { path }
     }
 
-    fn home(&self) -> DhttpConfig {
-        DhttpConfig::new(self.path.clone())
+    fn home(&self) -> DhttpHome {
+        DhttpHome::new(self.path.clone())
     }
 }
 
@@ -34,7 +34,7 @@ impl Drop for TestHome {
     }
 }
 
-async fn run_cli(home: &DhttpConfig, command: &str) -> String {
+async fn run_cli(home: &DhttpHome, command: &str) -> String {
     let mut args = vec!["access"];
     args.extend(command.split_whitespace());
     let options = Options::try_parse_from(&args).unwrap();
@@ -43,7 +43,7 @@ async fn run_cli(home: &DhttpConfig, command: &str) -> String {
         .unwrap_or_else(|error| panic!("{}", Report::from_error(error)))
 }
 
-async fn run_cli_args(home: &DhttpConfig, command: &[&str]) -> String {
+async fn run_cli_args(home: &DhttpHome, command: &[&str]) -> String {
     let mut args = vec!["access"];
     args.extend(command.iter().copied());
     let options = Options::try_parse_from(&args).unwrap();
@@ -52,7 +52,7 @@ async fn run_cli_args(home: &DhttpConfig, command: &[&str]) -> String {
         .unwrap_or_else(|error| panic!("{}", Report::from_error(error)))
 }
 
-async fn try_run_cli(home: &DhttpConfig, command: &str) -> Result<String, genmeta_access::Error> {
+async fn try_run_cli(home: &DhttpHome, command: &str) -> Result<String, genmeta_access::Error> {
     let mut args = vec!["access"];
     args.extend(command.split_whitespace());
     let options = Options::try_parse_from(&args).unwrap();
@@ -60,7 +60,7 @@ async fn try_run_cli(home: &DhttpConfig, command: &str) -> Result<String, genmet
 }
 
 async fn try_run_cli_args(
-    home: &DhttpConfig,
+    home: &DhttpHome,
     command: &[&str],
 ) -> Result<String, genmeta_access::Error> {
     let mut args = vec!["access"];
@@ -70,13 +70,13 @@ async fn try_run_cli_args(
 }
 
 async fn set_default_identity(
-    home: &DhttpConfig,
+    home: &DhttpHome,
     identity: &str,
-) -> Result<(), SaveDefaultConfigError> {
+) -> Result<(), SaveDhttpSettingsError> {
     let identity: Name<'static> = identity.parse().unwrap();
-    let mut config = home.new_identity_default_config();
-    config.config_mut().set_name(identity);
-    config.save().await
+    let mut settings = home.new_settings();
+    settings.settings_mut().set_default_identity_name(identity);
+    settings.save().await
 }
 
 #[tokio::test]
@@ -84,12 +84,12 @@ async fn inline_default_identity_auto_init_creates_store() {
     let test_home = TestHome::new("auto-init");
     let home = test_home.home();
     let identity: Name<'static> = "alice.pilot".parse().unwrap();
-    let identity_config = home.identity_config(identity.borrow());
+    let identity_profile = home.identity_profile(identity.borrow());
 
-    assert!(!identity_access_db_path(&identity_config).is_file());
+    assert!(!identity_access_db_path(&identity_profile).is_file());
     set_default_identity(&home, "alice.pilot").await.unwrap();
     run_cli(&home, "list").await;
-    assert!(identity_access_db_path(&identity_config).is_file());
+    assert!(identity_access_db_path(&identity_profile).is_file());
 }
 
 #[tokio::test]

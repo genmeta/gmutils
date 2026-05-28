@@ -17,8 +17,8 @@ use dhttp_access::{
         },
     },
 };
-use dhttp_config::{
-    DhttpConfig, LocateDhttpConfigError, identity::default::LoadDefaultConfigError,
+use dhttp_home::{
+    DhttpHome, LocateDhttpHomeError, identity::settings::LoadDhttpSettingsError,
 };
 use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
@@ -34,10 +34,10 @@ pub enum Error {
     ParseCommand { source: ParseCommandError },
 
     #[snafu(display("failed to locate DHTTP_CONFIG"))]
-    LocateHome { source: LocateDhttpConfigError },
+    LocateHome { source: LocateDhttpHomeError },
 
     #[snafu(display("failed to load default identity config"))]
-    LoadDefaultIdentityConfig { source: LoadDefaultConfigError },
+    LoadDefaultIdentityConfig { source: LoadDhttpSettingsError },
 
     #[snafu(display(
         "no default identity configured, use `genmeta identity default <name>` to set one"
@@ -96,7 +96,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
 pub async fn run(options: Options) -> Result<(), Error> {
     let _guard = init_tracing();
 
-    let home = DhttpConfig::load_from_environment().context(error::LocateHomeSnafu)?;
+    let home = DhttpHome::load_from_environment().context(error::LocateHomeSnafu)?;
     let output = run_for_home(&home, options).await?;
 
     if !output.is_empty() {
@@ -105,17 +105,17 @@ pub async fn run(options: Options) -> Result<(), Error> {
     Ok(())
 }
 
-pub async fn run_for_home(home: &DhttpConfig, options: Options) -> Result<String, Error> {
+pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, Error> {
     let (identity, command) = options.into_parts()?;
     if let Command::Print { output } = command {
         return Ok(output);
     }
 
     let identity = resolve_identity(home, identity).await?;
-    let identity_config = home.identity_config(identity.borrow());
-    let db_path = identity_access_db_path(&identity_config);
+    let identity_profile = home.identity_profile(identity.borrow());
+    let db_path = identity_access_db_path(&identity_profile);
     let db = if db_path.is_file() {
-        open_access_database(&identity_config)
+        open_access_database(&identity_profile)
             .await
             .context(error::OpenDatabaseSnafu)?
     } else {
@@ -123,7 +123,7 @@ pub async fn run_for_home(home: &DhttpConfig, options: Options) -> Result<String
             "access store not found, initializing at `{}`",
             db_path.display()
         );
-        init_access_database_for(&identity_config)
+        init_access_database_for(&identity_profile)
             .await
             .context(error::InitDatabaseSnafu)?
     };
@@ -131,16 +131,16 @@ pub async fn run_for_home(home: &DhttpConfig, options: Options) -> Result<String
 }
 
 async fn resolve_identity(
-    home: &DhttpConfig,
+    home: &DhttpHome,
     identity: Option<Name<'static>>,
 ) -> Result<Name<'static>, Error> {
     if let Some(identity) = identity {
         return Ok(identity);
     }
 
-    let config = match home.load_identity_default_config().await {
+    let config = match home.load_settings().await {
         Ok(config) => config,
-        Err(LoadDefaultConfigError::Io { source, .. })
+        Err(LoadDhttpSettingsError::Io { source, .. })
             if source.kind() == std::io::ErrorKind::NotFound =>
         {
             return error::MissingDefaultIdentitySnafu.fail();
@@ -149,8 +149,8 @@ async fn resolve_identity(
     };
 
     config
-        .config()
-        .name()
+        .settings()
+        .default_identity_name()
         .cloned()
         .context(error::MissingDefaultIdentitySnafu)
 }

@@ -2,7 +2,7 @@ use std::{io::IsTerminal, net::SocketAddr, sync::Arc, time::Duration};
 
 use clap::Parser;
 use dhttp::{
-    config::{self, DhttpConfig, identity::IdentityConfig},
+    home::{self, DhttpHome, identity::IdentityProfile},
     ddns,
     dquic::binds::BindPattern,
     endpoint::Endpoint,
@@ -60,19 +60,19 @@ pub enum Error {
     },
 
     #[snafu(display("failed to locate dhttp config"))]
-    LocateDhttpConfig {
-        source: config::LocateDhttpConfigError,
+    LocateDhttpHome {
+        source: home::LocateDhttpHomeError,
     },
 
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
         name: Name<'static>,
-        source: config::identity::ssl::LoadIdentityError,
+        source: dhttp::home::identity::ssl::ResolveIdentityProfileError,
     },
 
     #[snafu(display("failed to load identity certificate and key"))]
     LoadIdentitySsl {
-        source: config::identity::ssl::LoadIdentitySslError,
+        source: dhttp::home::identity::ssl::LoadIdentityError,
     },
 
     #[snafu(display("failed to build dhttp endpoint"))]
@@ -279,12 +279,12 @@ async fn bind_listeners(options: &Options) -> Result<Vec<TcpListener>, Error> {
     Ok(listeners)
 }
 
-async fn load_identity_config(options: &Options) -> Result<Option<IdentityConfig>, Error> {
+async fn load_identity_profile(options: &Options) -> Result<Option<IdentityProfile>, Error> {
     if options.anonymous {
         return Ok(None);
     }
 
-    let home = match DhttpConfig::load_from_environment() {
+    let home = match DhttpHome::load_from_environment() {
         Ok(home) => home,
         Err(source) if options.id.is_none() => {
             tracing::warn!(
@@ -293,19 +293,19 @@ async fn load_identity_config(options: &Options) -> Result<Option<IdentityConfig
             );
             return Ok(None);
         }
-        Err(source) => return Err(LocateDhttpConfigSnafu.into_error(source)),
+        Err(source) => return Err(LocateDhttpHomeSnafu.into_error(source)),
     };
 
     if let Some(name) = &options.id {
         tracing::debug!(%name, "trying to load command line identity");
         return home
-            .load_identity(name.clone())
+            .resolve_identity_profile(name.clone())
             .await
             .context(LoadExplicitIdentitySnafu { name: name.clone() })
             .map(Some);
     }
 
-    match home.load_default_identity().await {
+    match home.resolve_default_identity_profile().await {
         Ok(identity) => {
             tracing::debug!(name = %identity.name(), "using default identity");
             Ok(Some(identity))
@@ -323,10 +323,10 @@ async fn load_identity_config(options: &Options) -> Result<Option<IdentityConfig
 pub async fn run(options: Options) -> Result<(), Error> {
     let _guard = init_tracing(&options)?;
 
-    let identity_config = load_identity_config(&options).await?;
-    let identity = match &identity_config {
-        Some(home) => Some(Arc::new(
-            home.identity().await.context(LoadIdentitySslSnafu)?,
+    let identity_profile = load_identity_profile(&options).await?;
+    let identity = match &identity_profile {
+        Some(profile) => Some(Arc::new(
+            profile.load_identity().await.context(LoadIdentitySslSnafu)?,
         )),
         None => None,
     };
