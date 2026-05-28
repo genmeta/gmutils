@@ -1,6 +1,9 @@
 name: Release Dry Run
 
 on:
+  push:
+    branches:
+      - release-dry-run-ci-test
   workflow_dispatch:
     inputs:
       bucket:
@@ -74,13 +77,13 @@ jobs:
     timeout-minutes: 240
     env:
       DHTTP_ROOT_CA: ${{ github.workspace }}/gmutils/keychain/root.crt
-      RELEASE_BUCKET: ${{ inputs.bucket }}
-      APT_SUITE: ${{ inputs.apt_suite }}
-      APT_PREFIX: ${{ inputs.apt_prefix }}
-      RPM_PREFIX: ${{ inputs.rpm_prefix }}
-      SCOOP_PREFIX: ${{ inputs.scoop_prefix }}
-      SCOOP_PUBLIC_BASE_URL: ${{ inputs.scoop_public_base_url }}
-      LINUX_TARGETS: ${{ inputs.linux_targets }}
+      RELEASE_BUCKET: ${{ inputs.bucket || 'download' }}
+      APT_SUITE: ${{ inputs.apt_suite || 'stable' }}
+      APT_PREFIX: ${{ inputs.apt_prefix || 'apt/gmutils' }}
+      RPM_PREFIX: ${{ inputs.rpm_prefix || 'rpm/gmutils' }}
+      SCOOP_PREFIX: ${{ inputs.scoop_prefix || 'scoop/gmutils' }}
+      SCOOP_PUBLIC_BASE_URL: ${{ inputs.scoop_public_base_url || 'https://download.genmeta.net/scoop/gmutils' }}
+      LINUX_TARGETS: ${{ inputs.linux_targets || 'x86_64-unknown-linux-gnu' }}
     defaults:
       run:
         shell: bash
@@ -244,12 +247,12 @@ jobs:
     timeout-minutes: 120
     env:
       DHTTP_ROOT_CA: ${{ github.workspace }}/gmutils/keychain/root.crt
-      RELEASE_BUCKET: ${{ inputs.bucket }}
-      BREW_PREFIX: ${{ inputs.brew_prefix }}
-      BREW_PUBLIC_BASE_URL: ${{ inputs.brew_public_base_url }}
-      CREATE_HOMEBREW_TAP_PR: ${{ inputs.create_homebrew_tap_pr }}
-      HOMEBREW_TAP_REPOSITORY: ${{ inputs.homebrew_tap_repository }}
-      HOMEBREW_TAP_BASE_BRANCH: ${{ inputs.homebrew_tap_base_branch }}
+      RELEASE_BUCKET: ${{ inputs.bucket || 'download' }}
+      BREW_PREFIX: ${{ inputs.brew_prefix || 'brew/gmutils' }}
+      BREW_PUBLIC_BASE_URL: ${{ inputs.brew_public_base_url || 'https://download.genmeta.net/brew/gmutils' }}
+      CREATE_HOMEBREW_TAP_PR: ${{ inputs.create_homebrew_tap_pr || github.event_name == 'push' }}
+      HOMEBREW_TAP_REPOSITORY: ${{ inputs.homebrew_tap_repository || 'genmeta/homebrew-genmeta' }}
+      HOMEBREW_TAP_BASE_BRANCH: ${{ inputs.homebrew_tap_base_branch || 'main' }}
     defaults:
       run:
         shell: bash
@@ -294,7 +297,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkout Homebrew tap
-        if: ${{ inputs.create_homebrew_tap_pr }}
+        if: ${{ inputs.create_homebrew_tap_pr || github.event_name == 'push' }}
         uses: actions/checkout@v6
         with:
           repository: ${{ inputs.homebrew_tap_repository }}
@@ -351,7 +354,7 @@ jobs:
             brew --prefix "$BREW_PREFIX" --public-base-url "$BREW_PUBLIC_BASE_URL"
 
       - name: Create Homebrew tap pull request
-        if: ${{ inputs.create_homebrew_tap_pr }}
+        if: ${{ inputs.create_homebrew_tap_pr || github.event_name == 'push' }}
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
           FORMULA_NAME: gmutils.rb
