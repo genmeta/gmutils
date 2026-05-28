@@ -10,7 +10,6 @@ use std::{
 use async_compression::tokio::bufread::{DeflateDecoder, GzipDecoder, ZstdDecoder};
 use clap::Parser;
 use dhttp::{
-    home::{self, DhttpHome, identity::IdentityProfile},
     ddns,
     dquic::binds::BindPattern,
     endpoint::Endpoint,
@@ -19,6 +18,7 @@ use dhttp::{
         hyper::SendMessageError,
         message::stream::{InitialMessageStreamError, MessageStreamError, WriteStream},
     },
+    home::{self, DhttpHome, identity::IdentityProfile},
     message::IntoUri,
     name::DhttpName as Name,
 };
@@ -145,9 +145,7 @@ pub enum Error {
     ConstructRequestUri { source: http::uri::InvalidUriParts },
 
     #[snafu(display("failed to locate dhttp config"))]
-    LocateDhttpHome {
-        source: home::LocateDhttpHomeError,
-    },
+    LocateDhttpHome { source: home::LocateDhttpHomeError },
 
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
@@ -502,7 +500,10 @@ async fn setup_client(
     // it's needed again.
     let identity = match &identity_profile {
         Some(profile) => Some(Arc::new(
-            profile.load_identity().await.context(error::LoadIdentitySslSnafu)?,
+            profile
+                .load_identity()
+                .await
+                .context(error::LoadIdentitySslSnafu)?,
         )),
         None => None,
     };

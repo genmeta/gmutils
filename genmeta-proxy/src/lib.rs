@@ -2,10 +2,10 @@ use std::{io::IsTerminal, net::SocketAddr, sync::Arc, time::Duration};
 
 use clap::Parser;
 use dhttp::{
-    home::{self, DhttpHome, identity::IdentityProfile},
     ddns,
     dquic::binds::BindPattern,
     endpoint::Endpoint,
+    home::{self, DhttpHome, identity::IdentityProfile},
     message::IntoUri,
     name::DhttpName as Name,
 };
@@ -60,9 +60,7 @@ pub enum Error {
     },
 
     #[snafu(display("failed to locate dhttp config"))]
-    LocateDhttpHome {
-        source: home::LocateDhttpHomeError,
-    },
+    LocateDhttpHome { source: home::LocateDhttpHomeError },
 
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
@@ -326,7 +324,10 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let identity_profile = load_identity_profile(&options).await?;
     let identity = match &identity_profile {
         Some(profile) => Some(Arc::new(
-            profile.load_identity().await.context(LoadIdentitySslSnafu)?,
+            profile
+                .load_identity()
+                .await
+                .context(LoadIdentitySslSnafu)?,
         )),
         None => None,
     };

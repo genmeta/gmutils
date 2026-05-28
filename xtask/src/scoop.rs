@@ -94,16 +94,24 @@ async fn build_one(
 ) -> Result<ScoopArchive, Whatever> {
     let triple = target.triple();
     info!(triple, "starting cargo-xwin build for scoop target");
-    run_cmd(tokio::process::Command::new("cargo-xwin").args([
-        "build",
-        "--release",
-        "--target",
-        triple,
-        "-p",
-        CARGO_NAME,
-        "--bin",
-        CARGO_NAME,
-    ]))
+    // cargo-xwin downloads Windows SDK/CRT libraries on first use and caches them
+    // by architecture. Without XWIN_ARCH, only the arch matching the first build's
+    // triple is fetched, breaking subsequent i686 link with missing secur32.lib etc.
+    // Pinning XWIN_ARCH=x86,x86_64 ensures both architectures are present on first splat.
+    run_cmd(
+        tokio::process::Command::new("cargo-xwin")
+            .env("XWIN_ARCH", "x86,x86_64")
+            .args([
+                "build",
+                "--release",
+                "--target",
+                triple,
+                "-p",
+                CARGO_NAME,
+                "--bin",
+                CARGO_NAME,
+            ]),
+    )
     .await
     .whatever_context(format!("cargo xwin build failed for {triple}"))?;
     info!(triple, "cargo-xwin build finished for scoop target");

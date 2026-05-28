@@ -8,7 +8,6 @@ use std::{
 
 use clap::Parser;
 use dhttp::{
-    home::{self, DhttpHome, identity::IdentityProfile},
     ddns::DnsScheme,
     dquic::{
         binds::BindPattern,
@@ -21,6 +20,7 @@ use dhttp::{
         },
     },
     endpoint::Endpoint,
+    home::{self, DhttpHome, identity::IdentityProfile},
     name::DhttpName as Name,
 };
 use futures::{StreamExt, future::BoxFuture};
@@ -52,9 +52,7 @@ pub struct Options {
 #[snafu(module)]
 pub enum Error {
     #[snafu(display("failed to locate dhttp config"))]
-    LocateDhttpHome {
-        source: home::LocateDhttpHomeError,
-    },
+    LocateDhttpHome { source: home::LocateDhttpHomeError },
 
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
@@ -280,7 +278,10 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
     let identity_profile = load_identity_profile(options).await?;
     let identity = match &identity_profile {
         Some(profile) => Some(Arc::new(
-            profile.load_identity().await.context(error::LoadIdentitySslSnafu)?,
+            profile
+                .load_identity()
+                .await
+                .context(error::LoadIdentitySslSnafu)?,
         )),
         None => None,
     };

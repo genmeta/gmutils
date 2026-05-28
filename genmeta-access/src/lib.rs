@@ -17,9 +17,7 @@ use dhttp_access::{
         },
     },
 };
-use dhttp_home::{
-    DhttpHome, LocateDhttpHomeError, identity::settings::LoadDhttpSettingsError,
-};
+use dhttp_home::{DhttpHome, LocateDhttpHomeError, identity::settings::LoadDhttpSettingsError};
 use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
 

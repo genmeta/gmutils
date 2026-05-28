@@ -292,9 +292,7 @@ async fn renew_identities(
 }
 
 #[tracing::instrument()]
-async fn load_current_settings(
-    dhttp_home: &DhttpHome,
-) -> Result<Option<DhttpSettingsFile>, Error> {
+async fn load_current_settings(dhttp_home: &DhttpHome) -> Result<Option<DhttpSettingsFile>, Error> {
     let path = dhttp_home.settings_path();
     tracing::Span::current().pb_set_message(&format!(
         "Loading default configuration from {}...",
@@ -326,10 +324,7 @@ async fn save_settings(default_config: &DhttpSettingsFile) -> Result<(), Error> 
     Ok(())
 }
 
-async fn ensure_default_identity(
-    dhttp_home: &DhttpHome,
-    names: &[Name<'_>],
-) -> Result<(), Error> {
+async fn ensure_default_identity(dhttp_home: &DhttpHome, names: &[Name<'_>]) -> Result<(), Error> {
     let default_config = load_current_settings(dhttp_home).await?;
     if default_config
         .as_ref()
@@ -368,8 +363,7 @@ async fn ensure_default_identity(
     };
 
     if let Some(name) = selected {
-        let mut config =
-            default_config.unwrap_or_else(|| dhttp_home.new_settings());
+        let mut config = default_config.unwrap_or_else(|| dhttp_home.new_settings());
         config.settings_mut().set_default_identity_name(name);
         save_settings(&config).await?;
     }
@@ -380,7 +374,11 @@ async fn ensure_default_identity(
 #[tracing::instrument()]
 async fn query_exist_names_list(dhttp_home: &DhttpHome) -> Result<Vec<Name<'static>>, Error> {
     tracing::Span::current().pb_set_message("Querying existing identities...");
-    let (message, result) = match dhttp_home.identity_profile_names().try_collect::<Vec<_>>().await {
+    let (message, result) = match dhttp_home
+        .identity_profile_names()
+        .try_collect::<Vec<_>>()
+        .await
+    {
         Ok(list) => (
             format!("Found {} existing identities.", list.len()),
             Ok(list),
@@ -410,11 +408,7 @@ pub struct Create {
 }
 
 impl Create {
-    pub async fn run(
-        &self,
-        dhttp_home: &DhttpHome,
-        cert_server: &CertServer,
-    ) -> Result<(), Error> {
+    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
         let suffix: String = match self.suffix.as_ref() {
             Some(suffix) if !REGISTERABLE_SUFFIXES.contains(&suffix.as_str()) => {
                 whatever!("`{suffix}` is not a registerable suffix")
@@ -482,11 +476,7 @@ pub struct Apply {
 }
 
 impl Apply {
-    pub async fn run(
-        &self,
-        dhttp_home: &DhttpHome,
-        cert_server: &CertServer,
-    ) -> Result<(), Error> {
+    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
         let email = match self.email.clone() {
             Some(email) => email,
             None => prompt::prompt_email()
@@ -531,11 +521,7 @@ pub struct Renew {
 }
 
 impl Renew {
-    pub async fn run(
-        &self,
-        dhttp_home: &DhttpHome,
-        cert_server: &CertServer,
-    ) -> Result<(), Error> {
+    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
         let email = match self.email.clone() {
             Some(email) => email,
             None => prompt::prompt_email()
@@ -584,7 +570,9 @@ impl Default {
             None => {
                 // Show info for current default identity
                 let current_config = load_current_settings(dhttp_home).await?;
-                let name = match current_config.and_then(|c| c.settings().default_identity_name().cloned()) {
+                let name = match current_config
+                    .and_then(|c| c.settings().default_identity_name().cloned())
+                {
                     Some(n) => n,
                     None => whatever!(
                         "no default identity configured, use `genmeta identity default <name>` to set one"
@@ -601,10 +589,11 @@ impl Default {
                 // Configure name as default
                 dhttp_home.resolve_identity_profile(name.borrow()).await?;
                 let current_config = load_current_settings(dhttp_home).await?;
-                let mut current_config = current_config.unwrap_or_else(|| {
-                    DhttpSettingsFile::new(dhttp_home.settings_path())
-                });
-                current_config.settings_mut().set_default_identity_name(name.to_owned());
+                let mut current_config = current_config
+                    .unwrap_or_else(|| DhttpSettingsFile::new(dhttp_home.settings_path()));
+                current_config
+                    .settings_mut()
+                    .set_default_identity_name(name.to_owned());
                 save_settings(&current_config).await
             }
         }
@@ -704,11 +693,7 @@ pub enum Options {
 }
 
 impl Options {
-    pub async fn run(
-        &self,
-        dhttp_home: &DhttpHome,
-        cert_server: &CertServer,
-    ) -> Result<(), Error> {
+    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
         match self {
             Options::Create(cmd) => cmd.run(dhttp_home, cert_server).await,
             Options::Apply(cmd) => cmd.run(dhttp_home, cert_server).await,

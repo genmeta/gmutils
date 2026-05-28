@@ -1,9 +1,9 @@
 use std::{collections::BTreeSet, str::FromStr, time::Duration};
 
 use dhttp::{
-    home::{self, DhttpHome, identity::IdentityProfile},
     ddns,
     dquic::binds::BindPattern,
+    home::{self, DhttpHome, identity::IdentityProfile},
     message::IntoUri,
     name::{DhttpName as Name, InvalidDhttpName as InvalidName},
 };
@@ -37,9 +37,7 @@ pub enum Error {
     #[snafu(display("failed to read ssh configuration"))]
     ReadConfig { source: ssh_config::ReadConfigError },
     #[snafu(display("failed to locate dhttp config"))]
-    LocateDhttpHome {
-        source: home::LocateDhttpHomeError,
-    },
+    LocateDhttpHome { source: home::LocateDhttpHomeError },
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
         name: Name<'static>,
