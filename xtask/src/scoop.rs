@@ -99,6 +99,8 @@ async fn build_one(
         "--release",
         "--target",
         triple,
+        "-p",
+        CARGO_NAME,
         "--bin",
         CARGO_NAME,
     ]))
