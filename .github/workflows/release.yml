@@ -2,8 +2,8 @@ name: Release Dry Run
 
 on:
   push:
-    branches:
-      - release-dry-run-ci-test
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       bucket:
@@ -41,12 +41,7 @@ on:
       linux_targets:
         description: Space-separated Linux Rust targets for deb/rpm package build; override to all supported targets for a full Linux dry run.
         required: true
-        default: x86_64-unknown-linux-gnu
-      create_homebrew_tap_pr:
-        description: Create or update a Homebrew tap pull request from the generated formula.
-        required: true
-        type: boolean
-        default: true
+        default: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu armv7-unknown-linux-gnueabihf i686-unknown-linux-gnu
       homebrew_tap_repository:
         description: GitHub repository that owns the Homebrew tap.
         required: true
@@ -71,8 +66,8 @@ env:
   DHTTP_MDNS_SERVICE: _genmeta.local
 
 jobs:
-  linux:
-    name: Linux packages and S3 dry run
+  linux-deb:
+    name: Linux deb packages and S3 dry run
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
@@ -80,10 +75,273 @@ jobs:
       RELEASE_BUCKET: ${{ inputs.bucket || 'download' }}
       APT_SUITE: ${{ inputs.apt_suite || 'stable' }}
       APT_PREFIX: ${{ inputs.apt_prefix || 'apt/gmutils' }}
+      LINUX_TARGETS: ${{ inputs.linux_targets || 'x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu armv7-unknown-linux-gnueabihf i686-unknown-linux-gnu' }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: gmutils
+    steps:
+      - name: Checkout gmutils
+        uses: actions/checkout@v6
+        with:
+          path: gmutils
+          persist-credentials: false
+
+      - name: Checkout dhttp
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/dhttp
+          ref: main
+          path: dhttp
+          persist-credentials: false
+
+      - name: Checkout ddns
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/ddns
+          ref: endpoint
+          path: ddns
+          persist-credentials: false
+
+      - name: Checkout h3x
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/h3x
+          ref: endpoint
+          path: h3x
+          persist-credentials: false
+
+      - name: Checkout dssh
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/dssh
+          ref: endpoint
+          path: dssh
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache cargo downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+          key: gmutils-linux-deb-cargo-${{ hashFiles('gmutils/Cargo.lock', 'dhttp/Cargo.lock', 'ddns/Cargo.lock', 'h3x/Cargo.lock', 'dssh/Cargo.lock') }}
+          restore-keys: |
+            gmutils-linux-deb-cargo-
+
+      - name: Install Linux deb tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --assume-yes --no-install-recommends gpg
+          docker info
+
+      - name: Check release secrets and derive APT fingerprint
+        id: apt_key
+        env:
+          XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
+          XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
+          XTASK_RELEASE_S3_ENDPOINT_URL: https://291f3a932ece99211a59654f23bf6634.r2.cloudflarestorage.com
+          XTASK_RELEASE_APT_SIGNING_KEY: ${{ secrets.XTASK_RELEASE_APT_SIGNING_KEY }}
+        run: |
+          : "${XTASK_RELEASE_S3_ACCESS_KEY_ID:?missing XTASK_RELEASE_S3_ACCESS_KEY_ID}"
+          : "${XTASK_RELEASE_S3_SECRET_ACCESS_KEY:?missing XTASK_RELEASE_S3_SECRET_ACCESS_KEY}"
+          : "${XTASK_RELEASE_S3_ENDPOINT_URL:?missing XTASK_RELEASE_S3_ENDPOINT_URL}"
+          : "${XTASK_RELEASE_APT_SIGNING_KEY:?missing XTASK_RELEASE_APT_SIGNING_KEY}"
+
+          key_file="$RUNNER_TEMP/apt-signing-key.asc"
+          install -m 700 -d "$(dirname "$key_file")"
+          printf '%s' "$XTASK_RELEASE_APT_SIGNING_KEY" > "$key_file"
+          fingerprint="$(gpg --batch --import-options show-only --with-colons --import "$key_file" \
+            | awk -F: '$1 == "fpr" { print toupper($10); exit }')"
+          rm -f "$key_file"
+          if [ -z "$fingerprint" ]; then
+            echo "failed to derive APT signing key fingerprint" >&2
+            exit 1
+          fi
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+
+      - name: Package deb artifacts
+        run: |
+          deb_args=()
+          for target in ${LINUX_TARGETS}; do
+            deb_args+=(--target "$target")
+          done
+          if [ "${#deb_args[@]}" -eq 0 ]; then
+            echo "linux_targets must not be empty" >&2
+            exit 1
+          fi
+
+          cargo xtask package --overwrite-manifest \
+            deb "${deb_args[@]}" \
+              --sibling ../dhttp \
+              --sibling ../ddns \
+              --sibling ../h3x \
+              --sibling ../dssh
+
+      - name: Publish S3 dry run for deb artifacts
+        env:
+          XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
+          XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
+          XTASK_RELEASE_S3_ENDPOINT_URL: https://291f3a932ece99211a59654f23bf6634.r2.cloudflarestorage.com
+          XTASK_RELEASE_APT_SIGNING_KEY: ${{ secrets.XTASK_RELEASE_APT_SIGNING_KEY }}
+          APT_SIGNING_PASSPHRASE: ${{ secrets.XTASK_RELEASE_APT_SIGNING_PASSPHRASE }}
+          APT_SIGNING_FINGERPRINT: ${{ steps.apt_key.outputs.fingerprint }}
+        run: |
+          if [ -n "${APT_SIGNING_PASSPHRASE:-}" ]; then
+            export XTASK_RELEASE_APT_SIGNING_PASSPHRASE="$APT_SIGNING_PASSPHRASE"
+          else
+            unset XTASK_RELEASE_APT_SIGNING_PASSPHRASE
+          fi
+
+          cargo xtask publish s3 --dry-run \
+            --endpoint-url "$XTASK_RELEASE_S3_ENDPOINT_URL" \
+            --bucket "$RELEASE_BUCKET" \
+            deb --prefix "$APT_PREFIX" --suite "$APT_SUITE" --fingerprint "$APT_SIGNING_FINGERPRINT"
+
+      - name: Upload deb dry-run manifests
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gmutils-deb-release-dry-run
+          if-no-files-found: ignore
+          path: |
+            gmutils/target/common/deb/**
+
+  linux-rpm:
+    name: Linux rpm packages and S3 dry run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      DHTTP_ROOT_CA: ${{ github.workspace }}/gmutils/keychain/root.crt
+      RELEASE_BUCKET: ${{ inputs.bucket || 'download' }}
       RPM_PREFIX: ${{ inputs.rpm_prefix || 'rpm/gmutils' }}
+      LINUX_TARGETS: ${{ inputs.linux_targets || 'x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu armv7-unknown-linux-gnueabihf i686-unknown-linux-gnu' }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: gmutils
+    steps:
+      - name: Checkout gmutils
+        uses: actions/checkout@v6
+        with:
+          path: gmutils
+          persist-credentials: false
+
+      - name: Checkout dhttp
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/dhttp
+          ref: main
+          path: dhttp
+          persist-credentials: false
+
+      - name: Checkout ddns
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/ddns
+          ref: endpoint
+          path: ddns
+          persist-credentials: false
+
+      - name: Checkout h3x
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/h3x
+          ref: endpoint
+          path: h3x
+          persist-credentials: false
+
+      - name: Checkout dssh
+        uses: actions/checkout@v6
+        with:
+          repository: genmeta/dssh
+          ref: endpoint
+          path: dssh
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache cargo downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+          key: gmutils-linux-rpm-cargo-${{ hashFiles('gmutils/Cargo.lock', 'dhttp/Cargo.lock', 'ddns/Cargo.lock', 'h3x/Cargo.lock', 'dssh/Cargo.lock') }}
+          restore-keys: |
+            gmutils-linux-rpm-cargo-
+
+      - name: Install Linux rpm tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --assume-yes --no-install-recommends rpm
+          docker info
+
+      - name: Check release secrets
+        env:
+          XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
+          XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
+          XTASK_RELEASE_S3_ENDPOINT_URL: https://291f3a932ece99211a59654f23bf6634.r2.cloudflarestorage.com
+        run: |
+          : "${XTASK_RELEASE_S3_ACCESS_KEY_ID:?missing XTASK_RELEASE_S3_ACCESS_KEY_ID}"
+          : "${XTASK_RELEASE_S3_SECRET_ACCESS_KEY:?missing XTASK_RELEASE_S3_SECRET_ACCESS_KEY}"
+          : "${XTASK_RELEASE_S3_ENDPOINT_URL:?missing XTASK_RELEASE_S3_ENDPOINT_URL}"
+
+      - name: Package rpm artifacts
+        run: |
+          rpm_args=()
+          for target in ${LINUX_TARGETS}; do
+            rpm_args+=(--target "$target")
+          done
+          if [ "${#rpm_args[@]}" -eq 0 ]; then
+            echo "linux_targets must not be empty" >&2
+            exit 1
+          fi
+
+          cargo xtask package --overwrite-manifest \
+            rpm "${rpm_args[@]}" \
+              --sibling ../dhttp \
+              --sibling ../ddns \
+              --sibling ../h3x \
+              --sibling ../dssh
+
+      - name: Publish S3 dry run for rpm artifacts
+        env:
+          XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
+          XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
+          XTASK_RELEASE_S3_ENDPOINT_URL: https://291f3a932ece99211a59654f23bf6634.r2.cloudflarestorage.com
+        run: |
+          cargo xtask publish s3 --dry-run \
+            --endpoint-url "$XTASK_RELEASE_S3_ENDPOINT_URL" \
+            --bucket "$RELEASE_BUCKET" \
+            rpm --prefix "$RPM_PREFIX"
+
+      - name: Upload rpm dry-run manifests
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gmutils-rpm-release-dry-run
+          if-no-files-found: ignore
+          path: |
+            gmutils/target/common/rpm/**
+
+  linux-scoop:
+    name: Linux scoop packages and S3 dry run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      DHTTP_ROOT_CA: ${{ github.workspace }}/gmutils/keychain/root.crt
+      RELEASE_BUCKET: ${{ inputs.bucket || 'download' }}
       SCOOP_PREFIX: ${{ inputs.scoop_prefix || 'scoop/gmutils' }}
       SCOOP_PUBLIC_BASE_URL: ${{ inputs.scoop_public_base_url || 'https://download.genmeta.net/scoop/gmutils' }}
-      LINUX_TARGETS: ${{ inputs.linux_targets || 'x86_64-unknown-linux-gnu' }}
     defaults:
       run:
         shell: bash
@@ -141,15 +399,14 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/bin/cargo-xwin
             ~/.cache/cargo-xwin
-          key: gmutils-linux-cargo-${{ hashFiles('gmutils/Cargo.lock', 'dhttp/Cargo.lock', 'ddns/Cargo.lock', 'h3x/Cargo.lock', 'dssh/Cargo.lock') }}
+          key: gmutils-linux-scoop-cargo-${{ hashFiles('gmutils/Cargo.lock', 'dhttp/Cargo.lock', 'ddns/Cargo.lock', 'h3x/Cargo.lock', 'dssh/Cargo.lock') }}
           restore-keys: |
-            gmutils-linux-cargo-
+            gmutils-linux-scoop-cargo-
 
-      - name: Install Linux package tooling
+      - name: Install scoop tooling
         run: |
           sudo apt-get update
-          sudo apt-get install --assume-yes --no-install-recommends gpg rpm llvm nasm
-          docker info
+          sudo apt-get install --assume-yes --no-install-recommends llvm nasm
 
       - name: Install cargo-xwin
         run: |
@@ -157,91 +414,44 @@ jobs:
             cargo install cargo-xwin --locked
           fi
 
-      - name: Check release secrets and derive APT fingerprint
-        id: apt_key
+      - name: Check release secrets
         env:
           XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
           XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
           XTASK_RELEASE_S3_ENDPOINT_URL: https://291f3a932ece99211a59654f23bf6634.r2.cloudflarestorage.com
-          XTASK_RELEASE_APT_SIGNING_KEY: ${{ secrets.XTASK_RELEASE_APT_SIGNING_KEY }}
         run: |
           : "${XTASK_RELEASE_S3_ACCESS_KEY_ID:?missing XTASK_RELEASE_S3_ACCESS_KEY_ID}"
           : "${XTASK_RELEASE_S3_SECRET_ACCESS_KEY:?missing XTASK_RELEASE_S3_SECRET_ACCESS_KEY}"
           : "${XTASK_RELEASE_S3_ENDPOINT_URL:?missing XTASK_RELEASE_S3_ENDPOINT_URL}"
-          : "${XTASK_RELEASE_APT_SIGNING_KEY:?missing XTASK_RELEASE_APT_SIGNING_KEY}"
 
-          key_file="$RUNNER_TEMP/apt-signing-key.asc"
-          install -m 700 -d "$(dirname "$key_file")"
-          printf '%s' "$XTASK_RELEASE_APT_SIGNING_KEY" > "$key_file"
-          fingerprint="$(gpg --batch --import-options show-only --with-colons --import "$key_file" \
-            | awk -F: '$1 == "fpr" { print toupper($10); exit }')"
-          rm -f "$key_file"
-          if [ -z "$fingerprint" ]; then
-            echo "failed to derive APT signing key fingerprint" >&2
-            exit 1
-          fi
-          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
-
-      - name: Package Linux artifacts
+      - name: Package scoop artifacts
         run: |
-          deb_args=()
-          rpm_args=()
-          for target in ${LINUX_TARGETS}; do
-            deb_args+=(--target "$target")
-            rpm_args+=(--target "$target")
-          done
-          if [ "${#deb_args[@]}" -eq 0 ]; then
-            echo "linux_targets must not be empty" >&2
-            exit 1
-          fi
-
           cargo xtask package --overwrite-manifest \
-            deb "${deb_args[@]}" \
-              --sibling ../dhttp \
-              --sibling ../ddns \
-              --sibling ../h3x \
-              --sibling ../dssh \
-            rpm "${rpm_args[@]}" \
-              --sibling ../dhttp \
-              --sibling ../ddns \
-              --sibling ../h3x \
-              --sibling ../dssh \
             scoop \
               --target x86_64-pc-windows-msvc \
               --target i686-pc-windows-msvc
 
-      - name: Publish S3 dry run for Linux artifacts
+      - name: Publish S3 dry run for scoop artifacts
         env:
           XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
           XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
           XTASK_RELEASE_S3_ENDPOINT_URL: https://291f3a932ece99211a59654f23bf6634.r2.cloudflarestorage.com
-          XTASK_RELEASE_APT_SIGNING_KEY: ${{ secrets.XTASK_RELEASE_APT_SIGNING_KEY }}
-          APT_SIGNING_PASSPHRASE: ${{ secrets.XTASK_RELEASE_APT_SIGNING_PASSPHRASE }}
-          APT_SIGNING_FINGERPRINT: ${{ steps.apt_key.outputs.fingerprint }}
         run: |
-          if [ -n "${APT_SIGNING_PASSPHRASE:-}" ]; then
-            export XTASK_RELEASE_APT_SIGNING_PASSPHRASE="$APT_SIGNING_PASSPHRASE"
-          else
-            unset XTASK_RELEASE_APT_SIGNING_PASSPHRASE
-          fi
-
           cargo xtask publish s3 --dry-run \
             --endpoint-url "$XTASK_RELEASE_S3_ENDPOINT_URL" \
             --bucket "$RELEASE_BUCKET" \
-            deb --prefix "$APT_PREFIX" --suite "$APT_SUITE" --fingerprint "$APT_SIGNING_FINGERPRINT" \
-            rpm --prefix "$RPM_PREFIX" \
             scoop --prefix "$SCOOP_PREFIX" --public-base-url "$SCOOP_PUBLIC_BASE_URL"
 
-      - name: Upload Linux dry-run manifests
+      - name: Upload scoop dry-run manifests
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: gmutils-linux-release-dry-run
+          name: gmutils-scoop-release-dry-run
           if-no-files-found: ignore
           path: |
-            gmutils/target/common/**
+            gmutils/target/common/scoop/**
 
-  macos:
+  homebrew:
     name: Homebrew package and S3 dry run
     runs-on: macos-15
     timeout-minutes: 120
@@ -250,7 +460,6 @@ jobs:
       RELEASE_BUCKET: ${{ inputs.bucket || 'download' }}
       BREW_PREFIX: ${{ inputs.brew_prefix || 'brew/gmutils' }}
       BREW_PUBLIC_BASE_URL: ${{ inputs.brew_public_base_url || 'https://download.genmeta.net/brew/gmutils' }}
-      CREATE_HOMEBREW_TAP_PR: ${{ inputs.create_homebrew_tap_pr || github.event_name == 'push' }}
       HOMEBREW_TAP_REPOSITORY: ${{ inputs.homebrew_tap_repository || 'genmeta/homebrew-genmeta' }}
       HOMEBREW_TAP_BASE_BRANCH: ${{ inputs.homebrew_tap_base_branch || 'main' }}
     defaults:
@@ -297,11 +506,10 @@ jobs:
           persist-credentials: false
 
       - name: Checkout Homebrew tap
-        if: ${{ inputs.create_homebrew_tap_pr || github.event_name == 'push' }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ inputs.homebrew_tap_repository }}
-          ref: ${{ inputs.homebrew_tap_base_branch }}
+          repository: ${{ inputs.homebrew_tap_repository || 'genmeta/homebrew-genmeta' }}
+          ref: ${{ inputs.homebrew_tap_base_branch || 'main' }}
           path: homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
 
@@ -331,9 +539,7 @@ jobs:
           : "${XTASK_RELEASE_S3_ACCESS_KEY_ID:?missing XTASK_RELEASE_S3_ACCESS_KEY_ID}"
           : "${XTASK_RELEASE_S3_SECRET_ACCESS_KEY:?missing XTASK_RELEASE_S3_SECRET_ACCESS_KEY}"
           : "${XTASK_RELEASE_S3_ENDPOINT_URL:?missing XTASK_RELEASE_S3_ENDPOINT_URL}"
-          if [ "$CREATE_HOMEBREW_TAP_PR" = "true" ]; then
-            : "${HOMEBREW_TAP_GITHUB_TOKEN:?missing HOMEBREW_TAP_GITHUB_TOKEN}"
-          fi
+          : "${HOMEBREW_TAP_GITHUB_TOKEN:?missing HOMEBREW_TAP_GITHUB_TOKEN}"
 
       - name: Package Homebrew artifacts
         run: |
@@ -354,7 +560,6 @@ jobs:
             brew --prefix "$BREW_PREFIX" --public-base-url "$BREW_PUBLIC_BASE_URL"
 
       - name: Create Homebrew tap pull request
-        if: ${{ inputs.create_homebrew_tap_pr || github.event_name == 'push' }}
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
           FORMULA_NAME: gmutils.rb
@@ -395,4 +600,4 @@ jobs:
           name: gmutils-homebrew-release-dry-run
           if-no-files-found: ignore
           path: |
-            gmutils/target/common/**
+            gmutils/target/common/brew/**

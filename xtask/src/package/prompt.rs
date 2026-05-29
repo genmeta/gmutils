@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
-use std::io::IsTerminal;
+use std::{io::IsTerminal, sync::OnceLock};
 
-use snafu::Snafu;
+use snafu::{ResultExt, Snafu, ensure};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverwriteDecision {
@@ -17,6 +17,8 @@ pub enum OverwriteManifestError {
     NotInteractive,
     #[snafu(display("failed to read overwrite confirmation"))]
     Prompt { source: inquire::InquireError },
+    #[snafu(display("prompt task panicked"))]
+    PromptTaskPanic { source: tokio::task::JoinError },
 }
 
 pub fn decide_manifest_overwrite(
@@ -28,25 +30,43 @@ pub fn decide_manifest_overwrite(
     if !manifest_exists || overwrite_manifest {
         return Ok(OverwriteDecision::Write);
     }
-    if !interactive {
-        return Err(OverwriteManifestError::NotInteractive);
-    }
-    if prompt().map_err(|source| OverwriteManifestError::Prompt { source })? {
+    ensure!(interactive, overwrite_manifest_error::NotInteractiveSnafu);
+    if prompt().context(overwrite_manifest_error::PromptSnafu)? {
         Ok(OverwriteDecision::Write)
     } else {
         Ok(OverwriteDecision::Skip)
     }
 }
 
+fn prompt_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 pub async fn confirm_manifest_overwrite(
     manifest_exists: bool,
     overwrite_manifest: bool,
 ) -> Result<OverwriteDecision, OverwriteManifestError> {
-    let interactive = std::io::stdin().is_terminal();
-    decide_manifest_overwrite(manifest_exists, overwrite_manifest, interactive, || {
+    if !manifest_exists || overwrite_manifest {
+        return Ok(OverwriteDecision::Write);
+    }
+    ensure!(
+        std::io::stdin().is_terminal(),
+        overwrite_manifest_error::NotInteractiveSnafu
+    );
+    let _guard = prompt_lock().lock().await;
+    let answer = tokio::task::spawn_blocking(|| {
         inquire::Confirm::new("package manifest already exists; overwrite it?")
             .with_default(false)
             .prompt()
+    })
+    .await
+    .context(overwrite_manifest_error::PromptTaskPanicSnafu)?
+    .context(overwrite_manifest_error::PromptSnafu)?;
+    Ok(if answer {
+        OverwriteDecision::Write
+    } else {
+        OverwriteDecision::Skip
     })
 }
 
