@@ -1,4 +1,4 @@
-name: Release Dry Run
+name: Release
 
 on:
   push:
@@ -39,7 +39,7 @@ on:
         required: true
         default: https://download.genmeta.net/scoop/gmutils
       linux_targets:
-        description: Space-separated Linux Rust targets for deb/rpm package build; override to all supported targets for a full Linux dry run.
+        description: Space-separated Linux Rust targets for deb/rpm package build.
         required: true
         default: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu armv7-unknown-linux-gnueabihf i686-unknown-linux-gnu
       homebrew_tap_repository:
@@ -55,7 +55,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-dry-run-${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -67,11 +67,12 @@ env:
 
 jobs:
   linux-deb:
-    name: Linux deb packages and S3 dry run
+    name: Linux deb packages and S3 publish
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
       DHTTP_ROOT_CA: ${{ github.workspace }}/gmutils/keychain/root.crt
+      DRY_RUN_FLAG: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
       RELEASE_BUCKET: ${{ inputs.bucket || 'download' }}
       APT_SUITE: ${{ inputs.apt_suite || 'stable' }}
       APT_PREFIX: ${{ inputs.apt_prefix || 'apt/gmutils' }}
@@ -183,7 +184,7 @@ jobs:
               --sibling ../h3x \
               --sibling ../dssh
 
-      - name: Publish S3 dry run for deb artifacts
+      - name: Publish S3 for deb artifacts
         env:
           XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
           XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
@@ -198,26 +199,27 @@ jobs:
             unset XTASK_RELEASE_APT_SIGNING_PASSPHRASE
           fi
 
-          cargo xtask publish s3 --dry-run \
+          cargo xtask publish s3 $DRY_RUN_FLAG \
             --endpoint-url "$XTASK_RELEASE_S3_ENDPOINT_URL" \
             --bucket "$RELEASE_BUCKET" \
             deb --prefix "$APT_PREFIX" --suite "$APT_SUITE" --fingerprint "$APT_SIGNING_FINGERPRINT"
 
-      - name: Upload deb dry-run manifests
+      - name: Upload deb manifests
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: gmutils-deb-release-dry-run
+          name: gmutils-deb-release
           if-no-files-found: ignore
           path: |
             gmutils/target/common/deb/**
 
   linux-rpm:
-    name: Linux rpm packages and S3 dry run
+    name: Linux rpm packages and S3 publish
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
       DHTTP_ROOT_CA: ${{ github.workspace }}/gmutils/keychain/root.crt
+      DRY_RUN_FLAG: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
       RELEASE_BUCKET: ${{ inputs.bucket || 'download' }}
       RPM_PREFIX: ${{ inputs.rpm_prefix || 'rpm/gmutils' }}
       LINUX_TARGETS: ${{ inputs.linux_targets || 'x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu armv7-unknown-linux-gnueabihf i686-unknown-linux-gnu' }}
@@ -313,32 +315,33 @@ jobs:
               --sibling ../h3x \
               --sibling ../dssh
 
-      - name: Publish S3 dry run for rpm artifacts
+      - name: Publish S3 for rpm artifacts
         env:
           XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
           XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
           XTASK_RELEASE_S3_ENDPOINT_URL: https://291f3a932ece99211a59654f23bf6634.r2.cloudflarestorage.com
         run: |
-          cargo xtask publish s3 --dry-run \
+          cargo xtask publish s3 $DRY_RUN_FLAG \
             --endpoint-url "$XTASK_RELEASE_S3_ENDPOINT_URL" \
             --bucket "$RELEASE_BUCKET" \
             rpm --prefix "$RPM_PREFIX"
 
-      - name: Upload rpm dry-run manifests
+      - name: Upload rpm manifests
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: gmutils-rpm-release-dry-run
+          name: gmutils-rpm-release
           if-no-files-found: ignore
           path: |
             gmutils/target/common/rpm/**
 
   linux-scoop:
-    name: Linux scoop packages and S3 dry run
+    name: Linux scoop packages and S3 publish
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
       DHTTP_ROOT_CA: ${{ github.workspace }}/gmutils/keychain/root.crt
+      DRY_RUN_FLAG: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
       RELEASE_BUCKET: ${{ inputs.bucket || 'download' }}
       SCOOP_PREFIX: ${{ inputs.scoop_prefix || 'scoop/gmutils' }}
       SCOOP_PUBLIC_BASE_URL: ${{ inputs.scoop_public_base_url || 'https://download.genmeta.net/scoop/gmutils' }}
@@ -431,32 +434,33 @@ jobs:
               --target x86_64-pc-windows-msvc \
               --target i686-pc-windows-msvc
 
-      - name: Publish S3 dry run for scoop artifacts
+      - name: Publish S3 for scoop artifacts
         env:
           XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
           XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
           XTASK_RELEASE_S3_ENDPOINT_URL: https://291f3a932ece99211a59654f23bf6634.r2.cloudflarestorage.com
         run: |
-          cargo xtask publish s3 --dry-run \
+          cargo xtask publish s3 $DRY_RUN_FLAG \
             --endpoint-url "$XTASK_RELEASE_S3_ENDPOINT_URL" \
             --bucket "$RELEASE_BUCKET" \
             scoop --prefix "$SCOOP_PREFIX" --public-base-url "$SCOOP_PUBLIC_BASE_URL"
 
-      - name: Upload scoop dry-run manifests
+      - name: Upload scoop manifests
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: gmutils-scoop-release-dry-run
+          name: gmutils-scoop-release
           if-no-files-found: ignore
           path: |
             gmutils/target/common/scoop/**
 
   homebrew:
-    name: Homebrew package and S3 dry run
+    name: Homebrew package and S3 publish
     runs-on: macos-15
     timeout-minutes: 120
     env:
       DHTTP_ROOT_CA: ${{ github.workspace }}/gmutils/keychain/root.crt
+      DRY_RUN_FLAG: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
       RELEASE_BUCKET: ${{ inputs.bucket || 'download' }}
       BREW_PREFIX: ${{ inputs.brew_prefix || 'brew/gmutils' }}
       BREW_PUBLIC_BASE_URL: ${{ inputs.brew_public_base_url || 'https://download.genmeta.net/brew/gmutils' }}
@@ -506,6 +510,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkout Homebrew tap
+        if: github.event_name == 'push'
         uses: actions/checkout@v6
         with:
           repository: ${{ inputs.homebrew_tap_repository || 'genmeta/homebrew-genmeta' }}
@@ -539,7 +544,9 @@ jobs:
           : "${XTASK_RELEASE_S3_ACCESS_KEY_ID:?missing XTASK_RELEASE_S3_ACCESS_KEY_ID}"
           : "${XTASK_RELEASE_S3_SECRET_ACCESS_KEY:?missing XTASK_RELEASE_S3_SECRET_ACCESS_KEY}"
           : "${XTASK_RELEASE_S3_ENDPOINT_URL:?missing XTASK_RELEASE_S3_ENDPOINT_URL}"
-          : "${HOMEBREW_TAP_GITHUB_TOKEN:?missing HOMEBREW_TAP_GITHUB_TOKEN}"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            : "${HOMEBREW_TAP_GITHUB_TOKEN:?missing HOMEBREW_TAP_GITHUB_TOKEN}"
+          fi
 
       - name: Package Homebrew artifacts
         run: |
@@ -548,18 +555,19 @@ jobs:
               --target aarch64-apple-darwin \
               --target x86_64-apple-darwin
 
-      - name: Publish S3 dry run for Homebrew artifacts
+      - name: Publish S3 for Homebrew artifacts
         env:
           XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
           XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
           XTASK_RELEASE_S3_ENDPOINT_URL: https://291f3a932ece99211a59654f23bf6634.r2.cloudflarestorage.com
         run: |
-          cargo xtask publish s3 --dry-run \
+          cargo xtask publish s3 $DRY_RUN_FLAG \
             --endpoint-url "$XTASK_RELEASE_S3_ENDPOINT_URL" \
             --bucket "$RELEASE_BUCKET" \
             brew --prefix "$BREW_PREFIX" --public-base-url "$BREW_PUBLIC_BASE_URL"
 
       - name: Create Homebrew tap pull request
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
           FORMULA_NAME: gmutils.rb
@@ -579,7 +587,7 @@ jobs:
             exit 0
           fi
 
-          branch="release-dry-run/${GITHUB_REPOSITORY##*/}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          branch="release/${GITHUB_REPOSITORY##*/}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
@@ -590,14 +598,14 @@ jobs:
             --repo "$HOMEBREW_TAP_REPOSITORY" \
             --base "$HOMEBREW_TAP_BASE_BRANCH" \
             --head "$branch" \
-            --title "brew: update $FORMULA_NAME from gmutils dry run" \
-            --body "Generated by $GITHUB_REPOSITORY release dry run $GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT."
+            --title "brew: update $FORMULA_NAME from gmutils release" \
+            --body "Generated by $GITHUB_REPOSITORY release $GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT."
 
-      - name: Upload Homebrew dry-run manifests
+      - name: Upload Homebrew manifests
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: gmutils-homebrew-release-dry-run
+          name: gmutils-homebrew-release
           if-no-files-found: ignore
           path: |
             gmutils/target/common/brew/**
