@@ -28,7 +28,6 @@ const DHTTP_STUN_SERVER: &str = "DHTTP_STUN_SERVER";
 const DHTTP_H3_DNS_SERVER: &str = "DHTTP_H3_DNS_SERVER";
 const DHTTP_HTTP_DNS_SERVER: &str = "DHTTP_HTTP_DNS_SERVER";
 const DHTTP_MDNS_SERVICE: &str = "DHTTP_MDNS_SERVICE";
-const ROOT_CA: &str = "ROOT_CA";
 
 const DHTTP_BOOTSTRAP_VARS: [&str; 5] = [
     DHTTP_ROOT_CA,
@@ -83,12 +82,6 @@ pub(crate) fn dhttp_bootstrap_from_values(
         });
         exports.push_str(&format!(
             "export {DHTTP_ROOT_CA}={DHTTP_BOOTSTRAP_ROOT_CA_TARGET}\n"
-        ));
-        // Older package build scripts still consume ROOT_CA directly while
-        // dhttp/ddns consume DHTTP_ROOT_CA. Keep both names pointing at the
-        // same mounted test trust anchor.
-        exports.push_str(&format!(
-            "export {ROOT_CA}={DHTTP_BOOTSTRAP_ROOT_CA_TARGET}\n"
         ));
     }
 
@@ -342,11 +335,7 @@ mod tests {
                 .exports
                 .contains("export DHTTP_ROOT_CA=/dhttp-bootstrap/root.crt\n")
         );
-        assert!(
-            bootstrap
-                .exports
-                .contains("export ROOT_CA=/dhttp-bootstrap/root.crt\n")
-        );
+        assert!(!bootstrap.exports.contains("export ROOT_CA="));
         assert!(
             bootstrap
                 .exports
@@ -403,5 +392,12 @@ mod tests {
             "export DHTTP_STUN_SERVER='nat'\\''genmeta.net:20004'\n"
         );
         assert!(bootstrap.mounts.is_empty());
+    }
+
+    #[test]
+    fn deb_rules_do_not_forward_legacy_root_ca_env() {
+        let rules = include_str!("../deb/rules");
+
+        assert!(!rules.contains("ROOT_CA"));
     }
 }

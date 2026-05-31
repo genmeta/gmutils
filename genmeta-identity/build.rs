@@ -4,10 +4,10 @@ fn main() {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
 
-    // Allow overriding the root CA via the ROOT_CA environment variable.
+    // Allow overriding the root CA via the DHTTP_ROOT_CA environment variable.
     // Default: keychain/root.crt relative to the workspace root (one level up).
     let default_path = manifest_dir.join("../keychain/root.crt");
-    let src = match std::env::var("ROOT_CA") {
+    let src = match std::env::var("DHTTP_ROOT_CA") {
         Ok(path) => PathBuf::from(path),
         Err(_) => default_path,
     };
@@ -21,6 +21,6 @@ fn main() {
         )
     });
 
-    println!("cargo::rerun-if-env-changed=ROOT_CA");
+    println!("cargo::rerun-if-env-changed=DHTTP_ROOT_CA");
     println!("cargo::rerun-if-changed={}", src.display());
 }
