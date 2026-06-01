@@ -6,7 +6,7 @@ use std::{
 
 use clap::Parser;
 use dhttp::{
-    ddns::DnsScheme,
+    ddns::resolvers::DnsScheme,
     dquic::binds::BindPattern,
     endpoint::Endpoint,
     home::{self, DhttpHome, identity::IdentityProfile},

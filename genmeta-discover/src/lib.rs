@@ -6,7 +6,10 @@ use std::{
 
 use clap::Parser;
 use dhttp::{
-    ddns::{DHTTP_MDNS_SERVICE, MdnsResolvers, parser::record::RData},
+    ddns::{
+        core::parser::record::RData, mdns::resolvers::mdns::MdnsResolvers,
+        resolvers::DHTTP_MDNS_SERVICE,
+    },
     dquic::{Network, binds::BindPattern},
 };
 use futures::StreamExt;

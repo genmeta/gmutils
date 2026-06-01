@@ -2,7 +2,7 @@ use std::{io::IsTerminal, net::SocketAddr, sync::Arc, time::Duration};
 
 use clap::Parser;
 use dhttp::{
-    ddns,
+    ddns::resolvers::DnsScheme,
     dquic::binds::BindPattern,
     endpoint::Endpoint,
     home::{self, DhttpHome, identity::IdentityProfile},
@@ -32,7 +32,7 @@ pub struct Options {
 
     /// DNS resolution schemes
     #[arg(long, value_name = "scheme", default_values = ["mdns", "h3"], value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
-    pub dns: Vec<ddns::DnsScheme>,
+    pub dns: Vec<DnsScheme>,
 
     /// Bind patterns for DHTTP/3 connections
     #[arg(long = "interface", value_name = "bind", default_value = "*", hide = cfg!(not(debug_assertions)))]

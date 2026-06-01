@@ -10,7 +10,10 @@ pub mod forward;
 pub mod ssh_config;
 
 use clap::Parser;
-use dhttp::{ddns, dquic::binds::BindPattern, h3x::error::Code, name::DhttpName as Name};
+use dhttp::{
+    ddns::resolvers::DnsScheme, dquic::binds::BindPattern, h3x::error::Code,
+    name::DhttpName as Name,
+};
 use dssh as ssh3;
 use forward::*;
 use snafu::{FromString, Report, ResultExt, Snafu};
@@ -112,7 +115,7 @@ pub struct Options {
 
     /// DNS resolution schemes
     #[arg(long, value_name = "scheme", default_value = "mdns,h3", value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
-    dns: Vec<ddns::DnsScheme>,
+    dns: Vec<DnsScheme>,
 
     /// Bind patterns for DHTTP/3 connections
     #[arg(long = "interface", value_name = "bind", default_value = "*", hide = cfg!(not(debug_assertions)))]
@@ -203,6 +206,49 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
         )
         .init();
     guard
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ShutdownSignal {
+    Interrupt,
+    Terminate,
+}
+
+impl ShutdownSignal {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Interrupt => "interrupt",
+            Self::Terminate => "terminate",
+        }
+    }
+}
+
+async fn shutdown_signal() -> ShutdownSignal {
+    #[cfg(unix)]
+    {
+        let terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
+        match terminate {
+            Ok(mut terminate) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => ShutdownSignal::Interrupt,
+                    _ = terminate.recv() => ShutdownSignal::Terminate,
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %snafu::Report::from_error(&error),
+                    "failed to install terminate signal handler"
+                );
+                let _ = tokio::signal::ctrl_c().await;
+                ShutdownSignal::Interrupt
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        ShutdownSignal::Interrupt
+    }
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
@@ -316,13 +362,11 @@ pub async fn run(options: Options) -> Result<(), Error> {
     // tokio runtime shutdown (tokio::io::stdin uses spawn_blocking which
     // cannot be cancelled and hangs the runtime Drop).
     let interactive = options.pseudo && std::io::stdin().is_terminal();
-    let _raw_guard = if interactive {
+    let _raw_guard = interactive.then(|| {
         crossterm::terminal::enable_raw_mode()
             .map(|()| RawModeGuard)
             .ok()
-    } else {
-        None
-    };
+    });
 
     let exit_result = if interactive {
         let resize = sigwinch_stream();
@@ -357,8 +401,8 @@ pub async fn run(options: Options) -> Result<(), Error> {
             "session ended, keeping connection alive for port forwarding"
         );
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!("received interrupt, shutting down forwarding");
+            signal = shutdown_signal() => {
+                tracing::info!(signal = signal.as_str(), "received shutdown signal, shutting down forwarding");
             }
             // All forward tasks completed on their own (unlikely for listeners,
             // but handles the case where they all fail).

@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, str::FromStr, time::Duration};
 
 use dhttp::{
-    ddns,
+    ddns::resolvers::DnsScheme,
     dquic::binds::BindPattern,
     home::{self, DhttpHome, identity::IdentityProfile},
     message::IntoUri,
@@ -61,7 +61,7 @@ pub enum Error {
 #[derive(Debug)]
 pub struct Config {
     pub binds: Vec<BindPattern>,
-    pub dns: BTreeSet<ddns::DnsScheme>,
+    pub dns: BTreeSet<DnsScheme>,
     pub username: String,
     pub uri: Uri,
     pub id: Option<IdentityProfile>,

@@ -10,7 +10,7 @@ use std::{
 use async_compression::tokio::bufread::{DeflateDecoder, GzipDecoder, ZstdDecoder};
 use clap::Parser;
 use dhttp::{
-    ddns,
+    ddns::resolvers::DnsScheme,
     dquic::binds::BindPattern,
     endpoint::Endpoint,
     h3x::{
@@ -111,7 +111,7 @@ pub struct Options {
 
     /// DNS resolution schemes
     #[arg(long, value_name = "scheme", default_value = "mdns,h3", value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
-    dns: Vec<ddns::DnsScheme>,
+    dns: Vec<DnsScheme>,
 
     /// Bind patterns for DHTTP/3 connections
     #[arg(long = "interface", value_name = "bind", default_value = "*", hide = cfg!(not(debug_assertions)))]
