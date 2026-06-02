@@ -5,24 +5,15 @@ edition = "2024"
 publish = false
 
 [dependencies]
-# Disable default `default-https-client` (pulls aws-lc) and re-enable the
-# `rustls` feature (alias of `tls-rustls`, ring backend) plus the other
-# defaults we actually use. Keeps the windows MSVC cross-build off aws-lc-sys,
-# which fails to assemble on i686-pc-windows-msvc under clang-cl.
-aws-config = { version = "1", default-features = false, features = [
-    "behavior-version-latest",
-    "credentials-process",
-    "rt-tokio",
-    "rustls",
-    "sso",
-] }
 aws-credential-types = "1"
+# Keep default `default-https-client` disabled. It pulls aws-lc, and aws-lc-sys
+# fails to assemble on i686-pc-windows-msvc under clang-cl during release
+# cross-builds. Enable only the rustls/ring-backed features used by S3 publish.
 aws-sdk-s3 = { version = "1", default-features = false, features = [
     "rt-tokio",
     "rustls",
     "sigv4a",
 ] }
-aws-types = "1"
 bollard = "0.19"
 cargo_metadata = "0.19"
 clap = { version = "4", features = ["derive", "env"] }

@@ -9,7 +9,6 @@ clap = { workspace = true }
 dhttp-access = { workspace = true, features = ["cli", "orm", "migration"] }
 dhttp-home = { workspace = true }
 sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
-sea-orm-migration = { workspace = true, features = ["sqlx-sqlite"] }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

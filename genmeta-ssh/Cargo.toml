@@ -5,7 +5,6 @@ version = "0.5.0"
 edition = "2024"
 
 [dependencies]
-bytes = { workspace = true }
 clap = { workspace = true }
 crossterm = { workspace = true }
 dirs = { workspace = true }
@@ -13,11 +12,9 @@ futures = { workspace = true }
 dhttp = { workspace = true }
 dssh = { workspace = true, features = ["cli", "client", "config"] }
 http = { workspace = true }
-http-body-util = { workspace = true }
 h3x = { workspace = true, features = ["webtransport"] }
 snafu = { workspace = true }
 tokio = { workspace = true }
-tokio-util = { workspace = true, features = ["codec", "rt"] }
 tracing = { workspace = true }
 tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }

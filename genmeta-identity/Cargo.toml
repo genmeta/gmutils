@@ -7,7 +7,6 @@ edition = "2024"
 [dependencies]
 clap = { workspace = true, optional = true }
 inquire = { workspace = true, optional = true }
-inquire-derive = { workspace = true, optional = true }
 indicatif = { workspace = true, optional = true }
 tracing-indicatif = { workspace = true, optional = true }
 
@@ -32,7 +31,6 @@ default = ["cli"]
 cli = [
     "dep:clap",
     "dep:inquire",
-    "dep:inquire-derive",
     "dep:indicatif",
     "dep:tracing-indicatif",
 ]
