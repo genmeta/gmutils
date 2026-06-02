@@ -44,7 +44,7 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 
 # security
-rankey = { git = "https://github.com/genmeta/rankey.git", rev = "39aaf4fbc774866fadce67ae7eaaf71d1920ba7a" }
+rankey = { git = "https://github.com/genmeta/rankey.git", rev = "70d1b5d8ce2ec2c0244356a02d19e038482956b3" }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 x509-parser = "0.18"
 

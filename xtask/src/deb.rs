@@ -2,7 +2,7 @@
 
 use bollard::{
     Docker,
-    models::{ContainerConfig, ContainerCreateBody, HostConfig, Mount, MountTypeEnum},
+    models::{ContainerConfig, ContainerCreateBody, HostConfig, Mount, MountType},
     query_parameters::{
         CommitContainerOptionsBuilder, CreateContainerOptionsBuilder, CreateImageOptionsBuilder,
     },
@@ -321,7 +321,7 @@ async fn build_one(
     let mut mounts = vec![Mount {
         target: Some("/workspace".into()),
         source: Some(workspace_dir.to_string_lossy().into_owned()),
-        typ: Some(MountTypeEnum::BIND),
+        typ: Some(MountType::BIND),
         ..Default::default()
     }];
     // User-requested sibling crates, bind-mounted at /{basename} so that
@@ -331,7 +331,7 @@ async fn build_one(
         mounts.push(Mount {
             target: Some(format!("/{}", sibling.basename)),
             source: Some(sibling.host.to_string_lossy().into_owned()),
-            typ: Some(MountTypeEnum::BIND),
+            typ: Some(MountType::BIND),
             ..Default::default()
         });
     }

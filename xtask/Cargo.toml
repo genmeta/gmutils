@@ -14,8 +14,8 @@ aws-sdk-s3 = { version = "1", default-features = false, features = [
     "rustls",
     "sigv4a",
 ] }
-bollard = "0.19"
-cargo_metadata = "0.19"
+bollard = "0.21"
+cargo_metadata = "0.23"
 clap = { version = "4", features = ["derive", "env"] }
 flate2 = "1"
 inquire = "0.9"
@@ -32,4 +32,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures-util = "0.3"
 tokio = { version = "1", features = ["full"] }
 walkdir = "2"
-zip = { version = "4", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
