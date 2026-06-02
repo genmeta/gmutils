@@ -1,9 +1,11 @@
 use std::{
     collections::BTreeMap,
+    fmt,
     io::{IsTerminal, Write as _},
     net::SocketAddr,
     str::FromStr,
     sync::Arc,
+    time::Duration,
 };
 
 use clap::Parser;
@@ -18,14 +20,48 @@ use dhttp::{
                 DetectNatTypeError, DetectOuterAddrError, StunClientsComponent, StunProbeError,
             },
         },
+        resolver::{Resolve, ResolveFuture, handy::SystemResolver},
     },
     endpoint::Endpoint,
     home::{self, DhttpHome, identity::IdentityProfile},
     name::DhttpName as Name,
+    network::DhttpNetwork,
 };
 use futures::{StreamExt, future::BoxFuture};
 use snafu::{IntoError, ResultExt};
+use tokio::time::Instant;
 use tracing_subscriber::prelude::*;
+
+const STUN_AGENT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
+const STUN_AGENT_DISCOVERY_INTERVAL: Duration = Duration::from_millis(100);
+
+#[derive(Debug, Clone)]
+struct FirstEndpointResolver {
+    inner: Arc<dyn Resolve + Send + Sync>,
+}
+
+impl FirstEndpointResolver {
+    fn system() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Arc::new(SystemResolver),
+        })
+    }
+}
+
+impl fmt::Display for FirstEndpointResolver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "first endpoint of {}", self.inner)
+    }
+}
+
+impl Resolve for FirstEndpointResolver {
+    fn lookup<'l>(&'l self, name: &'l str) -> ResolveFuture<'l> {
+        Box::pin(async move {
+            let records = self.inner.lookup(name).await?;
+            Ok(records.take(1).boxed())
+        })
+    }
+}
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "nat-detect", version, about)]
@@ -287,9 +323,17 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
     };
 
     let bind_patterns = Arc::new(options.binds.clone());
+    let network = DhttpNetwork::builder()
+        // NAT filtering tests are stateful: probing multiple STUN agents in
+        // parallel can open holes and misclassify restricted NATs. A single
+        // bootstrap STUN endpoint is enough because the STUN changed-address
+        // attribute supplies alternate servers for classification.
+        .stun_resolver(FirstEndpointResolver::system())
+        .build();
     let endpoint = Endpoint::builder()
         .bind(bind_patterns)
         .maybe_identity(identity)
+        .network(network)
         .dns(DnsScheme::H3)
         .dns(DnsScheme::System)
         .build()
@@ -362,45 +406,47 @@ fn observe_interface(iface: BindInterface) -> NatReportStream {
         )]);
     };
 
-    let tasks: NatReportStream =
-        clients.with_clients(|clients| {
-            clients
-                .values()
-                .cloned()
-                .map(|client| {
-                    let bind_uri = bind_uri.clone();
-                    Box::pin(async move {
-                        let stun_server = client.agent_addr();
-                        let external_addr = client.outer_addr().await.context(
-                            nat_report_error::DetectExternalAddrSnafu {
-                                bind_uri: bind_uri.clone(),
-                                stun_server,
-                            },
-                        )?;
-                        let nat_type = client.nat_type().await.context(
-                            nat_report_error::DetectNatTypeSnafu {
-                                bind_uri: bind_uri.clone(),
-                                stun_server,
-                            },
-                        )?;
-                        Ok(NatObservation {
-                            bind_uri,
-                            stun_server,
-                            external_addr,
-                            nat_type,
-                        })
-                    }) as NatReportFuture
-                })
-                .collect()
-        });
+    futures::stream::FuturesUnordered::from_iter([Box::pin(async move {
+        let deadline = Instant::now() + STUN_AGENT_DISCOVERY_TIMEOUT;
+        let client = loop {
+            let mut clients =
+                clients.with_clients(|clients| clients.values().cloned().collect::<Vec<_>>());
+            if !clients.is_empty() {
+                clients.sort_by_key(|client| client.agent_addr());
+                break clients
+                    .into_iter()
+                    .next()
+                    .expect("client list was checked as non-empty");
+            }
+            if Instant::now() >= deadline {
+                return Err(NatReportError::NoStunAgent { bind_uri });
+            }
+            tokio::time::sleep(STUN_AGENT_DISCOVERY_INTERVAL).await;
+        };
 
-    if tasks.is_empty() {
-        return futures::stream::FuturesUnordered::from_iter([ready_report(
-            NatReportError::NoStunAgent { bind_uri },
-        )]);
-    }
-
-    tasks
+        let stun_server = client.agent_addr();
+        let external_addr =
+            client
+                .outer_addr()
+                .await
+                .context(nat_report_error::DetectExternalAddrSnafu {
+                    bind_uri: bind_uri.clone(),
+                    stun_server,
+                })?;
+        let nat_type = client
+            .nat_type()
+            .await
+            .context(nat_report_error::DetectNatTypeSnafu {
+                bind_uri: bind_uri.clone(),
+                stun_server,
+            })?;
+        Ok(NatObservation {
+            bind_uri,
+            stun_server,
+            external_addr,
+            nat_type,
+        })
+    }) as NatReportFuture])
 }
 
 fn ready_report(error: NatReportError) -> NatReportFuture {
