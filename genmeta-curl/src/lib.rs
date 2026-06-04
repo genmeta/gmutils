@@ -16,7 +16,7 @@ use dhttp::{
     h3x::{
         self,
         hyper::SendMessageError,
-        message::stream::{InitialMessageStreamError, MessageStreamError, WriteStream},
+        message::stream::{InitialMessageStreamError, MessageStreamError, MessageWriter},
     },
     home::{self, DhttpHome, identity::IdentityProfile},
     message::IntoUri,
@@ -554,7 +554,7 @@ fn build_request_builder(uri: &Uri, method: &Method, options: &Options) -> http:
 /// Send the request body (data, file upload, or empty) and close the stream.
 async fn send_request_body(
     request_builder: http::request::Builder,
-    request_stream: &mut WriteStream,
+    request_stream: &mut MessageWriter,
     options: &Options,
     current_method: &Method,
     redirect_count: u32,
@@ -656,7 +656,7 @@ fn resolve_redirect(
 
 /// Stream the response body to a file or stdout, optionally decompressing.
 async fn stream_response_body(
-    mut response_stream: h3x::message::stream::ReadStream,
+    mut response_stream: h3x::message::stream::MessageReader,
     decompress: bool,
     content_encoding: &str,
     output: Option<&PathBuf>,
@@ -699,7 +699,7 @@ async fn stream_response_body(
 /// Process the final response: stream body and optionally print `--write-out`.
 #[allow(clippy::too_many_arguments)]
 async fn process_final_response(
-    response_stream: h3x::message::stream::ReadStream,
+    response_stream: h3x::message::stream::MessageReader,
     response_headers: &http::HeaderMap,
     options: &Options,
     status: StatusCode,
@@ -752,7 +752,7 @@ async fn connect_and_open_streams(
     uri: &Uri,
     connect_timeout: Duration,
     timing: &mut Timing,
-) -> Result<(h3x::message::stream::ReadStream, WriteStream), Error> {
+) -> Result<(h3x::message::stream::MessageReader, MessageWriter), Error> {
     let connect_fut = async {
         client
             .connect(
@@ -783,7 +783,7 @@ async fn check_redirect(
     current_uri: &Uri,
     current_method: &Method,
     redirect_count: u32,
-    response_stream: &mut h3x::message::stream::ReadStream,
+    response_stream: &mut h3x::message::stream::MessageReader,
 ) -> Result<Option<(Uri, Method)>, Error> {
     if !options.location || !status.is_redirection() || status == StatusCode::NOT_MODIFIED {
         return Ok(None);
@@ -812,7 +812,7 @@ fn print_verbose_response(response: &http::response::Parts) {
 /// Receive the response head, record first-byte timing, and optionally print
 /// verbose details.
 async fn receive_response_head(
-    response_stream: &mut h3x::message::stream::ReadStream,
+    response_stream: &mut h3x::message::stream::MessageReader,
     timing: &mut Timing,
     verbose: bool,
 ) -> Result<http::response::Parts, Error> {

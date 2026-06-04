@@ -1,6 +1,6 @@
 use dhttp::{
     endpoint::Endpoint,
-    h3x::message::stream::{MessageStreamError, WriteStream},
+    h3x::message::stream::{MessageStreamError, MessageWriter},
 };
 use http::uri::{self, Uri};
 use hyper::{
@@ -50,7 +50,7 @@ fn rewrite_request_for_h3(mut req: Request<Incoming>) -> Request<Incoming> {
 /// Close the write stream after request is fully sent.
 ///
 /// Failure to close is non-fatal — the response may already be readable.
-async fn close_write_stream(mut write_stream: WriteStream) {
+async fn close_write_stream(mut write_stream: MessageWriter) {
     if let Err(e) = write_stream.close().await {
         tracing::warn!(error = %snafu::Report::from_error(&e), "failed to close h3 request stream");
     }
