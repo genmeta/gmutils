@@ -1,6 +1,6 @@
 use dhttp::{
     endpoint::Endpoint,
-    h3x::message::stream::{MessageStreamError, MessageWriter},
+    h3x::dhttp::message::{MessageStreamError, MessageWriter},
 };
 use http::uri::{self, Uri};
 use hyper::{
