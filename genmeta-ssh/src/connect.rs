@@ -35,7 +35,7 @@ pub enum Error {
 pub struct ConnectResult {
     pub endpoint: Arc<Endpoint>,
     pub connection: Arc<Connection<DquicConnection>>,
-    pub conversation: ssh3::webtransport::ClientWebTransportConversation,
+    pub conversation: ssh3::conversation::Conversation,
 }
 
 fn connection_builder() -> Arc<ConnectionBuilder<DquicConnection>> {

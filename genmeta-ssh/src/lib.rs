@@ -447,16 +447,14 @@ pub async fn run(options: Options) -> Result<(), Error> {
 /// Run a dynamic SOCKS5 forward: bind a local TCP listener and, for each
 /// accepted connection, open a "socks5" channel to the server. The server
 /// handles SOCKS5 negotiation and connects to the final destination.
-async fn run_dynamic_forward<M, R, W>(
+async fn run_dynamic_forward<S>(
     spec: DynamicForward,
-    conversation: Arc<ssh3::conversation::Conversation<M, R, W>>,
+    conversation: Arc<ssh3::conversation::Conversation<S>>,
 ) -> Result<std::convert::Infallible, ForwardError>
 where
-    M: ssh3::conversation::ManageSessionStream + 'static,
-    M::StreamReader: 'static,
-    M::StreamWriter: 'static,
-    R: tokio::io::AsyncRead + Unpin + Send + 'static,
-    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+    S: h3x::webtransport::Session + 'static,
+    S::StreamReader: 'static,
+    S::StreamWriter: 'static,
 {
     let bind_addr = match spec.host.as_str() {
         "" | "*" => "0.0.0.0",
