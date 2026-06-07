@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use dhttp::{dquic, endpoint::Endpoint};
 use dssh as ssh3;
-use h3x::connection::{Connection, ConnectionBuilder};
+use h3x::{
+    connection::{Connection, ConnectionBuilder},
+    dhttp::{settings::Settings, webtransport::settings::WebTransportSupport},
+};
 use snafu::prelude::*;
 
 use crate::config::Config;
@@ -24,6 +27,8 @@ pub enum Error {
     Connect {
         source: dhttp::endpoint::ConnectError,
     },
+    #[snafu(display("failed to wait for peer HTTP/3 settings before dssh webtransport connect"))]
+    PeerSettings { source: h3x::quic::ConnectionError },
     #[snafu(display("failed to open dssh webtransport conversation"))]
     OpenConversation {
         source: ssh3::webtransport::ClientConnectConversationError,
@@ -38,9 +43,13 @@ pub struct ConnectResult {
     pub conversation: ssh3::conversation::Conversation,
 }
 
+fn connection_settings() -> Arc<Settings> {
+    Arc::new(Settings::default().with_all(WebTransportSupport::default()))
+}
+
 fn connection_builder() -> Arc<ConnectionBuilder<DquicConnection>> {
     Arc::new(
-        ConnectionBuilder::new(Arc::default())
+        ConnectionBuilder::new(connection_settings())
             .protocol(h3x::webtransport::WebTransportProtocolFactory),
     )
 }
@@ -85,6 +94,11 @@ pub async fn connect(config: &Config) -> Result<ConnectResult, Error> {
         .await
         .context(connect_error::ConnectSnafu)?;
 
+    connection
+        .peer_settings()
+        .await
+        .context(connect_error::PeerSettingsSnafu)?;
+
     let conversation = ssh3::webtransport::open_client_conversation(
         &connection,
         server,
@@ -125,6 +139,15 @@ mod tests {
             !display.contains("Ssh3"),
             "dssh client connections must not register the legacy SSH3 stream protocol"
         );
+    }
+
+    #[test]
+    fn connection_settings_advertise_webtransport_support() {
+        let settings = connection_settings();
+
+        assert!(settings.enable_connect_protocol());
+        assert!(settings.enable_webtransport());
+        assert!(settings.webtransport_flow_control_enabled());
     }
 
     #[test]
