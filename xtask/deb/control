@@ -1,7 +1,7 @@
 Source: gmutils
 Section: utilities
 Priority: optional
-Maintainer: Genmeta Tech Limited <support@genmeta.net>
+Maintainer: Genmeta Tech Limited <developer@genmeta.net>
 Build-Depends: debhelper-compat (= 13)
 
 Package: gmutils

@@ -50,7 +50,7 @@ const IMAGE_TAG_PREFIX: &str = "gmutils-rpm-v1";
 /// so spec generation stays a single source of truth owned by xtask.
 const RPM_SUMMARY: &str = "Genmeta binary utilities";
 const RPM_LICENSE: &str = "Proprietary";
-const RPM_URL: &str = "https://genmeta.net";
+const RPM_URL: &str = "https://www.dhttp.net";
 const RPM_VENDOR: &str = "Genmeta Tech Limited";
 const RPM_DESCRIPTION: &str =
     "Genmeta command-line tools for DHTTP/3, SSH3, DNS, and identity management.";
@@ -472,7 +472,7 @@ install -D -m 0755 %{{SOURCE1}} %{{buildroot}}/usr/bin/genmeta-ssh.sh
 /usr/bin/genmeta-ssh.sh
 
 %changelog
-* %(date '+%a %b %d %Y') {RPM_VENDOR} <support@genmeta.net> - {version}-1
+* %(date '+%a %b %d %Y') {RPM_VENDOR} <developer@genmeta.net> - {version}-1
 - release {version}
 "#
     )

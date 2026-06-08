@@ -194,7 +194,7 @@ async fn handle_request(
         }
         route::Route::GenmetaConnect { .. } => Ok(hyper::Response::builder()
             .status(502)
-            .body(full_body("HTTPS proxy to .genmeta.net not supported"))
+            .body(full_body("HTTPS proxy to .dhttp.net not supported"))
             .expect("valid static response")),
         route::Route::TunnelConnect { authority } => {
             match tunnel::tunnel_connect(req, authority.as_str()).await {

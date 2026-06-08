@@ -56,7 +56,7 @@ async fn close_write_stream(mut write_stream: MessageWriter) {
     }
 }
 
-/// Forward a plain HTTP request to a genmeta domain via DHTTP/3.
+/// Forward a plain HTTP request to a DHTTP identity domain via DHTTP/3.
 pub async fn forward_h3(
     req: Request<Incoming>,
     client: &Endpoint,

@@ -12,7 +12,7 @@ use crate::package::manifest::{ArtifactKind, PackageArtifact, PackageManifest};
 const PACKAGE_NAME: &str = "gmutils";
 const FORMULA_NAME: &str = "gmutils.rb";
 const DESCRIPTION: &str = "Genmeta Binary Utilities";
-const HOMEPAGE: &str = "www.genmeta.net";
+const HOMEPAGE: &str = "https://www.dhttp.net";
 const LICENSE: &str = "Shareware";
 const INSTALL_CONTENT: &str = r##"  def install
     bin.install "genmeta"

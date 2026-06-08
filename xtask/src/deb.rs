@@ -434,7 +434,7 @@ export DEB_HOST_MULTIARCH={gnu}
 SRC=/workspace/target/{triple}/{profile_dir}/deb/src
 mkdir -p "$SRC/debian"
 cp -r /workspace/{DEBIAN_PKG_DIR}/. "$SRC/debian/"
-printf '{PACKAGE_NAME} ({version}-1) unstable; urgency=low\n\n  * release {version}\n\n -- Genmeta Tech Limited <support@genmeta.net>  %s\n' \
+printf '{PACKAGE_NAME} ({version}-1) unstable; urgency=low\n\n  * release {version}\n\n -- Genmeta Tech Limited <developer@genmeta.net>  %s\n' \
     "$(date -R)" > "$SRC/debian/changelog"
 cd "$SRC"
 dpkg-buildpackage -B -uc -us -d -a{arch}

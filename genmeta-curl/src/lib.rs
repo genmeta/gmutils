@@ -924,6 +924,6 @@ mod tests {
 
         let normalized = normalize_cli_uri(uri, None).unwrap();
 
-        assert_eq!(normalized.to_string(), "https://reimu.pilot.genmeta.net/");
+        assert_eq!(normalized.to_string(), "https://reimu.pilot.dhttp.net/");
     }
 }

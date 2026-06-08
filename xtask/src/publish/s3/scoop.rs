@@ -13,7 +13,7 @@ use crate::package::manifest::{ArtifactKind, PackageArtifact, PackageManifest};
 const MANIFEST_NAME: &str = "gmutils.json";
 const CARGO_NAME: &str = "genmeta";
 const DESCRIPTION: &str = "Genmeta Binary Utilities";
-const HOMEPAGE: &str = "www.genmeta.net";
+const HOMEPAGE: &str = "https://www.dhttp.net";
 const LICENSE: &str = "Shareware";
 
 #[derive(Debug, Serialize)]
