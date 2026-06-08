@@ -28,7 +28,7 @@ use tracing_subscriber::{
 };
 
 use crate::{
-    DEFAULT_CERT_SERVER_BASE_URL, REGISTERABLE_SUFFIXES,
+    CERT_SERVER_URL_ENV, DEFAULT_CERT_SERVER_BASE_URL, REGISTERABLE_SUFFIXES,
     cert_server::{
         self, CertServer, LoginResponse, RegisterResponse, RenewResponse, ResignResponse,
     },
@@ -735,13 +735,39 @@ fn init_tracing() {
         .init();
 }
 
+fn cert_server_base_url(override_url: Option<String>) -> Cow<'static, str> {
+    match override_url {
+        Some(url) => Cow::Owned(url),
+        None => Cow::Borrowed(DEFAULT_CERT_SERVER_BASE_URL),
+    }
+}
+
 pub async fn run(options: Options) -> Result<(), Error> {
     init_tracing();
 
     let dhttp_home = DhttpHome::load_from_environment()?;
 
     _ = rustls::crypto::ring::default_provider().install_default();
-    let cert_server = CertServer::new(DEFAULT_CERT_SERVER_BASE_URL)?;
+    let cert_server_url = cert_server_base_url(std::env::var(CERT_SERVER_URL_ENV).ok());
+    let cert_server = CertServer::new(cert_server_url.as_ref())?;
 
     options.run(&dhttp_home, &cert_server).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cert_server_base_url;
+    use crate::DEFAULT_CERT_SERVER_BASE_URL;
+
+    #[test]
+    fn cert_server_base_url_uses_default_when_env_is_absent() {
+        let url = cert_server_base_url(None);
+        assert_eq!(url.as_ref(), DEFAULT_CERT_SERVER_BASE_URL);
+    }
+
+    #[test]
+    fn cert_server_base_url_uses_environment_override() {
+        let url = cert_server_base_url(Some("https://keine.gensokyo".into()));
+        assert_eq!(url.as_ref(), "https://keine.gensokyo");
+    }
 }

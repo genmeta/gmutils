@@ -10,6 +10,7 @@ pub mod cert_server;
 pub const REGISTERABLE_SUFFIXES: &[&str] = &["pilot", "lab"];
 
 pub const DEFAULT_CERT_SERVER_BASE_URL: &str = "https://license.genmeta.net";
+pub const CERT_SERVER_URL_ENV: &str = "CERT_SERVER_URL";
 
 #[cfg(test)]
 mod tests {
