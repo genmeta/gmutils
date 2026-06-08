@@ -1,3 +1,6 @@
+[env]
+DHTTP_ROOT_CA = { value = "keychain/root.crt", relative = true }
+
 [alias]
 xtask = "run --package xtask --"
 

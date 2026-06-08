@@ -2203,6 +2203,7 @@ dependencies = [
  "base64",
  "bytes",
  "clap",
+ "dhttp",
  "dhttp-home",
  "dhttp-identity",
  "futures",

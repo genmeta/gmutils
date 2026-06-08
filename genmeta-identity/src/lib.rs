@@ -14,12 +14,15 @@ pub const CERT_SERVER_URL_ENV: &str = "CERT_SERVER_URL";
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn build_script_uses_dhttp_root_ca_env_only() {
-        let build_script = include_str!("../build.rs");
+    use super::cert_server::CertServer;
 
-        assert!(build_script.contains("DHTTP_ROOT_CA"));
-        assert!(!build_script.contains("std::env::var(\"ROOT_CA\")"));
-        assert!(!build_script.contains("rerun-if-env-changed=ROOT_CA"));
+    #[test]
+    fn cert_server_client_builds_with_dhttp_root_ca() {
+        reqwest::Certificate::from_pem(dhttp::trust::DHTTP_ROOT_CA)
+            .expect("DHTTP root CA should be valid PEM");
+
+        _ = rustls::crypto::ring::default_provider().install_default();
+        CertServer::new("https://license.genmeta.net")
+            .expect("cert server client should build with DHTTP root CA");
     }
 }
