@@ -5,7 +5,10 @@ pub mod cli;
 #[cfg(feature = "cli")]
 pub use cli::{Error, Options, run};
 
+#[cfg(feature = "cli")]
+pub mod auth;
 pub mod cert_server;
+pub mod local_identity;
 
 pub const REGISTERABLE_SUFFIXES: &[&str] = &["pilot", "lab"];
 pub const DEFAULT_DEVICE_NAME: &str = "local device";
