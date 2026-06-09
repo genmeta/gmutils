@@ -1,7 +1,7 @@
 pub mod prompt;
 pub mod validator;
 
-use std::{borrow::Cow, io::IsTerminal, ops::Deref};
+use std::{io::IsTerminal, ops::Deref};
 
 use clap::Parser;
 use dhttp_home::{
@@ -28,7 +28,7 @@ use tracing_subscriber::{
 };
 
 use crate::{
-    CERT_SERVER_URL_ENV, DEFAULT_CERT_SERVER_BASE_URL,
+    CERT_SERVER_BASE_URL,
     cert_server::{self, CertServer},
     cli::prompt::{
         InquireResultExt, prompt_confirm_set_as_default_name, prompt_select_default_identity,
@@ -995,11 +995,8 @@ fn init_tracing() {
         .init();
 }
 
-fn cert_server_base_url(override_url: Option<String>) -> Cow<'static, str> {
-    match override_url {
-        Some(url) => Cow::Owned(url),
-        None => Cow::Borrowed(DEFAULT_CERT_SERVER_BASE_URL),
-    }
+fn cert_server_base_url() -> &'static str {
+    CERT_SERVER_BASE_URL
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
@@ -1008,8 +1005,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let dhttp_home = DhttpHome::load_from_environment()?;
 
     _ = rustls::crypto::ring::default_provider().install_default();
-    let cert_server_url = cert_server_base_url(std::env::var(CERT_SERVER_URL_ENV).ok());
-    let cert_server = CertServer::new(cert_server_url.as_ref())?;
+    let cert_server = CertServer::new(cert_server_base_url())?;
 
     options.run(&dhttp_home, &cert_server).await
 }
@@ -1017,17 +1013,11 @@ pub async fn run(options: Options) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::cert_server_base_url;
-    use crate::DEFAULT_CERT_SERVER_BASE_URL;
+    use crate::CERT_SERVER_BASE_URL;
 
     #[test]
-    fn cert_server_base_url_uses_default_when_env_is_absent() {
-        let url = cert_server_base_url(None);
-        assert_eq!(url.as_ref(), DEFAULT_CERT_SERVER_BASE_URL);
-    }
-
-    #[test]
-    fn cert_server_base_url_uses_environment_override() {
-        let url = cert_server_base_url(Some("https://keine.gensokyo".into()));
-        assert_eq!(url.as_ref(), "https://keine.gensokyo");
+    fn cert_server_base_url_uses_compile_time_bootstrap_url() {
+        let url = cert_server_base_url();
+        assert_eq!(url, CERT_SERVER_BASE_URL);
     }
 }
