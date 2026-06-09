@@ -14,7 +14,7 @@ use dhttp_home::{
         },
     },
 };
-use dhttp_identity::name::DhttpName as Name;
+use dhttp_identity::{certificate::CertificateChainKind, name::DhttpName as Name};
 use futures::TryStreamExt;
 use indicatif::ProgressStyle;
 use rankey::EncodePem;
@@ -93,6 +93,96 @@ impl snafu::FromString for Error {
 
     fn with_source(source: Self::Source, message: String) -> Self {
         Whatever::with_source(source, message).into()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ChainSelector {
+    kind: String,
+    sequence: i32,
+}
+
+impl ChainSelector {
+    fn new(kind: String, sequence: i32) -> Result<Self, Error> {
+        validator::validate_kind(&kind)
+            .whatever_context::<_, Error>("certificate kind is invalid")?;
+        if sequence < 0 {
+            whatever!("certificate sequence must be >= 0");
+        }
+        Ok(Self { kind, sequence })
+    }
+
+    fn from_dhttp_ski(
+        ski: dhttp_identity::certificate::DhttpSubjectKeyIdentifier,
+    ) -> Result<Self, Error> {
+        let kind = match ski.chain().kind() {
+            CertificateChainKind::Primary => "primary",
+            CertificateChainKind::Secondary => "secondary",
+        }
+        .to_string();
+        let sequence = i32::try_from(ski.chain().sequence().get())
+            .whatever_context::<_, Error>("certificate sequence does not fit CLI sequence range")?;
+        Self::new(kind, sequence)
+    }
+}
+
+fn selector_from_identity(
+    identity: &dhttp_identity::identity::Identity,
+) -> Result<Option<ChainSelector>, Error> {
+    match identity.dhttp_subject_key_identifier() {
+        Ok(ski) => ChainSelector::from_dhttp_ski(ski).map(Some),
+        Err(_) => Ok(None),
+    }
+}
+
+async fn prompt_chain_selector() -> Result<ChainSelector, Error> {
+    let kind = prompt::prompt_kind()
+        .await
+        .require_interactive("--kind and --sequence")?;
+    let sequence = prompt::prompt_sequence()
+        .await
+        .require_interactive("--kind and --sequence")?;
+    ChainSelector::new(kind, sequence)
+}
+
+async fn resolve_chain_selector(
+    explicit_kind: Option<&str>,
+    explicit_sequence: Option<i32>,
+    local_identity: Option<&dhttp_identity::identity::Identity>,
+    allow_mismatch: bool,
+) -> Result<ChainSelector, Error> {
+    let local_selector = match local_identity {
+        Some(identity) => selector_from_identity(identity)?,
+        None => None,
+    };
+
+    match (explicit_kind, explicit_sequence) {
+        (Some(_), None) => whatever!("--kind and --sequence must be specified together"),
+        (None, Some(_)) => whatever!("--kind and --sequence must be specified together"),
+        (None, None) => match local_selector {
+            Some(selector) => Ok(selector),
+            None => prompt_chain_selector().await,
+        },
+        (Some(kind), Some(sequence)) => {
+            let requested = ChainSelector::new(kind.to_string(), sequence)?;
+            if let Some(local) = local_selector
+                && local != requested
+                && !allow_mismatch
+            {
+                let confirmed = prompt::prompt_confirm_chain_selector_mismatch(
+                    &requested.kind,
+                    requested.sequence,
+                    &local.kind,
+                    local.sequence,
+                )
+                .await
+                .require_interactive("--allow-chain-selector-mismatch")?;
+                if !confirmed {
+                    whatever!("certificate chain selector mismatch was not confirmed");
+                }
+            }
+            Ok(requested)
+        }
     }
 }
 
@@ -584,6 +674,8 @@ pub struct Apply {
     pub kind: Option<String>,
     #[arg(long)]
     pub sequence: Option<i32>,
+    #[arg(long)]
+    pub allow_chain_selector_mismatch: bool,
     #[arg(short, long)]
     pub email: Option<String>,
     #[arg(long)]
@@ -601,15 +693,17 @@ impl Apply {
                 .require_interactive("--domain")?
                 .whatever_context::<_, Error>("no identity selected")?,
         };
-        let kind = self.kind.clone().unwrap_or_else(|| "primary".to_string());
-        validator::validate_kind(&kind)
-            .whatever_context::<_, Error>("certificate kind is invalid")?;
-        let sequence = match self.sequence {
-            Some(sequence) => sequence,
-            None => prompt::prompt_sequence()
-                .await
-                .require_interactive("--sequence")?,
-        };
+        let identity_profile = dhttp_home.resolve_identity_profile(domain.borrow()).await?;
+        let local_identity = identity_profile.load_identity().await.ok();
+        let selector = resolve_chain_selector(
+            self.kind.as_deref(),
+            self.sequence,
+            local_identity.as_ref(),
+            self.allow_chain_selector_mismatch,
+        )
+        .await?;
+        let kind = selector.kind;
+        let sequence = selector.sequence;
 
         let identity_attempt = if matches!(self.auth, crate::auth::AuthPolicy::Email) {
             None
@@ -676,8 +770,7 @@ impl Apply {
             }
         };
 
-        let identity = dhttp_home.resolve_identity_profile(domain.borrow()).await?;
-        let key = identity.load_key().await?;
+        let key = identity_profile.load_key().await?;
         let matched = crate::local_identity::private_key_matches_certificate(
             key.secret_der(),
             detail.cert_pem.as_bytes(),
@@ -687,7 +780,7 @@ impl Apply {
                 "local private key does not match downloaded certificate; use renew or create a new chain"
             );
         }
-        let cert_path = identity
+        let cert_path = identity_profile
             .ssl_dir()
             .join(dhttp_home::identity::ssl::CERT_FILE_NAME);
         tokio::fs::write(&cert_path, detail.cert_pem.as_bytes())
@@ -707,10 +800,12 @@ impl Apply {
 pub struct Renew {
     #[arg(long)]
     pub domain: Option<Name<'static>>,
-    #[arg(long, default_value = "primary")]
-    pub kind: String,
+    #[arg(long)]
+    pub kind: Option<String>,
     #[arg(long)]
     pub sequence: Option<i32>,
+    #[arg(long)]
+    pub allow_chain_selector_mismatch: bool,
     #[arg(long)]
     pub device_name: Option<String>,
     #[arg(short, long)]
@@ -730,14 +825,17 @@ impl Renew {
                 .require_interactive("--domain")?
                 .whatever_context::<_, Error>("no identity selected")?,
         };
-        validator::validate_kind(&self.kind)
-            .whatever_context::<_, Error>("certificate kind is invalid")?;
-        let sequence = match self.sequence {
-            Some(sequence) => sequence,
-            None => prompt::prompt_sequence()
-                .await
-                .require_interactive("--sequence")?,
-        };
+        let identity_profile = dhttp_home.resolve_identity_profile(domain.borrow()).await?;
+        let local_identity = identity_profile.load_identity().await.ok();
+        let selector = resolve_chain_selector(
+            self.kind.as_deref(),
+            self.sequence,
+            local_identity.as_ref(),
+            self.allow_chain_selector_mismatch,
+        )
+        .await?;
+        let kind = selector.kind;
+        let sequence = selector.sequence;
         let device_name = self.device_name.clone().unwrap_or_else(default_device_name);
         let (key_pem, csr_pem) = generate_private_key_and_csr(&domain)?;
         let identity_attempt = if matches!(self.auth, crate::auth::AuthPolicy::Email) {
@@ -748,7 +846,7 @@ impl Renew {
                     .renew_cert_with_identity(
                         domain.as_full(),
                         domain.as_full(),
-                        &self.kind,
+                        &kind,
                         sequence,
                         Some(&device_name),
                         &csr_pem,
@@ -773,7 +871,7 @@ impl Renew {
                     .renew_cert(
                         &token,
                         domain.as_full(),
-                        &self.kind,
+                        &kind,
                         sequence,
                         Some(&device_name),
                         &csr_pem,
@@ -793,7 +891,7 @@ impl Renew {
                     .renew_cert(
                         &token,
                         domain.as_full(),
-                        &self.kind,
+                        &kind,
                         sequence,
                         Some(&device_name),
                         &csr_pem,
@@ -1012,12 +1110,106 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::cert_server_base_url;
+    use dhttp_identity::{identity::Identity, name::Name};
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+
+    use super::{ChainSelector, cert_server_base_url, resolve_chain_selector};
     use crate::CERT_SERVER_BASE_URL;
 
     #[test]
     fn cert_server_base_url_uses_compile_time_bootstrap_url() {
         let url = cert_server_base_url();
         assert_eq!(url, CERT_SERVER_BASE_URL);
+    }
+
+    fn local_identity_with_dhttp_ski() -> Identity {
+        Identity::new(
+            Name::try_from("client.example.com.dhttp.net").unwrap(),
+            vec![CertificateDer::from(
+                include_bytes!("../tests/fixtures/valid.der").to_vec(),
+            )],
+            PrivateKeyDer::Pkcs8(b"dummy".to_vec().into()),
+        )
+    }
+
+    #[tokio::test]
+    async fn chain_selector_rejects_partial_explicit_selector() {
+        assert!(
+            resolve_chain_selector(Some("primary"), None, None, false)
+                .await
+                .is_err()
+        );
+        assert!(
+            resolve_chain_selector(None, Some(0), None, false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn chain_selector_uses_explicit_pair() {
+        let selector = resolve_chain_selector(Some("secondary"), Some(3), None, false)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            selector,
+            ChainSelector {
+                kind: "secondary".to_string(),
+                sequence: 3,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn chain_selector_rejects_invalid_explicit_kind() {
+        assert!(
+            resolve_chain_selector(Some("device"), Some(3), None, false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn chain_selector_reads_dhttp_ski() {
+        let identity = local_identity_with_dhttp_ski();
+        let selector = resolve_chain_selector(None, None, Some(&identity), false)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            selector,
+            ChainSelector {
+                kind: "primary".to_string(),
+                sequence: 0,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn chain_selector_rejects_unconfirmed_mismatch() {
+        let identity = local_identity_with_dhttp_ski();
+
+        assert!(
+            resolve_chain_selector(Some("secondary"), Some(3), Some(&identity), false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn chain_selector_allows_explicit_mismatch_override() {
+        let identity = local_identity_with_dhttp_ski();
+        let selector = resolve_chain_selector(Some("secondary"), Some(3), Some(&identity), true)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            selector,
+            ChainSelector {
+                kind: "secondary".to_string(),
+                sequence: 3,
+            }
+        );
     }
 }

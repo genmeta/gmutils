@@ -117,6 +117,15 @@ pub(crate) async fn prompt_verify_code() -> Result<String, inquire::InquireError
     )
 }
 
+pub(crate) async fn prompt_kind() -> Result<String, inquire::InquireError> {
+    sync!(
+        inquire::Text::new("Enter certificate chain kind (primary or secondary):")
+            .with_validator(inquire::required!("Kind cannot be empty."))
+            .with_validator(validator::KindValidator)
+            .prompt()
+    )
+}
+
 pub(crate) async fn prompt_sequence() -> Result<i32, inquire::InquireError> {
     sync!(
         inquire::Text::new("Enter certificate chain sequence:")
@@ -135,6 +144,18 @@ pub(crate) async fn prompt_confirm_set_as_default_name(
 ) -> Result<bool, inquire::InquireError> {
     let message = format!("Set {name} as the default identity?");
     sync!(inquire::Confirm::new(&message).with_default(true).prompt())
+}
+
+pub(crate) async fn prompt_confirm_chain_selector_mismatch(
+    requested_kind: &str,
+    requested_sequence: i32,
+    local_kind: &str,
+    local_sequence: i32,
+) -> Result<bool, inquire::InquireError> {
+    let message = format!(
+        "Requested certificate chain {requested_kind}/{requested_sequence} differs from local certificate SKI {local_kind}/{local_sequence}. Continue?"
+    );
+    sync!(inquire::Confirm::new(&message).with_default(false).prompt())
 }
 
 pub(crate) async fn prompt_select_default_identity(

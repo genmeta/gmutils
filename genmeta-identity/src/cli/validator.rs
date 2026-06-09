@@ -32,6 +32,18 @@ pub fn validate_kind(value: &str) -> Result<(), String> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct KindValidator;
+
+impl StringValidator for KindValidator {
+    fn validate(&self, input: &str) -> Result<Validation, inquire::CustomUserError> {
+        Ok(match validate_kind(input) {
+            Ok(()) => Validation::Valid,
+            Err(message) => validation_failed(message),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct EmailValidator;
 
 impl StringValidator for EmailValidator {
