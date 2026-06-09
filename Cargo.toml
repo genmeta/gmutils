@@ -28,7 +28,7 @@ indicatif = "0.18"
 whoami = "2"
 
 # network
-h3x = { git = "https://github.com/genmeta/h3x.git", branch = "endpoint" }
+h3x = { git = "https://github.com/genmeta/h3x.git", branch = "endpoint", version = "0.2.0" }
 http = "1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
@@ -44,7 +44,7 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 
 # security
-rankey = { git = "https://github.com/genmeta/rankey.git", rev = "70d1b5d8ce2ec2c0244356a02d19e038482956b3" }
+rankey = { git = "https://github.com/genmeta/rankey.git", branch = "master", version = "0.2.1" }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 x509-parser = "0.18"
 
@@ -83,11 +83,11 @@ async-compression = { version = "0.4", features = [
 ] }
 
 # workspace
-dhttp-access = { git = "https://github.com/genmeta/dhttp.git", branch = "main" }
+dhttp-access = { git = "https://github.com/genmeta/dhttp.git", branch = "main", version = "0.1.0" }
 genmeta-access = { path = "genmeta-access" }
-dhttp = { git = "https://github.com/genmeta/dhttp.git", branch = "main" }
-dhttp-home = { git = "https://github.com/genmeta/dhttp.git", branch = "main" }
-dhttp-identity = { git = "https://github.com/genmeta/dhttp.git", branch = "main" }
+dhttp = { git = "https://github.com/genmeta/dhttp.git", branch = "main", version = "0.1.0" }
+dhttp-home = { git = "https://github.com/genmeta/dhttp.git", branch = "main", version = "0.1.0" }
+dhttp-identity = { git = "https://github.com/genmeta/dhttp.git", branch = "main", version = "0.1.0" }
 genmeta-curl = { path = "genmeta-curl" }
 genmeta-discover = { path = "genmeta-discover" }
 genmeta-doctor = { path = "genmeta-doctor" }
@@ -98,7 +98,7 @@ genmeta-ssh = { path = "genmeta-ssh" }
 genmeta-proxy = { path = "genmeta-proxy" }
 
 # ssh
-dssh = { git = "https://github.com/genmeta/dssh.git", branch = "endpoint", features = [
+dssh = { git = "https://github.com/genmeta/dssh.git", branch = "endpoint", version = "0.2.0", features = [
     "config",
 ] }
 
@@ -108,25 +108,3 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
-
-
-# Local patches are root-only and keep this workspace buildable while provider
-# branch heads for the dependency rename/consolidation commits are not yet
-# published remotely.
-[patch."https://github.com/genmeta/dhttp.git"]
-dhttp = { path = "../dhttp/dhttp" }
-dhttp-home = { path = "../dhttp/home" }
-dhttp-identity = { path = "../dhttp/identity" }
-dhttp-access = { path = "../dhttp/access" }
-
-[patch."https://github.com/genmeta/ddns.git"]
-ddns = { path = "../ddns" }
-
-[patch."https://github.com/genmeta/h3x.git"]
-h3x = { path = "../h3x" }
-
-[patch."https://github.com/genmeta/dssh.git"]
-dssh = { path = "../dssh" }
-
-[patch."https://github.com/genmeta/dquic.git"]
-dquic = { path = "../dquic/dquic" }

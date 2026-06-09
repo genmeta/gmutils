@@ -277,7 +277,7 @@ dependencies = [
  "bytes-utils",
  "fastrand",
  "http 0.2.12",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body 0.4.6",
  "http-body 1.0.1",
  "percent-encoding",
@@ -310,7 +310,7 @@ dependencies = [
  "hex",
  "hmac 0.12.1",
  "http 0.2.12",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body 0.4.6",
  "lru",
  "percent-encoding",
@@ -337,7 +337,7 @@ dependencies = [
  "hex",
  "hmac 0.12.1",
  "http 0.2.12",
- "http 1.4.1",
+ "http 1.4.2",
  "p256",
  "percent-encoding",
  "ring",
@@ -404,7 +404,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "http 0.2.12",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body 0.4.6",
  "percent-encoding",
  "pin-project-lite",
@@ -424,7 +424,7 @@ dependencies = [
  "bytes-utils",
  "futures-core",
  "futures-util",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body 1.0.1",
  "http-body-util",
  "percent-encoding",
@@ -435,9 +435,9 @@ dependencies = [
 
 [[package]]
 name = "aws-smithy-http-client"
-version = "1.1.12"
+version = "1.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a2f165a7feee6f263028b899d0a181987f4fa7179a6411a32a439fba7c5f769"
+checksum = "5c3ef8931ad1c98aa6a55b4256f847f3116090819844e0dd41ea682cac5dd2d3"
 dependencies = [
  "aws-smithy-async",
  "aws-smithy-runtime-api",
@@ -489,7 +489,7 @@ dependencies = [
  "bytes",
  "fastrand",
  "http 0.2.12",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body 0.4.6",
  "http-body 1.0.1",
  "http-body-util",
@@ -501,16 +501,16 @@ dependencies = [
 
 [[package]]
 name = "aws-smithy-runtime-api"
-version = "1.12.1"
+version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc117c179ecf39a62a0a3f49f600e9ac26a7ad7dd172177999f83933af776c32"
+checksum = "9db177daa6ba8afb9ee1aefcf548c907abcf52065e394ee11a92780057fe0e8c"
 dependencies = [
  "aws-smithy-async",
  "aws-smithy-runtime-api-macros",
  "aws-smithy-types",
  "bytes",
  "http 0.2.12",
- "http 1.4.1",
+ "http 1.4.2",
  "pin-project-lite",
  "tokio",
  "tracing",
@@ -536,21 +536,21 @@ checksum = "7442cb268338f0eb8278140a107c046756aa01093d8ef5e99628d34ae09c94f5"
 dependencies = [
  "aws-smithy-runtime-api",
  "aws-smithy-types",
- "http 1.4.1",
+ "http 1.4.2",
 ]
 
 [[package]]
 name = "aws-smithy-types"
-version = "1.4.8"
+version = "1.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "056b66dbce2f81cc0c1e2b05bb402eb58f8a3530479d650efadd5bbae9a4050b"
+checksum = "53f93074121a1be41317b9aa607143ae17900631f7f59a99f2b905d519d6783b"
 dependencies = [
  "base64-simd",
  "bytes",
  "bytes-utils",
  "futures-core",
  "http 0.2.12",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body 0.4.6",
  "http-body 1.0.1",
  "http-body-util",
@@ -660,9 +660,9 @@ dependencies = [
 
 [[package]]
 name = "bitflags"
-version = "2.11.1"
+version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
+checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 dependencies = [
  "serde_core",
 ]
@@ -718,7 +718,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "hex",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body-util",
  "hyper 1.10.1",
  "hyper-named-pipe",
@@ -940,9 +940,9 @@ dependencies = [
 
 [[package]]
 name = "chrono"
-version = "0.4.44"
+version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
+checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
  "js-sys",
@@ -1383,6 +1383,7 @@ checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 [[package]]
 name = "ddns"
 version = "0.2.0"
+source = "git+https://github.com/genmeta/ddns.git?branch=endpoint#ddb22b4dec8e696b37de5a3a7ab82cb8d4c02a09"
 dependencies = [
  "base64",
  "bitfield-struct",
@@ -1393,7 +1394,7 @@ dependencies = [
  "flume 0.12.0",
  "futures",
  "h3x",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body 1.0.1",
  "http-body-util",
  "libc",
@@ -1538,6 +1539,7 @@ dependencies = [
 [[package]]
 name = "dhttp"
 version = "0.1.0"
+source = "git+https://github.com/genmeta/dhttp.git?branch=main#a7486b8c30df5c096b3327046a9cb08a350ae987"
 dependencies = [
  "bon",
  "bytes",
@@ -1546,7 +1548,7 @@ dependencies = [
  "dhttp-identity",
  "futures",
  "h3x",
- "http 1.4.1",
+ "http 1.4.2",
  "matchit",
  "rustls 0.23.40",
  "snafu 0.9.1",
@@ -1558,6 +1560,7 @@ dependencies = [
 [[package]]
 name = "dhttp-access"
 version = "0.1.0"
+source = "git+https://github.com/genmeta/dhttp.git?branch=main#a7486b8c30df5c096b3327046a9cb08a350ae987"
 dependencies = [
  "chrono",
  "clap",
@@ -1579,6 +1582,7 @@ dependencies = [
 [[package]]
 name = "dhttp-home"
 version = "0.1.0"
+source = "git+https://github.com/genmeta/dhttp.git?branch=main#a7486b8c30df5c096b3327046a9cb08a350ae987"
 dependencies = [
  "dhttp-identity",
  "dirs",
@@ -1594,10 +1598,11 @@ dependencies = [
 [[package]]
 name = "dhttp-identity"
 version = "0.1.0"
+source = "git+https://github.com/genmeta/dhttp.git?branch=main#a7486b8c30df5c096b3327046a9cb08a350ae987"
 dependencies = [
  "bytes",
  "futures",
- "http 1.4.1",
+ "http 1.4.2",
  "ring",
  "rustls 0.23.40",
  "serde",
@@ -1702,6 +1707,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 [[package]]
 name = "dquic"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#c0327c84e7cda8d3c8395f7b01f2d5bec20fdff7"
 dependencies = [
  "arc-swap",
  "dashmap",
@@ -1718,12 +1724,13 @@ dependencies = [
 [[package]]
 name = "dssh"
 version = "0.2.0"
+source = "git+https://github.com/genmeta/dssh.git?branch=endpoint#d5a193abeb41f1f8995cff50555a2a0b54e0b5ef"
 dependencies = [
  "base64",
  "bytes",
  "futures",
  "h3x",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body 1.0.1",
  "http-body-util",
  "peg",
@@ -2162,7 +2169,7 @@ dependencies = [
  "bytes",
  "clap",
  "dhttp",
- "http 1.4.1",
+ "http 1.4.2",
  "snafu 0.9.1",
  "tokio",
  "tracing",
@@ -2258,7 +2265,7 @@ dependencies = [
  "clap",
  "daemonize",
  "dhttp",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body-util",
  "hyper 1.10.1",
  "hyper-util",
@@ -2281,7 +2288,7 @@ dependencies = [
  "dssh",
  "futures",
  "h3x",
- "http 1.4.1",
+ "http 1.4.2",
  "snafu 0.9.1",
  "tokio",
  "tracing",
@@ -2401,7 +2408,7 @@ dependencies = [
  "fnv",
  "futures-core",
  "futures-sink",
- "http 1.4.1",
+ "http 1.4.2",
  "indexmap 2.14.0",
  "slab",
  "tokio",
@@ -2412,6 +2419,7 @@ dependencies = [
 [[package]]
 name = "h3x"
 version = "0.2.0"
+source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#9b80db6f7496cc24bef699c2bd95f512fd406b9c"
 dependencies = [
  "arc-swap",
  "async-channel",
@@ -2424,7 +2432,7 @@ dependencies = [
  "futures",
  "globset",
  "httlib-huffman",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body 1.0.1",
  "http-body-util",
  "hyper 1.10.1",
@@ -2555,9 +2563,9 @@ dependencies = [
 
 [[package]]
 name = "http"
-version = "1.4.1"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8be7462df143984c4598a256ef469b251d7d7f9e271135073e78fc535414f3d0"
+checksum = "6970f50e31d6fc17d3fa27329444bfa74e196cf62e95052a3f6fee181dba6425"
 dependencies = [
  "bytes",
  "itoa",
@@ -2581,7 +2589,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1efedce1fb8e6913f23e0c92de8e62cd5b772a67e7b3946df930a62566c93184"
 dependencies = [
  "bytes",
- "http 1.4.1",
+ "http 1.4.2",
 ]
 
 [[package]]
@@ -2592,7 +2600,7 @@ checksum = "b021d93e26becf5dc7e1b75b1bed1fd93124b374ceb73f43d4d4eafec896a64a"
 dependencies = [
  "bytes",
  "futures-core",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body 1.0.1",
  "pin-project-lite",
 ]
@@ -2655,7 +2663,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "h2 0.4.14",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body 1.0.1",
  "httparse",
  "httpdate",
@@ -2702,7 +2710,7 @@ version = "0.27.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33ca68d021ef39cf6463ab54c1d0f5daf03377b70561305bb89a8f83aab66e0f"
 dependencies = [
- "http 1.4.1",
+ "http 1.4.2",
  "hyper 1.10.1",
  "hyper-util",
  "rustls 0.23.40",
@@ -2721,14 +2729,14 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-util",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body 1.0.1",
  "hyper 1.10.1",
  "ipnet",
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -3031,13 +3039,12 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.99"
+version = "0.3.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "142bc4740e452c1e57ade0cbc129f139c9093e354346f0872ef985f4f5cf5f11"
+checksum = "f2025f20d7a4fa7785846e7b63d10a76d3f1cee98ee5cb79ea59703f95e42162"
 dependencies = [
  "cfg-if",
  "futures-util",
- "once_cell",
  "wasm-bindgen",
 ]
 
@@ -3077,7 +3084,7 @@ dependencies = [
  "bitflags",
  "libc",
  "plain",
- "redox_syscall 0.8.0",
+ "redox_syscall 0.8.1",
 ]
 
 [[package]]
@@ -3120,9 +3127,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.30"
+version = "0.4.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
+checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "lru"
@@ -3923,6 +3930,7 @@ dependencies = [
 [[package]]
 name = "qbase"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#c0327c84e7cda8d3c8395f7b01f2d5bec20fdff7"
 dependencies = [
  "bitflags",
  "bytes",
@@ -3944,6 +3952,7 @@ dependencies = [
 [[package]]
 name = "qcongestion"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#c0327c84e7cda8d3c8395f7b01f2d5bec20fdff7"
 dependencies = [
  "qbase",
  "qevent",
@@ -3956,6 +3965,7 @@ dependencies = [
 [[package]]
 name = "qconnection"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#c0327c84e7cda8d3c8395f7b01f2d5bec20fdff7"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3982,6 +3992,7 @@ dependencies = [
 [[package]]
 name = "qdatagram"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#c0327c84e7cda8d3c8395f7b01f2d5bec20fdff7"
 dependencies = [
  "bytes",
  "qbase",
@@ -3992,6 +4003,7 @@ dependencies = [
 [[package]]
 name = "qevent"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#c0327c84e7cda8d3c8395f7b01f2d5bec20fdff7"
 dependencies = [
  "bytes",
  "derive_builder",
@@ -4009,12 +4021,13 @@ dependencies = [
 [[package]]
 name = "qinterface"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#c0327c84e7cda8d3c8395f7b01f2d5bec20fdff7"
 dependencies = [
  "bytes",
  "dashmap",
  "derive_more",
  "futures",
- "http 1.4.1",
+ "http 1.4.2",
  "netdev",
  "netwatcher",
  "parking_lot",
@@ -4031,6 +4044,7 @@ dependencies = [
 [[package]]
 name = "qmacro"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#c0327c84e7cda8d3c8395f7b01f2d5bec20fdff7"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -4041,6 +4055,7 @@ dependencies = [
 [[package]]
 name = "qrecovery"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#c0327c84e7cda8d3c8395f7b01f2d5bec20fdff7"
 dependencies = [
  "bytes",
  "derive_more",
@@ -4055,6 +4070,7 @@ dependencies = [
 [[package]]
 name = "qresolve"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#c0327c84e7cda8d3c8395f7b01f2d5bec20fdff7"
 dependencies = [
  "futures",
  "qbase",
@@ -4064,6 +4080,7 @@ dependencies = [
 [[package]]
 name = "qtraversal"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#c0327c84e7cda8d3c8395f7b01f2d5bec20fdff7"
 dependencies = [
  "bon",
  "bytes",
@@ -4086,6 +4103,7 @@ dependencies = [
 [[package]]
 name = "qudp"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#c0327c84e7cda8d3c8395f7b01f2d5bec20fdff7"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -4212,8 +4230,8 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rankey"
-version = "0.2.0"
-source = "git+https://github.com/genmeta/rankey.git?rev=70d1b5d8ce2ec2c0244356a02d19e038482956b3#70d1b5d8ce2ec2c0244356a02d19e038482956b3"
+version = "0.2.1"
+source = "git+https://github.com/genmeta/rankey.git?branch=master#7c87727676d13739c02c92b95a52190965feb484"
 dependencies = [
  "crypto-bigint 0.7.0-rc.28",
  "der 0.8.0",
@@ -4247,9 +4265,9 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c7591fa2c6b601dfcfe5f043f65a1c39fcdf50efefcd7f1572e538c1f4b398d"
+checksum = "5b44b894f2a6e36457d665d1e08c3866add6ed5e70050c1b4ba8a8ddedb02ce7"
 dependencies = [
  "bitflags",
 ]
@@ -4370,7 +4388,7 @@ dependencies = [
  "encoding_rs",
  "futures-core",
  "h2 0.4.14",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body 1.0.1",
  "http-body-util",
  "hyper 1.10.1",
@@ -5036,9 +5054,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.20.0"
+version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e72c1c2cb7b223fafb600a619537a871c2818583d619401b785e7c0b746ccde2"
+checksum = "76a5c54c7310e7b8b9577c286d7e399ddd876c3e12b3ed917a8aabc4b96e9e8c"
 dependencies = [
  "base64",
  "bs58",
@@ -5056,9 +5074,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.20.0"
+version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b90c488738ecb4fb0262f41f43bc40efc5868d9fb744319ddf5f5317f417bfac"
+checksum = "84d57bc0c8b9a17920c178daa6bb924850d54a9c97ab45194bb8c17ad66bb660"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -5247,7 +5265,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -5259,7 +5277,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f103c50866b8743da9429b8a581d81a27c2d3a9c4ac7df8f8571c1dd7896eda"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -5931,7 +5949,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-util",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body 1.0.1",
  "http-body-util",
  "pin-project-lite",
@@ -6274,9 +6292,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.122"
+version = "0.2.123"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ed04576f974d2b2fba0f38c51dbc5518011e38c36bf1143164be765528fd409"
+checksum = "a254a4b10c19a76f09a27640e7ffbf9bc30bf67e16a3bf28aaefa4920fe81563"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -6288,9 +6306,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.72"
+version = "0.4.73"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9473dbd2991ae90b6291c3c32c30c6187ac49aa32f9905d1cce280ec1e110b0f"
+checksum = "54568702fabf5d4849ce2b90fadfa64168a097eaf4b351ce9df8b687a0086aaf"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -6298,9 +6316,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.122"
+version = "0.2.123"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "916151b09da36bd82f6615cbf3a419e2f0ba23a03c6160e8e92eb6bd4aa1dec6"
+checksum = "24a40fc75b0ec6f3746ceb10d36f53a93dcd68a93b11b6445983945d79eba0dc"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -6308,9 +6326,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.122"
+version = "0.2.123"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "299047362ccbfce148b67ab7e73349f77748e00c8296f9542adfad2ad82c5c5e"
+checksum = "908f34bd9b9ce3d4caf07b72dfab63d61504d156856c6bd3cd87fa350cf3985b"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -6321,9 +6339,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.122"
+version = "0.2.123"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a929b2c61f11ba3e9bc35b50c1f25cb38e0e892c0c231ae2b8cf78d5dad4437"
+checksum = "7acbf7616c27b194bbb550bf77ed0c2c3e5b7fd1260a93082b95fb7f47959b92"
 dependencies = [
  "unicode-ident",
 ]
@@ -6364,9 +6382,9 @@ dependencies = [
 
 [[package]]
 name = "web-sys"
-version = "0.3.99"
+version = "0.3.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d621441cfc37b84979402712047321980c178f299193a3589d05b99e8763436"
+checksum = "6e0871acf327f283dc6da28a1696cdc64fb355ba9f935d052021fa77f35cce69"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -6454,7 +6472,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6932,9 +6950,9 @@ checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yoke"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abe8c5fda708d9ca3df187cae8bfb9ceda00dd96231bed36e445a1a48e66f9ca"
+checksum = "709fe23a0424b6a435d82152b1bd3fdfb0833487d5fa90d05d42762a9891fef5"
 dependencies = [
  "stable_deref_trait",
  "yoke-derive",
