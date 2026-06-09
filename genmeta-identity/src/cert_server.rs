@@ -10,6 +10,12 @@ pub enum Error {
         status: reqwest::StatusCode,
         message: String,
     },
+    #[snafu(display("cert server returned {status} {code}: {message}"))]
+    Api {
+        status: reqwest::StatusCode,
+        code: String,
+        message: String,
+    },
     #[snafu(display(
         "server returned error code `{code}`{}", 
         message.as_ref().map_or(String::new(), |m| format!(": {}", m))
@@ -35,6 +41,49 @@ impl snafu::FromString for Error {
 
     fn with_source(source: Self::Source, message: String) -> Self {
         Whatever::with_source(source, message).into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_v2_error_envelope() {
+        let payload =
+            br#"{"error":{"code":"domain_forbidden","message":"domain access is forbidden"}}"#;
+        let error = parse_error_body(reqwest::StatusCode::FORBIDDEN, payload).unwrap_err();
+        match error {
+            Error::Api {
+                status,
+                code,
+                message,
+            } => {
+                assert_eq!(status, reqwest::StatusCode::FORBIDDEN);
+                assert_eq!(code, "domain_forbidden");
+                assert_eq!(message, "domain access is forbidden");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_domain_response_accepts_payment_payload() {
+        let payload = r#"
+        {
+          "domain":"alice.smith.dhttp.net",
+          "quotes":{"currency":"USD","monthly":9900,"yearly":99000,"default_billing_cycle":"yearly"},
+          "reservation":{"reservation_no":"RSV123","status":"reserved","expires_at":1760001800},
+          "payment_entry":{"url":"https://dhttp.net/checkout/ckt_123","checkout_token":"ckt_123","expires_at":1760000300},
+          "next_action":"payment",
+          "auth":{"email":"alice@example.com","is_new_user":true,"access_token":"token","token_expires_at":1760090000}
+        }
+        "#;
+        let response: CreateDomainResponse = serde_json::from_str(payload).unwrap();
+        assert_eq!(response.domain, "alice.smith.dhttp.net");
+        assert_eq!(response.next_action, "payment");
+        assert_eq!(response.payment_entry.unwrap().checkout_token, "ckt_123");
+        assert_eq!(response.auth.unwrap().access_token, "token");
     }
 }
 
@@ -80,6 +129,27 @@ impl<T> Response<T> {
             }
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct ErrorResponse {
+    error: ErrorEnvelope,
+}
+
+#[derive(Debug, Deserialize)]
+struct ErrorEnvelope {
+    code: String,
+    message: String,
+}
+
+pub fn parse_error_body(status: reqwest::StatusCode, body: &[u8]) -> Result<(), Error> {
+    let parsed = serde_json::from_slice::<ErrorResponse>(body).context(JsonSnafu {})?;
+    ApiSnafu {
+        status,
+        code: parsed.error.code,
+        message: parsed.error.message,
+    }
+    .fail()
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,6 +221,133 @@ pub struct RenewResponse {
     pub cert_pem: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct EmailVerifyResponse {
+    pub email: String,
+    pub expires_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct V2LoginResponse {
+    pub email: String,
+    pub access_token: String,
+    pub token_expires_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DomainLoginResponse {
+    pub domain: String,
+    pub access_token: String,
+    pub token_expires_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateDomainResponse {
+    pub domain: String,
+    pub quotes: DomainQuotes,
+    pub reservation: Option<ReservationInfo>,
+    pub payment_entry: Option<PaymentEntryInfo>,
+    pub next_action: String,
+    pub selected_billing_cycle: Option<String>,
+    pub subscription: Option<SubscriptionInfo>,
+    pub invoice: Option<InvoiceInfo>,
+    pub auth: Option<CreateDomainAuthInfo>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DomainQuotes {
+    pub currency: String,
+    pub monthly: i64,
+    pub yearly: i64,
+    pub default_billing_cycle: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReservationInfo {
+    pub reservation_no: String,
+    pub status: String,
+    pub expires_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PaymentEntryInfo {
+    pub url: String,
+    pub checkout_token: String,
+    pub expires_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateDomainAuthInfo {
+    pub email: String,
+    pub is_new_user: bool,
+    pub access_token: String,
+    pub token_expires_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubscriptionInfo {
+    pub subscription_no: String,
+    pub status: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct InvoiceInfo {
+    pub number: String,
+    pub status: String,
+    pub amount: i64,
+    pub currency: String,
+    pub billing_cycle: Option<String>,
+    pub expires_at: Option<i64>,
+    pub paid_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CertificateDetail {
+    pub domain: String,
+    pub device_name: Option<String>,
+    pub sequence: i32,
+    pub kind: String,
+    pub serial_number: Option<String>,
+    pub ski: Option<String>,
+    pub ski_version: Option<String>,
+    pub status: String,
+    pub csr: String,
+    pub cert_pem: String,
+    pub issued_at: i64,
+    pub valid_not_after: i64,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CertificateListPage {
+    pub list: Vec<CertificateListItem>,
+    pub pagination: PageInfo,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PageInfo {
+    pub page: usize,
+    pub page_size: usize,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CertificateListItem {
+    pub domain: String,
+    pub device_name: Option<String>,
+    pub sequence: i32,
+    pub kind: String,
+    pub serial_number: Option<String>,
+    pub ski: Option<String>,
+    pub ski_version: Option<String>,
+    pub status: String,
+    pub issued_at: i64,
+    pub valid_not_after: i64,
+    pub revoked_at: Option<i64>,
+    pub created_at: i64,
+}
+
 async fn parse_response<T: DeserializeOwned>(response: reqwest::Response) -> Result<T, Error> {
     let response = match response.status() {
         status if status.is_success() => response,
@@ -163,6 +360,33 @@ async fn parse_response<T: DeserializeOwned>(response: reqwest::Response) -> Res
     tracing::debug!("response bytes: {:?}", response);
     let response = serde_json::from_slice::<Response<T>>(&response).context(JsonSnafu {})?;
     response.body()
+}
+
+async fn parse_v2_response<T: DeserializeOwned>(response: reqwest::Response) -> Result<T, Error> {
+    let status = response.status();
+    let body = response.bytes().await?;
+    if !status.is_success() {
+        return parse_error_body(status, &body).and_then(|()| unreachable!());
+    }
+    serde_json::from_slice::<T>(&body).context(JsonSnafu {})
+}
+
+async fn parse_create_domain_response(
+    response: reqwest::Response,
+) -> Result<CreateDomainResponse, Error> {
+    let status = response.status();
+    let body = response.bytes().await?;
+    if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+        let parsed = serde_json::from_slice::<CreateDomainResponse>(&body).context(JsonSnafu {})?;
+        if parsed.next_action == "payment" || parsed.payment_entry.is_some() {
+            return Ok(parsed);
+        }
+        return parse_error_body(status, &body).and_then(|()| unreachable!());
+    }
+    if !status.is_success() {
+        return parse_error_body(status, &body).and_then(|()| unreachable!());
+    }
+    serde_json::from_slice::<CreateDomainResponse>(&body).context(JsonSnafu {})
 }
 
 #[derive(Debug, Clone)]
@@ -198,6 +422,80 @@ impl CertServer {
             .send()
             .await?;
         parse_response::<()>(response).await
+    }
+
+    pub async fn send_email_verification(&self, email: &str) -> Result<EmailVerifyResponse, Error> {
+        let response = self
+            .http_client
+            .post(format!("{}/v2/email/verify", self.base_url))
+            .json(&json!({ "email": email }))
+            .send()
+            .await?;
+        parse_v2_response(response).await
+    }
+
+    pub async fn login_v2(&self, email: &str, verify_code: &str) -> Result<V2LoginResponse, Error> {
+        let response = self
+            .http_client
+            .post(format!("{}/v2/user/login", self.base_url))
+            .json(&json!({
+                "email": email,
+                "verify_code": verify_code,
+            }))
+            .send()
+            .await?;
+        parse_v2_response(response).await
+    }
+
+    pub async fn domain_login(
+        &self,
+        domain: &str,
+        email: &str,
+        verify_code: &str,
+    ) -> Result<DomainLoginResponse, Error> {
+        let response = self
+            .http_client
+            .post(format!("{}/v2/user/domain-login", self.base_url))
+            .json(&json!({
+                "domain": domain,
+                "email": email,
+                "verify_code": verify_code,
+            }))
+            .send()
+            .await?;
+        parse_v2_response(response).await
+    }
+
+    pub async fn create_domain_with_email(
+        &self,
+        domain: &str,
+        email: &str,
+        verify_code: &str,
+    ) -> Result<CreateDomainResponse, Error> {
+        let response = self
+            .http_client
+            .post(format!("{}/v2/domain", self.base_url))
+            .json(&json!({
+                "domain": domain,
+                "email": email,
+                "verify_code": verify_code,
+                "redirect_mode": "payment_required",
+                "terms_accepted": true,
+                "terms_version": "v1",
+            }))
+            .send()
+            .await?;
+        parse_create_domain_response(response).await
+    }
+
+    pub async fn get_checkout(&self, checkout_token: &str) -> Result<CreateDomainResponse, Error> {
+        let response = self
+            .http_client
+            .get(format!("{}/v2/checkout", self.base_url))
+            .query(&[("token", checkout_token)])
+            .send()
+            .await?;
+        parse_v2_response(response).await
     }
 
     pub async fn login(&self, email: &str, captcha: &str) -> Result<LoginResponse, Error> {
@@ -238,6 +536,31 @@ impl CertServer {
         Ok(ResignResponse { cert_pem })
     }
 
+    pub async fn issue_cert(
+        &self,
+        access_token: &str,
+        domain: &str,
+        kind: &str,
+        sequence: Option<i32>,
+        device_name: &str,
+        csr_pem: &str,
+    ) -> Result<CertificateDetail, Error> {
+        let response = self
+            .http_client
+            .post(format!("{}/v2/cert", self.base_url))
+            .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
+            .json(&json!({
+                "domain": domain,
+                "kind": kind,
+                "sequence": sequence,
+                "device_name": device_name,
+                "csr": csr_pem,
+            }))
+            .send()
+            .await?;
+        parse_v2_response(response).await
+    }
+
     pub async fn renew_cert(
         &self,
         access_token: &str,
@@ -261,6 +584,53 @@ impl CertServer {
             .decode(&cert)
             .context(Base64Snafu { data: cert })?;
         Ok(RenewResponse { cert_pem })
+    }
+
+    pub async fn renew_cert_v2(
+        &self,
+        access_token: &str,
+        domain: &str,
+        kind: &str,
+        sequence: i32,
+        device_name: Option<&str>,
+        csr_pem: &str,
+    ) -> Result<CertificateDetail, Error> {
+        let response = self
+            .http_client
+            .post(format!("{}/v2/cert/renew", self.base_url))
+            .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
+            .json(&json!({
+                "domain": domain,
+                "kind": kind,
+                "sequence": sequence,
+                "device_name": device_name,
+                "csr": csr_pem,
+            }))
+            .send()
+            .await?;
+        parse_v2_response(response).await
+    }
+
+    pub async fn list_certs(
+        &self,
+        access_token: &str,
+        domain: &str,
+        kind: Option<&str>,
+        sequence: Option<i32>,
+    ) -> Result<CertificateListPage, Error> {
+        let mut request = self
+            .http_client
+            .get(format!("{}/v2/cert", self.base_url))
+            .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
+            .query(&[("domain", domain)]);
+        if let Some(kind) = kind {
+            request = request.query(&[("kind", kind)]);
+        }
+        if let Some(sequence) = sequence {
+            request = request.query(&[("sequence", sequence)]);
+        }
+        let response = request.send().await?;
+        parse_v2_response(response).await
     }
 
     pub async fn get_user(&self, access_token: &str) -> Result<UserResponse, Error> {
