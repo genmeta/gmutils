@@ -2,11 +2,7 @@ use std::{borrow::Cow, fmt::Display};
 
 use dhttp_identity::name::DhttpName as Name;
 
-use crate::{
-    REGISTERABLE_SUFFIXES,
-    cert_server::{CertServer, LoginResponse, RegisterResponse},
-    cli::validator,
-};
+use crate::cli::validator;
 
 #[derive(Debug)]
 pub enum Error {
@@ -84,31 +80,6 @@ macro_rules! sync {
     };
 }
 
-pub(crate) async fn prompt_suffix() -> Result<&'static str, inquire::InquireError> {
-    sync!(
-        inquire::Select::new(
-            "Select a suffix for registration:",
-            REGISTERABLE_SUFFIXES.to_vec()
-        )
-        .prompt()
-    )
-}
-
-pub(crate) async fn prompt_available_name(
-    cert_server: CertServer,
-    suffix: impl Into<Cow<'static, str>> + Send + 'static,
-) -> Result<String, inquire::InquireError> {
-    sync!(
-        inquire::Text::new("Enter your desired name:")
-            .with_validator(inquire::required!("Name cannot be empty."))
-            .with_validator(validator::UsernameValidator::new(suffix))
-            .with_validator(validator::OnlineAvailableUsernameValidator::new(
-                cert_server
-            ))
-            .prompt()
-    )
-}
-
 pub(crate) async fn prompt_email() -> Result<String, inquire::InquireError> {
     sync!(
         inquire::Text::new("Enter your email address:")
@@ -118,26 +89,23 @@ pub(crate) async fn prompt_email() -> Result<String, inquire::InquireError> {
     )
 }
 
-pub(crate) async fn prompt_available_email(
-    cert_server: CertServer,
-) -> Result<String, inquire::InquireError> {
+pub(crate) async fn prompt_given_name() -> Result<String, inquire::InquireError> {
     sync!(
-        inquire::Text::new("Enter your email address:")
-            .with_validator(inquire::required!("Email address cannot be empty."))
-            .with_validator(validator::EmailValidator)
-            .with_validator(validator::OnlineAvailableEmailValidator::new(cert_server))
+        inquire::Text::new("Enter your given name:")
+            .with_validator(inquire::required!("Given name cannot be empty."))
             .prompt()
     )
 }
 
-pub(crate) async fn prompt_register_catpcha(
-    cert_server: CertServer,
-    username: String,
-    email: String,
-    csr_pem: String,
-) -> Result<RegisterResponse, inquire::InquireError> {
-    let (validate_captcha, get_response) =
-        validator::RegisterCaptchaValidator::new(cert_server, username, email, csr_pem);
+pub(crate) async fn prompt_surname() -> Result<String, inquire::InquireError> {
+    sync!(
+        inquire::Text::new("Enter your surname:")
+            .with_validator(inquire::required!("Surname cannot be empty."))
+            .prompt()
+    )
+}
+
+pub(crate) async fn prompt_verify_code() -> Result<String, inquire::InquireError> {
     sync!(
         inquire::Text::new("Enter the verification code sent to your email:")
             .with_validator(inquire::required!("Verification code cannot be empty."))
@@ -145,35 +113,21 @@ pub(crate) async fn prompt_register_catpcha(
                 6,
                 "Verification code must be exactly 6 characters."
             ))
-            .with_validator(validate_captcha)
             .prompt()
-    )?;
-    Ok(get_response.await)
+    )
 }
 
-pub(crate) async fn prompt_login_catpcha(
-    cert_server: CertServer,
-    email: String,
-) -> Result<LoginResponse, inquire::InquireError> {
-    let (validate_captcha, get_response) =
-        validator::LoginCaptchaValidator::new(cert_server, email);
+pub(crate) async fn prompt_sequence() -> Result<i32, inquire::InquireError> {
     sync!(
-        inquire::Text::new("Enter the verification code sent to your email:")
-            .with_validator(inquire::required!("Verification code cannot be empty."))
-            .with_validator(inquire::length!(
-                6,
-                "Verification code must be exactly 6 characters."
-            ))
-            .with_validator(validate_captcha)
+        inquire::Text::new("Enter certificate chain sequence:")
+            .with_validator(inquire::required!("Sequence cannot be empty."))
             .prompt()
-    )?;
-    Ok(get_response.await)
-}
-
-pub(crate) async fn prompt_select_identities(
-    names: Vec<Name<'static>>,
-) -> Result<Vec<Name<'static>>, inquire::InquireError> {
-    sync!(inquire::MultiSelect::new("Select the identities to re-sign:", names.to_vec()).prompt())
+    )
+    .and_then(|value| {
+        value
+            .parse::<i32>()
+            .map_err(|error| inquire::InquireError::Custom(Box::new(error)))
+    })
 }
 
 pub(crate) async fn prompt_confirm_set_as_default_name(

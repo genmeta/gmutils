@@ -11,7 +11,6 @@ pub mod cert_server;
 pub mod checkout;
 pub mod local_identity;
 
-pub const REGISTERABLE_SUFFIXES: &[&str] = &["pilot", "lab"];
 pub const DEFAULT_DEVICE_NAME: &str = "local device";
 
 pub const DEFAULT_CERT_SERVER_BASE_URL: &str = "https://license.genmeta.net";
