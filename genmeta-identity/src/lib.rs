@@ -8,6 +8,7 @@ pub use cli::{Error, Options, run};
 #[cfg(feature = "cli")]
 pub mod auth;
 pub mod cert_server;
+pub mod checkout;
 pub mod local_identity;
 
 pub const REGISTERABLE_SUFFIXES: &[&str] = &["pilot", "lab"];
