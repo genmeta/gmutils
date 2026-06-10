@@ -55,6 +55,8 @@ const RPM_URL: &str = "https://www.dhttp.net";
 const RPM_VENDOR: &str = "Genmeta Tech Limited";
 const RPM_DESCRIPTION: &str =
     "Genmeta command-line tools for DHTTP/3, SSH3, DNS, and identity management.";
+const AARCH64_ZIGBUILD_RUSTFLAGS_WORKAROUND: &str =
+    "-Z unstable-options -Clinker-flavor=gnu-lld-cc";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RpmArtifact {
@@ -391,7 +393,7 @@ export RUSTFLAGS="${{RUSTFLAGS:-}}"
 # TODO: Remove this aarch64 cargo-zigbuild workaround after rustc/Zig/cargo-zigbuild
 # agree on the Cortex-A53 843419 mitigation linker argument.
 if [ "{triple}" = "aarch64-unknown-linux-gnu" ]; then
-    export RUSTFLAGS="$RUSTFLAGS -Clinker-flavor=gnu-lld-cc"
+    export RUSTFLAGS="$RUSTFLAGS {AARCH64_ZIGBUILD_RUSTFLAGS_WORKAROUND}"
 fi
 cd /workspace
 cargo zigbuild --release --target {triple}.{ZIG_GLIBC_VERSION} --bin genmeta
@@ -488,4 +490,15 @@ install -D -m 0755 %{{SOURCE1}} %{{buildroot}}/usr/bin/genmeta-ssh.sh
 - release {version}
 "#
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AARCH64_ZIGBUILD_RUSTFLAGS_WORKAROUND;
+
+    #[test]
+    fn aarch64_linker_workaround_enables_unstable_flavor_option() {
+        assert!(AARCH64_ZIGBUILD_RUSTFLAGS_WORKAROUND.contains("-Z unstable-options"));
+        assert!(AARCH64_ZIGBUILD_RUSTFLAGS_WORKAROUND.contains("-Clinker-flavor=gnu-lld-cc"));
+    }
 }

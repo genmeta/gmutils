@@ -22,7 +22,7 @@ ifdef TRIPLE
 	cd /workspace && \
 	export RUSTFLAGS="$${RUSTFLAGS:-} -L /usr/lib/$(DEB_HOST_MULTIARCH)" && \
 	if [ "$(TRIPLE)" = "aarch64-unknown-linux-gnu" ]; then \
-		export RUSTFLAGS="$$RUSTFLAGS -Clinker-flavor=gnu-lld-cc"; \
+		export RUSTFLAGS="$$RUSTFLAGS -Z unstable-options -Clinker-flavor=gnu-lld-cc"; \
 	fi && \
 	cargo zigbuild $(CARGO_PROFILE_ARGS) --target $(ZIG_TARGET) --bin genmeta
 endif
