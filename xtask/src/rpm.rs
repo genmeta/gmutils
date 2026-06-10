@@ -387,6 +387,12 @@ export PATH="{CARGO_HOME}/bin:/usr/local/zig:$PATH"
 export RUSTUP_HOME={RUSTUP_HOME}
 export CARGO_HOME={CARGO_HOME}
 {dhttp_bootstrap_exports}
+export RUSTFLAGS="${{RUSTFLAGS:-}}"
+# TODO: Remove this aarch64 cargo-zigbuild workaround after rustc/Zig/cargo-zigbuild
+# agree on the Cortex-A53 843419 mitigation linker argument.
+if [ "{triple}" = "aarch64-unknown-linux-gnu" ]; then
+    export RUSTFLAGS="$RUSTFLAGS -Clinker-flavor=gnu-lld-cc"
+fi
 cd /workspace
 cargo zigbuild --release --target {triple}.{ZIG_GLIBC_VERSION} --bin genmeta
 

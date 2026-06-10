@@ -1383,7 +1383,7 @@ checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 [[package]]
 name = "ddns"
 version = "0.2.0"
-source = "git+https://github.com/genmeta/ddns.git?branch=endpoint#ddb22b4dec8e696b37de5a3a7ab82cb8d4c02a09"
+source = "git+https://github.com/genmeta/ddns.git?branch=endpoint#2723d7fb0f57e8b9ae1389ddc5b0e921dcb79283"
 dependencies = [
  "base64",
  "bitfield-struct",
@@ -1539,7 +1539,7 @@ dependencies = [
 [[package]]
 name = "dhttp"
 version = "0.1.0"
-source = "git+https://github.com/genmeta/dhttp.git?branch=main#a7486b8c30df5c096b3327046a9cb08a350ae987"
+source = "git+https://github.com/genmeta/dhttp.git?branch=main#716c0409b9089d38fe00eea08cf72a22616f4100"
 dependencies = [
  "bon",
  "bytes",
@@ -1560,7 +1560,7 @@ dependencies = [
 [[package]]
 name = "dhttp-access"
 version = "0.1.0"
-source = "git+https://github.com/genmeta/dhttp.git?branch=main#a7486b8c30df5c096b3327046a9cb08a350ae987"
+source = "git+https://github.com/genmeta/dhttp.git?branch=main#716c0409b9089d38fe00eea08cf72a22616f4100"
 dependencies = [
  "chrono",
  "clap",
@@ -1582,7 +1582,7 @@ dependencies = [
 [[package]]
 name = "dhttp-home"
 version = "0.1.0"
-source = "git+https://github.com/genmeta/dhttp.git?branch=main#a7486b8c30df5c096b3327046a9cb08a350ae987"
+source = "git+https://github.com/genmeta/dhttp.git?branch=main#716c0409b9089d38fe00eea08cf72a22616f4100"
 dependencies = [
  "dhttp-identity",
  "dirs",
@@ -1598,7 +1598,7 @@ dependencies = [
 [[package]]
 name = "dhttp-identity"
 version = "0.1.0"
-source = "git+https://github.com/genmeta/dhttp.git?branch=main#a7486b8c30df5c096b3327046a9cb08a350ae987"
+source = "git+https://github.com/genmeta/dhttp.git?branch=main#716c0409b9089d38fe00eea08cf72a22616f4100"
 dependencies = [
  "bytes",
  "futures",
@@ -1724,7 +1724,7 @@ dependencies = [
 [[package]]
 name = "dssh"
 version = "0.2.0"
-source = "git+https://github.com/genmeta/dssh.git?branch=endpoint#d5a193abeb41f1f8995cff50555a2a0b54e0b5ef"
+source = "git+https://github.com/genmeta/dssh.git?branch=endpoint#505c6d1f442f5ba36e16424137d25d2a5b1abb1e"
 dependencies = [
  "base64",
  "bytes",
@@ -2423,7 +2423,7 @@ dependencies = [
 [[package]]
 name = "h3x"
 version = "0.2.0"
-source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#9b80db6f7496cc24bef699c2bd95f512fd406b9c"
+source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#83eee6c2df1fd5fdc56a9ca1f02e0f9a326468a6"
 dependencies = [
  "arc-swap",
  "async-channel",
@@ -4309,9 +4309,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.12.3"
+version = "1.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e10754a14b9137dd7b1e3e5b0493cc9171fdd105e0ab477f51b72e7f3ac0e276"
+checksum = "f1292b7759ae1cb9ec195452d1390a074f0cd8541ab7a5a8c31cd6db45d4a6ba"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -4338,9 +4338,9 @@ checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "regex-syntax"
-version = "0.8.10"
+version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
+checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "remoc"
@@ -6178,9 +6178,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.23.2"
+version = "1.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d258b83ceec21034727ecee8c382cfa6c3e133699b0742c64571814fb420c9f7"
+checksum = "144d6b123cef80b301b8f72a9e2ca4370ddec21950d0a103dd22c437006d2db7"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",
@@ -6983,18 +6983,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.50"
+version = "0.8.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b065d4f0e55f82fae73202e189638116a87c55ab6b8e6c2721e13dd9d854ad1"
+checksum = "ce1022995ff5ff5d841ad7d994facc23098cd40152f2c1d11cd607c6f530653f"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.50"
+version = "0.8.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b631b19d36a892ab55420c92dbc83ccd79274f25be714855d3074aa71cab639"
+checksum = "1ae7f38b72ec2a254e2b87ef277cf2cd4fb97cbebf944faa6f33354da0867930"
 dependencies = [
  "proc-macro2",
  "quote",
