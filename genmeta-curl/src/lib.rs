@@ -14,8 +14,9 @@ use dhttp::{
     dquic::binds::BindPattern,
     endpoint::Endpoint,
     h3x::{
-        self,
-        dhttp::message::{InitialMessageStreamError, MessageStreamError, MessageWriter},
+        dhttp::message::{
+            InitialMessageStreamError, MessageReader, MessageStreamError, MessageWriter,
+        },
         hyper::SendMessageError,
     },
     home::{self, DhttpHome, identity::IdentityProfile},
@@ -656,7 +657,7 @@ fn resolve_redirect(
 
 /// Stream the response body to a file or stdout, optionally decompressing.
 async fn stream_response_body(
-    mut response_stream: h3x::dhttp::message::MessageReader,
+    mut response_stream: MessageReader,
     decompress: bool,
     content_encoding: &str,
     output: Option<&PathBuf>,
@@ -699,7 +700,7 @@ async fn stream_response_body(
 /// Process the final response: stream body and optionally print `--write-out`.
 #[allow(clippy::too_many_arguments)]
 async fn process_final_response(
-    response_stream: h3x::dhttp::message::MessageReader,
+    response_stream: MessageReader,
     response_headers: &http::HeaderMap,
     options: &Options,
     status: StatusCode,
@@ -752,7 +753,7 @@ async fn connect_and_open_streams(
     uri: &Uri,
     connect_timeout: Duration,
     timing: &mut Timing,
-) -> Result<(h3x::dhttp::message::MessageReader, MessageWriter), Error> {
+) -> Result<(MessageReader, MessageWriter), Error> {
     let connect_fut = async {
         client
             .connect(
@@ -783,7 +784,7 @@ async fn check_redirect(
     current_uri: &Uri,
     current_method: &Method,
     redirect_count: u32,
-    response_stream: &mut h3x::dhttp::message::MessageReader,
+    response_stream: &mut MessageReader,
 ) -> Result<Option<(Uri, Method)>, Error> {
     if !options.location || !status.is_redirection() || status == StatusCode::NOT_MODIFIED {
         return Ok(None);
@@ -812,7 +813,7 @@ fn print_verbose_response(response: &http::response::Parts) {
 /// Receive the response head, record first-byte timing, and optionally print
 /// verbose details.
 async fn receive_response_head(
-    response_stream: &mut h3x::dhttp::message::MessageReader,
+    response_stream: &mut MessageReader,
     timing: &mut Timing,
     verbose: bool,
 ) -> Result<http::response::Parts, Error> {

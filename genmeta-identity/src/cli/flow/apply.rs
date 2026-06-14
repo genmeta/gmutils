@@ -1,6 +1,6 @@
 use std::io::IsTerminal;
 
-use dhttp_home::DhttpHome;
+use dhttp::home::DhttpHome;
 use snafu::{OptionExt, whatever};
 use tracing::{Instrument, info_span};
 
@@ -216,7 +216,7 @@ fn apply_plan_from_option(option: &approval::ApprovalMenuOption) -> ApplyApprova
 
 #[derive(Debug, Clone)]
 struct InteractiveApplyState {
-    target: Option<dhttp_identity::name::DhttpName<'static>>,
+    target: Option<dhttp::name::DhttpName<'static>>,
     kind: Option<IdentityKind>,
     kind_prompt_required: bool,
     approval_plan: Option<ApplyApprovalPlan>,
@@ -229,7 +229,7 @@ struct InteractiveApplyState {
 impl InteractiveApplyState {
     fn from_command(
         command: &Apply,
-        target: Option<dhttp_identity::name::DhttpName<'static>>,
+        target: Option<dhttp::name::DhttpName<'static>>,
     ) -> Result<Self, Error> {
         Ok(Self {
             target,
@@ -379,7 +379,7 @@ fn apply_identity_name_opening() -> &'static str {
 async fn resolve_target(
     command: &Apply,
     dhttp_home: &DhttpHome,
-) -> Result<dhttp_identity::name::DhttpName<'static>, Error> {
+) -> Result<dhttp::name::DhttpName<'static>, Error> {
     if command.use_default {
         return cli::resolve_default_target_name(dhttp_home).await;
     }
@@ -455,7 +455,7 @@ async fn resolve_email(command: &Apply) -> Result<String, Error> {
 async fn resolve_identity_auth_domain(
     dhttp_home: &DhttpHome,
     target: &IdentityTarget,
-) -> Result<Option<dhttp_identity::name::DhttpName<'static>>, Error> {
+) -> Result<Option<dhttp::name::DhttpName<'static>>, Error> {
     if dhttp_home
         .identity_profile_exists_exactly(target.dhttp_name())
         .await

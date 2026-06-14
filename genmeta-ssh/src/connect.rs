@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
-use dhttp::{dquic, endpoint::Endpoint};
-use dssh as ssh3;
-use h3x::{
-    connection::{Connection, ConnectionBuilder},
-    dhttp::{settings::Settings, webtransport::settings::WebTransportSupport},
+use dhttp::{
+    dquic,
+    endpoint::Endpoint,
+    h3x::{
+        connection::{Connection, ConnectionBuilder},
+        dhttp::{settings::Settings, webtransport::settings::WebTransportSupport},
+    },
 };
+use dssh as ssh3;
 use snafu::prelude::*;
 
 use crate::config::Config;
@@ -28,7 +31,9 @@ pub enum Error {
         source: dhttp::endpoint::ConnectError,
     },
     #[snafu(display("failed to wait for peer HTTP/3 settings before dssh webtransport connect"))]
-    PeerSettings { source: h3x::quic::ConnectionError },
+    PeerSettings {
+        source: dhttp::h3x::quic::ConnectionError,
+    },
     #[snafu(display("failed to open dssh webtransport conversation"))]
     OpenConversation {
         source: ssh3::webtransport::ClientConnectConversationError,
@@ -50,7 +55,7 @@ fn connection_settings() -> Arc<Settings> {
 fn connection_builder() -> Arc<ConnectionBuilder<DquicConnection>> {
     Arc::new(
         ConnectionBuilder::new(connection_settings())
-            .protocol(h3x::webtransport::WebTransportProtocolFactory),
+            .protocol(dhttp::h3x::webtransport::WebTransportProtocolFactory),
     )
 }
 

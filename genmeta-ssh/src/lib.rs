@@ -333,10 +333,10 @@ pub async fn run(options: Options) -> Result<(), Error> {
         let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
         let pty_req = ssh3::session::PtyRequest {
             term_type: "xterm-256color".into(),
-            width_cols: h3x::varint::VarInt::from(cols as u32),
-            height_rows: h3x::varint::VarInt::from(rows as u32),
-            width_px: h3x::varint::VarInt::from_u32(0),
-            height_px: h3x::varint::VarInt::from_u32(0),
+            width_cols: dhttp::h3x::varint::VarInt::from(cols as u32),
+            height_rows: dhttp::h3x::varint::VarInt::from(rows as u32),
+            width_px: dhttp::h3x::varint::VarInt::from_u32(0),
+            height_px: dhttp::h3x::varint::VarInt::from_u32(0),
             terminal_modes: ssh3::codec::SshBytes::from(Vec::new()),
         };
         session
@@ -452,7 +452,7 @@ async fn run_dynamic_forward<S>(
     conversation: Arc<ssh3::conversation::Conversation<S>>,
 ) -> Result<std::convert::Infallible, ForwardError>
 where
-    S: h3x::webtransport::Session + 'static,
+    S: dhttp::h3x::webtransport::Session + 'static,
     S::StreamReader: 'static,
     S::StreamWriter: 'static,
 {

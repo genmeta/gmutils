@@ -1,6 +1,6 @@
 use std::{fmt, str::FromStr};
 
-use dhttp_identity::certificate::CertificateChainKind;
+use dhttp::certificate::CertificateChainKind;
 use snafu::Snafu;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

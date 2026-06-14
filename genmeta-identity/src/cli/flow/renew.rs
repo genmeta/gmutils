@@ -1,6 +1,6 @@
 use std::io::IsTerminal;
 
-use dhttp_home::DhttpHome;
+use dhttp::home::DhttpHome;
 use snafu::{OptionExt, whatever};
 use tracing::{Instrument, info_span};
 
@@ -99,7 +99,7 @@ fn renew_approval_menu_actions() -> Vec<RenewApprovalMenuAction> {
 
 #[derive(Debug, Clone)]
 struct InteractiveRenewState {
-    target: Option<dhttp_identity::name::DhttpName<'static>>,
+    target: Option<dhttp::name::DhttpName<'static>>,
     approval_plan: Option<RenewApprovalPlan>,
     email: Option<String>,
     email_prompt_required: bool,
@@ -108,10 +108,7 @@ struct InteractiveRenewState {
 }
 
 impl InteractiveRenewState {
-    fn from_command(
-        command: &Renew,
-        target: Option<dhttp_identity::name::DhttpName<'static>>,
-    ) -> Self {
+    fn from_command(command: &Renew, target: Option<dhttp::name::DhttpName<'static>>) -> Self {
         Self {
             target,
             approval_plan: None,
@@ -247,7 +244,7 @@ async fn resolve_approval_plan(
 async fn resolve_target(
     command: &Renew,
     dhttp_home: &DhttpHome,
-) -> Result<dhttp_identity::name::DhttpName<'static>, Error> {
+) -> Result<dhttp::name::DhttpName<'static>, Error> {
     if command.use_default {
         return cli::resolve_default_target_name(dhttp_home).await;
     }

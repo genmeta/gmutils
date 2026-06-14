@@ -1,6 +1,6 @@
 use std::fmt;
 
-use dhttp_identity::name::{DhttpName, InvalidDhttpName};
+use dhttp::name::{DhttpName, InvalidDhttpName};
 use snafu::{ResultExt, Snafu};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,7 +102,7 @@ pub enum ParseIdentityTargetError {
 
 #[cfg(test)]
 mod tests {
-    use dhttp_identity::name::DhttpName;
+    use dhttp::name::DhttpName;
 
     use super::{IdentityLevel, IdentityTarget};
 

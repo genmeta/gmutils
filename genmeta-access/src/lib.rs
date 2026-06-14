@@ -3,21 +3,23 @@ mod cli;
 use std::io::IsTerminal;
 
 pub use cli::{Options, ParseCommandError, ReportFromStr};
-use dhttp_access::{
-    action::RequestAction,
-    db::{
-        identity::Name,
-        identity_access_db_path, init_access_database_for, open_access_database,
-        service::{
-            error::{
-                AppendRuleError, ListAllRulesError, ListRuleSetsError, ListRulesError,
-                RemoveRuleSetError, RemoveRulesError,
+use dhttp::{
+    access::{
+        action::RequestAction,
+        db::{
+            identity::Name,
+            identity_access_db_path, init_access_database_for, open_access_database,
+            service::{
+                error::{
+                    AppendRuleError, ListAllRulesError, ListRuleSetsError, ListRulesError,
+                    RemoveRuleSetError, RemoveRulesError,
+                },
+                location_service::LocationService,
             },
-            location_service::LocationService,
         },
     },
+    home::{DhttpHome, LocateDhttpHomeError, identity::settings::LoadDhttpSettingsError},
 };
-use dhttp_home::{DhttpHome, LocateDhttpHomeError, identity::settings::LoadDhttpSettingsError};
 use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
 
@@ -44,12 +46,12 @@ pub enum Error {
 
     #[snafu(display("failed to initialize identity access database"))]
     InitDatabase {
-        source: dhttp_access::db::AccessDbError,
+        source: dhttp::access::db::AccessDbError,
     },
 
     #[snafu(display("failed to open identity access database"))]
     OpenDatabase {
-        source: dhttp_access::db::AccessDbError,
+        source: dhttp::access::db::AccessDbError,
     },
 
     #[snafu(display("failed to list access path rules"))]

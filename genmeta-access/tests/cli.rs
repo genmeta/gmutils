@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser};
-use dhttp_access::db::{identity::Name, identity_access_db_path};
-use dhttp_home::{DhttpHome, identity::settings::SaveDhttpSettingsError};
+use dhttp::{
+    access::db::{identity::Name, identity_access_db_path},
+    home::{DhttpHome, identity::settings::SaveDhttpSettingsError},
+};
 use genmeta_access::{Options, run_for_home};
 use snafu::Report;
 

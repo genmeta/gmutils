@@ -1382,7 +1382,7 @@ checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 
 [[package]]
 name = "ddns"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64",
  "bitfield-struct",
@@ -1410,6 +1410,17 @@ dependencies = [
  "tracing",
  "url",
  "x509-parser",
+]
+
+[[package]]
+name = "debversion"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f79ef0d110ecfe7c87db7ff3a87756cd31d601073f440619963bea29f06694dc"
+dependencies = [
+ "chrono",
+ "lazy-regex",
+ "num-bigint",
 ]
 
 [[package]]
@@ -1542,6 +1553,7 @@ dependencies = [
  "bon",
  "bytes",
  "ddns",
+ "dhttp-access",
  "dhttp-home",
  "dhttp-identity",
  "futures",
@@ -2144,8 +2156,8 @@ name = "genmeta-access"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "dhttp",
  "dhttp-access",
- "dhttp-home",
  "sea-orm",
  "snafu 0.9.1",
  "tokio",
@@ -2205,8 +2217,6 @@ dependencies = [
  "clap",
  "crossterm",
  "dhttp",
- "dhttp-home",
- "dhttp-identity",
  "futures",
  "http 1.4.2",
  "indicatif",
@@ -2418,7 +2428,7 @@ dependencies = [
 
 [[package]]
 name = "h3x"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arc-swap",
  "async-channel",
@@ -3045,6 +3055,29 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "lazy-regex"
+version = "3.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bae91019476d3ec7147de9aa291cadb6d870abf2f3015d2da73a90325ac1496"
+dependencies = [
+ "lazy-regex-proc_macros",
+ "once_cell",
+ "regex",
+]
+
+[[package]]
+name = "lazy-regex-proc_macros"
+version = "3.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4de9c1e1439d8b7b3061b2d209809f447ca33241733d9a3c01eabf2dc8d94358"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4467,6 +4500,12 @@ dependencies = [
  "quote",
  "syn 1.0.109",
 ]
+
+[[package]]
+name = "rpm-version"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56568fb1bf1d2c0a640aac216b3d84d65e210ca1997df922bf124f2bfaf9efd9"
 
 [[package]]
 name = "rsa"
@@ -6917,9 +6956,11 @@ dependencies = [
  "bollard",
  "cargo_metadata",
  "clap",
+ "debversion",
  "flate2",
  "futures-util",
  "inquire",
+ "rpm-version",
  "serde",
  "serde_json",
  "sha2 0.10.9",

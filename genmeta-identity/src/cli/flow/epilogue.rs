@@ -1,7 +1,6 @@
 use std::io::IsTerminal;
 
-use dhttp_home::DhttpHome;
-use dhttp_identity::name::DhttpName;
+use dhttp::{home::DhttpHome, name::DhttpName};
 
 use super::{local, output, transcript};
 use crate::cli::{self, Error, prompt::InquireResultExt};
@@ -140,8 +139,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use dhttp_home::DhttpHome;
-    use dhttp_identity::name::DhttpName;
+    use dhttp::{home::DhttpHome, name::DhttpName};
     use tokio::fs;
 
     use super::{DefaultSuggestion, default_block, suggest_default_change};

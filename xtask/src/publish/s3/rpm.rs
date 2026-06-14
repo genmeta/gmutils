@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -26,6 +26,7 @@ use crate::{
         start_container,
     },
     package::manifest::{ArtifactKind, PackageArtifact},
+    version_cmp::compare_rpm_versions,
 };
 
 const RPM_STAGE_BASE_IMAGE: &str = "fedora:40";
@@ -83,9 +84,11 @@ pub async fn run(
         &loaded.manifest.artifacts,
         &loaded.manifest.version,
     )?;
+    let remote_payloads = remote_rpm_payloads(client, &options.bucket, &target.prefix).await?;
+    let local_payloads = publishable_local_payloads(local_payloads, &remote_payloads)
+        .whatever_context("failed to select publishable rpm payloads")?;
     let mut uploads =
         plan_payload_uploads(client, &options.bucket, &local_payloads, &target.prefix).await?;
-    let remote_payloads = remote_rpm_payloads(client, &options.bucket, &target.prefix).await?;
     let local_keys = local_payload_keys(&local_payloads);
     let retained_remote = retained_remote_payloads(remote_payloads, &local_keys);
     uploads.sort_by(|left, right| {
@@ -164,7 +167,10 @@ fn local_payloads(
                     .package_name
                     .clone()
                     .whatever_context("rpm package artifact is missing package name")?,
-                version: manifest_version.to_string(),
+                version: artifact
+                    .package_version
+                    .clone()
+                    .unwrap_or_else(|| manifest_version.to_string()),
                 architecture: artifact
                     .architecture
                     .clone()
@@ -177,6 +183,40 @@ fn local_payloads(
             })
         })
         .collect()
+}
+
+fn publishable_local_payloads(
+    payloads: Vec<RpmPayload>,
+    remote_payloads: &[RemoteRpmPayload],
+) -> Result<Vec<RpmPayload>, crate::version_cmp::CompareVersionError> {
+    let mut latest_remote = BTreeMap::<(String, String), String>::new();
+    for payload in remote_payloads {
+        let key = (payload.package.clone(), payload.architecture.clone());
+        match latest_remote.get(&key) {
+            None => {
+                latest_remote.insert(key, payload.version.clone());
+            }
+            Some(current) => {
+                if compare_rpm_versions(&payload.version, current)?.is_gt() {
+                    latest_remote.insert(key, payload.version.clone());
+                }
+            }
+        }
+    }
+
+    let mut selected = Vec::new();
+    for payload in payloads {
+        let key = (payload.package.clone(), payload.architecture.clone());
+        let should_publish = match latest_remote.get(&key) {
+            None => true,
+            Some(remote_version) => compare_rpm_versions(&payload.version, remote_version)?.is_gt(),
+        };
+        if should_publish {
+            selected.push(payload);
+        }
+    }
+
+    Ok(selected)
 }
 
 fn local_payload_keys(payloads: &[RpmPayload]) -> BTreeSet<(String, String)> {
@@ -454,12 +494,13 @@ fn path_to_mount_source(path: &Path) -> Result<String, Whatever> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use super::{
-        RemoteRpmPayload, RpmPayload, local_payload_keys, retained_remote_payloads,
-        rpm_upload_order,
+        RemoteRpmPayload, RpmPayload, local_payload_keys, local_payloads,
+        publishable_local_payloads, retained_remote_payloads, rpm_upload_order,
     };
+    use crate::package::manifest::PackageArtifact;
 
     #[test]
     fn manifest_arch_replaces_remote_same_arch_and_preserves_others() {
@@ -482,6 +523,54 @@ mod tests {
                 .iter()
                 .any(|entry| entry.version == "0.5.1" && entry.architecture == "x86_64")
         );
+    }
+
+    #[test]
+    fn local_rpm_payload_uses_artifact_package_version() {
+        let payloads = local_payloads(
+            Path::new("/tmp/target"),
+            &[artifact(
+                "gmutils",
+                "0.5.2-3",
+                "x86_64",
+                "gmutils-0.5.2-3.x86_64.rpm",
+            )],
+            "0.5.2",
+        )
+        .expect("payload extraction should succeed");
+
+        assert_eq!(payloads[0].version, "0.5.2-3");
+    }
+
+    #[test]
+    fn publishable_rpm_payloads_skip_equal_and_older_versions() {
+        let remote = vec![remote_payload("gmutils", "0.5.2-1", "x86_64")];
+        let local = vec![
+            local_payload("gmutils", "0.5.2-1", "x86_64"),
+            local_payload("gmutils", "0.5.1-1", "x86_64"),
+        ];
+
+        let publishable =
+            publishable_local_payloads(local, &remote).expect("payload filtering should succeed");
+
+        assert!(publishable.is_empty());
+    }
+
+    #[test]
+    fn publishable_rpm_payloads_compare_against_latest_remote_version() {
+        let remote = vec![
+            remote_payload("gmutils", "0.5.1-1", "x86_64"),
+            remote_payload("gmutils", "0.5.2-1", "x86_64"),
+        ];
+        let local = vec![local_payload("gmutils", "0.5.2-2", "x86_64")];
+
+        let publishable =
+            publishable_local_payloads(local, &remote).expect("payload filtering should succeed");
+
+        assert_eq!(publishable.len(), 1);
+        assert_eq!(publishable[0].package, "gmutils");
+        assert_eq!(publishable[0].version, "0.5.2-2");
+        assert_eq!(publishable[0].architecture, "x86_64");
     }
 
     #[test]
@@ -527,6 +616,26 @@ mod tests {
             architecture: architecture.to_string(),
             filename: filename.clone(),
             key: format!("rpm/gmutils/{package}/{version}/{filename}"),
+        }
+    }
+
+    fn artifact(
+        package: &str,
+        version: &str,
+        architecture: &str,
+        archive_name: &str,
+    ) -> PackageArtifact {
+        PackageArtifact {
+            target: "x86_64-unknown-linux-gnu".to_string(),
+            path: format!("x86_64-unknown-linux-gnu/release/rpm/{archive_name}"),
+            sha256: "deadbeef".to_string(),
+            size: 42,
+            archive_name: Some(archive_name.to_string()),
+            package_name: Some(package.to_string()),
+            package_version: Some(version.to_string()),
+            architecture: Some(architecture.to_string()),
+            features: Vec::new(),
+            profile: Some("release".to_string()),
         }
     }
 }

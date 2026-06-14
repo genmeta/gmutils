@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use clap::{Arg, ArgAction, Command as ClapCommand, CommandFactory, FromArgMatches};
 use genmeta_identity::{Error, Options, run};
 

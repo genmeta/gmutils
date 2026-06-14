@@ -1,6 +1,6 @@
 use std::io::IsTerminal;
 
-use dhttp_home::DhttpHome;
+use dhttp::home::DhttpHome;
 use snafu::{OptionExt, whatever};
 
 use super::{
@@ -51,7 +51,7 @@ fn organization_action_from_selection(
 async fn set_default_summary(
     command: &Default,
     dhttp_home: &DhttpHome,
-    current_config: Option<dhttp_home::identity::settings::DhttpSettingsFile>,
+    current_config: Option<dhttp::home::identity::settings::DhttpSettingsFile>,
     summary: LocalIdentitySummary,
 ) -> Result<(), Error> {
     if !summary.status.is_ready() && !command.allow_nonready {
@@ -71,7 +71,7 @@ async fn set_default_summary(
     }
 
     let mut current_config = current_config.unwrap_or_else(|| {
-        dhttp_home::identity::settings::DhttpSettingsFile::new(dhttp_home.settings_path())
+        dhttp::home::identity::settings::DhttpSettingsFile::new(dhttp_home.settings_path())
     });
     current_config
         .settings_mut()
@@ -106,7 +106,7 @@ async fn run_helper_apply(
 async fn select_interactive_default_summary(
     dhttp_home: &DhttpHome,
     cert_server: &CertServer,
-    configured_default_name: Option<dhttp_identity::name::DhttpName<'_>>,
+    configured_default_name: Option<dhttp::name::DhttpName<'_>>,
 ) -> Result<LocalIdentitySummary, Error> {
     loop {
         let inventory = local::load_inventory(dhttp_home, configured_default_name.clone()).await?;

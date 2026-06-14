@@ -6,6 +6,7 @@ mod package;
 mod publish;
 mod rpm;
 mod scoop;
+mod version_cmp;
 
 use std::{io::IsTerminal, path::PathBuf, process::Stdio};
 

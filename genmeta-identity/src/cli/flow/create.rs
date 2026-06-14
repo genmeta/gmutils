@@ -1,6 +1,6 @@
 use std::io::IsTerminal;
 
-use dhttp_home::DhttpHome;
+use dhttp::home::DhttpHome;
 use snafu::{FromString, OptionExt, whatever};
 use tracing::{Instrument, info_span};
 
@@ -589,7 +589,7 @@ async fn resolve_verify_code(
 async fn ensure_parent_identity_ready(
     dhttp_home: &DhttpHome,
     target: &IdentityTarget,
-) -> Result<dhttp_identity::name::DhttpName<'static>, Error> {
+) -> Result<dhttp::name::DhttpName<'static>, Error> {
     let parent = target
         .parent()
         .whatever_context::<_, Error>("sub-identity target is missing its parent identity")?
@@ -608,7 +608,7 @@ async fn ensure_parent_identity_ready(
 async fn resolve_ready_parent_identity(
     dhttp_home: &DhttpHome,
     target: &IdentityTarget,
-) -> Result<Option<dhttp_identity::name::DhttpName<'static>>, Error> {
+) -> Result<Option<dhttp::name::DhttpName<'static>>, Error> {
     if target.level() != IdentityLevel::SubIdentity {
         return Ok(None);
     }
@@ -832,7 +832,7 @@ async fn create_sub_identity_with_email_interactively(
     cert_server: &CertServer,
     target: &IdentityTarget,
     access_token: &str,
-    parent: &dhttp_identity::name::DhttpName<'_>,
+    parent: &dhttp::name::DhttpName<'_>,
     label: &str,
 ) -> Result<CreateSubdomainResponse, Error> {
     loop {

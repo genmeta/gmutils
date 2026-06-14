@@ -5,17 +5,20 @@ pub mod validator;
 use std::{io::IsTerminal, ops::Deref};
 
 use clap::Parser;
-use dhttp_home::{
-    DhttpHome,
-    identity::{
-        settings::{DhttpSettingsFile, LoadDhttpSettingsError, SaveDhttpSettingsError},
-        ssl::{
-            ListIdentityProfilesError, LoadCertsError, LoadIdentityError, LoadKeyError,
-            ResolveIdentityProfileError, SaveIdentityError,
+use dhttp::{
+    certificate::CertificateChainKind,
+    home::{
+        DhttpHome,
+        identity::{
+            settings::{DhttpSettingsFile, LoadDhttpSettingsError, SaveDhttpSettingsError},
+            ssl::{
+                ListIdentityProfilesError, LoadCertsError, LoadIdentityError, LoadKeyError,
+                ResolveIdentityProfileError, SaveIdentityError,
+            },
         },
     },
+    name::DhttpName as Name,
 };
-use dhttp_identity::{certificate::CertificateChainKind, name::DhttpName as Name};
 use indicatif::ProgressStyle;
 use rankey::EncodePem;
 use snafu::{ResultExt, Snafu, Whatever, whatever};
@@ -84,7 +87,7 @@ pub enum Error {
 
     #[snafu(transparent)]
     LocateDhttpHome {
-        source: dhttp_home::LocateDhttpHomeError,
+        source: dhttp::home::LocateDhttpHomeError,
     },
 
     #[snafu(transparent)]
@@ -118,9 +121,7 @@ impl ChainSelector {
         Ok(Self { kind, sequence })
     }
 
-    fn from_dhttp_ski(
-        ski: dhttp_identity::certificate::DhttpSubjectKeyIdentifier,
-    ) -> Result<Self, Error> {
+    fn from_dhttp_ski(ski: dhttp::certificate::DhttpSubjectKeyIdentifier) -> Result<Self, Error> {
         let kind = match ski.chain().kind() {
             CertificateChainKind::Primary => "primary",
             CertificateChainKind::Secondary => "secondary",
@@ -133,7 +134,7 @@ impl ChainSelector {
 }
 
 fn selector_from_identity(
-    identity: &dhttp_identity::identity::Identity,
+    identity: &dhttp::identity::Identity,
 ) -> Result<Option<ChainSelector>, Error> {
     match identity.dhttp_subject_key_identifier() {
         Ok(ski) => ChainSelector::from_dhttp_ski(ski).map(Some),
@@ -535,7 +536,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use clap::{CommandFactory, Parser};
-    use dhttp_identity::{identity::Identity, name::Name};
+    use dhttp::{identity::Identity, name::Name};
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
     use super::{ChainSelector, Create, Options, cert_server_base_url, selector_from_identity};

@@ -1,7 +1,6 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
-use dhttp_home::DhttpHome;
-use dhttp_identity::{identity::extract_dhttp_subject_key_identifier, name::DhttpName};
+use dhttp::{home::DhttpHome, identity::extract_dhttp_subject_key_identifier, name::DhttpName};
 use futures::TryStreamExt;
 use tokio::fs;
 
@@ -342,7 +341,7 @@ fn now_unix_timestamp() -> i64 {
 }
 
 async fn assess_profile(
-    profile: &dhttp_home::identity::IdentityProfile,
+    profile: &dhttp::home::identity::IdentityProfile,
 ) -> LocalIdentityAssessment {
     let certs = match profile.load_certs().await {
         Ok(certs) => certs,
@@ -359,7 +358,7 @@ async fn assess_profile(
     let cert_pem = fs::read(
         profile
             .ssl_dir()
-            .join(dhttp_home::identity::ssl::CERT_FILE_NAME),
+            .join(dhttp::home::identity::ssl::CERT_FILE_NAME),
     )
     .await
     .ok();
@@ -434,10 +433,10 @@ async fn assess_profile(
 }
 
 fn certificate_state_from_error(
-    error: &dhttp_home::identity::ssl::LoadCertsError,
+    error: &dhttp::home::identity::ssl::LoadCertsError,
 ) -> LocalIdentityMaterialState {
     match error {
-        dhttp_home::identity::ssl::LoadCertsError::Read { source, .. }
+        dhttp::home::identity::ssl::LoadCertsError::Read { source, .. }
             if source.kind() == std::io::ErrorKind::NotFound =>
         {
             LocalIdentityMaterialState::Missing("certificate missing")
@@ -447,11 +446,11 @@ fn certificate_state_from_error(
 }
 
 fn private_key_state_from_error(
-    error: &dhttp_home::identity::ssl::LoadKeyError,
+    error: &dhttp::home::identity::ssl::LoadKeyError,
 ) -> LocalIdentityMaterialState {
     match error {
-        dhttp_home::identity::ssl::LoadKeyError::Metadata { source, .. }
-        | dhttp_home::identity::ssl::LoadKeyError::Read { source, .. }
+        dhttp::home::identity::ssl::LoadKeyError::Metadata { source, .. }
+        | dhttp::home::identity::ssl::LoadKeyError::Read { source, .. }
             if source.kind() == std::io::ErrorKind::NotFound =>
         {
             LocalIdentityMaterialState::Missing("private key missing")

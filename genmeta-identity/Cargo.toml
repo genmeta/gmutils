@@ -15,8 +15,6 @@ base64 = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 dhttp = { workspace = true }
-dhttp-home = { workspace = true }
-dhttp-identity = { workspace = true }
 rankey = { workspace = true }
 p384 = { workspace = true }
 pkcs8 = { workspace = true }

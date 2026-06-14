@@ -14,7 +14,7 @@ pub(crate) mod renew;
 pub(crate) mod target;
 pub(crate) mod transcript;
 
-use dhttp_home::DhttpHome;
+use dhttp::home::DhttpHome;
 
 use crate::{
     cert_server::CertServer,
