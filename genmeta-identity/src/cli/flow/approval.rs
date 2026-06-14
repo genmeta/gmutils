@@ -12,10 +12,7 @@ pub(crate) struct ApprovalDirectLocal {
 }
 
 impl ApprovalDirectLocal {
-    pub(crate) fn new(
-        short_name: impl Into<String>,
-        auth_domain: impl Into<String>,
-    ) -> Self {
+    pub(crate) fn new(short_name: impl Into<String>, auth_domain: impl Into<String>) -> Self {
         Self {
             short_name: short_name.into(),
             auth_domain: auth_domain.into(),
@@ -52,10 +49,7 @@ pub(crate) enum LocalApprovalCandidate {
 }
 
 impl LocalApprovalCandidate {
-    pub(crate) fn ready(
-        short_name: impl Into<String>,
-        auth_domain: impl Into<String>,
-    ) -> Self {
+    pub(crate) fn ready(short_name: impl Into<String>, auth_domain: impl Into<String>) -> Self {
         Self::Ready {
             short_name: short_name.into(),
             auth_domain: auth_domain.into(),
@@ -100,10 +94,7 @@ impl LocalApprovalCandidate {
         }
     }
 
-    pub(crate) fn missing(
-        short_name: impl Into<String>,
-        auth_domain: impl Into<String>,
-    ) -> Self {
+    pub(crate) fn missing(short_name: impl Into<String>, auth_domain: impl Into<String>) -> Self {
         Self::Missing {
             short_name: short_name.into(),
             auth_domain: auth_domain.into(),
@@ -126,10 +117,7 @@ impl ApprovalHelperOption {
         Self::apply_for(short_name.clone(), short_name)
     }
 
-    pub(crate) fn apply_for(
-        short_name: impl Into<String>,
-        auth_domain: impl Into<String>,
-    ) -> Self {
+    pub(crate) fn apply_for(short_name: impl Into<String>, auth_domain: impl Into<String>) -> Self {
         Self {
             action: ApprovalHelperAction::Apply,
             auth_domain: auth_domain.into(),
@@ -139,10 +127,7 @@ impl ApprovalHelperOption {
     }
 
     #[cfg(test)]
-    pub(crate) fn reapply(
-        short_name: impl Into<String>,
-        detail: impl Into<String>,
-    ) -> Self {
+    pub(crate) fn reapply(short_name: impl Into<String>, detail: impl Into<String>) -> Self {
         let short_name = short_name.into();
         Self::reapply_for(short_name.clone(), short_name, detail)
     }
@@ -166,10 +151,7 @@ impl ApprovalHelperOption {
         Self::renew_for(short_name.clone(), short_name)
     }
 
-    pub(crate) fn renew_for(
-        short_name: impl Into<String>,
-        auth_domain: impl Into<String>,
-    ) -> Self {
+    pub(crate) fn renew_for(short_name: impl Into<String>, auth_domain: impl Into<String>) -> Self {
         Self {
             action: ApprovalHelperAction::Renew,
             auth_domain: auth_domain.into(),
@@ -331,7 +313,10 @@ mod tests {
         });
 
         assert_eq!(
-            options.iter().map(ApprovalMenuOption::label).collect::<Vec<_>>(),
+            options
+                .iter()
+                .map(ApprovalMenuOption::label)
+                .collect::<Vec<_>>(),
             vec![
                 "Verify with alice.smith on local device".to_string(),
                 "Verify with email".to_string(),
@@ -351,7 +336,10 @@ mod tests {
         });
 
         assert_eq!(
-            options.iter().map(ApprovalMenuOption::label).collect::<Vec<_>>(),
+            options
+                .iter()
+                .map(ApprovalMenuOption::label)
+                .collect::<Vec<_>>(),
             vec![
                 "Verify with email".to_string(),
                 "Renew alice.smith on this device, then verify with alice.smith".to_string(),

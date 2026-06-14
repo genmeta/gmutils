@@ -4,7 +4,10 @@ use dhttp_home::DhttpHome;
 use snafu::{OptionExt, whatever};
 use tracing::{Instrument, info_span};
 
-use super::{approval, local::{self, InteractiveInventoryChoice}};
+use super::{
+    approval,
+    local::{self, InteractiveInventoryChoice},
+};
 use crate::{
     auth::AuthMethod,
     cert_server::CertServer,

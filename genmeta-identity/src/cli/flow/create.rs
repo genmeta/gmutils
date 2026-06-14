@@ -267,29 +267,24 @@ fn create_plan_from_selection(
     }
 }
 
-fn create_candidate_from_summary(summary: &LocalIdentitySummary) -> approval::LocalApprovalCandidate {
+fn create_candidate_from_summary(
+    summary: &LocalIdentitySummary,
+) -> approval::LocalApprovalCandidate {
     let short_name = summary.target.short_name().to_string();
     let auth_domain = summary.target.full_name();
     match &summary.status {
         LocalIdentityStatus::Ready { .. } => {
             approval::LocalApprovalCandidate::ready(short_name, auth_domain)
         }
-        LocalIdentityStatus::Expired { .. } => approval::LocalApprovalCandidate::expired(
-            short_name,
-            auth_domain,
-            true,
-            true,
-        ),
-        LocalIdentityStatus::Incomplete { detail } => approval::LocalApprovalCandidate::incomplete(
-            short_name,
-            auth_domain,
-            detail.clone(),
-        ),
-        LocalIdentityStatus::Invalid { detail } => approval::LocalApprovalCandidate::invalid(
-            short_name,
-            auth_domain,
-            detail.clone(),
-        ),
+        LocalIdentityStatus::Expired { .. } => {
+            approval::LocalApprovalCandidate::expired(short_name, auth_domain, true, true)
+        }
+        LocalIdentityStatus::Incomplete { detail } => {
+            approval::LocalApprovalCandidate::incomplete(short_name, auth_domain, detail.clone())
+        }
+        LocalIdentityStatus::Invalid { detail } => {
+            approval::LocalApprovalCandidate::invalid(short_name, auth_domain, detail.clone())
+        }
     }
 }
 
@@ -648,7 +643,10 @@ async fn resolve_parent_candidate(
         .parent()
         .whatever_context::<_, Error>("sub-identity target is missing its parent identity")?
         .into_owned();
-    if !dhttp_home.identity_profile_exists_exactly(parent.clone()).await {
+    if !dhttp_home
+        .identity_profile_exists_exactly(parent.clone())
+        .await
+    {
         return Ok(Some(approval::LocalApprovalCandidate::missing(
             parent.as_partial(),
             parent.as_full(),
@@ -1628,7 +1626,13 @@ mod tests {
     use crate::{
         auth::AuthMethod,
         cert_server::{CreateDomainResponse, CreateSubdomainResponse},
-        cli::{Create, flow::{approval::{ApprovalMenuOption, LocalApprovalCandidate}, target::IdentityTarget}},
+        cli::{
+            Create,
+            flow::{
+                approval::{ApprovalMenuOption, LocalApprovalCandidate},
+                target::IdentityTarget,
+            },
+        },
     };
 
     #[test]
@@ -1842,12 +1846,10 @@ mod tests {
 
     #[test]
     fn create_subidentity_with_ready_parent_shows_local_before_email() {
-        let options = build_create_approval_options(Some(
-            LocalApprovalCandidate::ready(
-                "alice.smith",
-                "alice.smith.dhttp.net",
-            ),
-        ));
+        let options = build_create_approval_options(Some(LocalApprovalCandidate::ready(
+            "alice.smith",
+            "alice.smith.dhttp.net",
+        )));
 
         assert_eq!(
             options
@@ -1863,12 +1865,10 @@ mod tests {
 
     #[test]
     fn create_subidentity_with_missing_parent_uses_apply_copy() {
-        let options = build_create_approval_options(Some(
-            LocalApprovalCandidate::missing(
-                "alice.smith",
-                "alice.smith.dhttp.net",
-            ),
-        ));
+        let options = build_create_approval_options(Some(LocalApprovalCandidate::missing(
+            "alice.smith",
+            "alice.smith.dhttp.net",
+        )));
 
         assert_eq!(
             options

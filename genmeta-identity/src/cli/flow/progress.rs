@@ -3,10 +3,7 @@ use std::future::Future;
 use tracing::{Instrument, info_span};
 use tracing_indicatif::span_ext::IndicatifSpanExt;
 
-pub(crate) async fn run_with_spinner<T, E, Fut>(
-    message: &str,
-    future: Fut,
-) -> Result<T, E>
+pub(crate) async fn run_with_spinner<T, E, Fut>(message: &str, future: Fut) -> Result<T, E>
 where
     Fut: Future<Output = Result<T, E>>,
 {

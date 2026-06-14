@@ -19,7 +19,9 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ApplyApprovalPlan {
     Email,
-    DirectIdentity { auth_domain: String },
+    DirectIdentity {
+        auth_domain: String,
+    },
     HelperIdentity {
         auth_domain: String,
         action: approval::ApprovalHelperAction,
@@ -178,35 +180,28 @@ fn apply_verification_options(auth_domain: &str) -> Vec<(String, ApplyApprovalPl
     .collect()
 }
 
-fn apply_candidate_from_summary(summary: &LocalIdentitySummary) -> approval::LocalApprovalCandidate {
+fn apply_candidate_from_summary(
+    summary: &LocalIdentitySummary,
+) -> approval::LocalApprovalCandidate {
     let short_name = summary.target.short_name().to_string();
     let auth_domain = summary.target.full_name();
     match &summary.status {
         LocalIdentityStatus::Ready { .. } => {
             approval::LocalApprovalCandidate::ready(short_name, auth_domain)
         }
-        LocalIdentityStatus::Expired { .. } => approval::LocalApprovalCandidate::expired(
-            short_name,
-            auth_domain,
-            true,
-            true,
-        ),
-        LocalIdentityStatus::Incomplete { detail } => approval::LocalApprovalCandidate::incomplete(
-            short_name,
-            auth_domain,
-            detail.clone(),
-        ),
-        LocalIdentityStatus::Invalid { detail } => approval::LocalApprovalCandidate::invalid(
-            short_name,
-            auth_domain,
-            detail.clone(),
-        ),
+        LocalIdentityStatus::Expired { .. } => {
+            approval::LocalApprovalCandidate::expired(short_name, auth_domain, true, true)
+        }
+        LocalIdentityStatus::Incomplete { detail } => {
+            approval::LocalApprovalCandidate::incomplete(short_name, auth_domain, detail.clone())
+        }
+        LocalIdentityStatus::Invalid { detail } => {
+            approval::LocalApprovalCandidate::invalid(short_name, auth_domain, detail.clone())
+        }
     }
 }
 
-fn apply_plan_from_option(
-    option: &approval::ApprovalMenuOption,
-) -> ApplyApprovalPlan {
+fn apply_plan_from_option(option: &approval::ApprovalMenuOption) -> ApplyApprovalPlan {
     match option {
         approval::ApprovalMenuOption::Email { .. } => ApplyApprovalPlan::Email,
         approval::ApprovalMenuOption::DirectLocal(local) => ApplyApprovalPlan::DirectIdentity {
@@ -502,7 +497,10 @@ async fn resolve_apply_candidate(
 
     let parent_candidate = if target.level() == IdentityLevel::SubIdentity {
         if let Some(parent) = target.parent() {
-            if dhttp_home.identity_profile_exists_exactly(parent.clone()).await {
+            if dhttp_home
+                .identity_profile_exists_exactly(parent.clone())
+                .await
+            {
                 let summary = local::load_summary(dhttp_home, parent.clone(), None).await?;
                 Some(apply_candidate_from_summary(&summary))
             } else {
@@ -551,7 +549,14 @@ async fn run_helper_apply_action(
                 verify_code: None,
                 auth: None,
             };
-            match Box::pin(run_interactive(&command, dhttp_home, cert_server, return_to)).await? {
+            match Box::pin(run_interactive(
+                &command,
+                dhttp_home,
+                cert_server,
+                return_to,
+            ))
+            .await?
+            {
                 ApplyRunOutcome::Applied => Ok(true),
                 ApplyRunOutcome::ReturnedToCaller => Ok(false),
             }
@@ -759,15 +764,13 @@ pub(crate) async fn run_interactive(
             .approval_plan
             .clone()
             .whatever_context::<_, Error>("interactive apply approval plan is unavailable")?;
-        if let ApplyApprovalPlan::HelperIdentity { auth_domain, action } = approval_plan.clone() {
-            if !run_helper_apply_action(
-                dhttp_home,
-                cert_server,
-                &auth_domain,
-                action,
-                return_to,
-            )
-            .await?
+        if let ApplyApprovalPlan::HelperIdentity {
+            auth_domain,
+            action,
+        } = approval_plan.clone()
+        {
+            if !run_helper_apply_action(dhttp_home, cert_server, &auth_domain, action, return_to)
+                .await?
             {
                 state.approval_plan = None;
                 state.revisit_verification_method();
@@ -1084,7 +1087,10 @@ mod tests {
     };
     use crate::{
         auth::AuthMethod,
-        cli::{Apply, flow::approval::{ApprovalMenuOption, LocalApprovalCandidate}},
+        cli::{
+            Apply,
+            flow::approval::{ApprovalMenuOption, LocalApprovalCandidate},
+        },
     };
 
     #[test]
@@ -1212,13 +1218,11 @@ mod tests {
 
     #[test]
     fn apply_with_invalid_local_identity_uses_reapply_copy() {
-        let options = build_apply_approval_options(Some(
-            LocalApprovalCandidate::invalid(
-                "alice.smith",
-                "alice.smith.dhttp.net",
-                "certificate is unreadable",
-            ),
-        ));
+        let options = build_apply_approval_options(Some(LocalApprovalCandidate::invalid(
+            "alice.smith",
+            "alice.smith.dhttp.net",
+            "certificate is unreadable",
+        )));
 
         assert_eq!(
             options
@@ -1234,14 +1238,12 @@ mod tests {
 
     #[test]
     fn apply_with_expired_local_identity_shows_renew_before_reapply() {
-        let options = build_apply_approval_options(Some(
-            LocalApprovalCandidate::expired(
-                "alice.smith",
-                "alice.smith.dhttp.net",
-                true,
-                true,
-            ),
-        ));
+        let options = build_apply_approval_options(Some(LocalApprovalCandidate::expired(
+            "alice.smith",
+            "alice.smith.dhttp.net",
+            true,
+            true,
+        )));
 
         assert_eq!(
             options
