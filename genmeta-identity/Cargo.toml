@@ -9,6 +9,7 @@ clap = { workspace = true, optional = true }
 inquire = { workspace = true, optional = true }
 indicatif = { workspace = true, optional = true }
 tracing-indicatif = { workspace = true, optional = true }
+crossterm = { workspace = true, optional = true }
 
 base64 = { workspace = true }
 bytes = { workspace = true }
@@ -28,7 +29,9 @@ http = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+time = { workspace = true }
 urlencoding = { workspace = true }
+whoami = { workspace = true, optional = true }
 x509-parser = { workspace = true }
 
 [features]
@@ -38,4 +41,6 @@ cli = [
     "dep:inquire",
     "dep:indicatif",
     "dep:tracing-indicatif",
+    "dep:crossterm",
+    "dep:whoami",
 ]
