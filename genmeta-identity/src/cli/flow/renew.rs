@@ -261,7 +261,7 @@ async fn resolve_target(
             let choices = local::build_renew_inventory_choices(&inventory);
             if choices.is_empty() {
                 whatever!(
-                    "no local identities found; renew requires a saved local identity profile"
+                    "No local identities found. Renew requires a saved local identity profile."
                 );
             }
             let labels: Vec<String> = choices
@@ -376,7 +376,7 @@ async fn run_interactive(
             let choices = local::build_renew_inventory_choices(&inventory);
             if choices.is_empty() {
                 whatever!(
-                    "no local identities found; renew requires a saved local identity profile"
+                    "No local identities found. Renew requires a saved local identity profile."
                 );
             }
             let labels: Vec<String> = choices

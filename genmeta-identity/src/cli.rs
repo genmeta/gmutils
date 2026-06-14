@@ -216,7 +216,7 @@ async fn resolve_default_target_name(dhttp_home: &DhttpHome) -> Result<Name<'sta
     {
         Some(name) => Ok(name),
         None => whatever!(
-            "no default identity configured, use `genmeta identity default <name>` to set one"
+            "No default identity configured. Use `genmeta identity default <name>` to set one."
         ),
     }
 }
@@ -408,7 +408,7 @@ impl List {
         )
         .await?;
         if inventory.groups.is_empty() {
-            flow::transcript::print_line("no local identities found");
+            flow::transcript::print_line("No local identities found");
         } else {
             flow::transcript::print_block(&flow::output::render_inventory(
                 &inventory,
@@ -444,7 +444,7 @@ impl Info {
             None => match default_name.clone() {
                 Some(n) => n,
                 None => whatever!(
-                    "no default identity configured, use `genmeta identity default <name>` to set one"
+                    "No default identity configured. Use `genmeta identity default <name>` to set one."
                 ),
             },
         };

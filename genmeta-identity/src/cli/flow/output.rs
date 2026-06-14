@@ -142,15 +142,15 @@ pub(crate) fn format_safekeeping_reminder(ansi: bool) -> String {
 pub(crate) fn format_info(summary: &LocalIdentitySummary, ansi: bool) -> String {
     let mut lines = Vec::new();
     lines.push(render_line(
-        format!("name: {}", summary_name(summary)),
+        format!("Name: {}", summary_name(summary)),
         summary_line_style(summary),
         ansi,
     ));
     if let Some(certificate_chain) = summary.certificate_chain.as_ref() {
-        lines.push(format!("certificate chain: {certificate_chain}"));
+        lines.push(format!("Certificate chain: {certificate_chain}"));
     }
-    lines.push(format!("status: {}", format_status(summary.status.clone())));
-    lines.push(format!("saved at: {}", summary.saved_at.display()));
+    lines.push(format!("Status: {}", format_status(summary.status.clone())));
+    lines.push(format!("Saved at: {}", summary.saved_at.display()));
     lines.join("\n")
 }
 
@@ -295,10 +295,10 @@ mod tests {
         );
 
         let expected = "\
-name: phone.alice.smith (sub-identity of alice.smith) (default identity)\n\
-certificate chain: secondary:2\n\
-status: ready (expires after 2026-11-10 08:12:44 UTC)\n\
-saved at: /tmp/phone.alice.smith";
+Name: phone.alice.smith (sub-identity of alice.smith) (default identity)\n\
+Certificate chain: secondary:2\n\
+Status: ready (expires after 2026-11-10 08:12:44 UTC)\n\
+Saved at: /tmp/phone.alice.smith";
 
         assert_eq!(format_info(&profile, false), expected);
         assert_eq!(format_default_summary(&profile, false), expected);

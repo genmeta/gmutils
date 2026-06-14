@@ -24,7 +24,7 @@ fn default_organization_actions(target: &str) -> Vec<String> {
         .map(|target| target.short_name().to_string())
         .unwrap_or_else(|_| target.to_string());
     vec![
-        format!("Apply {short_name} to local device"),
+        format!("Apply {short_name} to this device"),
         "Choose another identity".to_string(),
     ]
 }
@@ -112,7 +112,7 @@ async fn select_interactive_default_summary(
         let inventory = local::load_inventory(dhttp_home, configured_default_name.clone()).await?;
         let choices = local::build_default_inventory_choices(&inventory);
         if choices.is_empty() {
-            whatever!("no local identities found");
+            whatever!("No local identities found");
         }
 
         let ansi = std::io::stdout().is_terminal();
@@ -179,7 +179,7 @@ pub(crate) async fn run(
             let name = match configured_default_name.clone() {
                 Some(n) => n,
                 None => whatever!(
-                    "no default identity configured, use `genmeta identity default <name>` to set one"
+                    "No default identity configured. Use `genmeta identity default <name>` to set one."
                 ),
             };
             let summary = local::load_summary(
@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(
             default_organization_actions("alice.smith.dhttp.net"),
             vec![
-                "Apply alice.smith to local device".to_string(),
+                "Apply alice.smith to this device".to_string(),
                 "Choose another identity".to_string(),
             ]
         );
@@ -257,7 +257,7 @@ mod tests {
         let options = default_organization_actions("alice.smith.dhttp.net");
 
         assert_eq!(
-            organization_action_from_selection(&options, "Apply alice.smith to local device")
+            organization_action_from_selection(&options, "Apply alice.smith to this device")
                 .unwrap(),
             DefaultOrganizationAction::ApplyToLocalDevice,
         );

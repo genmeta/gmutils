@@ -120,6 +120,7 @@ pub(crate) struct ApprovalHelperOption {
 }
 
 impl ApprovalHelperOption {
+    #[cfg(test)]
     pub(crate) fn apply(short_name: impl Into<String>) -> Self {
         let short_name = short_name.into();
         Self::apply_for(short_name.clone(), short_name)
@@ -137,6 +138,7 @@ impl ApprovalHelperOption {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn reapply(
         short_name: impl Into<String>,
         detail: impl Into<String>,
@@ -158,6 +160,7 @@ impl ApprovalHelperOption {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn renew(short_name: impl Into<String>) -> Self {
         let short_name = short_name.into();
         Self::renew_for(short_name.clone(), short_name)
