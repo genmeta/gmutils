@@ -259,7 +259,11 @@ async fn acquire_verify_code(
     match flow::email::EmailVerificationAction::from_verify_code(provided) {
         flow::email::EmailVerificationAction::ReuseProvidedCode(code) => Ok(code),
         flow::email::EmailVerificationAction::SendAndPrompt => {
-            cert_server.send_email_verification(email).await?;
+            flow::progress::run_with_spinner(
+                "Sending verification code...",
+                cert_server.send_email_verification(email),
+            )
+            .await?;
             prompt::prompt_verify_code()
                 .await
                 .require_interactive("--verify-code")
@@ -286,12 +290,19 @@ async fn login_with_email(
     };
     let verify_code = acquire_verify_code(cert_server, &email, verify_code).await?;
     if let Some(domain) = domain {
-        Ok(cert_server
-            .domain_login(domain.as_full(), &email, &verify_code)
-            .await?
-            .access_token)
+        Ok(flow::progress::run_with_spinner(
+            "Verifying with email...",
+            cert_server.domain_login(domain.as_full(), &email, &verify_code),
+        )
+        .await?
+        .access_token)
     } else {
-        Ok(cert_server.login(&email, &verify_code).await?.access_token)
+        Ok(flow::progress::run_with_spinner(
+            "Verifying with email...",
+            cert_server.login(&email, &verify_code),
+        )
+        .await?
+        .access_token)
     }
 }
 

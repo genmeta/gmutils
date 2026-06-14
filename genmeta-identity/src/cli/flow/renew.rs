@@ -484,7 +484,12 @@ async fn run_interactive(
                 .clone()
                 .whatever_context::<_, Error>("interactive renew email is unavailable")?;
             if state.verification_code_sent_to.as_deref() != Some(email.as_str()) {
-                match cert_server.send_email_verification(&email).await {
+                match super::progress::run_with_spinner(
+                    "Sending verification code...",
+                    cert_server.send_email_verification(&email),
+                )
+                .await
+                {
                     Ok(_) => {
                         state.verification_code_sent_to = Some(email.clone());
                     }
@@ -513,7 +518,12 @@ async fn run_interactive(
                 crate::cli::prompt::TextPromptResult::MoreOptions => {
                     match prompt_renew_verify_code_action().await? {
                         RenewVerifyCodeAction::ResendVerificationCode => {
-                            match cert_server.send_email_verification(&email).await {
+                            match super::progress::run_with_spinner(
+                                "Sending verification code...",
+                                cert_server.send_email_verification(&email),
+                            )
+                            .await
+                            {
                                 Ok(_) => {
                                     state.verification_code_sent_to = Some(email);
                                 }
@@ -558,9 +568,11 @@ async fn run_interactive(
                 let verify_code = state.verify_code.as_deref().whatever_context::<_, Error>(
                     "interactive renew verification code is unavailable",
                 )?;
-                let token = match cert_server
-                    .domain_login(domain.as_full(), &email, verify_code)
-                    .await
+                let token = match super::progress::run_with_spinner(
+                    "Verifying with email...",
+                    cert_server.domain_login(domain.as_full(), &email, verify_code),
+                )
+                .await
                 {
                     Ok(login) => login.access_token,
                     Err(error) => {
@@ -578,28 +590,32 @@ async fn run_interactive(
                         return Err(Error::from(error));
                     }
                 };
-                cert_server
-                    .renew_cert(
+                super::progress::run_with_spinner(
+                    "Renewing identity...",
+                    cert_server.renew_cert(
                         &token,
                         domain.as_full(),
                         &kind,
                         sequence,
                         Some(&device_name),
                         &csr_pem,
-                    )
-                    .await?
+                    ),
+                )
+                .await?
             }
             RenewApprovalPlan::Identity => {
-                cert_server
-                    .renew_cert_with_identity(
+                super::progress::run_with_spinner(
+                    "Renewing identity...",
+                    cert_server.renew_cert_with_identity(
                         domain.as_full(),
                         domain.as_full(),
                         &kind,
                         sequence,
                         Some(&device_name),
                         &csr_pem,
-                    )
-                    .await?
+                    ),
+                )
+                .await?
             }
         };
 
@@ -659,7 +675,11 @@ pub(crate) async fn run(
             whatever!("--send-code requires --auth email");
         }
         let email = resolve_email(command).await?;
-        cert_server.send_email_verification(&email).await?;
+        super::progress::run_with_spinner(
+            "Sending verification code...",
+            cert_server.send_email_verification(&email),
+        )
+        .await?;
         return Ok(());
     }
 
@@ -673,28 +693,32 @@ pub(crate) async fn run(
                 command.verify_code.clone(),
             )
             .await?;
-            cert_server
-                .renew_cert(
+            super::progress::run_with_spinner(
+                "Renewing identity...",
+                cert_server.renew_cert(
                     &token,
                     domain.as_full(),
                     &kind,
                     sequence,
                     Some(&device_name),
                     &csr_pem,
-                )
-                .await?
+                ),
+            )
+            .await?
         }
         RenewApprovalPlan::Identity => {
-            cert_server
-                .renew_cert_with_identity(
+            super::progress::run_with_spinner(
+                "Renewing identity...",
+                cert_server.renew_cert_with_identity(
                     domain.as_full(),
                     domain.as_full(),
                     &kind,
                     sequence,
                     Some(&device_name),
                     &csr_pem,
-                )
-                .await?
+                ),
+            )
+            .await?
         }
     };
 

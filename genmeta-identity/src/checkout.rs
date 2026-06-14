@@ -63,15 +63,20 @@ pub async fn wait_for_checkout_completion(
     cert_server: &crate::cert_server::CertServer,
     checkout_token: &str,
 ) -> Result<CreateDomainResponse, crate::cert_server::Error> {
-    loop {
-        let response = cert_server.get_checkout(checkout_token).await?;
-        match classify_checkout(&response) {
-            CheckoutState::Completed | CheckoutState::Expired | CheckoutState::Cancelled => {
-                return Ok(response);
+    crate::cli::flow::progress::run_with_spinner("Waiting for payment confirmation...", async {
+        loop {
+            let response = cert_server.get_checkout(checkout_token).await?;
+            match classify_checkout(&response) {
+                CheckoutState::Completed | CheckoutState::Expired | CheckoutState::Cancelled => {
+                    return Ok(response);
+                }
+                CheckoutState::Pending => {
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await
+                }
             }
-            CheckoutState::Pending => tokio::time::sleep(std::time::Duration::from_secs(3)).await,
         }
-    }
+    })
+    .await
 }
 
 #[cfg(test)]

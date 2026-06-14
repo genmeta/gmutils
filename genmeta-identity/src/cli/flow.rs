@@ -8,6 +8,7 @@ pub(crate) mod epilogue;
 pub(crate) mod kind;
 pub(crate) mod local;
 pub(crate) mod output;
+pub(crate) mod progress;
 pub(crate) mod recovery;
 pub(crate) mod renew;
 pub(crate) mod target;

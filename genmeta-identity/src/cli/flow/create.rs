@@ -579,7 +579,11 @@ async fn resolve_verify_code(
     match provided_verify_code {
         Some(code) => Ok(code),
         None => {
-            cert_server.send_email_verification(email).await?;
+            super::progress::run_with_spinner(
+                "Sending verification code...",
+                cert_server.send_email_verification(email),
+            )
+            .await?;
             Ok(prompt::prompt_verify_code()
                 .await
                 .require_interactive("--verify-code")?)
@@ -729,9 +733,11 @@ async fn complete_root_identity_create_interactively(
     verify_code: &str,
 ) -> Result<CreateDomainResponse, CompleteRootIdentityCreateInteractivelyError> {
     loop {
-        let created = match cert_server
-            .create_domain_with_email(target.full_name(), email, verify_code)
-            .await
+        let created = match super::progress::run_with_spinner(
+            "Creating identity...",
+            cert_server.create_domain_with_email(target.full_name(), email, verify_code),
+        )
+        .await
         {
             Ok(created) => created,
             Err(source) => {
@@ -812,13 +818,16 @@ async fn wait_for_invoice_terminal(
     access_token: &str,
     invoice_no: &str,
 ) -> Result<InvoiceDetail, Error> {
-    loop {
-        let invoice = cert_server.get_invoice(access_token, invoice_no).await?;
-        match invoice.status.as_str() {
-            "paid" | "expired" | "cancelled" | "canceled" => return Ok(invoice),
-            _ => tokio::time::sleep(std::time::Duration::from_secs(3)).await,
+    super::progress::run_with_spinner("Waiting for payment confirmation...", async {
+        loop {
+            let invoice = cert_server.get_invoice(access_token, invoice_no).await?;
+            match invoice.status.as_str() {
+                "paid" | "expired" | "cancelled" | "canceled" => return Ok(invoice),
+                _ => tokio::time::sleep(std::time::Duration::from_secs(3)).await,
+            }
         }
-    }
+    })
+    .await
 }
 
 async fn create_sub_identity_with_email_interactively(
@@ -829,9 +838,11 @@ async fn create_sub_identity_with_email_interactively(
     label: &str,
 ) -> Result<CreateSubdomainResponse, Error> {
     loop {
-        match cert_server
-            .create_subdomain_attempt(access_token, parent.as_full(), label, None)
-            .await?
+        match super::progress::run_with_spinner(
+            "Creating sub-identity...",
+            cert_server.create_subdomain_attempt(access_token, parent.as_full(), label, None),
+        )
+        .await?
         {
             CreateSubdomainAttempt::Created(response) => return Ok(response),
             CreateSubdomainAttempt::QuotaExceeded(quote) => {
@@ -846,14 +857,16 @@ async fn create_sub_identity_with_email_interactively(
                 }
 
                 loop {
-                    let invoice_response = match cert_server
-                        .create_subdomain_attempt(
+                    let invoice_response = match super::progress::run_with_spinner(
+                        "Creating sub-identity...",
+                        cert_server.create_subdomain_attempt(
                             access_token,
                             parent.as_full(),
                             label,
                             Some(quote.due),
-                        )
-                        .await?
+                        ),
+                    )
+                    .await?
                     {
                         CreateSubdomainAttempt::Created(response) => response,
                         CreateSubdomainAttempt::QuotaExceeded(_) => {
@@ -867,7 +880,11 @@ async fn create_sub_identity_with_email_interactively(
                         .whatever_context::<_, Error>(
                             "quota expansion checkout did not return an invoice number",
                         )?;
-                    let invoice = cert_server.get_invoice(access_token, invoice_no).await?;
+                    let invoice = super::progress::run_with_spinner(
+                        "Loading payment details...",
+                        cert_server.get_invoice(access_token, invoice_no),
+                    )
+                    .await?;
                     print_subdomain_checkout_instructions(target, &invoice, &quote);
                     let invoice =
                         wait_for_invoice_terminal(cert_server, access_token, invoice_no).await?;
@@ -1070,7 +1087,12 @@ async fn run_interactive(
                 .clone()
                 .whatever_context::<_, Error>("interactive create email is unavailable")?;
             if state.verification_code_sent_to.as_deref() != Some(email.as_str()) {
-                match cert_server.send_email_verification(&email).await {
+                match super::progress::run_with_spinner(
+                    "Sending verification code...",
+                    cert_server.send_email_verification(&email),
+                )
+                .await
+                {
                     Ok(_) => {
                         state.verification_code_sent_to = Some(email.clone());
                     }
@@ -1099,7 +1121,12 @@ async fn run_interactive(
                 prompt::TextPromptResult::MoreOptions => {
                     match prompt_create_verify_code_action(None).await? {
                         CreateVerifyCodeAction::ResendVerificationCode => {
-                            match cert_server.send_email_verification(&email).await {
+                            match super::progress::run_with_spinner(
+                                "Sending verification code...",
+                                cert_server.send_email_verification(&email),
+                            )
+                            .await
+                            {
                                 Ok(_) => {
                                     state.verification_code_sent_to = Some(email);
                                 }
@@ -1182,7 +1209,12 @@ async fn run_interactive(
                 let access_token = if let Some(auth) = created.auth {
                     auth.access_token
                 } else {
-                    match cert_server.login(&email, &verify_code).await {
+                    match super::progress::run_with_spinner(
+                        "Verifying with email...",
+                        cert_server.login(&email, &verify_code),
+                    )
+                    .await
+                    {
                         Ok(login) => login.access_token,
                         Err(error) => {
                             let recovery =
@@ -1200,16 +1232,18 @@ async fn run_interactive(
                         }
                     }
                 };
-                let cert = cert_server
-                    .issue_cert(
+                let cert = super::progress::run_with_spinner(
+                    "Applying identity...",
+                    cert_server.issue_cert(
                         &access_token,
                         target.full_name(),
                         kind.as_str(),
                         None,
                         &super::device::resolve_device_name(command.device_name.as_deref()),
                         &csr_pem,
-                    )
-                    .await?;
+                    ),
+                )
+                .await?;
                 cli::save_identity(
                     dhttp_home,
                     &target.dhttp_name(),
@@ -1237,7 +1271,12 @@ async fn run_interactive(
                         let verify_code = state.verify_code.clone().whatever_context::<_, Error>(
                             "interactive create verification code is unavailable",
                         )?;
-                        let access_token = match cert_server.login(&email, &verify_code).await {
+                        let access_token = match super::progress::run_with_spinner(
+                            "Verifying with email...",
+                            cert_server.login(&email, &verify_code),
+                        )
+                        .await
+                        {
                             Ok(login) => login.access_token,
                             Err(error) => {
                                 let recovery =
@@ -1266,16 +1305,18 @@ async fn run_interactive(
                             label,
                         )
                         .await?;
-                        let cert = cert_server
-                            .issue_cert(
+                        let cert = super::progress::run_with_spinner(
+                            "Applying identity...",
+                            cert_server.issue_cert(
                                 &access_token,
                                 target.full_name(),
                                 kind.as_str(),
                                 None,
                                 &super::device::resolve_device_name(command.device_name.as_deref()),
                                 &csr_pem,
-                            )
-                            .await?;
+                            ),
+                        )
+                        .await?;
                         cli::save_identity(
                             dhttp_home,
                             &target.dhttp_name(),
@@ -1299,14 +1340,16 @@ async fn run_interactive(
                                     return Err(error);
                                 }
                             };
-                        match cert_server
-                            .create_subdomain_with_identity(
+                        match super::progress::run_with_spinner(
+                            "Creating sub-identity...",
+                            cert_server.create_subdomain_with_identity(
                                 ready_parent.as_full(),
                                 parent.as_full(),
                                 label,
                                 None,
-                            )
-                            .await
+                            ),
+                        )
+                        .await
                         {
                             Ok(_) => {}
                             Err(error) => {
@@ -1324,16 +1367,18 @@ async fn run_interactive(
                                 return Err(Error::from(error));
                             }
                         }
-                        let cert = cert_server
-                            .issue_cert_with_identity(
+                        let cert = super::progress::run_with_spinner(
+                            "Verifying with local identity...",
+                            cert_server.issue_cert_with_identity(
                                 ready_parent.as_full(),
                                 target.full_name(),
                                 kind.as_str(),
                                 None,
                                 &super::device::resolve_device_name(command.device_name.as_deref()),
                                 &csr_pem,
-                            )
-                            .await?;
+                            ),
+                        )
+                        .await?;
                         cli::save_identity(
                             dhttp_home,
                             &target.dhttp_name(),
@@ -1387,7 +1432,11 @@ pub(crate) async fn run(
             whatever!("--send-code requires --auth email");
         }
         let email = resolve_email(command).await?;
-        cert_server.send_email_verification(&email).await?;
+        super::progress::run_with_spinner(
+            "Sending verification code...",
+            cert_server.send_email_verification(&email),
+        )
+        .await?;
         return Ok(());
     }
 
@@ -1412,9 +1461,11 @@ pub(crate) async fn run(
             let email = resolve_email(command).await?;
             let verify_code =
                 resolve_verify_code(cert_server, &email, command.verify_code.clone()).await?;
-            let created = cert_server
-                .create_domain_with_email(target.full_name(), &email, &verify_code)
-                .await?;
+            let created = super::progress::run_with_spinner(
+                "Creating identity...",
+                cert_server.create_domain_with_email(target.full_name(), &email, &verify_code),
+            )
+            .await?;
 
             if let Some(payment_entry) = created.payment_entry.as_ref() {
                 if !is_interactive {
@@ -1443,18 +1494,25 @@ pub(crate) async fn run(
             let access_token = if let Some(auth) = created.auth {
                 auth.access_token
             } else {
-                cert_server.login(&email, &verify_code).await?.access_token
+                super::progress::run_with_spinner(
+                    "Verifying with email...",
+                    cert_server.login(&email, &verify_code),
+                )
+                .await?
+                .access_token
             };
-            let cert = cert_server
-                .issue_cert(
+            let cert = super::progress::run_with_spinner(
+                "Applying identity...",
+                cert_server.issue_cert(
                     &access_token,
                     target.full_name(),
                     kind.as_str(),
                     None,
                     &device_name,
                     &csr_pem,
-                )
-                .await?;
+                ),
+            )
+            .await?;
             cli::save_identity(
                 dhttp_home,
                 &target.dhttp_name(),
@@ -1478,21 +1536,30 @@ pub(crate) async fn run(
                     let verify_code =
                         resolve_verify_code(cert_server, &email, command.verify_code.clone())
                             .await?;
-                    let access_token = cert_server.login(&email, &verify_code).await?.access_token;
-                    let created = cert_server
-                        .create_subdomain(&access_token, parent.as_full(), label, None)
-                        .await?;
+                    let access_token = super::progress::run_with_spinner(
+                        "Verifying with email...",
+                        cert_server.login(&email, &verify_code),
+                    )
+                    .await?
+                    .access_token;
+                    let created = super::progress::run_with_spinner(
+                        "Creating sub-identity...",
+                        cert_server.create_subdomain(&access_token, parent.as_full(), label, None),
+                    )
+                    .await?;
                     ensure_non_interactive_sub_identity_checkout_not_required(&target, &created)?;
-                    let cert = cert_server
-                        .issue_cert(
+                    let cert = super::progress::run_with_spinner(
+                        "Applying identity...",
+                        cert_server.issue_cert(
                             &access_token,
                             target.full_name(),
                             kind.as_str(),
                             None,
                             &device_name,
                             &csr_pem,
-                        )
-                        .await?;
+                        ),
+                    )
+                    .await?;
                     cli::save_identity(
                         dhttp_home,
                         &target.dhttp_name(),
@@ -1504,25 +1571,29 @@ pub(crate) async fn run(
                 }
                 AuthMethod::Identity => {
                     let ready_parent = ensure_parent_identity_ready(dhttp_home, &target).await?;
-                    let created = cert_server
-                        .create_subdomain_with_identity(
+                    let created = super::progress::run_with_spinner(
+                        "Creating sub-identity...",
+                        cert_server.create_subdomain_with_identity(
                             ready_parent.as_full(),
                             parent.as_full(),
                             label,
                             None,
-                        )
-                        .await?;
+                        ),
+                    )
+                    .await?;
                     ensure_non_interactive_sub_identity_checkout_not_required(&target, &created)?;
-                    let cert = cert_server
-                        .issue_cert_with_identity(
+                    let cert = super::progress::run_with_spinner(
+                        "Verifying with local identity...",
+                        cert_server.issue_cert_with_identity(
                             ready_parent.as_full(),
                             target.full_name(),
                             kind.as_str(),
                             None,
                             &device_name,
                             &csr_pem,
-                        )
-                        .await?;
+                        ),
+                    )
+                    .await?;
                     cli::save_identity(
                         dhttp_home,
                         &target.dhttp_name(),
