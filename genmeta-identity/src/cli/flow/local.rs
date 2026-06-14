@@ -277,8 +277,15 @@ pub(crate) fn build_renew_inventory_choices(
 ) -> Vec<InteractiveInventoryChoice> {
     let mut choices = Vec::new();
     for group in &inventory.groups {
-        if let LocalInventoryRoot::Saved(summary) = &group.root {
-            choices.push(InteractiveInventoryChoice::Saved(summary.clone()));
+        match &group.root {
+            LocalInventoryRoot::Saved(summary) => {
+                choices.push(InteractiveInventoryChoice::Saved(summary.clone()));
+            }
+            LocalInventoryRoot::Organization { target } => {
+                choices.push(InteractiveInventoryChoice::Organization {
+                    target: target.clone(),
+                });
+            }
         }
         choices.extend(
             group
@@ -633,27 +640,17 @@ mod tests {
     }
 
     #[test]
-    fn builds_renew_inventory_choices_without_organization_roots() {
-        let mut tv = ready_summary("tv.alice.smith", false, "secondary:3");
-        tv.status = LocalIdentityStatus::Incomplete {
-            detail: "private key missing".to_string(),
-        };
-        tv.certificate_chain = None;
-
-        let inventory = build_inventory(vec![
-            ready_summary("phone.alice.smith", false, "secondary:2"),
-            tv.clone(),
-        ]);
+    fn build_renew_inventory_choices_keeps_missing_parent_roots() {
+        let child = ready_summary("shanghai.alice.ma", false, "secondary:1");
+        let inventory = build_inventory(vec![child.clone()]);
 
         assert_eq!(
             build_renew_inventory_choices(&inventory),
             vec![
-                InteractiveInventoryChoice::Saved(ready_summary(
-                    "phone.alice.smith",
-                    false,
-                    "secondary:2",
-                )),
-                InteractiveInventoryChoice::Saved(tv),
+                InteractiveInventoryChoice::Organization {
+                    target: IdentityTarget::parse("alice.ma").unwrap(),
+                },
+                InteractiveInventoryChoice::Saved(child),
             ]
         );
     }

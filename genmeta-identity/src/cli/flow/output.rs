@@ -388,6 +388,37 @@ reimu.scarlet (not saved locally)\n\
     }
 
     #[test]
+    fn renew_selector_labels_include_parent_root_before_child() {
+        let labels = vec![
+            render_choice_label(
+                &InteractiveInventoryChoice::Organization {
+                    target: IdentityTarget::parse("alice.ma").unwrap(),
+                },
+                false,
+            ),
+            render_choice_label(
+                &InteractiveInventoryChoice::Saved(summary(
+                    "shanghai.alice.ma",
+                    false,
+                    LocalIdentityStatus::Ready {
+                        expires_at: EXPIRES_AT,
+                    },
+                    Some("secondary:1"),
+                )),
+                false,
+            ),
+        ];
+
+        assert_eq!(
+            labels,
+            vec![
+                "alice.ma (not saved locally)".to_string(),
+                "  shanghai.alice.ma [ready]".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn renders_choice_labels_without_ansi_effects() {
         let labels = vec![
             render_choice_label(

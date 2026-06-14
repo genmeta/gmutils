@@ -4,7 +4,7 @@ use dhttp_home::DhttpHome;
 use snafu::{OptionExt, whatever};
 use tracing::{Instrument, info_span};
 
-use super::local::{self, InteractiveInventoryChoice};
+use super::{approval, local::{self, InteractiveInventoryChoice}};
 use crate::{
     auth::AuthMethod,
     cert_server::CertServer,
@@ -161,14 +161,34 @@ fn apply_verification_recovery(
     }
 }
 
+fn renew_not_saved_root_message(short_name: &str) -> String {
+    format!(
+        "The identity {short_name} is not saved on this device.\n\nRenew updates a local identity already saved on this device.\nThis identity has not been applied locally yet.\n\nApply {short_name} to this device first, then return to renew."
+    )
+}
+
+fn build_renew_approval_options(target: &str) -> Vec<approval::ApprovalMenuOption> {
+    approval::build_approval_options(approval::ApprovalMenuSpec {
+        email_label: "Verify with email".to_string(),
+        direct_local: vec![approval::ApprovalDirectLocal::new(target, target)],
+        helpers: Vec::new(),
+    })
+}
+
 fn renew_verification_options(target: &str) -> Vec<(String, RenewApprovalPlan)> {
-    vec![
-        ("Verify with email".to_string(), RenewApprovalPlan::Email),
-        (
-            format!("Verify with {target} on local device"),
-            RenewApprovalPlan::Identity,
-        ),
-    ]
+    build_renew_approval_options(target)
+        .into_iter()
+        .filter_map(|option| match option {
+            approval::ApprovalMenuOption::Email { label } => {
+                Some((label, RenewApprovalPlan::Email))
+            }
+            approval::ApprovalMenuOption::DirectLocal(local) => Some((
+                format!("Verify with {} on local device", local.short_name),
+                RenewApprovalPlan::Identity,
+            )),
+            approval::ApprovalMenuOption::Helper(_) => None,
+        })
+        .collect()
 }
 
 fn approval_plan_from_selection(
@@ -380,8 +400,13 @@ async fn run_interactive(
                 InteractiveInventoryChoice::Saved(summary) => {
                     state.target = Some(summary.target.into_dhttp_name());
                 }
-                InteractiveInventoryChoice::Organization { .. }
-                | InteractiveInventoryChoice::EnterAnotherIdentity => {
+                InteractiveInventoryChoice::Organization { target } => {
+                    crate::cli::flow::transcript::print_block(&renew_not_saved_root_message(
+                        target.short_name(),
+                    ));
+                    state.revisit_target_selection();
+                }
+                InteractiveInventoryChoice::EnterAnotherIdentity => {
                     whatever!("renew requires a saved local identity profile")
                 }
             }
@@ -668,8 +693,9 @@ pub(crate) async fn run(
 mod tests {
     use super::{
         InteractiveRenewState, RenewApprovalMenuAction, RenewApprovalPlan, RenewEmailAction,
-        RenewVerifyCodeAction, approval_plan_from_selection, renew_approval_menu_actions,
-        renew_email_actions, renew_verification_options, renew_verify_code_actions,
+        RenewVerifyCodeAction, approval_plan_from_selection, build_renew_approval_options,
+        renew_approval_menu_actions, renew_email_actions, renew_not_saved_root_message,
+        renew_verification_options, renew_verify_code_actions,
         resolve_non_interactive_approval_plan,
     };
     use crate::{auth::AuthMethod, cli::Renew};
@@ -759,6 +785,35 @@ mod tests {
         assert_eq!(
             approval_plan_from_selection(&options, "Verify with email").unwrap(),
             RenewApprovalPlan::Email,
+        );
+    }
+
+    #[test]
+    fn renew_not_saved_root_message_mentions_apply_and_return() {
+        assert_eq!(
+            renew_not_saved_root_message("alice.ma"),
+            "The identity alice.ma is not saved on this device.
+
+Renew updates a local identity already saved on this device.
+This identity has not been applied locally yet.
+
+Apply alice.ma to this device first, then return to renew."
+        );
+    }
+
+    #[test]
+    fn renew_verification_options_place_local_before_email() {
+        let options = build_renew_approval_options("alice.ma");
+
+        assert_eq!(
+            options
+                .iter()
+                .map(crate::cli::flow::approval::ApprovalMenuOption::label)
+                .collect::<Vec<_>>(),
+            vec![
+                "Verify with alice.ma on local device".to_string(),
+                "Verify with email".to_string(),
+            ]
         );
     }
 
