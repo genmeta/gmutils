@@ -1,4 +1,5 @@
 use crate::cert_server::CreateDomainResponse;
+use crate::cli::flow::transcript;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckoutState {
@@ -34,23 +35,26 @@ pub fn classify_checkout(response: &CreateDomainResponse) -> CheckoutState {
 }
 
 pub fn print_payment_instructions(response: &CreateDomainResponse) {
-    println!("payment required for {}", response.domain);
-    println!("currency: {}", response.quotes.currency);
-    println!("monthly: {}", response.quotes.monthly);
-    println!("yearly: {}", response.quotes.yearly);
-    println!(
-        "default billing cycle: {}",
-        response.quotes.default_billing_cycle
-    );
+    let mut lines = vec![
+        format!("payment required for {}", response.domain),
+        format!("currency: {}", response.quotes.currency),
+        format!("monthly: {}", response.quotes.monthly),
+        format!("yearly: {}", response.quotes.yearly),
+        format!(
+            "default billing cycle: {}",
+            response.quotes.default_billing_cycle
+        ),
+    ];
     if let Some(reservation) = &response.reservation {
-        println!("reservation: {}", reservation.reservation_no);
-        println!("reservation expires at: {}", reservation.expires_at);
+        lines.push(format!("reservation: {}", reservation.reservation_no));
+        lines.push(format!("reservation expires at: {}", reservation.expires_at));
     }
     if let Some(payment_entry) = &response.payment_entry {
-        println!("payment url: {}", payment_entry.url);
-        println!("checkout token: {}", payment_entry.checkout_token);
-        println!("checkout expires at: {}", payment_entry.expires_at);
+        lines.push(format!("payment url: {}", payment_entry.url));
+        lines.push(format!("checkout token: {}", payment_entry.checkout_token));
+        lines.push(format!("checkout expires at: {}", payment_entry.expires_at));
     }
+    transcript::print_block(&lines.join("\n"));
 }
 
 pub async fn wait_for_checkout_completion(
