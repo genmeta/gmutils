@@ -1,4 +1,5 @@
 pub(crate) mod apply;
+pub(crate) mod approval;
 pub(crate) mod create;
 pub(crate) mod default_identity;
 pub(crate) mod device;
