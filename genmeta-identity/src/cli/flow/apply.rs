@@ -5,8 +5,9 @@ use snafu::{OptionExt, whatever};
 use tracing::{Instrument, info_span};
 
 use super::{
+    approval,
     kind::IdentityKind,
-    local::{self, InteractiveInventoryChoice, LocalIdentityStatus},
+    local::{self, InteractiveInventoryChoice, LocalIdentityStatus, LocalIdentitySummary},
     target::{IdentityLevel, IdentityTarget},
 };
 use crate::{
@@ -18,7 +19,11 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ApplyApprovalPlan {
     Email,
-    Identity { auth_domain: String },
+    DirectIdentity { auth_domain: String },
+    HelperIdentity {
+        auth_domain: String,
+        action: approval::ApprovalHelperAction,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,19 +150,73 @@ fn apply_verify_code_actions(return_to: Option<&str>) -> Vec<ApplyVerifyCodeActi
     actions
 }
 
+fn build_apply_approval_options(
+    candidate: Option<approval::LocalApprovalCandidate>,
+) -> Vec<approval::ApprovalMenuOption> {
+    approval::build_options_for_candidate("Verify with email", candidate)
+}
+
 fn apply_verification_options(auth_domain: &str) -> Vec<(String, ApplyApprovalPlan)> {
     let short_name = IdentityTarget::parse(auth_domain)
         .map(|target| target.short_name().to_string())
         .unwrap_or_else(|_| auth_domain.to_string());
-    vec![
-        ("Verify with email".to_string(), ApplyApprovalPlan::Email),
-        (
-            format!("Verify with {short_name} on local device"),
-            ApplyApprovalPlan::Identity {
-                auth_domain: auth_domain.to_string(),
+    build_apply_approval_options(Some(approval::LocalApprovalCandidate::ready(
+        short_name,
+        auth_domain,
+    )))
+    .into_iter()
+    .filter_map(|option| match option {
+        approval::ApprovalMenuOption::Email { label } => Some((label, ApplyApprovalPlan::Email)),
+        approval::ApprovalMenuOption::DirectLocal(local) => Some((
+            format!("Verify with {} on local device", local.short_name),
+            ApplyApprovalPlan::DirectIdentity {
+                auth_domain: local.auth_domain,
             },
+        )),
+        approval::ApprovalMenuOption::Helper(_) => None,
+    })
+    .collect()
+}
+
+fn apply_candidate_from_summary(summary: &LocalIdentitySummary) -> approval::LocalApprovalCandidate {
+    let short_name = summary.target.short_name().to_string();
+    let auth_domain = summary.target.full_name();
+    match &summary.status {
+        LocalIdentityStatus::Ready { .. } => {
+            approval::LocalApprovalCandidate::ready(short_name, auth_domain)
+        }
+        LocalIdentityStatus::Expired { .. } => approval::LocalApprovalCandidate::expired(
+            short_name,
+            auth_domain,
+            true,
+            true,
         ),
-    ]
+        LocalIdentityStatus::Incomplete { detail } => approval::LocalApprovalCandidate::incomplete(
+            short_name,
+            auth_domain,
+            detail.clone(),
+        ),
+        LocalIdentityStatus::Invalid { detail } => approval::LocalApprovalCandidate::invalid(
+            short_name,
+            auth_domain,
+            detail.clone(),
+        ),
+    }
+}
+
+fn apply_plan_from_option(
+    option: &approval::ApprovalMenuOption,
+) -> ApplyApprovalPlan {
+    match option {
+        approval::ApprovalMenuOption::Email { .. } => ApplyApprovalPlan::Email,
+        approval::ApprovalMenuOption::DirectLocal(local) => ApplyApprovalPlan::DirectIdentity {
+            auth_domain: local.auth_domain.clone(),
+        },
+        approval::ApprovalMenuOption::Helper(helper) => ApplyApprovalPlan::HelperIdentity {
+            auth_domain: helper.auth_domain.clone(),
+            action: helper.action.clone(),
+        },
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -270,7 +329,7 @@ fn resolve_non_interactive_approval_plan(
                     target
                 );
             };
-            Ok(ApplyApprovalPlan::Identity {
+            Ok(ApplyApprovalPlan::DirectIdentity {
                 auth_domain: auth_domain.to_string(),
             })
         }
@@ -427,6 +486,88 @@ async fn resolve_identity_auth_domain(
     Ok(None)
 }
 
+async fn resolve_apply_candidate(
+    dhttp_home: &DhttpHome,
+    target: &IdentityTarget,
+) -> Result<Option<approval::LocalApprovalCandidate>, Error> {
+    let target_candidate = if dhttp_home
+        .identity_profile_exists_exactly(target.dhttp_name())
+        .await
+    {
+        let summary = local::load_summary(dhttp_home, target.dhttp_name(), None).await?;
+        Some(apply_candidate_from_summary(&summary))
+    } else {
+        None
+    };
+
+    let parent_candidate = if target.level() == IdentityLevel::SubIdentity {
+        if let Some(parent) = target.parent() {
+            if dhttp_home.identity_profile_exists_exactly(parent.clone()).await {
+                let summary = local::load_summary(dhttp_home, parent.clone(), None).await?;
+                Some(apply_candidate_from_summary(&summary))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if matches!(
+        target_candidate,
+        Some(approval::LocalApprovalCandidate::Ready { .. })
+    ) {
+        return Ok(target_candidate);
+    }
+    if matches!(
+        parent_candidate,
+        Some(approval::LocalApprovalCandidate::Ready { .. })
+    ) {
+        return Ok(parent_candidate);
+    }
+
+    Ok(target_candidate.or(parent_candidate))
+}
+
+async fn run_helper_apply_action(
+    dhttp_home: &DhttpHome,
+    cert_server: &CertServer,
+    auth_domain: &str,
+    action: approval::ApprovalHelperAction,
+    return_to: Option<&str>,
+) -> Result<bool, Error> {
+    match action {
+        approval::ApprovalHelperAction::Apply | approval::ApprovalHelperAction::Reapply => {
+            let command = Apply {
+                name: Some(auth_domain.to_string()),
+                use_default: false,
+                kind: None,
+                replace_local: matches!(action, approval::ApprovalHelperAction::Reapply),
+                device_name: None,
+                email: None,
+                send_code: false,
+                verify_code: None,
+                auth: None,
+            };
+            match Box::pin(run_interactive(&command, dhttp_home, cert_server, return_to)).await? {
+                ApplyRunOutcome::Applied => Ok(true),
+                ApplyRunOutcome::ReturnedToCaller => Ok(false),
+            }
+        }
+        approval::ApprovalHelperAction::Renew => {
+            super::renew::run_helper_for_verification(
+                dhttp_home,
+                cert_server,
+                auth_domain,
+                return_to.unwrap_or("apply"),
+            )
+            .await
+        }
+    }
+}
+
 async fn prompt_apply_verify_code_action(
     return_to: Option<&str>,
 ) -> Result<ApplyVerifyCodeAction, Error> {
@@ -568,6 +709,7 @@ pub(crate) async fn run_interactive(
             .whatever_context::<_, Error>("interactive apply target is unavailable")?;
         let target = IdentityTarget::parse(domain.as_partial())?;
         let identity_auth_domain = resolve_identity_auth_domain(dhttp_home, &target).await?;
+        let approval_candidate = resolve_apply_candidate(dhttp_home, &target).await?;
 
         if state.approval_plan.is_none() {
             if let Some(auth) = command.auth {
@@ -579,11 +721,11 @@ pub(crate) async fn run_interactive(
                 continue;
             }
 
-            if let Some(auth_domain) = identity_auth_domain.as_ref() {
-                let options = apply_verification_options(auth_domain.as_full());
+            if let Some(candidate) = approval_candidate.clone() {
+                let options = build_apply_approval_options(Some(candidate));
                 let mut labels = options
                     .iter()
-                    .map(|(label, _)| label.clone())
+                    .map(approval::ApprovalMenuOption::label)
                     .collect::<Vec<_>>();
                 labels.push(crate::cli::prompt::MORE_OPTIONS_LABEL.to_string());
                 let message = format!("Choose how to verify applying {}:", target.short_name());
@@ -601,7 +743,11 @@ pub(crate) async fn run_interactive(
                         }
                     }
                 } else {
-                    state.approval_plan = Some(approval_plan_from_selection(&options, &selected)?);
+                    let option = options
+                        .iter()
+                        .find(|option| option.label() == selected)
+                        .whatever_context::<_, Error>("selected approval path is unavailable")?;
+                    state.approval_plan = Some(apply_plan_from_option(option));
                 }
             } else {
                 state.approval_plan = Some(ApplyApprovalPlan::Email);
@@ -613,6 +759,24 @@ pub(crate) async fn run_interactive(
             .approval_plan
             .clone()
             .whatever_context::<_, Error>("interactive apply approval plan is unavailable")?;
+        if let ApplyApprovalPlan::HelperIdentity { auth_domain, action } = approval_plan.clone() {
+            if !run_helper_apply_action(
+                dhttp_home,
+                cert_server,
+                &auth_domain,
+                action,
+                return_to,
+            )
+            .await?
+            {
+                state.approval_plan = None;
+                state.revisit_verification_method();
+                continue;
+            }
+            state.approval_plan = Some(ApplyApprovalPlan::DirectIdentity { auth_domain });
+            continue;
+        }
+
         if matches!(approval_plan, ApplyApprovalPlan::Email)
             && (state.email.is_none() || state.email_prompt_required)
         {
@@ -755,7 +919,7 @@ pub(crate) async fn run_interactive(
                     )
                     .await?
             }
-            ApplyApprovalPlan::Identity { auth_domain } => {
+            ApplyApprovalPlan::DirectIdentity { auth_domain } => {
                 cert_server
                     .issue_cert_with_identity(
                         &auth_domain,
@@ -766,6 +930,9 @@ pub(crate) async fn run_interactive(
                         &csr_pem,
                     )
                     .await?
+            }
+            ApplyApprovalPlan::HelperIdentity { .. } => {
+                unreachable!("helper approval plan should be resolved before issuing certificate")
             }
         };
 
@@ -848,7 +1015,7 @@ pub(crate) async fn run(
                 )
                 .await?
         }
-        ApplyApprovalPlan::Identity { auth_domain } => {
+        ApplyApprovalPlan::DirectIdentity { auth_domain } => {
             cert_server
                 .issue_cert_with_identity(
                     &auth_domain,
@@ -859,6 +1026,9 @@ pub(crate) async fn run(
                     &csr_pem,
                 )
                 .await?
+        }
+        ApplyApprovalPlan::HelperIdentity { .. } => {
+            unreachable!("helper approval plan should be resolved before issuing certificate")
         }
     };
 
@@ -885,9 +1055,13 @@ mod tests {
         ApplyApprovalMenuAction, ApplyApprovalPlan, ApplyEmailAction, ApplyVerifyCodeAction,
         InteractiveApplyState, apply_approval_menu_actions, apply_email_actions,
         apply_identity_name_opening, apply_verification_options, apply_verify_code_actions,
-        approval_plan_from_selection, resolve_non_interactive_approval_plan,
+        approval_plan_from_selection, build_apply_approval_options,
+        resolve_non_interactive_approval_plan,
     };
-    use crate::{auth::AuthMethod, cli::Apply};
+    use crate::{
+        auth::AuthMethod,
+        cli::{Apply, flow::approval::{ApprovalMenuOption, LocalApprovalCandidate}},
+    };
 
     #[test]
     fn stay_recovery_keeps_apply_verify_state() {
@@ -987,7 +1161,7 @@ mod tests {
                 Some("alice.smith"),
             )
             .unwrap(),
-            ApplyApprovalPlan::Identity {
+            ApplyApprovalPlan::DirectIdentity {
                 auth_domain: "alice.smith".to_string(),
             },
         );
@@ -1013,6 +1187,52 @@ mod tests {
     }
 
     #[test]
+    fn apply_with_invalid_local_identity_uses_reapply_copy() {
+        let options = build_apply_approval_options(Some(
+            LocalApprovalCandidate::invalid(
+                "alice.smith",
+                "alice.smith.dhttp.net",
+                "certificate is unreadable",
+            ),
+        ));
+
+        assert_eq!(
+            options
+                .iter()
+                .map(ApprovalMenuOption::label)
+                .collect::<Vec<_>>(),
+            vec![
+                "Verify with email".to_string(),
+                "Re-apply alice.smith to this device, then verify with alice.smith".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn apply_with_expired_local_identity_shows_renew_before_reapply() {
+        let options = build_apply_approval_options(Some(
+            LocalApprovalCandidate::expired(
+                "alice.smith",
+                "alice.smith.dhttp.net",
+                true,
+                true,
+            ),
+        ));
+
+        assert_eq!(
+            options
+                .iter()
+                .map(ApprovalMenuOption::label)
+                .collect::<Vec<_>>(),
+            vec![
+                "Verify with email".to_string(),
+                "Renew alice.smith on this device, then verify with alice.smith".to_string(),
+                "Re-apply alice.smith to this device, then verify with alice.smith".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn interactive_apply_selection_can_choose_email() {
         let options = apply_verification_options("alice.smith.dhttp.net");
 
@@ -1029,7 +1249,7 @@ mod tests {
         assert_eq!(
             approval_plan_from_selection(&options, "Verify with alice.smith on local device",)
                 .unwrap(),
-            ApplyApprovalPlan::Identity {
+            ApplyApprovalPlan::DirectIdentity {
                 auth_domain: "alice.smith.dhttp.net".to_string(),
             },
         );

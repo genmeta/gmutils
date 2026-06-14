@@ -615,6 +615,25 @@ async fn run_interactive(
     }
 }
 
+pub(crate) async fn run_helper_for_verification(
+    dhttp_home: &DhttpHome,
+    cert_server: &CertServer,
+    short_name: &str,
+    _return_to: &str,
+) -> Result<bool, Error> {
+    let command = Renew {
+        name: Some(short_name.to_string()),
+        use_default: false,
+        device_name: None,
+        email: None,
+        send_code: false,
+        verify_code: None,
+        auth: None,
+    };
+    run(&command, dhttp_home, cert_server).await?;
+    Ok(true)
+}
+
 pub(crate) async fn run(
     command: &Renew,
     dhttp_home: &DhttpHome,

@@ -5,8 +5,9 @@ use snafu::{FromString, OptionExt, whatever};
 use tracing::{Instrument, info_span};
 
 use super::{
+    approval,
     kind::IdentityKind,
-    local::{self, LocalIdentityStatus},
+    local::{self, LocalIdentityStatus, LocalIdentitySummary},
     target::{IdentityLevel, IdentityTarget},
 };
 use crate::{
@@ -25,7 +26,7 @@ use crate::{
 struct CreateApprovalPlan {
     parent_identity: Option<String>,
     auth: AuthMethod,
-    helper_apply_parent_first: bool,
+    helper_action: Option<approval::ApprovalHelperAction>,
 }
 
 #[derive(Debug)]
@@ -231,64 +232,65 @@ fn apply_verification_recovery(
     }
 }
 
-fn create_verification_options(parent_identity: &str) -> Vec<(String, CreateApprovalPlan)> {
-    let short_name = IdentityTarget::parse(parent_identity)
-        .map(|target| target.short_name().to_string())
-        .unwrap_or_else(|_| parent_identity.to_string());
-    vec![
-        (
-            "Verify with email".to_string(),
-            CreateApprovalPlan {
-                parent_identity: Some(parent_identity.to_string()),
-                auth: AuthMethod::Email,
-                helper_apply_parent_first: false,
-            },
-        ),
-        (
-            format!("Verify with {short_name} on local device"),
-            CreateApprovalPlan {
-                parent_identity: Some(parent_identity.to_string()),
-                auth: AuthMethod::Identity,
-                helper_apply_parent_first: false,
-            },
-        ),
-    ]
+fn build_create_approval_options(
+    candidate: Option<approval::LocalApprovalCandidate>,
+) -> Vec<approval::ApprovalMenuOption> {
+    approval::build_options_for_candidate("Verify with email", candidate)
 }
 
-fn create_apply_parent_verification_options(
-    parent_identity: &str,
-) -> Vec<(String, CreateApprovalPlan)> {
-    let short_name = IdentityTarget::parse(parent_identity)
-        .map(|target| target.short_name().to_string())
-        .unwrap_or_else(|_| parent_identity.to_string());
-    vec![
-        (
-            "Verify with email".to_string(),
-            CreateApprovalPlan {
-                parent_identity: Some(parent_identity.to_string()),
-                auth: AuthMethod::Email,
-                helper_apply_parent_first: false,
-            },
-        ),
-        (
-            format!("Apply {short_name} to local device then verify with {short_name}"),
-            CreateApprovalPlan {
-                parent_identity: Some(parent_identity.to_string()),
-                auth: AuthMethod::Identity,
-                helper_apply_parent_first: true,
-            },
-        ),
-    ]
-}
-
-fn approval_plan_from_selection(
-    options: &[(String, CreateApprovalPlan)],
+fn create_plan_from_selection(
+    options: &[approval::ApprovalMenuOption],
     selected: &str,
+    parent_identity: Option<&str>,
 ) -> Result<CreateApprovalPlan, Error> {
-    options
+    let option = options
         .iter()
-        .find_map(|(label, plan)| (label == selected).then_some(plan.clone()))
-        .whatever_context::<_, Error>("selected approval path is unavailable")
+        .find(|option| option.label() == selected)
+        .whatever_context::<_, Error>("selected approval path is unavailable")?;
+
+    match option {
+        approval::ApprovalMenuOption::Email { .. } => Ok(CreateApprovalPlan {
+            parent_identity: parent_identity.map(str::to_string),
+            auth: AuthMethod::Email,
+            helper_action: None,
+        }),
+        approval::ApprovalMenuOption::DirectLocal(local) => Ok(CreateApprovalPlan {
+            parent_identity: Some(local.auth_domain.clone()),
+            auth: AuthMethod::Identity,
+            helper_action: None,
+        }),
+        approval::ApprovalMenuOption::Helper(helper) => Ok(CreateApprovalPlan {
+            parent_identity: Some(helper.auth_domain.clone()),
+            auth: AuthMethod::Identity,
+            helper_action: Some(helper.action.clone()),
+        }),
+    }
+}
+
+fn create_candidate_from_summary(summary: &LocalIdentitySummary) -> approval::LocalApprovalCandidate {
+    let short_name = summary.target.short_name().to_string();
+    let auth_domain = summary.target.full_name();
+    match &summary.status {
+        LocalIdentityStatus::Ready { .. } => {
+            approval::LocalApprovalCandidate::ready(short_name, auth_domain)
+        }
+        LocalIdentityStatus::Expired { .. } => approval::LocalApprovalCandidate::expired(
+            short_name,
+            auth_domain,
+            true,
+            true,
+        ),
+        LocalIdentityStatus::Incomplete { detail } => approval::LocalApprovalCandidate::incomplete(
+            short_name,
+            auth_domain,
+            detail.clone(),
+        ),
+        LocalIdentityStatus::Invalid { detail } => approval::LocalApprovalCandidate::invalid(
+            short_name,
+            auth_domain,
+            detail.clone(),
+        ),
+    }
 }
 
 fn resolve_non_interactive_approval_plan(
@@ -305,7 +307,7 @@ fn resolve_non_interactive_approval_plan(
             Some(AuthMethod::Email) | None => Ok(CreateApprovalPlan {
                 parent_identity: None,
                 auth: AuthMethod::Email,
-                helper_apply_parent_first: false,
+                helper_action: None,
             }),
         },
         IdentityLevel::SubIdentity => {
@@ -325,13 +327,13 @@ fn resolve_non_interactive_approval_plan(
                     Ok(CreateApprovalPlan {
                         parent_identity: Some(ready_parent_identity.to_string()),
                         auth: AuthMethod::Identity,
-                        helper_apply_parent_first: false,
+                        helper_action: None,
                     })
                 }
                 Some(AuthMethod::Email) => Ok(CreateApprovalPlan {
                     parent_identity: Some(parent_identity),
                     auth: AuthMethod::Email,
-                    helper_apply_parent_first: false,
+                    helper_action: None,
                 }),
                 None => {
                     if ready_parent_identity.is_some() {
@@ -343,7 +345,7 @@ fn resolve_non_interactive_approval_plan(
                     Ok(CreateApprovalPlan {
                         parent_identity: Some(parent_identity),
                         auth: AuthMethod::Email,
-                        helper_apply_parent_first: false,
+                        helper_action: None,
                     })
                 }
             }
@@ -373,30 +375,36 @@ async fn resolve_approval_plan(
             IdentityLevel::Identity => Ok(CreateApprovalPlan {
                 parent_identity: None,
                 auth: AuthMethod::Email,
-                helper_apply_parent_first: false,
+                helper_action: None,
             }),
             IdentityLevel::SubIdentity => {
-                let parent_identity = target
+                let parent = target
                     .parent()
                     .whatever_context::<_, Error>(
                         "sub-identity target is missing its parent identity",
                     )?
-                    .as_full()
-                    .to_string();
-                let options = if let Some(parent_identity) = ready_parent_identity {
-                    create_verification_options(parent_identity)
+                    .into_owned();
+                let candidate = if let Some(parent_identity) = ready_parent_identity {
+                    Some(approval::LocalApprovalCandidate::ready(
+                        parent.as_partial(),
+                        parent_identity,
+                    ))
                 } else {
-                    create_apply_parent_verification_options(&parent_identity)
+                    Some(approval::LocalApprovalCandidate::missing(
+                        parent.as_partial(),
+                        parent.as_full(),
+                    ))
                 };
+                let options = build_create_approval_options(candidate);
                 let labels = options
                     .iter()
-                    .map(|(label, _)| label.clone())
+                    .map(approval::ApprovalMenuOption::label)
                     .collect::<Vec<_>>();
                 let message = format!("Choose how to verify creating {}:", target.short_name());
                 let selected = prompt::prompt_select_string(&message, labels)
                     .await
                     .require_interactive("--auth")?;
-                approval_plan_from_selection(&options, &selected)
+                create_plan_from_selection(&options, &selected, Some(parent.as_full()))
             }
         },
     }
@@ -624,24 +632,51 @@ async fn resolve_ready_parent_identity(
     Ok(None)
 }
 
+async fn resolve_parent_candidate(
+    dhttp_home: &DhttpHome,
+    target: &IdentityTarget,
+) -> Result<Option<approval::LocalApprovalCandidate>, Error> {
+    if target.level() != IdentityLevel::SubIdentity {
+        return Ok(None);
+    }
+
+    let parent = target
+        .parent()
+        .whatever_context::<_, Error>("sub-identity target is missing its parent identity")?
+        .into_owned();
+    if !dhttp_home.identity_profile_exists_exactly(parent.clone()).await {
+        return Ok(Some(approval::LocalApprovalCandidate::missing(
+            parent.as_partial(),
+            parent.as_full(),
+        )));
+    }
+
+    let summary = local::load_summary(dhttp_home, parent.borrow(), None).await?;
+    Ok(Some(create_candidate_from_summary(&summary)))
+}
+
 async fn run_helper_apply_parent(
     dhttp_home: &DhttpHome,
     cert_server: &CertServer,
     target: &IdentityTarget,
     parent_identity: &str,
+    replace_local: bool,
 ) -> Result<bool, Error> {
     let short_parent_identity = IdentityTarget::parse(parent_identity)
         .map(|target| target.short_name().to_string())
         .unwrap_or_else(|_| parent_identity.to_string());
+    let verb = if replace_local { "re-apply" } else { "apply" };
     crate::cli::flow::transcript::print_block(&format!(
-        "{short_parent_identity} is not saved on this device.\n\nTo continue creating {}, this command will first apply {short_parent_identity} to this device, then return here and continue verification.",
+        "This command needs {short_parent_identity} available on this device first.
+
+To continue creating {}, it will {verb} {short_parent_identity} on this device, then return here and continue verification.",
         target.short_name()
     ));
     let command = crate::cli::Apply {
         name: Some(parent_identity.to_string()),
         use_default: false,
         kind: None,
-        replace_local: false,
+        replace_local,
         device_name: None,
         email: None,
         send_code: false,
@@ -658,6 +693,32 @@ async fn run_helper_apply_parent(
     {
         super::apply::ApplyRunOutcome::Applied => Ok(true),
         super::apply::ApplyRunOutcome::ReturnedToCaller => Ok(false),
+    }
+}
+
+async fn run_helper_parent_action(
+    dhttp_home: &DhttpHome,
+    cert_server: &CertServer,
+    target: &IdentityTarget,
+    parent_identity: &str,
+    action: approval::ApprovalHelperAction,
+) -> Result<bool, Error> {
+    match action {
+        approval::ApprovalHelperAction::Apply => {
+            run_helper_apply_parent(dhttp_home, cert_server, target, parent_identity, false).await
+        }
+        approval::ApprovalHelperAction::Reapply => {
+            run_helper_apply_parent(dhttp_home, cert_server, target, parent_identity, true).await
+        }
+        approval::ApprovalHelperAction::Renew => {
+            super::renew::run_helper_for_verification(
+                dhttp_home,
+                cert_server,
+                parent_identity,
+                &format!("create {}", target.short_name()),
+            )
+            .await
+        }
     }
 }
 
@@ -891,6 +952,7 @@ async fn run_interactive(
         }
 
         let ready_parent_identity = resolve_ready_parent_identity(dhttp_home, &target).await?;
+        let parent_candidate = resolve_parent_candidate(dhttp_home, &target).await?;
         if state.approval_plan.is_none() {
             if let Some(auth) = command.auth {
                 state.approval_plan = Some(resolve_non_interactive_approval_plan(
@@ -906,7 +968,7 @@ async fn run_interactive(
                     state.approval_plan = Some(CreateApprovalPlan {
                         parent_identity: None,
                         auth: AuthMethod::Email,
-                        helper_apply_parent_first: false,
+                        helper_action: None,
                     });
                 }
                 IdentityLevel::SubIdentity => {
@@ -915,16 +977,11 @@ async fn run_interactive(
                         .whatever_context::<_, Error>(
                             "sub-identity target is missing its parent identity",
                         )?
-                        .as_full()
-                        .to_string();
-                    let options = if let Some(parent_identity) = ready_parent_identity.as_ref() {
-                        create_verification_options(parent_identity.as_full())
-                    } else {
-                        create_apply_parent_verification_options(&parent_identity)
-                    };
+                        .into_owned();
+                    let options = build_create_approval_options(parent_candidate.clone());
                     let mut labels = options
                         .iter()
-                        .map(|(label, _)| label.clone())
+                        .map(approval::ApprovalMenuOption::label)
                         .collect::<Vec<_>>();
                     labels.push(prompt::MORE_OPTIONS_LABEL.to_string());
                     let message = format!("Choose how to verify creating {}:", target.short_name());
@@ -941,8 +998,11 @@ async fn run_interactive(
                             }
                         }
                     } else {
-                        state.approval_plan =
-                            Some(approval_plan_from_selection(&options, &selected)?);
+                        state.approval_plan = Some(create_plan_from_selection(
+                            &options,
+                            &selected,
+                            Some(parent_identity.as_full()),
+                        )?);
                     }
                 }
             }
@@ -953,12 +1013,14 @@ async fn run_interactive(
             .approval_plan
             .clone()
             .whatever_context::<_, Error>("interactive create approval plan is unavailable")?;
-        if approval_plan.helper_apply_parent_first {
+        if let Some(action) = approval_plan.helper_action.clone() {
             let parent_identity = approval_plan
                 .parent_identity
                 .as_deref()
                 .whatever_context::<_, Error>("helper apply path is missing its parent identity")?;
-            if !run_helper_apply_parent(dhttp_home, cert_server, &target, parent_identity).await? {
+            if !run_helper_parent_action(dhttp_home, cert_server, &target, parent_identity, action)
+                .await?
+            {
                 state.approval_plan = None;
                 state.reset_after_approval_change();
                 continue;
@@ -966,7 +1028,7 @@ async fn run_interactive(
             state.approval_plan = Some(CreateApprovalPlan {
                 parent_identity: Some(parent_identity.to_string()),
                 auth: AuthMethod::Identity,
-                helper_apply_parent_first: false,
+                helper_action: None,
             });
             continue;
         }
@@ -1329,12 +1391,16 @@ pub(crate) async fn run(
         return Ok(());
     }
 
-    if approval_plan.helper_apply_parent_first {
+    if let Some(action) = approval_plan.helper_action.clone() {
         let parent_identity = approval_plan
             .parent_identity
             .as_deref()
             .whatever_context::<_, Error>("helper apply path is missing its parent identity")?;
-        run_helper_apply_parent(dhttp_home, cert_server, &target, parent_identity).await?;
+        if !run_helper_parent_action(dhttp_home, cert_server, &target, parent_identity, action)
+            .await?
+        {
+            whatever!("create was cancelled");
+        }
     }
 
     cli::ensure_replace_local_allowed(dhttp_home, target.dhttp_name(), command.replace_local)
@@ -1483,8 +1549,7 @@ pub(crate) async fn run(
 mod tests {
     use super::{
         CreateApprovalPlan, CreateEmailAction, CreateVerifyCodeAction, InteractiveCreateState,
-        approval_plan_from_selection, create_apply_parent_verification_options,
-        create_email_actions, create_verification_options, create_verify_code_actions,
+        build_create_approval_options, create_email_actions, create_verify_code_actions,
         ensure_non_interactive_root_checkout_not_required,
         ensure_non_interactive_sub_identity_checkout_not_required,
         resolve_non_interactive_approval_plan,
@@ -1492,7 +1557,7 @@ mod tests {
     use crate::{
         auth::AuthMethod,
         cert_server::{CreateDomainResponse, CreateSubdomainResponse},
-        cli::{Create, flow::target::IdentityTarget},
+        cli::{Create, flow::{approval::{ApprovalMenuOption, LocalApprovalCandidate}, target::IdentityTarget}},
     };
 
     #[test]
@@ -1559,7 +1624,7 @@ mod tests {
             CreateApprovalPlan {
                 parent_identity: None,
                 auth: AuthMethod::Email,
-                helper_apply_parent_first: false,
+                helper_action: None,
             }
         );
     }
@@ -1598,7 +1663,7 @@ mod tests {
             CreateApprovalPlan {
                 parent_identity: Some("alice.smith".to_string()),
                 auth: AuthMethod::Identity,
-                helper_apply_parent_first: false,
+                helper_action: None,
             }
         );
     }
@@ -1611,7 +1676,7 @@ mod tests {
             CreateApprovalPlan {
                 parent_identity: Some("alice.smith".to_string()),
                 auth: AuthMethod::Email,
-                helper_apply_parent_first: false,
+                helper_action: None,
             }
         );
     }
@@ -1624,7 +1689,7 @@ mod tests {
             CreateApprovalPlan {
                 parent_identity: Some("alice.smith".to_string()),
                 auth: AuthMethod::Email,
-                helper_apply_parent_first: false,
+                helper_action: None,
             }
         );
     }
@@ -1705,49 +1770,44 @@ mod tests {
     }
 
     #[test]
-    fn interactive_create_selection_can_choose_email() {
-        let options = create_verification_options("alice.smith.dhttp.net");
+    fn create_subidentity_with_ready_parent_shows_local_before_email() {
+        let options = build_create_approval_options(Some(
+            LocalApprovalCandidate::ready(
+                "alice.smith",
+                "alice.smith.dhttp.net",
+            ),
+        ));
 
         assert_eq!(
-            approval_plan_from_selection(&options, "Verify with email").unwrap(),
-            CreateApprovalPlan {
-                parent_identity: Some("alice.smith.dhttp.net".to_string()),
-                auth: AuthMethod::Email,
-                helper_apply_parent_first: false,
-            }
+            options
+                .iter()
+                .map(ApprovalMenuOption::label)
+                .collect::<Vec<_>>(),
+            vec![
+                "Verify with alice.smith on local device".to_string(),
+                "Verify with email".to_string(),
+            ]
         );
     }
 
     #[test]
-    fn interactive_create_selection_can_choose_local_parent_identity() {
-        let options = create_verification_options("alice.smith.dhttp.net");
+    fn create_subidentity_with_missing_parent_uses_apply_copy() {
+        let options = build_create_approval_options(Some(
+            LocalApprovalCandidate::missing(
+                "alice.smith",
+                "alice.smith.dhttp.net",
+            ),
+        ));
 
         assert_eq!(
-            approval_plan_from_selection(&options, "Verify with alice.smith on local device",)
-                .unwrap(),
-            CreateApprovalPlan {
-                parent_identity: Some("alice.smith.dhttp.net".to_string()),
-                auth: AuthMethod::Identity,
-                helper_apply_parent_first: false,
-            }
-        );
-    }
-
-    #[test]
-    fn interactive_create_selection_can_choose_apply_parent_then_verify() {
-        let options = create_apply_parent_verification_options("alice.smith.dhttp.net");
-
-        assert_eq!(
-            approval_plan_from_selection(
-                &options,
-                "Apply alice.smith to local device then verify with alice.smith",
-            )
-            .unwrap(),
-            CreateApprovalPlan {
-                parent_identity: Some("alice.smith.dhttp.net".to_string()),
-                auth: AuthMethod::Identity,
-                helper_apply_parent_first: true,
-            }
+            options
+                .iter()
+                .map(ApprovalMenuOption::label)
+                .collect::<Vec<_>>(),
+            vec![
+                "Verify with email".to_string(),
+                "Apply alice.smith to this device, then verify with alice.smith".to_string(),
+            ]
         );
     }
 

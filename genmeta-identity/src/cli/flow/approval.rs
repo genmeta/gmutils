@@ -122,10 +122,17 @@ pub(crate) struct ApprovalHelperOption {
 impl ApprovalHelperOption {
     pub(crate) fn apply(short_name: impl Into<String>) -> Self {
         let short_name = short_name.into();
+        Self::apply_for(short_name.clone(), short_name)
+    }
+
+    pub(crate) fn apply_for(
+        short_name: impl Into<String>,
+        auth_domain: impl Into<String>,
+    ) -> Self {
         Self {
             action: ApprovalHelperAction::Apply,
-            auth_domain: short_name.clone(),
-            short_name,
+            auth_domain: auth_domain.into(),
+            short_name: short_name.into(),
             detail: None,
         }
     }
@@ -135,20 +142,35 @@ impl ApprovalHelperOption {
         detail: impl Into<String>,
     ) -> Self {
         let short_name = short_name.into();
+        Self::reapply_for(short_name.clone(), short_name, detail)
+    }
+
+    pub(crate) fn reapply_for(
+        short_name: impl Into<String>,
+        auth_domain: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
         Self {
             action: ApprovalHelperAction::Reapply,
-            auth_domain: short_name.clone(),
-            short_name,
+            auth_domain: auth_domain.into(),
+            short_name: short_name.into(),
             detail: Some(detail.into()),
         }
     }
 
     pub(crate) fn renew(short_name: impl Into<String>) -> Self {
         let short_name = short_name.into();
+        Self::renew_for(short_name.clone(), short_name)
+    }
+
+    pub(crate) fn renew_for(
+        short_name: impl Into<String>,
+        auth_domain: impl Into<String>,
+    ) -> Self {
         Self {
             action: ApprovalHelperAction::Renew,
-            auth_domain: short_name.clone(),
-            short_name,
+            auth_domain: auth_domain.into(),
+            short_name: short_name.into(),
             detail: None,
         }
     }
@@ -240,34 +262,45 @@ pub(crate) fn build_options_for_candidate(
         }
         Some(LocalApprovalCandidate::Expired {
             short_name,
+            auth_domain,
             can_renew,
             can_reapply,
-            ..
         }) => {
             if can_renew {
-                helpers.push(ApprovalHelperOption::renew(short_name.clone()));
+                helpers.push(ApprovalHelperOption::renew_for(
+                    short_name.clone(),
+                    auth_domain.clone(),
+                ));
             }
             if can_reapply {
-                helpers.push(ApprovalHelperOption::reapply(
+                helpers.push(ApprovalHelperOption::reapply_for(
                     short_name,
+                    auth_domain,
                     "expired local identity",
                 ));
             }
         }
         Some(LocalApprovalCandidate::Incomplete {
             short_name,
+            auth_domain,
             detail,
-            ..
         })
         | Some(LocalApprovalCandidate::Invalid {
             short_name,
+            auth_domain,
             detail,
-            ..
         }) => {
-            helpers.push(ApprovalHelperOption::reapply(short_name, detail));
+            helpers.push(ApprovalHelperOption::reapply_for(
+                short_name,
+                auth_domain,
+                detail,
+            ));
         }
-        Some(LocalApprovalCandidate::Missing { short_name, .. }) => {
-            helpers.push(ApprovalHelperOption::apply(short_name));
+        Some(LocalApprovalCandidate::Missing {
+            short_name,
+            auth_domain,
+        }) => {
+            helpers.push(ApprovalHelperOption::apply_for(short_name, auth_domain));
         }
         None => {}
     }
