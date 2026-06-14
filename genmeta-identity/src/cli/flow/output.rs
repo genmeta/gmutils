@@ -2,11 +2,14 @@ use crossterm::style::Stylize;
 use time::OffsetDateTime;
 
 use super::{
-    local::{LocalIdentityStatus, LocalIdentitySummary, LocalInventory, LocalInventoryRoot},
+    local::{
+        InteractiveInventoryChoice, LocalIdentityStatus, LocalIdentitySummary, LocalInventory,
+        LocalInventoryRoot,
+    },
     target::IdentityLevel,
 };
 
-pub(crate) fn render_inventory(inventory: &LocalInventory) -> String {
+pub(crate) fn render_inventory(inventory: &LocalInventory, ansi: bool) -> String {
     let mut lines = Vec::new();
     let width = inventory
         .groups
@@ -24,17 +27,21 @@ pub(crate) fn render_inventory(inventory: &LocalInventory) -> String {
         .max(40);
 
     for group in &inventory.groups {
-        lines.push(render_root(&group.root, width));
+        lines.push(render_root(&group.root, width, ansi));
         for (index, child) in group.children.iter().enumerate() {
             let branch = if index + 1 == group.children.len() {
                 "└─ "
             } else {
                 "├─ "
             };
-            lines.push(render_summary_line(
-                &format!("{branch}{}", child.target.short_name()),
-                child,
-                width,
+            lines.push(render_line(
+                render_summary_text(
+                    &format!("{branch}{}", child.target.short_name()),
+                    child,
+                    width,
+                ),
+                summary_line_style(child),
+                ansi,
             ));
         }
     }
@@ -82,6 +89,33 @@ fn render_line(text: String, style: LineStyle, ansi: bool) -> String {
     }
 }
 
+pub(crate) fn render_choice_label(choice: &InteractiveInventoryChoice, ansi: bool) -> String {
+    match choice {
+        InteractiveInventoryChoice::Saved(summary) => {
+            let prefix = if matches!(summary.target.level(), IdentityLevel::SubIdentity) {
+                "  "
+            } else {
+                ""
+            };
+            let mut label = format!(
+                "{prefix}{} [{}]",
+                summary.target.short_name(),
+                summary.status.label()
+            );
+            if summary.is_default {
+                label.push_str(" (default identity)");
+            }
+            render_line(label, summary_line_style(summary), ansi)
+        }
+        InteractiveInventoryChoice::Organization { target } => render_line(
+            format!("{} (not saved locally)", target.short_name()),
+            LineStyle::Dim,
+            ansi,
+        ),
+        InteractiveInventoryChoice::EnterAnotherIdentity => "Enter another identity".to_string(),
+    }
+}
+
 pub(crate) fn format_default_identity_block(block: &DefaultIdentityBlock) -> String {
     match block {
         DefaultIdentityBlock::None => "Default identity: (none)".to_string(),
@@ -105,9 +139,13 @@ pub(crate) fn format_safekeeping_reminder(ansi: bool) -> String {
     )
 }
 
-pub(crate) fn format_info(summary: &LocalIdentitySummary) -> String {
+pub(crate) fn format_info(summary: &LocalIdentitySummary, ansi: bool) -> String {
     let mut lines = Vec::new();
-    lines.push(format!("name: {}", summary_name(summary)));
+    lines.push(render_line(
+        format!("name: {}", summary_name(summary)),
+        summary_line_style(summary),
+        ansi,
+    ));
     if let Some(certificate_chain) = summary.certificate_chain.as_ref() {
         lines.push(format!("certificate chain: {certificate_chain}"));
     }
@@ -116,20 +154,24 @@ pub(crate) fn format_info(summary: &LocalIdentitySummary) -> String {
     lines.join("\n")
 }
 
-pub(crate) fn format_default_summary(summary: &LocalIdentitySummary) -> String {
-    format_info(summary)
+pub(crate) fn format_default_summary(summary: &LocalIdentitySummary, ansi: bool) -> String {
+    format_info(summary, ansi)
 }
 
-fn render_root(root: &LocalInventoryRoot, width: usize) -> String {
+fn render_root(root: &LocalInventoryRoot, width: usize, ansi: bool) -> String {
     match root {
-        LocalInventoryRoot::Saved(summary) => {
-            render_summary_line(&root_label(root), summary, width)
+        LocalInventoryRoot::Saved(summary) => render_line(
+            render_summary_text(&root_label(root), summary, width),
+            summary_line_style(summary),
+            ansi,
+        ),
+        LocalInventoryRoot::Organization { .. } => {
+            render_line(root_label(root), LineStyle::Dim, ansi)
         }
-        LocalInventoryRoot::Organization { .. } => root_label(root),
     }
 }
 
-fn render_summary_line(label: &str, summary: &LocalIdentitySummary, width: usize) -> String {
+fn render_summary_text(label: &str, summary: &LocalIdentitySummary, width: usize) -> String {
     let supplement = match &summary.status {
         LocalIdentityStatus::Ready { .. } | LocalIdentityStatus::Expired { .. } => summary
             .certificate_chain
@@ -215,10 +257,12 @@ mod tests {
 
     use super::{
         DefaultIdentityBlock, LineStyle, format_default_identity_block, format_default_summary,
-        format_info, render_inventory, summary_line_style,
+        format_info, render_choice_label, render_inventory, summary_line_style,
     };
     use crate::cli::flow::{
-        local::{LocalIdentityStatus, LocalIdentitySummary, build_inventory},
+        local::{
+            InteractiveInventoryChoice, LocalIdentityStatus, LocalIdentitySummary, build_inventory,
+        },
         target::IdentityTarget,
     };
 
@@ -256,8 +300,8 @@ certificate chain: secondary:2\n\
 status: ready (expires after 2026-11-10 08:12:44 UTC)\n\
 saved at: /tmp/phone.alice.smith";
 
-        assert_eq!(format_info(&profile), expected);
-        assert_eq!(format_default_summary(&profile), expected);
+        assert_eq!(format_info(&profile, false), expected);
+        assert_eq!(format_default_summary(&profile, false), expected);
     }
 
     #[test]
@@ -340,6 +384,51 @@ alice.smith (default identity)            ready       primary:0\n\
 reimu.scarlet (not saved locally)\n\
 └─ tablet.reimu.scarlet                   expired     secondary:1";
 
-        assert_eq!(render_inventory(&inventory), expected);
+        assert_eq!(render_inventory(&inventory, false), expected);
+    }
+
+    #[test]
+    fn renders_choice_labels_without_ansi_effects() {
+        let labels = vec![
+            render_choice_label(
+                &InteractiveInventoryChoice::Saved(summary(
+                    "alice.smith",
+                    true,
+                    LocalIdentityStatus::Ready {
+                        expires_at: EXPIRES_AT,
+                    },
+                    Some("primary:0"),
+                )),
+                false,
+            ),
+            render_choice_label(
+                &InteractiveInventoryChoice::Organization {
+                    target: IdentityTarget::parse("reimu.scarlet").unwrap(),
+                },
+                false,
+            ),
+            render_choice_label(
+                &InteractiveInventoryChoice::Saved(summary(
+                    "tablet.reimu.scarlet",
+                    false,
+                    LocalIdentityStatus::Ready {
+                        expires_at: EXPIRES_AT,
+                    },
+                    Some("secondary:1"),
+                )),
+                false,
+            ),
+            render_choice_label(&InteractiveInventoryChoice::EnterAnotherIdentity, false),
+        ];
+
+        assert_eq!(
+            labels,
+            vec![
+                "alice.smith [ready] (default identity)".to_string(),
+                "reimu.scarlet (not saved locally)".to_string(),
+                "  tablet.reimu.scarlet [ready]".to_string(),
+                "Enter another identity".to_string(),
+            ]
+        );
     }
 }

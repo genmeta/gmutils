@@ -1,4 +1,4 @@
-use tracing_indicatif::{indicatif_eprintln, indicatif_println};
+use tracing_indicatif::indicatif_println;
 
 pub(crate) fn block_lines(block: &str) -> Vec<String> {
     block.split('\n').map(ToOwned::to_owned).collect()
@@ -12,10 +12,6 @@ pub(crate) fn print_block(block: &str) {
 
 pub(crate) fn print_line(line: impl AsRef<str>) {
     indicatif_println!("{}", line.as_ref());
-}
-
-pub(crate) fn print_error(line: impl AsRef<str>) {
-    indicatif_eprintln!("{}", line.as_ref());
 }
 
 #[cfg(test)]

@@ -1,5 +1,4 @@
-use crate::cert_server::CreateDomainResponse;
-use crate::cli::flow::transcript;
+use crate::{cert_server::CreateDomainResponse, cli::flow::transcript};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckoutState {
@@ -47,7 +46,10 @@ pub fn print_payment_instructions(response: &CreateDomainResponse) {
     ];
     if let Some(reservation) = &response.reservation {
         lines.push(format!("reservation: {}", reservation.reservation_no));
-        lines.push(format!("reservation expires at: {}", reservation.expires_at));
+        lines.push(format!(
+            "reservation expires at: {}",
+            reservation.expires_at
+        ));
     }
     if let Some(payment_entry) = &response.payment_entry {
         lines.push(format!("payment url: {}", payment_entry.url));

@@ -1,7 +1,7 @@
 use std::io::IsTerminal;
 
 use dhttp_home::DhttpHome;
-use snafu::{OptionExt, whatever};
+use snafu::{FromString, OptionExt, whatever};
 use tracing::{Instrument, info_span};
 
 use super::{
@@ -26,6 +26,12 @@ struct CreateApprovalPlan {
     parent_identity: Option<String>,
     auth: AuthMethod,
     helper_apply_parent_first: bool,
+}
+
+#[derive(Debug)]
+enum CompleteRootIdentityCreateInteractivelyError {
+    Verification { source: crate::cert_server::Error },
+    Flow { source: Error },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,6 +210,24 @@ impl InteractiveCreateState {
     fn revisit_email_prompt(&mut self) {
         self.reset_after_email_change();
         self.email_prompt_required = true;
+    }
+}
+
+fn apply_verification_recovery(
+    state: &mut InteractiveCreateState,
+    recovery: &crate::cli::flow::recovery::VerificationRecovery,
+) -> bool {
+    match recovery {
+        crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep { message } => {
+            crate::cli::flow::transcript::print_line(*message);
+            true
+        }
+        crate::cli::flow::recovery::VerificationRecovery::BackToEmail { message } => {
+            crate::cli::flow::transcript::print_line(*message);
+            state.revisit_email_prompt();
+            true
+        }
+        crate::cli::flow::recovery::VerificationRecovery::Abort => false,
     }
 }
 
@@ -642,17 +666,23 @@ async fn complete_root_identity_create_interactively(
     target: &IdentityTarget,
     email: &str,
     verify_code: &str,
-) -> Result<CreateDomainResponse, Error> {
+) -> Result<CreateDomainResponse, CompleteRootIdentityCreateInteractivelyError> {
     loop {
-        let created = cert_server
+        let created = match cert_server
             .create_domain_with_email(target.full_name(), email, verify_code)
-            .await?;
+            .await
+        {
+            Ok(created) => created,
+            Err(source) => {
+                return Err(CompleteRootIdentityCreateInteractivelyError::Verification { source });
+            }
+        };
         if created.payment_entry.is_none() {
             return Ok(created);
         }
 
         print_root_checkout_instructions(target, &created);
-        let completed = crate::checkout::wait_for_checkout_completion(
+        let completed = match crate::checkout::wait_for_checkout_completion(
             cert_server,
             &created
                 .payment_entry
@@ -660,29 +690,57 @@ async fn complete_root_identity_create_interactively(
                 .expect("payment entry just checked")
                 .checkout_token,
         )
-        .await?;
+        .await
+        {
+            Ok(completed) => completed,
+            Err(source) => {
+                return Err(CompleteRootIdentityCreateInteractivelyError::Flow {
+                    source: Error::from(source),
+                });
+            }
+        };
         match crate::checkout::classify_checkout(&completed) {
             crate::checkout::CheckoutState::Completed => return Ok(created),
             crate::checkout::CheckoutState::Expired => {
-                if !prompt_restart_checkout(
+                let restart = match prompt_restart_checkout(
                     "This checkout expired. Start a new checkout for this identity?",
                 )
-                .await?
+                .await
                 {
-                    whatever!("checkout was not completed");
+                    Ok(restart) => restart,
+                    Err(source) => {
+                        return Err(CompleteRootIdentityCreateInteractivelyError::Flow { source });
+                    }
+                };
+                if !restart {
+                    return Err(CompleteRootIdentityCreateInteractivelyError::Flow {
+                        source: Error::without_source("checkout was not completed".to_string()),
+                    });
                 }
             }
             crate::checkout::CheckoutState::Cancelled => {
-                if !prompt_restart_checkout(
+                let restart = match prompt_restart_checkout(
                     "This checkout was cancelled. Start a new checkout for this identity?",
                 )
-                .await?
+                .await
                 {
-                    whatever!("checkout was not completed");
+                    Ok(restart) => restart,
+                    Err(source) => {
+                        return Err(CompleteRootIdentityCreateInteractivelyError::Flow { source });
+                    }
+                };
+                if !restart {
+                    return Err(CompleteRootIdentityCreateInteractivelyError::Flow {
+                        source: Error::without_source("checkout was not completed".to_string()),
+                    });
                 }
             }
             crate::checkout::CheckoutState::Pending => {
-                whatever!("checkout did not reach a terminal state");
+                return Err(CompleteRootIdentityCreateInteractivelyError::Flow {
+                    source: Error::without_source(
+                        "checkout did not reach a terminal state".to_string(),
+                    ),
+                });
             }
         }
     }
@@ -950,8 +1008,24 @@ async fn run_interactive(
                 .clone()
                 .whatever_context::<_, Error>("interactive create email is unavailable")?;
             if state.verification_code_sent_to.as_deref() != Some(email.as_str()) {
-                cert_server.send_email_verification(&email).await?;
-                state.verification_code_sent_to = Some(email.clone());
+                match cert_server.send_email_verification(&email).await {
+                    Ok(_) => {
+                        state.verification_code_sent_to = Some(email.clone());
+                    }
+                    Err(error) => {
+                        let recovery = crate::cli::flow::recovery::classify_resend_error(&error);
+                        if matches!(
+                            recovery,
+                            crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep { .. }
+                        ) {
+                            state.verification_code_sent_to = Some(email.clone());
+                        }
+                        if apply_verification_recovery(&mut state, &recovery) {
+                            continue;
+                        }
+                        return Err(Error::from(error));
+                    }
+                }
             }
             match prompt::prompt_verify_code_with_more_options(None)
                 .await
@@ -963,8 +1037,19 @@ async fn run_interactive(
                 prompt::TextPromptResult::MoreOptions => {
                     match prompt_create_verify_code_action(None).await? {
                         CreateVerifyCodeAction::ResendVerificationCode => {
-                            cert_server.send_email_verification(&email).await?;
-                            state.verification_code_sent_to = Some(email);
+                            match cert_server.send_email_verification(&email).await {
+                                Ok(_) => {
+                                    state.verification_code_sent_to = Some(email);
+                                }
+                                Err(error) => {
+                                    let recovery =
+                                        crate::cli::flow::recovery::classify_resend_error(&error);
+                                    if apply_verification_recovery(&mut state, &recovery) {
+                                        continue;
+                                    }
+                                    return Err(Error::from(error));
+                                }
+                            }
                         }
                         CreateVerifyCodeAction::ChangeEmail => {
                             state.revisit_email_prompt();
@@ -1005,17 +1090,53 @@ async fn run_interactive(
                 let verify_code = state.verify_code.clone().whatever_context::<_, Error>(
                     "interactive create verification code is unavailable",
                 )?;
-                let created = complete_root_identity_create_interactively(
+                let created = match complete_root_identity_create_interactively(
                     cert_server,
                     &target,
                     &email,
                     &verify_code,
                 )
-                .await?;
+                .await
+                {
+                    Ok(created) => created,
+                    Err(CompleteRootIdentityCreateInteractivelyError::Verification { source }) => {
+                        let recovery =
+                            crate::cli::flow::recovery::classify_verify_submit_error(&source);
+                        if matches!(
+                            recovery,
+                            crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep { .. }
+                        ) {
+                            state.verify_code = None;
+                        }
+                        if apply_verification_recovery(&mut state, &recovery) {
+                            continue;
+                        }
+                        return Err(Error::from(source));
+                    }
+                    Err(CompleteRootIdentityCreateInteractivelyError::Flow { source }) => {
+                        return Err(source);
+                    }
+                };
                 let access_token = if let Some(auth) = created.auth {
                     auth.access_token
                 } else {
-                    cert_server.login(&email, &verify_code).await?.access_token
+                    match cert_server.login(&email, &verify_code).await {
+                        Ok(login) => login.access_token,
+                        Err(error) => {
+                            let recovery =
+                                crate::cli::flow::recovery::classify_verify_submit_error(&error);
+                            if matches!(
+                                recovery,
+                                crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep { .. }
+                            ) {
+                                state.verify_code = None;
+                            }
+                            if apply_verification_recovery(&mut state, &recovery) {
+                                continue;
+                            }
+                            return Err(Error::from(error));
+                        }
+                    }
                 };
                 let cert = cert_server
                     .issue_cert(
@@ -1054,8 +1175,27 @@ async fn run_interactive(
                         let verify_code = state.verify_code.clone().whatever_context::<_, Error>(
                             "interactive create verification code is unavailable",
                         )?;
-                        let access_token =
-                            cert_server.login(&email, &verify_code).await?.access_token;
+                        let access_token = match cert_server.login(&email, &verify_code).await {
+                            Ok(login) => login.access_token,
+                            Err(error) => {
+                                let recovery =
+                                    crate::cli::flow::recovery::classify_verify_submit_error(
+                                        &error,
+                                    );
+                                if matches!(
+                                    recovery,
+                                    crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep {
+                                        ..
+                                    }
+                                ) {
+                                    state.verify_code = None;
+                                }
+                                if apply_verification_recovery(&mut state, &recovery) {
+                                    continue;
+                                }
+                                return Err(Error::from(error));
+                            }
+                        };
                         create_sub_identity_with_email_interactively(
                             cert_server,
                             &target,
@@ -1110,14 +1250,11 @@ async fn run_interactive(
                             Err(error) => {
                                 let rendered = error.to_string();
                                 if rendered.contains("subdomain quota exceeded") {
-                                    println!(
-                                        "Creating {} needs checkout to add one more sub-identity slot under {}.",
+                                    crate::cli::flow::transcript::print_block(&format!(
+                                        "Creating {} needs checkout to add one more sub-identity slot under {}.\nChoose email verification to continue with checkout.",
                                         target.short_name(),
                                         parent.as_partial(),
-                                    );
-                                    println!(
-                                        "Choose email verification to continue with checkout."
-                                    );
+                                    ));
                                     state.approval_plan = None;
                                     state.reset_after_approval_change();
                                     continue;
@@ -1148,13 +1285,14 @@ async fn run_interactive(
             }
         }
 
-        cli::ensure_default_identity_after_save(
+        crate::cli::flow::epilogue::run_lifecycle_epilogue(
             dhttp_home,
-            default_identity_when_command_started.as_ref(),
             target.dhttp_name(),
+            default_identity_when_command_started.clone(),
+            std::io::stdin().is_terminal(),
         )
         .await?;
-        return cli::print_saved_summary(dhttp_home, target.dhttp_name()).await;
+        return Ok(());
     }
 }
 
@@ -1332,19 +1470,19 @@ pub(crate) async fn run(
         }
     }
 
-    cli::ensure_default_identity_after_save(
+    crate::cli::flow::epilogue::run_lifecycle_epilogue(
         dhttp_home,
-        default_identity_when_command_started.as_ref(),
         target.dhttp_name(),
+        default_identity_when_command_started,
+        is_interactive,
     )
-    .await?;
-    cli::print_saved_summary(dhttp_home, target.dhttp_name()).await
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CreateApprovalPlan, CreateEmailAction, CreateVerifyCodeAction,
+        CreateApprovalPlan, CreateEmailAction, CreateVerifyCodeAction, InteractiveCreateState,
         approval_plan_from_selection, create_apply_parent_verification_options,
         create_email_actions, create_verification_options, create_verify_code_actions,
         ensure_non_interactive_root_checkout_not_required,
@@ -1354,8 +1492,64 @@ mod tests {
     use crate::{
         auth::AuthMethod,
         cert_server::{CreateDomainResponse, CreateSubdomainResponse},
-        cli::flow::target::IdentityTarget,
+        cli::{Create, flow::target::IdentityTarget},
     };
+
+    #[test]
+    fn stay_recovery_keeps_create_verify_state() {
+        let mut state = InteractiveCreateState::from_command(&Create {
+            name: Some("alice.smith".to_string()),
+            kind: Some("primary".to_string()),
+            replace_local: false,
+            device_name: None,
+            email: Some("alice@example.test".to_string()),
+            send_code: false,
+            verify_code: None,
+            auth: None,
+        })
+        .unwrap();
+        state.verify_code = Some("123456".to_string());
+        state.verification_code_sent_to = Some("alice@example.test".to_string());
+
+        super::apply_verification_recovery(
+            &mut state,
+            &crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep {
+                message: "retry later",
+            },
+        );
+
+        assert_eq!(state.verify_code.as_deref(), Some("123456"));
+        assert_eq!(
+            state.verification_code_sent_to.as_deref(),
+            Some("alice@example.test")
+        );
+    }
+
+    #[test]
+    fn back_to_email_recovery_reopens_email_prompt() {
+        let mut state = InteractiveCreateState::from_command(&Create {
+            name: Some("alice.smith".to_string()),
+            kind: Some("primary".to_string()),
+            replace_local: false,
+            device_name: None,
+            email: Some("alice@example.test".to_string()),
+            send_code: false,
+            verify_code: None,
+            auth: None,
+        })
+        .unwrap();
+        state.email_prompt_required = false;
+
+        super::apply_verification_recovery(
+            &mut state,
+            &crate::cli::flow::recovery::VerificationRecovery::BackToEmail {
+                message: "start over",
+            },
+        );
+
+        assert!(state.email_prompt_required);
+        assert!(state.verify_code.is_none());
+    }
 
     #[test]
     fn root_identity_defaults_to_email_auth_non_interactively() {

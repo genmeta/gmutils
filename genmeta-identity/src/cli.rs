@@ -1,3 +1,4 @@
+pub mod flow;
 pub mod prompt;
 pub mod validator;
 
@@ -9,18 +10,16 @@ use dhttp_home::{
     identity::{
         settings::{DhttpSettingsFile, LoadDhttpSettingsError, SaveDhttpSettingsError},
         ssl::{
-            ListIdentityProfilesError, LoadCertsError, LoadKeyError, ResolveIdentityProfileError,
-            SaveIdentityError,
+            ListIdentityProfilesError, LoadCertsError, LoadIdentityError, LoadKeyError,
+            ResolveIdentityProfileError, SaveIdentityError,
         },
     },
 };
 use dhttp_identity::{certificate::CertificateChainKind, name::DhttpName as Name};
-use futures::TryStreamExt;
 use indicatif::ProgressStyle;
 use rankey::EncodePem;
-use snafu::{OptionExt, ResultExt, Snafu, Whatever, whatever};
+use snafu::{ResultExt, Snafu, Whatever, whatever};
 use tokio::io;
-use tracing::{Instrument, info_span};
 use tracing_indicatif::{IndicatifLayer, span_ext::IndicatifSpanExt};
 use tracing_subscriber::{
     EnvFilter, filter::LevelFilter, prelude::__tracing_subscriber_SubscriberExt,
@@ -30,9 +29,7 @@ use tracing_subscriber::{
 use crate::{
     CERT_SERVER_BASE_URL,
     cert_server::{self, CertServer},
-    cli::prompt::{
-        InquireResultExt, prompt_confirm_set_as_default_name, prompt_select_default_identity,
-    },
+    cli::prompt::InquireResultExt,
 };
 
 #[derive(Debug, Snafu)]
@@ -55,6 +52,16 @@ pub enum Error {
     LoadCert { source: LoadCertsError },
     #[snafu(transparent)]
     LoadKey { source: LoadKeyError },
+    #[snafu(transparent)]
+    LoadIdentity { source: LoadIdentityError },
+    #[snafu(transparent)]
+    ParseIdentityTarget {
+        source: flow::target::ParseIdentityTargetError,
+    },
+    #[snafu(transparent)]
+    ParseIdentityKind {
+        source: flow::kind::ParseIdentityKindError,
+    },
     #[snafu(transparent)]
     LocalIdentity {
         source: crate::local_identity::Error,
@@ -104,8 +111,7 @@ struct ChainSelector {
 
 impl ChainSelector {
     fn new(kind: String, sequence: i32) -> Result<Self, Error> {
-        validator::validate_kind(&kind)
-            .whatever_context::<_, Error>("certificate kind is invalid")?;
+        let kind = kind.parse::<flow::kind::IdentityKind>()?.to_string();
         if sequence < 0 {
             whatever!("certificate sequence must be >= 0");
         }
@@ -132,57 +138,6 @@ fn selector_from_identity(
     match identity.dhttp_subject_key_identifier() {
         Ok(ski) => ChainSelector::from_dhttp_ski(ski).map(Some),
         Err(_) => Ok(None),
-    }
-}
-
-async fn prompt_chain_selector() -> Result<ChainSelector, Error> {
-    let kind = prompt::prompt_kind()
-        .await
-        .require_interactive("--kind and --sequence")?;
-    let sequence = prompt::prompt_sequence()
-        .await
-        .require_interactive("--kind and --sequence")?;
-    ChainSelector::new(kind, sequence)
-}
-
-async fn resolve_chain_selector(
-    explicit_kind: Option<&str>,
-    explicit_sequence: Option<i32>,
-    local_identity: Option<&dhttp_identity::identity::Identity>,
-    allow_mismatch: bool,
-) -> Result<ChainSelector, Error> {
-    let local_selector = match local_identity {
-        Some(identity) => selector_from_identity(identity)?,
-        None => None,
-    };
-
-    match (explicit_kind, explicit_sequence) {
-        (Some(_), None) => whatever!("--kind and --sequence must be specified together"),
-        (None, Some(_)) => whatever!("--kind and --sequence must be specified together"),
-        (None, None) => match local_selector {
-            Some(selector) => Ok(selector),
-            None => prompt_chain_selector().await,
-        },
-        (Some(kind), Some(sequence)) => {
-            let requested = ChainSelector::new(kind.to_string(), sequence)?;
-            if let Some(local) = local_selector
-                && local != requested
-                && !allow_mismatch
-            {
-                let confirmed = prompt::prompt_confirm_chain_selector_mismatch(
-                    &requested.kind,
-                    requested.sequence,
-                    &local.kind,
-                    local.sequence,
-                )
-                .await
-                .require_interactive("--allow-chain-selector-mismatch")?;
-                if !confirmed {
-                    whatever!("certificate chain selector mismatch was not confirmed");
-                }
-            }
-            Ok(requested)
-        }
     }
 }
 
@@ -230,87 +185,18 @@ async fn save_identity(
     ));
     Ok(())
 }
-fn display_cert_info(cert_der: &[u8], indent: &str) -> Result<(), Error> {
-    let (_, cert) = x509_parser::parse_x509_certificate(cert_der)
-        .whatever_context::<_, Error>("failed to parse certificate")?;
-    println!("{}Serial:     {}", indent, cert.serial);
-    println!("{}Subject:    {}", indent, cert.subject());
-    println!("{}Not Before: {}", indent, cert.validity().not_before);
-    println!("{}Not After:  {}", indent, cert.validity().not_after);
-    if let Ok(Some(san)) = cert.subject_alternative_name() {
-        let dns_names: Vec<_> = san
-            .value
-            .general_names
-            .iter()
-            .filter_map(|gn| match gn {
-                x509_parser::prelude::GeneralName::DNSName(n) => Some(*n),
-                _ => None,
-            })
-            .collect();
-        if !dns_names.is_empty() {
-            println!("{}SANs:       {}", indent, dns_names.join(", "));
-        }
-    }
-    if let Ok(Some(ku)) = cert.key_usage() {
-        let flags: Vec<&str> = [
-            ku.value.digital_signature().then_some("digital_signature"),
-            ku.value.non_repudiation().then_some("non_repudiation"),
-            ku.value.key_encipherment().then_some("key_encipherment"),
-            ku.value.data_encipherment().then_some("data_encipherment"),
-            ku.value.key_agreement().then_some("key_agreement"),
-            ku.value.key_cert_sign().then_some("key_cert_sign"),
-            ku.value.crl_sign().then_some("crl_sign"),
-            ku.value.encipher_only().then_some("encipher_only"),
-            ku.value.decipher_only().then_some("decipher_only"),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        if !flags.is_empty() {
-            println!("{}Key Usage:  {}", indent, flags.join(", "));
-        }
-    }
-    if let Ok(Some(eku)) = cert.extended_key_usage() {
-        let purposes: Vec<&str> = [
-            eku.value.any.then_some("any"),
-            eku.value.server_auth.then_some("server_auth"),
-            eku.value.client_auth.then_some("client_auth"),
-            eku.value.code_signing.then_some("code_signing"),
-            eku.value.email_protection.then_some("email_protection"),
-            eku.value.time_stamping.then_some("time_stamping"),
-            eku.value.ocsp_signing.then_some("ocsp_signing"),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        if !purposes.is_empty() {
-            println!("{}EKU:        {}", indent, purposes.join(", "));
-        }
-    }
-    Ok(())
-}
 
 #[tracing::instrument()]
 async fn load_current_settings(dhttp_home: &DhttpHome) -> Result<Option<DhttpSettingsFile>, Error> {
-    let path = dhttp_home.settings_path();
-    tracing::Span::current().pb_set_message(&format!(
-        "Loading default configuration from {}...",
-        path.display()
-    ));
-    let (message, result) = match dhttp_home.load_settings().await {
-        Ok(default_config) => ("Default configuration loaded.", Ok(Some(default_config))),
+    match dhttp_home.load_settings().await {
+        Ok(default_config) => Ok(Some(default_config)),
         Err(LoadDhttpSettingsError::Io { source, .. })
             if source.kind() == io::ErrorKind::NotFound =>
         {
-            ("No default configuration found.", Ok(None))
+            Ok(None)
         }
-        Err(error) => (
-            "Error loading default configuration.",
-            Err(Error::from(error)),
-        ),
-    };
-    tracing::Span::current().pb_set_finish_message(message);
-    result
+        Err(error) => Err(Error::from(error)),
+    }
 }
 
 #[tracing::instrument()]
@@ -323,74 +209,46 @@ async fn save_settings(default_config: &DhttpSettingsFile) -> Result<(), Error> 
     Ok(())
 }
 
-async fn ensure_default_identity(dhttp_home: &DhttpHome, names: &[Name<'_>]) -> Result<(), Error> {
-    let default_config = load_current_settings(dhttp_home).await?;
-    if default_config
-        .as_ref()
-        .and_then(|c| c.settings().default_identity_name())
-        .is_some()
+async fn resolve_default_target_name(dhttp_home: &DhttpHome) -> Result<Name<'static>, Error> {
+    match load_current_settings(dhttp_home)
+        .await?
+        .and_then(|config| config.settings().default_identity_name().cloned())
+    {
+        Some(name) => Ok(name),
+        None => whatever!(
+            "no default identity configured, use `genmeta identity default <name>` to set one"
+        ),
+    }
+}
+
+async fn ensure_replace_local_allowed(
+    dhttp_home: &DhttpHome,
+    name: Name<'_>,
+    replace_local: bool,
+) -> Result<(), Error> {
+    if !dhttp_home
+        .identity_profile_exists_exactly(name.clone())
+        .await
     {
         return Ok(());
     }
-
-    let selected = if names.len() == 1 {
-        let confirmed = prompt_confirm_set_as_default_name(names[0].borrow())
-            .await
-            .or_not_tty(|| {
-                tracing::info!(
-                    "no TTY, automatically setting {} as default identity",
-                    names[0]
-                );
-                true
-            })?;
-        if confirmed {
-            Some(names[0].to_owned())
-        } else {
-            None
-        }
-    } else {
-        let owned: Vec<Name<'static>> = names.iter().map(|n| n.to_owned()).collect();
-        prompt_select_default_identity(owned.clone())
-            .await
-            .or_not_tty(|| {
-                tracing::info!(
-                    "no TTY, automatically setting {} as default identity",
-                    owned[0]
-                );
-                Some(owned[0].clone())
-            })?
-    };
-
-    if let Some(name) = selected {
-        let mut config = default_config.unwrap_or_else(|| dhttp_home.new_settings());
-        config.settings_mut().set_default_identity_name(name);
-        save_settings(&config).await?;
+    if replace_local {
+        return Ok(());
     }
 
-    Ok(())
-}
-
-#[tracing::instrument()]
-async fn query_exist_names_list(dhttp_home: &DhttpHome) -> Result<Vec<Name<'static>>, Error> {
-    tracing::Span::current().pb_set_message("Querying existing identities...");
-    let (message, result) = match dhttp_home
-        .identity_profile_names()
-        .try_collect::<Vec<_>>()
-        .await
-    {
-        Ok(list) => (
-            format!("Found {} existing identities.", list.len()),
-            Ok(list),
-        ),
-        Err(ListIdentityProfilesError::ReadDir { source, .. })
-            if source.kind() == io::ErrorKind::NotFound =>
-        {
-            ("No existing identities found.".to_string(), Ok(vec![]))
-        }
-        Err(error) => ("Error querying existing identities".to_string(), Err(error)),
-    };
-    tracing::Span::current().pb_set_finish_message(&message);
-    Ok(result?)
+    let message = format!(
+        "Replace the local identity saved at {}?",
+        dhttp_home.join_identity_name(name.clone()).display()
+    );
+    let confirmed =
+        prompt::sync(move || inquire::Confirm::new(&message).with_default(false).prompt())
+            .await
+            .require_interactive("--replace-local")?;
+    if confirmed {
+        Ok(())
+    } else {
+        whatever!("local identity was not replaced")
+    }
 }
 
 async fn acquire_verify_code(
@@ -398,35 +256,20 @@ async fn acquire_verify_code(
     email: &str,
     provided: Option<String>,
 ) -> Result<String, Error> {
-    cert_server.send_email_verification(email).await?;
-    match provided {
-        Some(code) => Ok(code),
-        None => prompt::prompt_verify_code()
-            .await
-            .require_interactive("--verify-code")
-            .map_err(Error::from),
+    match flow::email::EmailVerificationAction::from_verify_code(provided) {
+        flow::email::EmailVerificationAction::ReuseProvidedCode(code) => Ok(code),
+        flow::email::EmailVerificationAction::SendAndPrompt => {
+            cert_server.send_email_verification(email).await?;
+            prompt::prompt_verify_code()
+                .await
+                .require_interactive("--verify-code")
+                .map_err(Error::from)
+        }
     }
 }
 
-fn mapped_domain(given_name: &str, surname: &str) -> Result<Name<'static>, Error> {
-    let given_name = given_name.trim();
-    let surname = surname.trim();
-    if let Err(message) = validator::validate_dhttp_label(given_name) {
-        whatever!("given name is invalid: {message}");
-    }
-    if let Err(message) = validator::validate_dhttp_label(surname) {
-        whatever!("surname is invalid: {message}");
-    }
-    let domain = format!("{given_name}.{surname}{}", Name::SUFFIX);
-    Name::try_from(domain).whatever_context::<_, Error>("mapped domain is invalid")
-}
-
-fn default_device_name() -> String {
-    std::env::var("HOSTNAME")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| crate::DEFAULT_DEVICE_NAME.to_string())
+fn parse_identity_name(identity: &str) -> Result<Name<'static>, Error> {
+    Ok(flow::target::IdentityTarget::parse(identity)?.into_dhttp_name())
 }
 
 async fn login_with_email(
@@ -452,509 +295,81 @@ async fn login_with_email(
     }
 }
 
-async fn account_token_after_identity_failure(
-    cert_server: &CertServer,
-    domain: &Name<'_>,
-    email: Option<String>,
-    verify_code: Option<String>,
-    policy: crate::auth::AuthPolicy,
-    error: cert_server::Error,
-) -> Result<String, Error> {
-    let can_get_email_credentials =
-        std::io::stdin().is_terminal() || (email.is_some() && verify_code.is_some());
-    let failure = crate::auth::classify_api_error(&error);
-    if crate::auth::should_fallback_to_email(policy, can_get_email_credentials, failure) {
-        println!("identity authentication failed; falling back to email verification");
-        login_with_email(cert_server, Some(domain), email, verify_code).await
-    } else if crate::auth::is_email_fallback_failure(failure) {
-        Err(cert_server::Error::identity_fallback_disabled().into())
-    } else {
-        Err(error.into())
-    }
-}
-
 /// Create a new identity
 #[derive(Parser, Debug, Clone)]
 pub struct Create {
+    #[arg(value_name = "IDENTITY")]
+    pub name: Option<String>,
     #[arg(long)]
-    pub given_name: Option<String>,
+    pub kind: Option<String>,
     #[arg(long)]
-    pub surname: Option<String>,
-    #[arg(long)]
-    pub domain: Option<Name<'static>>,
-    #[arg(long, default_value = "primary")]
-    pub kind: String,
-    #[arg(long)]
-    pub sequence: Option<i32>,
+    pub replace_local: bool,
     #[arg(long)]
     pub device_name: Option<String>,
     #[arg(short, long)]
     pub email: Option<String>,
-    #[arg(long)]
+    #[arg(long, conflicts_with = "verify_code")]
+    pub send_code: bool,
+    #[arg(long, value_name = "VERIFY_CODE", hide = true)]
     pub verify_code: Option<String>,
-    #[arg(long, value_enum, default_value_t = crate::auth::AuthPolicy::Auto)]
-    pub auth: crate::auth::AuthPolicy,
-}
-
-impl Create {
-    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
-        let explicit_domain = self.domain.clone();
-        let domain = match explicit_domain.clone() {
-            Some(domain) => domain,
-            None => {
-                let given_name = match self.given_name.clone() {
-                    Some(value) => value,
-                    None => prompt::prompt_given_name()
-                        .await
-                        .require_interactive("--given-name")?,
-                };
-                let surname = match self.surname.clone() {
-                    Some(value) => value,
-                    None => prompt::prompt_surname()
-                        .await
-                        .require_interactive("--surname")?,
-                };
-                mapped_domain(&given_name, &surname)?
-            }
-        };
-
-        validator::validate_kind(&self.kind)
-            .whatever_context::<_, Error>("certificate kind is invalid")?;
-        let device_name = self.device_name.clone().unwrap_or_else(default_device_name);
-        let (key_pem, csr_pem) = generate_private_key_and_csr(&domain)?;
-
-        if explicit_domain.is_some() {
-            let identity_attempt = if matches!(self.auth, crate::auth::AuthPolicy::Email) {
-                None
-            } else {
-                Some(
-                    cert_server
-                        .issue_cert_with_identity(
-                            domain.as_full(),
-                            domain.as_full(),
-                            &self.kind,
-                            self.sequence,
-                            &device_name,
-                            &csr_pem,
-                        )
-                        .await,
-                )
-            };
-
-            let cert = match identity_attempt {
-                Some(Ok(cert)) => cert,
-                Some(Err(error)) if matches!(self.auth, crate::auth::AuthPolicy::Auto) => {
-                    let token = account_token_after_identity_failure(
-                        cert_server,
-                        &domain,
-                        self.email.clone(),
-                        self.verify_code.clone(),
-                        self.auth,
-                        error,
-                    )
-                    .await?;
-                    cert_server
-                        .issue_cert(
-                            &token,
-                            domain.as_full(),
-                            &self.kind,
-                            self.sequence,
-                            &device_name,
-                            &csr_pem,
-                        )
-                        .await?
-                }
-                Some(Err(error)) => return Err(error.into()),
-                None => {
-                    let token = login_with_email(
-                        cert_server,
-                        Some(&domain),
-                        self.email.clone(),
-                        self.verify_code.clone(),
-                    )
-                    .await?;
-                    cert_server
-                        .issue_cert(
-                            &token,
-                            domain.as_full(),
-                            &self.kind,
-                            self.sequence,
-                            &device_name,
-                            &csr_pem,
-                        )
-                        .await?
-                }
-            };
-
-            save_identity(
-                dhttp_home,
-                &domain,
-                key_pem.as_bytes(),
-                cert.cert_pem.as_bytes(),
-            )
-            .instrument(info_span!("save_identity"))
-            .await?;
-            ensure_default_identity(dhttp_home, &[domain.borrow()]).await?;
-            return Ok(());
-        }
-
-        if matches!(self.auth, crate::auth::AuthPolicy::Identity) {
-            whatever!("identity auth cannot create a domain before the first certificate exists");
-        }
-
-        let email = match self.email.clone() {
-            Some(email) => email,
-            None => prompt::prompt_email()
-                .await
-                .require_interactive("--email")?,
-        };
-        let verify_code =
-            acquire_verify_code(cert_server, &email, self.verify_code.clone()).await?;
-        let created = cert_server
-            .create_domain_with_email(domain.as_full(), &email, &verify_code)
-            .await?;
-
-        let access_token = if let Some(auth) = created.auth.clone() {
-            auth.access_token
-        } else {
-            cert_server.login(&email, &verify_code).await?.access_token
-        };
-
-        if let Some(payment_entry) = created.payment_entry.as_ref() {
-            crate::checkout::print_payment_instructions(&created);
-            let completed = crate::checkout::wait_for_checkout_completion(
-                cert_server,
-                &payment_entry.checkout_token,
-            )
-            .await?;
-            match crate::checkout::classify_checkout(&completed) {
-                crate::checkout::CheckoutState::Completed => {}
-                crate::checkout::CheckoutState::Expired => {
-                    whatever!("checkout expired before payment completed")
-                }
-                crate::checkout::CheckoutState::Cancelled => whatever!("checkout was cancelled"),
-                crate::checkout::CheckoutState::Pending => {
-                    whatever!("checkout did not reach a terminal state")
-                }
-            }
-        }
-
-        let cert = cert_server
-            .issue_cert(
-                &access_token,
-                domain.as_full(),
-                &self.kind,
-                self.sequence,
-                &device_name,
-                &csr_pem,
-            )
-            .await?;
-
-        save_identity(
-            dhttp_home,
-            &domain,
-            key_pem.as_bytes(),
-            cert.cert_pem.as_bytes(),
-        )
-        .instrument(info_span!("save_identity"))
-        .await?;
-
-        ensure_default_identity(dhttp_home, &[domain.borrow()]).await?;
-
-        Ok(())
-    }
+    #[arg(long, value_enum)]
+    pub auth: Option<crate::auth::AuthMethod>,
 }
 
 /// Apply identity
 #[derive(Parser, Debug, Clone)]
 pub struct Apply {
-    #[arg(long)]
-    pub domain: Option<Name<'static>>,
+    #[arg(value_name = "IDENTITY")]
+    pub name: Option<String>,
+    #[arg(long = "default", conflicts_with = "name")]
+    pub use_default: bool,
     #[arg(long)]
     pub kind: Option<String>,
     #[arg(long)]
-    pub sequence: Option<i32>,
+    pub replace_local: bool,
     #[arg(long)]
-    pub allow_chain_selector_mismatch: bool,
+    pub device_name: Option<String>,
     #[arg(short, long)]
     pub email: Option<String>,
-    #[arg(long)]
+    #[arg(long, conflicts_with = "verify_code")]
+    pub send_code: bool,
+    #[arg(long, value_name = "VERIFY_CODE", hide = true)]
     pub verify_code: Option<String>,
-    #[arg(long, value_enum, default_value_t = crate::auth::AuthPolicy::Auto)]
-    pub auth: crate::auth::AuthPolicy,
-}
-
-impl Apply {
-    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
-        let domain = match self.domain.clone() {
-            Some(domain) => domain,
-            None => prompt_select_default_identity(query_exist_names_list(dhttp_home).await?)
-                .await
-                .require_interactive("--domain")?
-                .whatever_context::<_, Error>("no identity selected")?,
-        };
-        let identity_profile = dhttp_home.resolve_identity_profile(domain.borrow()).await?;
-        let local_identity = identity_profile.load_identity().await.ok();
-        let selector = resolve_chain_selector(
-            self.kind.as_deref(),
-            self.sequence,
-            local_identity.as_ref(),
-            self.allow_chain_selector_mismatch,
-        )
-        .await?;
-        let kind = selector.kind;
-        let sequence = selector.sequence;
-
-        let identity_attempt = if matches!(self.auth, crate::auth::AuthPolicy::Email) {
-            None
-        } else {
-            Some(
-                cert_server
-                    .list_certs_with_identity(
-                        domain.as_full(),
-                        domain.as_full(),
-                        Some(&kind),
-                        Some(sequence),
-                    )
-                    .await,
-            )
-        };
-        let (page, token) = match identity_attempt {
-            Some(Ok(page)) => (page, None),
-            Some(Err(error)) if matches!(self.auth, crate::auth::AuthPolicy::Auto) => {
-                let token = account_token_after_identity_failure(
-                    cert_server,
-                    &domain,
-                    self.email.clone(),
-                    self.verify_code.clone(),
-                    self.auth,
-                    error,
-                )
-                .await?;
-                let page = cert_server
-                    .list_certs(&token, domain.as_full(), Some(&kind), Some(sequence))
-                    .await?;
-                (page, Some(token))
-            }
-            Some(Err(error)) => return Err(error.into()),
-            None => {
-                let token = login_with_email(
-                    cert_server,
-                    Some(&domain),
-                    self.email.clone(),
-                    self.verify_code.clone(),
-                )
-                .await?;
-                let page = cert_server
-                    .list_certs(&token, domain.as_full(), Some(&kind), Some(sequence))
-                    .await?;
-                (page, Some(token))
-            }
-        };
-        let selected = page
-            .list
-            .iter()
-            .find(|item| item.status == "active")
-            .or_else(|| page.list.first())
-            .whatever_context::<_, Error>("no certificate found for selected chain")?;
-        let serial = selected
-            .serial_number
-            .as_ref()
-            .whatever_context::<_, Error>("selected certificate has no serial number")?;
-        let detail = match token {
-            Some(token) => cert_server.get_cert_detail(&token, serial).await?,
-            None => {
-                cert_server
-                    .get_cert_detail_with_identity(domain.as_full(), serial)
-                    .await?
-            }
-        };
-
-        let key = identity_profile.load_key().await?;
-        let matched = crate::local_identity::private_key_matches_certificate(
-            key.secret_der(),
-            detail.cert_pem.as_bytes(),
-        )?;
-        if !matched {
-            whatever!(
-                "local private key does not match downloaded certificate; use renew or create a new chain"
-            );
-        }
-        let cert_path = identity_profile
-            .ssl_dir()
-            .join(dhttp_home::identity::ssl::CERT_FILE_NAME);
-        tokio::fs::write(&cert_path, detail.cert_pem.as_bytes())
-            .await
-            .whatever_context::<_, Error>(format!(
-                "failed to write certificate file {}",
-                cert_path.display()
-            ))?;
-        ensure_default_identity(dhttp_home, &[domain.borrow()]).await?;
-
-        Ok(())
-    }
+    #[arg(long, value_enum)]
+    pub auth: Option<crate::auth::AuthMethod>,
 }
 
 /// Renew identities
 #[derive(Parser, Debug, Clone)]
 pub struct Renew {
-    #[arg(long)]
-    pub domain: Option<Name<'static>>,
-    #[arg(long)]
-    pub kind: Option<String>,
-    #[arg(long)]
-    pub sequence: Option<i32>,
-    #[arg(long)]
-    pub allow_chain_selector_mismatch: bool,
+    #[arg(value_name = "IDENTITY")]
+    pub name: Option<String>,
+    #[arg(long = "default", conflicts_with = "name")]
+    pub use_default: bool,
     #[arg(long)]
     pub device_name: Option<String>,
     #[arg(short, long)]
     pub email: Option<String>,
-    #[arg(long)]
+    #[arg(long, conflicts_with = "verify_code")]
+    pub send_code: bool,
+    #[arg(long, value_name = "VERIFY_CODE", hide = true)]
     pub verify_code: Option<String>,
-    #[arg(long, value_enum, default_value_t = crate::auth::AuthPolicy::Auto)]
-    pub auth: crate::auth::AuthPolicy,
-}
-
-impl Renew {
-    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
-        let domain = match self.domain.clone() {
-            Some(domain) => domain,
-            None => prompt_select_default_identity(query_exist_names_list(dhttp_home).await?)
-                .await
-                .require_interactive("--domain")?
-                .whatever_context::<_, Error>("no identity selected")?,
-        };
-        let identity_profile = dhttp_home.resolve_identity_profile(domain.borrow()).await?;
-        let local_identity = identity_profile.load_identity().await.ok();
-        let selector = resolve_chain_selector(
-            self.kind.as_deref(),
-            self.sequence,
-            local_identity.as_ref(),
-            self.allow_chain_selector_mismatch,
-        )
-        .await?;
-        let kind = selector.kind;
-        let sequence = selector.sequence;
-        let device_name = self.device_name.clone().unwrap_or_else(default_device_name);
-        let (key_pem, csr_pem) = generate_private_key_and_csr(&domain)?;
-        let identity_attempt = if matches!(self.auth, crate::auth::AuthPolicy::Email) {
-            None
-        } else {
-            Some(
-                cert_server
-                    .renew_cert_with_identity(
-                        domain.as_full(),
-                        domain.as_full(),
-                        &kind,
-                        sequence,
-                        Some(&device_name),
-                        &csr_pem,
-                    )
-                    .await,
-            )
-        };
-
-        let detail = match identity_attempt {
-            Some(Ok(detail)) => detail,
-            Some(Err(error)) if matches!(self.auth, crate::auth::AuthPolicy::Auto) => {
-                let token = account_token_after_identity_failure(
-                    cert_server,
-                    &domain,
-                    self.email.clone(),
-                    self.verify_code.clone(),
-                    self.auth,
-                    error,
-                )
-                .await?;
-                cert_server
-                    .renew_cert(
-                        &token,
-                        domain.as_full(),
-                        &kind,
-                        sequence,
-                        Some(&device_name),
-                        &csr_pem,
-                    )
-                    .await?
-            }
-            Some(Err(error)) => return Err(error.into()),
-            None => {
-                let token = login_with_email(
-                    cert_server,
-                    Some(&domain),
-                    self.email.clone(),
-                    self.verify_code.clone(),
-                )
-                .await?;
-                cert_server
-                    .renew_cert(
-                        &token,
-                        domain.as_full(),
-                        &kind,
-                        sequence,
-                        Some(&device_name),
-                        &csr_pem,
-                    )
-                    .await?
-            }
-        };
-        save_identity(
-            dhttp_home,
-            &domain,
-            key_pem.as_bytes(),
-            detail.cert_pem.as_bytes(),
-        )
-        .await?;
-        ensure_default_identity(dhttp_home, &[domain.borrow()]).await?;
-
-        Ok(())
-    }
+    #[arg(long, value_enum)]
+    pub auth: Option<crate::auth::AuthMethod>,
 }
 
 /// Set default identity
 #[derive(Parser, Debug, Clone)]
 pub struct Default {
-    pub name: Option<Name<'static>>,
+    #[arg(value_name = "IDENTITY")]
+    pub name: Option<String>,
+    #[arg(long)]
+    pub allow_nonready: bool,
 }
 
 impl Default {
-    pub async fn run(
-        &self,
-        dhttp_home: &DhttpHome,
-        _cert_server: &CertServer,
-    ) -> Result<(), Error> {
-        match self.name.as_ref() {
-            None => {
-                // Show info for current default identity
-                let current_config = load_current_settings(dhttp_home).await?;
-                let name = match current_config
-                    .and_then(|c| c.settings().default_identity_name().cloned())
-                {
-                    Some(n) => n,
-                    None => whatever!(
-                        "no default identity configured, use `genmeta identity default <name>` to set one"
-                    ),
-                };
-                let identity = dhttp_home.resolve_identity_profile(name.borrow()).await?;
-                println!("{}", identity.name());
-                let certs = identity.load_certs().await?;
-                let der = certs[0].as_ref();
-                display_cert_info(der, "  ")?;
-                Ok(())
-            }
-            Some(name) => {
-                // Configure name as default
-                dhttp_home.resolve_identity_profile(name.borrow()).await?;
-                let current_config = load_current_settings(dhttp_home).await?;
-                let mut current_config = current_config
-                    .unwrap_or_else(|| DhttpSettingsFile::new(dhttp_home.settings_path()));
-                current_config
-                    .settings_mut()
-                    .set_default_identity_name(name.to_owned());
-                save_settings(&current_config).await
-            }
-        }
+    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
+        flow::default_identity::run(self, dhttp_home, cert_server).await
     }
 }
 
@@ -972,31 +387,24 @@ impl List {
         dhttp_home: &DhttpHome,
         _cert_server: &CertServer,
     ) -> Result<(), Error> {
-        let names = query_exist_names_list(dhttp_home).await?;
         let default_config = load_current_settings(dhttp_home).await?;
         let default_name = default_config
             .as_ref()
             .and_then(|c| c.settings().default_identity_name().cloned());
-        if names.is_empty() {
-            println!("No local identities found.");
+        let inventory = flow::local::load_inventory(
+            dhttp_home,
+            default_name.as_ref().map(|name| name.borrow()),
+        )
+        .await?;
+        if inventory.groups.is_empty() {
+            flow::transcript::print_line("no local identities found");
         } else {
-            for name in &names {
-                let marker = if default_name
-                    .as_ref()
-                    .map(|d| d.borrow() == name.borrow())
-                    .unwrap_or(false)
-                {
-                    "* "
-                } else {
-                    "  "
-                };
-                println!("{marker}{name}");
-                if self.verbose {
-                    let identity = dhttp_home.resolve_identity_profile(name.borrow()).await?;
-                    let certs = identity.load_certs().await?;
-                    let der = certs[0].as_ref();
-                    display_cert_info(der, "    ")?;
-                }
+            flow::transcript::print_block(&flow::output::render_inventory(
+                &inventory,
+                std::io::stdout().is_terminal(),
+            ));
+            if self.verbose {
+                tracing::debug!("verbose identity list details are not implemented yet");
             }
         }
         Ok(())
@@ -1007,7 +415,8 @@ impl List {
 #[derive(Parser, Debug, Clone)]
 pub struct Info {
     /// Identity name (defaults to current default)
-    pub name: Option<Name<'static>>,
+    #[arg(value_name = "IDENTITY")]
+    pub name: Option<String>,
 }
 
 impl Info {
@@ -1016,24 +425,28 @@ impl Info {
         dhttp_home: &DhttpHome,
         _cert_server: &CertServer,
     ) -> Result<(), Error> {
+        let default_name = load_current_settings(dhttp_home)
+            .await?
+            .and_then(|config| config.settings().default_identity_name().cloned());
         let name: Name<'static> = match self.name.as_ref() {
-            Some(n) => n.to_owned(),
-            None => {
-                let cfg = load_current_settings(dhttp_home).await?;
-                match cfg.and_then(|c| c.settings().default_identity_name().cloned()) {
-                    Some(n) => n,
-                    None => whatever!(
-                        "no default identity configured, use `genmeta identity default <name>` to set one"
-                    ),
-                }
-            }
+            Some(n) => parse_identity_name(n)?,
+            None => match default_name.clone() {
+                Some(n) => n,
+                None => whatever!(
+                    "no default identity configured, use `genmeta identity default <name>` to set one"
+                ),
+            },
         };
-        let identity = dhttp_home.resolve_identity_profile(name.borrow()).await?;
-        println!("{}", identity.name());
-
-        let certs = identity.load_certs().await?;
-        let der = certs[0].as_ref();
-        display_cert_info(der, "  ")?;
+        let summary = flow::local::load_summary(
+            dhttp_home,
+            name.borrow(),
+            default_name.as_ref().map(|default| default.borrow()),
+        )
+        .await?;
+        flow::transcript::print_block(&flow::output::format_info(
+            &summary,
+            std::io::stdout().is_terminal(),
+        ));
 
         Ok(())
     }
@@ -1053,14 +466,14 @@ pub enum Options {
 impl Options {
     pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
         match self {
-            Options::Create(cmd) => cmd.run(dhttp_home, cert_server).await,
-            Options::Apply(cmd) => cmd.run(dhttp_home, cert_server).await,
-            Options::Renew(cmd) => cmd.run(dhttp_home, cert_server).await,
-            Options::Default(cmd) => cmd.run(dhttp_home, cert_server).await,
-            Options::Info(cmd) => cmd.run(dhttp_home, cert_server).await,
-            Options::List(cmd) => cmd.run(dhttp_home, cert_server).await,
+            Options::Create(cmd) => flow::run_create(cmd, dhttp_home, cert_server).await,
+            Options::Apply(cmd) => flow::run_apply(cmd, dhttp_home, cert_server).await,
+            Options::Renew(cmd) => flow::run_renew(cmd, dhttp_home, cert_server).await,
+            Options::Default(cmd) => flow::run_default(cmd, dhttp_home, cert_server).await,
+            Options::Info(cmd) => flow::run_info(cmd, dhttp_home, cert_server).await,
+            Options::List(cmd) => flow::run_list(cmd, dhttp_home, cert_server).await,
             Options::Version {} => {
-                println!("{}", env!("CARGO_PKG_VERSION"));
+                flow::transcript::print_line(env!("CARGO_PKG_VERSION"));
                 Ok(())
             }
         }
@@ -1110,10 +523,11 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
+    use clap::{CommandFactory, Parser};
     use dhttp_identity::{identity::Identity, name::Name};
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
-    use super::{ChainSelector, cert_server_base_url, resolve_chain_selector};
+    use super::{ChainSelector, Create, Options, cert_server_base_url, selector_from_identity};
     use crate::CERT_SERVER_BASE_URL;
 
     #[test]
@@ -1132,50 +546,10 @@ mod tests {
         )
     }
 
-    #[tokio::test]
-    async fn chain_selector_rejects_partial_explicit_selector() {
-        assert!(
-            resolve_chain_selector(Some("primary"), None, None, false)
-                .await
-                .is_err()
-        );
-        assert!(
-            resolve_chain_selector(None, Some(0), None, false)
-                .await
-                .is_err()
-        );
-    }
-
-    #[tokio::test]
-    async fn chain_selector_uses_explicit_pair() {
-        let selector = resolve_chain_selector(Some("secondary"), Some(3), None, false)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            selector,
-            ChainSelector {
-                kind: "secondary".to_string(),
-                sequence: 3,
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn chain_selector_rejects_invalid_explicit_kind() {
-        assert!(
-            resolve_chain_selector(Some("device"), Some(3), None, false)
-                .await
-                .is_err()
-        );
-    }
-
-    #[tokio::test]
-    async fn chain_selector_reads_dhttp_ski() {
+    #[test]
+    fn selector_from_identity_reads_dhttp_ski() {
         let identity = local_identity_with_dhttp_ski();
-        let selector = resolve_chain_selector(None, None, Some(&identity), false)
-            .await
-            .unwrap();
+        let selector = selector_from_identity(&identity).unwrap().unwrap();
 
         assert_eq!(
             selector,
@@ -1186,30 +560,145 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn chain_selector_rejects_unconfirmed_mismatch() {
-        let identity = local_identity_with_dhttp_ski();
+    #[test]
+    fn create_rejects_auth_auto() {
+        let error = Options::try_parse_from([
+            "genmeta",
+            "create",
+            "alice.smith",
+            "--kind",
+            "primary",
+            "--auth",
+            "auto",
+        ])
+        .unwrap_err();
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("--auth"), "{rendered}");
+        assert!(rendered.contains("auto"), "{rendered}");
+    }
+
+    #[test]
+    fn verify_code_is_hidden_from_help_but_still_parses() {
+        let mut command = Create::command();
+        let help = command.render_long_help().to_string();
+        assert!(!help.contains("--verify-code"), "{help}");
 
         assert!(
-            resolve_chain_selector(Some("secondary"), Some(3), Some(&identity), false)
-                .await
-                .is_err()
+            Options::try_parse_from([
+                "genmeta",
+                "create",
+                "alice.smith",
+                "--kind",
+                "primary",
+                "--auth",
+                "email",
+                "--email",
+                "user@example.com",
+                "--verify-code",
+                "000000",
+            ])
+            .is_ok()
         );
     }
 
-    #[tokio::test]
-    async fn chain_selector_allows_explicit_mismatch_override() {
-        let identity = local_identity_with_dhttp_ski();
-        let selector = resolve_chain_selector(Some("secondary"), Some(3), Some(&identity), true)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            selector,
-            ChainSelector {
-                kind: "secondary".to_string(),
-                sequence: 3,
-            }
+    #[test]
+    fn default_accepts_allow_nonready() {
+        assert!(
+            Options::try_parse_from(["genmeta", "default", "alice.smith", "--allow-nonready",])
+                .is_ok()
         );
+    }
+
+    #[test]
+    fn renew_rejects_kind_and_sequence_flags() {
+        for (flag, value) in [("--kind", "primary"), ("--sequence", "1")] {
+            let error = Options::try_parse_from(["genmeta", "renew", "alice.smith", flag, value])
+                .unwrap_err();
+            let rendered = error.to_string();
+            assert!(rendered.contains(flag), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn create_and_apply_reject_sequence_flag() {
+        for command in ["create", "apply"] {
+            let error = Options::try_parse_from([
+                "genmeta",
+                command,
+                "alice.smith",
+                "--kind",
+                "primary",
+                "--sequence",
+                "1",
+            ])
+            .unwrap_err();
+            let rendered = error.to_string();
+            assert!(rendered.contains("--sequence"), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn create_and_apply_accept_replace_local_flag() {
+        for command in ["create", "apply"] {
+            assert!(
+                Options::try_parse_from([
+                    "genmeta",
+                    command,
+                    "alice.smith",
+                    "--kind",
+                    "primary",
+                    "--replace-local",
+                ])
+                .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn apply_and_renew_accept_default_flag() {
+        assert!(
+            Options::try_parse_from(["genmeta", "apply", "--default", "--kind", "primary",])
+                .is_ok()
+        );
+        assert!(Options::try_parse_from(["genmeta", "renew", "--default"]).is_ok());
+    }
+
+    #[test]
+    fn send_code_is_available_and_mutually_exclusive_with_verify_code() {
+        assert!(
+            Options::try_parse_from([
+                "genmeta",
+                "create",
+                "alice.smith",
+                "--kind",
+                "primary",
+                "--auth",
+                "email",
+                "--email",
+                "user@example.com",
+                "--send-code",
+            ])
+            .is_ok()
+        );
+
+        let error = Options::try_parse_from([
+            "genmeta",
+            "create",
+            "alice.smith",
+            "--kind",
+            "primary",
+            "--auth",
+            "email",
+            "--email",
+            "user@example.com",
+            "--send-code",
+            "--verify-code",
+            "000000",
+        ])
+        .unwrap_err();
+        let rendered = error.to_string();
+        assert!(rendered.contains("--send-code"), "{rendered}");
+        assert!(rendered.contains("--verify-code"), "{rendered}");
     }
 }

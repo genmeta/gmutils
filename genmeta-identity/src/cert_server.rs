@@ -3,7 +3,7 @@ use std::sync::Arc;
 use reqwest::header;
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;
-use snafu::{ResultExt, Snafu, Whatever};
+use snafu::{FromString, ResultExt, Snafu, Whatever};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -56,6 +56,61 @@ struct ErrorResponse {
 struct ErrorEnvelope {
     code: String,
     message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DetailedErrorResponse<T> {
+    error: DetailedErrorEnvelope<T>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DetailedErrorEnvelope<T> {
+    code: String,
+    message: String,
+    details: T,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubdomainQuotaQuoteDetailsEnvelope {
+    domain: String,
+    quota_quote: SubdomainQuotaQuoteDetails,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubdomainQuotaQuoteDetails {
+    due: i64,
+    currency: String,
+    days_left: i64,
+    days_total: i64,
+    renewal: i64,
+}
+
+fn parse_subdomain_quota_quote(
+    status: reqwest::StatusCode,
+    body: &[u8],
+) -> Result<Option<SubdomainQuotaQuote>, Error> {
+    if status != reqwest::StatusCode::UNPROCESSABLE_ENTITY {
+        return Ok(None);
+    }
+
+    let Ok(parsed) =
+        serde_json::from_slice::<DetailedErrorResponse<SubdomainQuotaQuoteDetailsEnvelope>>(body)
+    else {
+        return Ok(None);
+    };
+    if parsed.error.code != "subdomain_quota_exceeded" {
+        return Ok(None);
+    }
+    let _ = &parsed.error.message;
+
+    Ok(Some(SubdomainQuotaQuote {
+        domain: parsed.error.details.domain,
+        due: parsed.error.details.quota_quote.due,
+        currency: parsed.error.details.quota_quote.currency,
+        days_left: parsed.error.details.quota_quote.days_left,
+        days_total: parsed.error.details.quota_quote.days_total,
+        renewal: parsed.error.details.quota_quote.renewal,
+    }))
 }
 
 pub fn parse_error_body(status: reqwest::StatusCode, body: &[u8]) -> Result<(), Error> {
@@ -150,6 +205,48 @@ pub struct InvoiceInfo {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct CreateSubdomainResponse {
+    pub domain: String,
+    pub parent: String,
+    pub status: String,
+    pub expires_at: Option<i64>,
+    pub cert: SubdomainCertQuota,
+    pub url: String,
+    pub certs_url: String,
+    pub created_at: i64,
+    pub invoice: Option<SubdomainInvoice>,
+}
+
+#[derive(Debug, Clone)]
+pub enum CreateSubdomainAttempt {
+    Created(CreateSubdomainResponse),
+    QuotaExceeded(SubdomainQuotaQuote),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubdomainCertQuota {
+    pub limit: i32,
+    pub used: i32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubdomainInvoice {
+    pub number: String,
+    pub amount: i64,
+    pub currency: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubdomainQuotaQuote {
+    pub domain: String,
+    pub due: i64,
+    pub currency: String,
+    pub days_left: i64,
+    pub days_total: i64,
+    pub renewal: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct CertificateDetail {
     pub domain: String,
     pub device_name: Option<String>,
@@ -164,6 +261,18 @@ pub struct CertificateDetail {
     pub issued_at: i64,
     pub valid_not_after: i64,
     pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct InvoiceDetail {
+    pub invoice_no: String,
+    pub domain: String,
+    pub status: String,
+    pub amount: i64,
+    pub currency: String,
+    pub url: String,
+    pub expires_at: Option<i64>,
+    pub updated_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -220,6 +329,22 @@ async fn parse_create_domain_response(
         return parse_error_body(status, &body).and_then(|()| unreachable!());
     }
     serde_json::from_slice::<CreateDomainResponse>(&body).context(JsonSnafu {})
+}
+
+async fn parse_create_subdomain_response(
+    response: reqwest::Response,
+) -> Result<CreateSubdomainAttempt, Error> {
+    let status = response.status();
+    let body = response.bytes().await?;
+    if let Some(quote) = parse_subdomain_quota_quote(status, &body)? {
+        return Ok(CreateSubdomainAttempt::QuotaExceeded(quote));
+    }
+    if !status.is_success() {
+        return parse_error_body(status, &body).and_then(|()| unreachable!());
+    }
+    serde_json::from_slice::<CreateSubdomainResponse>(&body)
+        .map(CreateSubdomainAttempt::Created)
+        .context(JsonSnafu {})
 }
 
 async fn parse_dhttp_response<T: DeserializeOwned>(
@@ -372,6 +497,69 @@ impl CertServer {
         parse_response(response).await
     }
 
+    pub async fn create_subdomain(
+        &self,
+        access_token: &str,
+        parent: &str,
+        label: &str,
+        expected_amount: Option<i64>,
+    ) -> Result<CreateSubdomainResponse, Error> {
+        match self
+            .create_subdomain_attempt(access_token, parent, label, expected_amount)
+            .await?
+        {
+            CreateSubdomainAttempt::Created(response) => Ok(response),
+            CreateSubdomainAttempt::QuotaExceeded(quote) => Err(Whatever::without_source(
+                format!(
+                    "creating {} requires interactive checkout to add one more sub-identity slot under {} ({})",
+                    quote.domain, parent, quote.currency
+                ),
+            )
+            .into()),
+        }
+    }
+
+    pub async fn create_subdomain_attempt(
+        &self,
+        access_token: &str,
+        parent: &str,
+        label: &str,
+        expected_amount: Option<i64>,
+    ) -> Result<CreateSubdomainAttempt, Error> {
+        let response = self
+            .http_client
+            .post(format!("{}/v2/subdomain", self.base_url))
+            .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
+            .json(&json!({
+                "parent": parent,
+                "label": label,
+                "expected_amount": expected_amount,
+            }))
+            .send()
+            .await?;
+        parse_create_subdomain_response(response).await
+    }
+
+    pub async fn create_subdomain_with_identity(
+        &self,
+        identity_domain: &str,
+        parent: &str,
+        label: &str,
+        expected_amount: Option<i64>,
+    ) -> Result<CreateSubdomainResponse, Error> {
+        self.send_identity_json(
+            identity_domain,
+            http::Method::POST,
+            "/v2/subdomain",
+            json!({
+                "parent": parent,
+                "label": label,
+                "expected_amount": expected_amount,
+            }),
+        )
+        .await
+    }
+
     pub async fn issue_cert(
         &self,
         access_token: &str,
@@ -392,6 +580,21 @@ impl CertServer {
                 "device_name": device_name,
                 "csr": csr_pem,
             }))
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn get_invoice(
+        &self,
+        access_token: &str,
+        invoice_no: &str,
+    ) -> Result<InvoiceDetail, Error> {
+        let response = self
+            .http_client
+            .get(format!("{}/v2/invoice", self.base_url))
+            .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
+            .query(&[("no", invoice_no)])
             .send()
             .await?;
         parse_response(response).await
@@ -585,5 +788,38 @@ mod tests {
         assert_eq!(response.next_action, "payment");
         assert_eq!(response.payment_entry.unwrap().checkout_token, "ckt_123");
         assert_eq!(response.auth.unwrap().access_token, "token");
+    }
+
+    #[test]
+    fn subdomain_quota_error_details_are_parsed() {
+        let payload = br#"{
+          "error": {
+            "code": "subdomain_quota_exceeded",
+            "message": "subdomain quota exceeded",
+            "details": {
+              "domain": "phone.alice.smith.dhttp.net",
+              "quota_quote": {
+                "due": 500,
+                "currency": "USD",
+                "days_left": 120,
+                "days_total": 365,
+                "renewal": 1200
+              }
+            }
+          }
+        }"#;
+
+        assert_eq!(
+            parse_subdomain_quota_quote(reqwest::StatusCode::UNPROCESSABLE_ENTITY, payload)
+                .unwrap(),
+            Some(SubdomainQuotaQuote {
+                domain: "phone.alice.smith.dhttp.net".to_string(),
+                due: 500,
+                currency: "USD".to_string(),
+                days_left: 120,
+                days_total: 365,
+                renewal: 1200,
+            })
+        );
     }
 }
