@@ -14,7 +14,7 @@ use bollard::{
     },
 };
 use futures_util::StreamExt;
-use snafu::{OptionExt, ResultExt, Snafu, Whatever};
+use snafu::{OptionExt, ResultExt, Whatever};
 use tempfile::TempDir;
 use tracing::info;
 use walkdir::WalkDir;
@@ -43,16 +43,6 @@ pub struct PackageEntry {
     pub version: String,
     pub architecture: String,
     pub stanza: String,
-}
-
-#[derive(Debug, Snafu)]
-#[snafu(module)]
-pub enum MergePackageEntriesError {
-    #[snafu(display("duplicate local package entry for {package} {architecture}"))]
-    DuplicateLocal {
-        package: String,
-        architecture: String,
-    },
 }
 
 #[derive(Debug)]
@@ -99,35 +89,6 @@ struct AptStageContainer {
     _secrets: TempDir,
 }
 
-pub fn merge_package_entries(
-    remote: Vec<PackageEntry>,
-    local: Vec<PackageEntry>,
-) -> Result<Vec<PackageEntry>, MergePackageEntriesError> {
-    let mut local_keys = BTreeSet::new();
-    for entry in &local {
-        let key = (entry.package.clone(), entry.architecture.clone());
-        snafu::ensure!(
-            local_keys.insert(key),
-            merge_package_entries_error::DuplicateLocalSnafu {
-                package: entry.package.clone(),
-                architecture: entry.architecture.clone()
-            }
-        );
-    }
-    let mut merged = remote
-        .into_iter()
-        .filter(|entry| !local_keys.contains(&(entry.package.clone(), entry.architecture.clone())))
-        .collect::<Vec<_>>();
-    merged.extend(local);
-    merged.sort_by(|left, right| {
-        left.package
-            .cmp(&right.package)
-            .then_with(|| left.architecture.cmp(&right.architecture))
-            .then_with(|| left.version.cmp(&right.version))
-    });
-    Ok(merged)
-}
-
 pub fn apt_upload_order(key: &str) -> u8 {
     if key.contains("/pool/") || key.starts_with("pool/") {
         return 0;
@@ -158,19 +119,8 @@ pub async fn run(
         plan_payload_uploads(client, &options.bucket, &local_payloads, &target.prefix).await?;
     let remote_entries =
         remote_package_entries(client, &options.bucket, &target.prefix, &target.suite).await?;
-    let local_keys = local_payloads
-        .iter()
-        .map(|payload| (payload.package.clone(), payload.architecture.clone()))
-        .collect::<BTreeSet<_>>();
-    let retained_remote = remote_entries
-        .into_iter()
-        .filter(|entry| {
-            !local_keys.contains(&(
-                entry.entry.package.clone(),
-                entry.entry.architecture.clone(),
-            ))
-        })
-        .collect::<Vec<_>>();
+    let local_keys = local_payload_keys(&local_payloads);
+    let retained_remote = retained_remote_entries(remote_entries, &local_keys);
     uploads.sort_by(|left, right| {
         apt_upload_order(&left.key)
             .cmp(&apt_upload_order(&right.key))
@@ -270,6 +220,28 @@ fn local_payloads(
                     .whatever_context("deb package artifact is missing archive name")?,
                 source: super::artifact_path(target_dir, artifact),
             })
+        })
+        .collect()
+}
+
+fn local_payload_keys(payloads: &[DebPayload]) -> BTreeSet<(String, String)> {
+    payloads
+        .iter()
+        .map(|payload| (payload.package.clone(), payload.architecture.clone()))
+        .collect()
+}
+
+fn retained_remote_entries(
+    remote_entries: Vec<RemotePackageEntry>,
+    local_keys: &BTreeSet<(String, String)>,
+) -> Vec<RemotePackageEntry> {
+    remote_entries
+        .into_iter()
+        .filter(|entry| {
+            !local_keys.contains(&(
+                entry.entry.package.clone(),
+                entry.entry.architecture.clone(),
+            ))
         })
         .collect()
 }
@@ -784,45 +756,33 @@ fn path_to_mount_source(path: &Path) -> Result<String, Whatever> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::{
-        AptContainerOptions, PackageEntry, apt_upload_order, deb_payload_key,
-        merge_package_entries, sign_suite_release_script,
+        AptContainerOptions, DebPayload, PackageEntry, RemotePackageEntry, apt_upload_order,
+        deb_payload_key, local_payload_keys, retained_remote_entries, sign_suite_release_script,
     };
 
     #[test]
     fn manifest_arch_replaces_remote_same_arch_and_preserves_others() {
         let remote = vec![
-            PackageEntry {
-                package: "gmutils".to_string(),
-                version: "0.5.1-1".to_string(),
-                architecture: "amd64".to_string(),
-                stanza: "Package: gmutils\nVersion: 0.5.1-1\nArchitecture: amd64\n".to_string(),
-            },
-            PackageEntry {
-                package: "gmutils".to_string(),
-                version: "0.5.1-1".to_string(),
-                architecture: "arm64".to_string(),
-                stanza: "Package: gmutils\nVersion: 0.5.1-1\nArchitecture: arm64\n".to_string(),
-            },
+            remote_package_entry("gmutils", "0.5.1-1", "amd64"),
+            remote_package_entry("gmutils", "0.5.1-1", "arm64"),
         ];
-        let local = vec![PackageEntry {
-            package: "gmutils".to_string(),
-            version: "0.5.2-1".to_string(),
-            architecture: "amd64".to_string(),
-            stanza: "Package: gmutils\nVersion: 0.5.2-1\nArchitecture: amd64\n".to_string(),
-        }];
+        let local = vec![local_payload("gmutils", "0.5.2-1", "amd64")];
 
-        let merged = merge_package_entries(remote, local).expect("merge should pass");
+        let local_keys = local_payload_keys(&local);
+        let retained_remote = retained_remote_entries(remote, &local_keys);
 
         assert!(
-            merged
-                .iter()
-                .any(|entry| entry.version == "0.5.2-1" && entry.architecture == "amd64")
+            retained_remote.iter().any(
+                |entry| entry.entry.version == "0.5.1-1" && entry.entry.architecture == "arm64"
+            )
         );
         assert!(
-            merged
-                .iter()
-                .any(|entry| entry.version == "0.5.1-1" && entry.architecture == "arm64")
+            !retained_remote.iter().any(
+                |entry| entry.entry.version == "0.5.1-1" && entry.entry.architecture == "amd64"
+            )
         );
     }
 
@@ -858,5 +818,36 @@ mod tests {
             key,
             "apt/gmutils/pool/main/g/gmutils/gmutils_0.5.2-1_amd64.deb"
         );
+    }
+
+    fn local_payload(package: &str, version: &str, architecture: &str) -> DebPayload {
+        DebPayload {
+            package: package.to_string(),
+            version: version.to_string(),
+            architecture: architecture.to_string(),
+            filename: format!("{package}_{version}_{architecture}.deb"),
+            source: PathBuf::from(format!("/tmp/{package}_{version}_{architecture}.deb")),
+        }
+    }
+
+    fn remote_package_entry(
+        package: &str,
+        version: &str,
+        architecture: &str,
+    ) -> RemotePackageEntry {
+        RemotePackageEntry {
+            entry: PackageEntry {
+                package: package.to_string(),
+                version: version.to_string(),
+                architecture: architecture.to_string(),
+                stanza: format!(
+                    "Package: {package}\nVersion: {version}\nArchitecture: {architecture}\n"
+                ),
+            },
+            filename: format!(
+                "pool/main/{}/{package}/{package}_{version}_{architecture}.deb",
+                package.chars().next().unwrap_or('_')
+            ),
+        }
     }
 }
