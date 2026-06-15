@@ -123,12 +123,17 @@ pub async fn run(
         path: manifest_path.clone(),
         key: target.prefix.join(MANIFEST_NAME),
         entry: true,
+        condition: None,
     });
     uploads.sort_by(|left, right| {
         left.entry
             .cmp(&right.entry)
             .then_with(|| left.key.cmp(&right.key))
     });
+
+    tokio::fs::write(&manifest_path, json)
+        .await
+        .whatever_context(format!("failed to write {}", manifest_path.display()))?;
 
     if options.dry_run {
         for upload in &uploads {
@@ -141,11 +146,15 @@ pub async fn run(
         return Ok(());
     }
 
-    tokio::fs::write(&manifest_path, json)
-        .await
-        .whatever_context(format!("failed to write {}", manifest_path.display()))?;
     for upload in uploads {
-        super::upload_file(client, &options.bucket, &upload.path, &upload.key).await?;
+        super::upload_file(
+            client,
+            &options.bucket,
+            &upload.path,
+            &upload.key,
+            upload.condition,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -170,12 +179,21 @@ async fn plan_payload_uploads(
         );
         let key = prefix.join(archive_name);
         let remote = super::remote_artifact_state(client, bucket, &key).await?;
-        super::plan::verify_immutable_collision(&key, &actual_sha256, remote)
-            .whatever_context("remote scoop artifact collision")?;
+        let Some(condition) = super::plan::plan_immutable_upload(&key, &actual_sha256, remote)
+            .whatever_context("remote scoop artifact collision")?
+        else {
+            info!(
+                key,
+                path = %path.display(),
+                "remote immutable scoop artifact already has matching sha256"
+            );
+            continue;
+        };
         uploads.push(PlannedUpload {
             path,
             key,
             entry: false,
+            condition: Some(condition),
         });
     }
     Ok(uploads)
