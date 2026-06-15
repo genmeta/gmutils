@@ -39,100 +39,133 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-targets --all-features
 
-      - name: Preflight workspace publish graph
-        run: cargo publish --workspace --exclude xtask --dry-run --locked
-
-      - name: Plan crates.io publish candidates
+      - name: Plan crates.io publish packages
         id: publish_plan
         shell: bash
         run: |
           set -euo pipefail
-          cargo metadata --no-deps --format-version 1 > "$RUNNER_TEMP/gmutils-metadata.json"
-          python3 - <<'PY' > "$RUNNER_TEMP/publish-candidates.txt"
-          import json
-          import os
-          import sys
-          import urllib.error
-          import urllib.request
-          from pathlib import Path
-
-          metadata = json.loads((Path(os.environ["RUNNER_TEMP"]) / "gmutils-metadata.json").read_text())
-          packages = {package["id"]: package for package in metadata["packages"]}
-          skipped_names = {"xtask"}
-          candidates = []
-          skipped = []
-
-          for package_id in metadata["workspace_members"]:
-              package = packages[package_id]
-              name = package["name"]
-              if name in skipped_names or package.get("publish") == []:
-                  continue
-              version = package["version"]
-              url = f"https://crates.io/api/v1/crates/{name}/{version}"
-              request = urllib.request.Request(
-                  url,
-                  headers={"User-Agent": "genmeta gmutils release workflow"},
-              )
-              try:
-                  with urllib.request.urlopen(request, timeout=20) as response:
-                      if response.status == 200:
-                          skipped.append((name, version))
-                          continue
-                      raise SystemExit(f"unexpected crates.io status for {name} {version}: {response.status}")
-              except urllib.error.HTTPError as error:
-                  if error.code == 404:
-                      candidates.append((name, version))
-                      continue
-                  raise
-
-          for name, version in skipped:
-              print(f"skip {name} {version}", file=sys.stderr)
-          for name, version in candidates:
-              print(name)
-          PY
-          mapfile -t candidates < "$RUNNER_TEMP/publish-candidates.txt"
+          packages=(
+            genmeta-access
+            genmeta-curl
+            genmeta-discover
+            genmeta-identity
+            genmeta-nat
+            genmeta-doctor
+            genmeta-nslookup
+            genmeta-proxy
+            genmeta-ssh
+            genmeta
+          )
           {
-            echo "candidate_count=${#candidates[@]}"
-            echo 'publish_candidates<<EOF'
-            cat "$RUNNER_TEMP/publish-candidates.txt"
+            echo "package_count=${#packages[@]}"
+            echo 'publish_packages<<EOF'
+            printf '%s\n' "${packages[@]}"
             echo EOF
           } >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to crates.io
-        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && steps.publish_plan.outputs.candidate_count != '0'
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         uses: rust-lang/crates-io-auth-action@v1
         id: auth
 
       - name: Publish crates.io candidates
-        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && steps.publish_plan.outputs.candidate_count != '0'
         shell: bash
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-          PUBLISH_CANDIDATES: ${{ steps.publish_plan.outputs.publish_candidates }}
+          PUBLISH_PACKAGES: ${{ steps.publish_plan.outputs.publish_packages }}
         run: |
           set -euo pipefail
-          mapfile -t packages <<< "$PUBLISH_CANDIDATES"
-          args=()
-          for package in "${packages[@]}"; do
-            if [ -n "$package" ]; then
-              args+=(-p "$package")
-            fi
-          done
-          if [ "${#args[@]}" -eq 0 ]; then
-            echo "no crates.io publish candidates"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+            mode=publish
+          else
+            mode=dry-run
+          fi
+
+          mapfile -t packages <<< "$PUBLISH_PACKAGES"
+          if [ "${#packages[@]}" -eq 0 ]; then
+            echo "no publishable workspace crates"
             exit 0
           fi
-          cargo publish --locked "${args[@]}"
+
+          if [[ "$mode" == "dry-run" ]]; then
+            publish_args=(cargo publish --dry-run --locked --workspace --exclude xtask)
+            echo "dry-run publish packages: ${packages[*]}"
+            "${publish_args[@]}"
+            exit 0
+          fi
+
+          cargo metadata --format-version 1 > "$RUNNER_TEMP/workspace-metadata.json"
+          package_versions="$(
+            PACKAGES="$(printf '%s\n' "${packages[@]}")" RUNNER_TEMP="$RUNNER_TEMP" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          metadata = json.loads((Path(os.environ["RUNNER_TEMP"]) / "workspace-metadata.json").read_text())
+          packages = [line for line in os.environ["PACKAGES"].splitlines() if line]
+          by_name = {package["name"]: package for package in metadata["packages"]}
+          for name in packages:
+              package = by_name.get(name)
+              if package is None:
+                  raise SystemExit(f"failed to resolve workspace package metadata for {name}")
+              print(f"{name}\t{package['version']}")
+          PY
+          )"
+
+          missing_packages=()
+          while IFS=$'\t' read -r crate_name crate_version; do
+            [ -n "$crate_name" ] || continue
+            crate_state="$(
+              python3 - <<'PY' "$crate_name" "$crate_version"
+          import sys
+          import urllib.error
+          import urllib.request
+
+          name, version = sys.argv[1], sys.argv[2]
+          url = f"https://crates.io/api/v1/crates/{name}/{version}"
+          request = urllib.request.Request(url, headers={"User-Agent": "genmeta gmutils publish workflow"})
+          try:
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  if response.status == 200:
+                      print("published")
+                  else:
+                      raise SystemExit(f"unexpected crates.io status for {name} {version}: {response.status}")
+          except urllib.error.HTTPError as error:
+              if error.code == 404:
+                  print("missing")
+              else:
+                  raise
+          PY
+            )"
+
+            if [[ "$crate_state" == "published" ]]; then
+              echo "skip $crate_name $crate_version (already on crates.io)"
+            else
+              echo "publish $crate_name $crate_version"
+              missing_packages+=("$crate_name")
+            fi
+          done <<< "$package_versions"
+
+          if [[ "${#missing_packages[@]}" -eq 0 ]]; then
+            echo "all selected packages are already published"
+            exit 0
+          fi
+
+          publish_args=(cargo publish --locked)
+          for package in "${missing_packages[@]}"; do
+            publish_args+=(-p "$package")
+          done
+          "${publish_args[@]}"
 
       - name: Report dry-run candidates
         if: ${{ !(github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) }}
         shell: bash
         env:
-          PUBLISH_CANDIDATES: ${{ steps.publish_plan.outputs.publish_candidates }}
+          PUBLISH_PACKAGES: ${{ steps.publish_plan.outputs.publish_packages }}
         run: |
           set -euo pipefail
-          if [ -z "$PUBLISH_CANDIDATES" ]; then
+          if [ -z "$PUBLISH_PACKAGES" ]; then
             echo "no crates.io publish candidates"
           else
-            printf 'dry-run crates.io publish candidates:\n%s\n' "$PUBLISH_CANDIDATES"
+            printf 'dry-run crates.io publish packages:\n%s\n' "$PUBLISH_PACKAGES"
           fi
