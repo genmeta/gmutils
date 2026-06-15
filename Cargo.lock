@@ -1517,13 +1517,14 @@ dependencies = [
 [[package]]
 name = "dhttp"
 version = "0.1.0"
-source = "git+https://github.com/genmeta/dhttp.git?branch=publish#1d5ee242867ce5c6e39dc2dc0a81344eb0ec58c1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0416f3592b25c3655a6acd02b4588a959241d3b0250e374afb8515f707fce5c3"
 dependencies = [
  "bon",
  "bytes",
  "dhttp-access",
  "dhttp-home",
- "dhttp-identity 0.1.0 (git+https://github.com/genmeta/dhttp.git?branch=publish)",
+ "dhttp-identity",
  "dyns",
  "futures",
  "h3x",
@@ -1539,13 +1540,14 @@ dependencies = [
 [[package]]
 name = "dhttp-access"
 version = "0.1.0"
-source = "git+https://github.com/genmeta/dhttp.git?branch=publish#1d5ee242867ce5c6e39dc2dc0a81344eb0ec58c1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e02c4c0baad928761eeeddd17c36f2ac9e18ab52f8b4a71f2c5751b2f3cde514"
 dependencies = [
  "chrono",
  "clap",
  "derive_more",
  "dhttp-home",
- "dhttp-identity 0.1.0 (git+https://github.com/genmeta/dhttp.git?branch=publish)",
+ "dhttp-identity",
  "globset",
  "peg",
  "regex",
@@ -1561,9 +1563,10 @@ dependencies = [
 [[package]]
 name = "dhttp-home"
 version = "0.1.0"
-source = "git+https://github.com/genmeta/dhttp.git?branch=publish#1d5ee242867ce5c6e39dc2dc0a81344eb0ec58c1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ff587e43dd13e739c48d670302d8fdb53d6a679fe078007637cbe27161125bd"
 dependencies = [
- "dhttp-identity 0.1.0 (git+https://github.com/genmeta/dhttp.git?branch=publish)",
+ "dhttp-identity",
  "dirs",
  "futures",
  "rustls 0.23.40",
@@ -1579,21 +1582,6 @@ name = "dhttp-identity"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "408a1d3a9e073862b9d8ad97ecfdf3b78a22ee0e338d7f2e959edc5de503f4e6"
-dependencies = [
- "bytes",
- "futures",
- "http 1.4.2",
- "ring",
- "rustls 0.23.40",
- "serde",
- "snafu 0.9.1",
- "x509-parser",
-]
-
-[[package]]
-name = "dhttp-identity"
-version = "0.1.0"
-source = "git+https://github.com/genmeta/dhttp.git?branch=publish#1d5ee242867ce5c6e39dc2dc0a81344eb0ec58c1"
 dependencies = [
  "bytes",
  "futures",
@@ -1720,7 +1708,8 @@ dependencies = [
 [[package]]
 name = "dshell"
 version = "0.3.0"
-source = "git+https://github.com/genmeta/dssh.git?branch=endpoint#425347f6509e416f9b6afe21cccd30422add2430"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23178b3664796029df033e15139b41df9899fb296aaed640090b9ba745ee4bb9"
 dependencies = [
  "base64",
  "bytes",
@@ -1747,13 +1736,14 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 [[package]]
 name = "dyns"
 version = "0.3.0"
-source = "git+https://github.com/genmeta/ddns.git?branch=endpoint#a1fd466f338b3f48c7e964c745ee604c3f276193"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5eb83f58c5a3ef6259620d311e29bcc4ee3ae72cde4f60a6eb8e4a305189984"
 dependencies = [
  "base64",
  "bitfield-struct",
  "bytes",
  "dashmap",
- "dhttp-identity 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "dhttp-identity",
  "dquic",
  "flume 0.12.0",
  "futures",
@@ -2461,7 +2451,7 @@ dependencies = [
  "bon",
  "bytes",
  "dashmap",
- "dhttp-identity 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "dhttp-identity",
  "dquic",
  "either",
  "futures",
@@ -2771,7 +2761,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -4300,7 +4290,8 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 [[package]]
 name = "rankey"
 version = "0.2.1"
-source = "git+https://github.com/genmeta/rankey.git?branch=master#7c87727676d13739c02c92b95a52190965feb484"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f4a0713147f04d0f0ea6e146074adef0ecab3c5ca49fd5f156330b42bc1a363"
 dependencies = [
  "crypto-bigint 0.7.0-rc.28",
  "der 0.8.0",

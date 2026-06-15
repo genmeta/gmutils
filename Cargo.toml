@@ -45,7 +45,7 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 
 # security
-rankey = { git = "https://github.com/genmeta/rankey.git", branch = "master", version = "0.2.1" }
+rankey = "0.2.1"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 x509-parser = "0.18"
 p384 = "0.14.0-rc.7"
@@ -87,9 +87,9 @@ async-compression = { version = "0.4", features = [
 ] }
 
 # workspace
-dhttp-access = { git = "https://github.com/genmeta/dhttp.git", branch = "publish", version = "0.1.0" }
+dhttp-access = "0.1.0"
 genmeta-access = { path = "genmeta-access", version = "0.2.0" }
-dhttp = { git = "https://github.com/genmeta/dhttp.git", branch = "publish", version = "0.1.0" }
+dhttp = "0.1.0"
 genmeta-curl = { path = "genmeta-curl", version = "0.5.0" }
 genmeta-discover = { path = "genmeta-discover", version = "0.3.0" }
 genmeta-doctor = { path = "genmeta-doctor", version = "0.3.0" }
@@ -100,7 +100,7 @@ genmeta-ssh = { path = "genmeta-ssh", version = "0.6.0" }
 genmeta-proxy = { path = "genmeta-proxy", version = "0.2.0" }
 
 # DShell
-dshell = { git = "https://github.com/genmeta/dssh.git", branch = "endpoint", version = "0.3.0", features = [
+dshell = { version = "0.3.0", features = [
     "config",
 ] }
 
