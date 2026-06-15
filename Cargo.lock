@@ -1383,12 +1383,13 @@ checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 [[package]]
 name = "ddns"
 version = "0.3.0"
+source = "git+https://github.com/genmeta/ddns.git?branch=endpoint#ed23d98da6bb72e0047d44e1a0c90d1ca05caabe"
 dependencies = [
  "base64",
  "bitfield-struct",
  "bytes",
  "dashmap",
- "dhttp-identity",
+ "dhttp-identity 0.1.0 (git+https://github.com/genmeta/dhttp.git?branch=main)",
  "dquic",
  "flume 0.12.0",
  "futures",
@@ -1549,13 +1550,14 @@ dependencies = [
 [[package]]
 name = "dhttp"
 version = "0.1.0"
+source = "git+https://github.com/genmeta/dhttp.git?branch=publish#f4ca208af08511511aa2b81dfb835342648ac960"
 dependencies = [
  "bon",
  "bytes",
  "ddns",
  "dhttp-access",
  "dhttp-home",
- "dhttp-identity",
+ "dhttp-identity 0.1.0 (git+https://github.com/genmeta/dhttp.git?branch=publish)",
  "futures",
  "h3x",
  "http 1.4.2",
@@ -1570,12 +1572,13 @@ dependencies = [
 [[package]]
 name = "dhttp-access"
 version = "0.1.0"
+source = "git+https://github.com/genmeta/dhttp.git?branch=publish#f4ca208af08511511aa2b81dfb835342648ac960"
 dependencies = [
  "chrono",
  "clap",
  "derive_more",
  "dhttp-home",
- "dhttp-identity",
+ "dhttp-identity 0.1.0 (git+https://github.com/genmeta/dhttp.git?branch=publish)",
  "globset",
  "peg",
  "regex",
@@ -1591,8 +1594,9 @@ dependencies = [
 [[package]]
 name = "dhttp-home"
 version = "0.1.0"
+source = "git+https://github.com/genmeta/dhttp.git?branch=publish#f4ca208af08511511aa2b81dfb835342648ac960"
 dependencies = [
- "dhttp-identity",
+ "dhttp-identity 0.1.0 (git+https://github.com/genmeta/dhttp.git?branch=publish)",
  "dirs",
  "futures",
  "rustls 0.23.40",
@@ -1606,6 +1610,22 @@ dependencies = [
 [[package]]
 name = "dhttp-identity"
 version = "0.1.0"
+source = "git+https://github.com/genmeta/dhttp.git?branch=main#b8f8abed208727f6c577de3541d5c827c6f3d981"
+dependencies = [
+ "bytes",
+ "futures",
+ "http 1.4.2",
+ "ring",
+ "rustls 0.23.40",
+ "serde",
+ "snafu 0.9.1",
+ "x509-parser",
+]
+
+[[package]]
+name = "dhttp-identity"
+version = "0.1.0"
+source = "git+https://github.com/genmeta/dhttp.git?branch=publish#f4ca208af08511511aa2b81dfb835342648ac960"
 dependencies = [
  "bytes",
  "futures",
@@ -1714,6 +1734,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 [[package]]
 name = "dquic"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4f418fae59a0e4d6ab7e8c245abc502254808f07"
 dependencies = [
  "arc-swap",
  "dashmap",
@@ -1729,7 +1750,8 @@ dependencies = [
 
 [[package]]
 name = "dssh"
-version = "0.2.0"
+version = "0.3.0"
+source = "git+https://github.com/genmeta/dssh.git?branch=endpoint#1bf39c76932145e3d3899f544d1806ecc29cbb87"
 dependencies = [
  "base64",
  "bytes",
@@ -2134,7 +2156,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "clap",
  "genmeta-access",
@@ -2153,7 +2175,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-access"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "dhttp",
@@ -2168,7 +2190,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-curl"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-compression",
  "bytes",
@@ -2185,7 +2207,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-discover"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "dhttp",
@@ -2199,7 +2221,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-doctor"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "genmeta-nat",
@@ -2210,7 +2232,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-identity"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64",
  "bytes",
@@ -2241,7 +2263,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nat"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "dhttp",
@@ -2255,7 +2277,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nslookup"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "dhttp",
@@ -2269,7 +2291,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-proxy"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "clap",
@@ -2289,7 +2311,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-ssh"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "clap",
  "crossterm",
@@ -2429,13 +2451,14 @@ dependencies = [
 [[package]]
 name = "h3x"
 version = "0.3.0"
+source = "git+https://github.com/genmeta/h3x.git?branch=endpoint#a825de1093abdbd626bac25f9791c45887ef8411"
 dependencies = [
  "arc-swap",
  "async-channel",
  "bon",
  "bytes",
  "dashmap",
- "dhttp-identity",
+ "dhttp-identity 0.1.0 (git+https://github.com/genmeta/dhttp.git?branch=main)",
  "dquic",
  "either",
  "futures",
@@ -3962,6 +3985,7 @@ dependencies = [
 [[package]]
 name = "qbase"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4f418fae59a0e4d6ab7e8c245abc502254808f07"
 dependencies = [
  "bitflags",
  "bytes",
@@ -3983,6 +4007,7 @@ dependencies = [
 [[package]]
 name = "qcongestion"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4f418fae59a0e4d6ab7e8c245abc502254808f07"
 dependencies = [
  "qbase",
  "qevent",
@@ -3995,6 +4020,7 @@ dependencies = [
 [[package]]
 name = "qconnection"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4f418fae59a0e4d6ab7e8c245abc502254808f07"
 dependencies = [
  "bytes",
  "dashmap",
@@ -4021,6 +4047,7 @@ dependencies = [
 [[package]]
 name = "qdatagram"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4f418fae59a0e4d6ab7e8c245abc502254808f07"
 dependencies = [
  "bytes",
  "qbase",
@@ -4031,6 +4058,7 @@ dependencies = [
 [[package]]
 name = "qevent"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4f418fae59a0e4d6ab7e8c245abc502254808f07"
 dependencies = [
  "bytes",
  "derive_builder",
@@ -4048,6 +4076,7 @@ dependencies = [
 [[package]]
 name = "qinterface"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4f418fae59a0e4d6ab7e8c245abc502254808f07"
 dependencies = [
  "bytes",
  "dashmap",
@@ -4070,6 +4099,7 @@ dependencies = [
 [[package]]
 name = "qmacro"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4f418fae59a0e4d6ab7e8c245abc502254808f07"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -4080,6 +4110,7 @@ dependencies = [
 [[package]]
 name = "qrecovery"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4f418fae59a0e4d6ab7e8c245abc502254808f07"
 dependencies = [
  "bytes",
  "derive_more",
@@ -4094,6 +4125,7 @@ dependencies = [
 [[package]]
 name = "qresolve"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4f418fae59a0e4d6ab7e8c245abc502254808f07"
 dependencies = [
  "futures",
  "qbase",
@@ -4103,6 +4135,7 @@ dependencies = [
 [[package]]
 name = "qtraversal"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4f418fae59a0e4d6ab7e8c245abc502254808f07"
 dependencies = [
  "bon",
  "bytes",
@@ -4125,6 +4158,7 @@ dependencies = [
 [[package]]
 name = "qudp"
 version = "0.5.1"
+source = "git+https://github.com/genmeta/dquic.git?branch=feat%2Fv0.5.1#4f418fae59a0e4d6ab7e8c245abc502254808f07"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -4252,6 +4286,7 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 [[package]]
 name = "rankey"
 version = "0.2.1"
+source = "git+https://github.com/genmeta/rankey.git?branch=master#7c87727676d13739c02c92b95a52190965feb484"
 dependencies = [
  "crypto-bigint 0.7.0-rc.28",
  "der 0.8.0",

@@ -87,20 +87,20 @@ async-compression = { version = "0.4", features = [
 ] }
 
 # workspace
-dhttp-access = { git = "https://github.com/genmeta/dhttp.git", branch = "main", version = "0.1.0" }
-genmeta-access = { path = "genmeta-access", version = "0.1.0" }
-dhttp = { git = "https://github.com/genmeta/dhttp.git", branch = "main", version = "0.1.0" }
-genmeta-curl = { path = "genmeta-curl", version = "0.4.0" }
-genmeta-discover = { path = "genmeta-discover", version = "0.2.0" }
-genmeta-doctor = { path = "genmeta-doctor", version = "0.2.0" }
-genmeta-identity = { path = "genmeta-identity", version = "0.1.0" }
-genmeta-nat = { path = "genmeta-nat", version = "0.2.0" }
-genmeta-nslookup = { path = "genmeta-nslookup", version = "0.2.0" }
-genmeta-ssh = { path = "genmeta-ssh", version = "0.5.0" }
-genmeta-proxy = { path = "genmeta-proxy", version = "0.1.0" }
+dhttp-access = { git = "https://github.com/genmeta/dhttp.git", branch = "publish", version = "0.1.0" }
+genmeta-access = { path = "genmeta-access", version = "0.2.0" }
+dhttp = { git = "https://github.com/genmeta/dhttp.git", branch = "publish", version = "0.1.0" }
+genmeta-curl = { path = "genmeta-curl", version = "0.5.0" }
+genmeta-discover = { path = "genmeta-discover", version = "0.3.0" }
+genmeta-doctor = { path = "genmeta-doctor", version = "0.3.0" }
+genmeta-identity = { path = "genmeta-identity", version = "0.2.0" }
+genmeta-nat = { path = "genmeta-nat", version = "0.3.0" }
+genmeta-nslookup = { path = "genmeta-nslookup", version = "0.3.0" }
+genmeta-ssh = { path = "genmeta-ssh", version = "0.6.0" }
+genmeta-proxy = { path = "genmeta-proxy", version = "0.2.0" }
 
 # ssh
-dssh = { git = "https://github.com/genmeta/dssh.git", branch = "endpoint", version = "0.2.0", features = [
+dssh = { git = "https://github.com/genmeta/dssh.git", branch = "endpoint", version = "0.3.0", features = [
     "config",
 ] }
 
