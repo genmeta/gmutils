@@ -8,4 +8,4 @@ Package: gmutils
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: Genmeta Binary Utilities
- Genmeta command-line tools for DHTTP/3, SSH3, DNS, and identity management.
+ Genmeta command-line tools for DHTTP/3, DShell, DNS, and identity management.

@@ -1,6 +1,6 @@
-//! Re-exports forwarding rule types from the core `dssh` crate.
+//! Re-exports forwarding rule types from the core `dshell` crate.
 //!
-//! See [`dssh::forward::spec`] for type definitions, PEG parser,
+//! See [`dshell::forward::spec`] for type definitions, PEG parser,
 //! and OpenSSH-compatible syntax documentation.
 
-pub use dssh::forward::spec::{DynamicForward, Endpoint, LocalForward, RemoteForward};
+pub use dshell::forward::spec::{DynamicForward, Endpoint, LocalForward, RemoteForward};

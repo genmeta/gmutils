@@ -8,7 +8,6 @@ use dhttp::{
         dhttp::{settings::Settings, webtransport::settings::WebTransportSupport},
     },
 };
-use dssh as ssh3;
 use snafu::prelude::*;
 
 use crate::config::Config;
@@ -30,13 +29,13 @@ pub enum Error {
     Connect {
         source: dhttp::endpoint::ConnectError,
     },
-    #[snafu(display("failed to wait for peer HTTP/3 settings before dssh webtransport connect"))]
+    #[snafu(display("failed to wait for peer HTTP/3 settings before dshell webtransport connect"))]
     PeerSettings {
         source: dhttp::h3x::quic::ConnectionError,
     },
-    #[snafu(display("failed to open dssh webtransport conversation"))]
+    #[snafu(display("failed to open dshell webtransport conversation"))]
     OpenConversation {
-        source: ssh3::webtransport::ClientConnectConversationError,
+        source: dshell::webtransport::ClientConnectConversationError,
     },
     #[snafu(display("missing authority in URI `{uri}`"))]
     MissingAuthority { uri: http::Uri },
@@ -45,7 +44,7 @@ pub enum Error {
 pub struct ConnectResult {
     pub endpoint: Arc<Endpoint>,
     pub connection: Arc<Connection<DquicConnection>>,
-    pub conversation: ssh3::conversation::Conversation,
+    pub conversation: dshell::conversation::Conversation,
 }
 
 fn connection_settings() -> Arc<Settings> {
@@ -104,7 +103,7 @@ pub async fn connect(config: &Config) -> Result<ConnectResult, Error> {
         .await
         .context(connect_error::PeerSettingsSnafu)?;
 
-    let conversation = ssh3::webtransport::open_client_conversation(
+    let conversation = dshell::webtransport::open_client_conversation(
         &connection,
         server,
         connect_path(&config.uri),
@@ -117,7 +116,7 @@ pub async fn connect(config: &Config) -> Result<ConnectResult, Error> {
         server = %server,
         conversation_id = %conversation.id(),
         version = %conversation.peer_version(),
-        "dssh webtransport connection established"
+        "dshell webtransport connection established"
     );
 
     Ok(ConnectResult {
@@ -138,11 +137,11 @@ mod tests {
 
         assert!(
             display.contains("WebTransport"),
-            "dssh client connections must route WebTransport streams"
+            "dshell client connections must route WebTransport streams"
         );
         assert!(
             !display.contains("Ssh3"),
-            "dssh client connections must not register the legacy SSH3 stream protocol"
+            "dshell client connections must not register the legacy DShell stream protocol"
         );
     }
 

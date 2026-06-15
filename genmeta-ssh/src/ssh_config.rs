@@ -4,7 +4,7 @@
 //! with support for standard keywords plus the custom `Id` keyword for
 //! genmeta identity selection.
 //!
-//! Uses [`dssh::config`] for syntax-level parsing (PEG), providing
+//! Uses [`dshell::config`] for syntax-level parsing (PEG), providing
 //! precise source location tracking on all parsed elements.
 //!
 //! ## Supported keywords
@@ -34,7 +34,9 @@ use std::{
     time::Duration,
 };
 
-use dssh::config::{self as ssh_config, Directive, Entry, HostArgs, Located, Pattern, SourceFile};
+use dshell::config::{
+    self as ssh_config, Directive, Entry, HostArgs, Located, Pattern, SourceFile,
+};
 use snafu::prelude::*;
 
 use crate::forward::{DynamicForward, LocalForward, RemoteForward};

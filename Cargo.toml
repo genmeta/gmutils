@@ -28,7 +28,7 @@ indicatif = "0.18"
 whoami = "2"
 
 # network
-h3x = { git = "https://github.com/genmeta/h3x.git", branch = "endpoint", version = "0.3.0" }
+h3x = "0.3.1"
 http = "1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
@@ -99,8 +99,8 @@ genmeta-nslookup = { path = "genmeta-nslookup", version = "0.3.0" }
 genmeta-ssh = { path = "genmeta-ssh", version = "0.6.0" }
 genmeta-proxy = { path = "genmeta-proxy", version = "0.2.0" }
 
-# ssh
-dssh = { git = "https://github.com/genmeta/dssh.git", branch = "endpoint", version = "0.3.0", features = [
+# DShell
+dshell = { git = "https://github.com/genmeta/dssh.git", branch = "endpoint", version = "0.3.0", features = [
     "config",
 ] }
 

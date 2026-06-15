@@ -14,7 +14,6 @@ use dhttp::{
     ddns::resolvers::DnsScheme, dquic::binds::BindPattern, h3x::error::Code,
     name::DhttpName as Name,
 };
-use dssh as ssh3;
 use forward::*;
 use snafu::{FromString, Report, ResultExt, Snafu};
 use tracing::Instrument;
@@ -149,22 +148,22 @@ pub enum SessionError {
 
     #[snafu(display("failed to set up PTY"))]
     SetupPty {
-        source: ssh3::session::client::SetupError,
+        source: dshell::session::client::SetupError,
     },
 
     #[snafu(display("failed to send exec request"))]
     Exec {
-        source: ssh3::session::client::SetupError,
+        source: dshell::session::client::SetupError,
     },
 
     #[snafu(display("failed to send shell request"))]
     Shell {
-        source: ssh3::session::client::SetupError,
+        source: dshell::session::client::SetupError,
     },
 
     #[snafu(display("session IO relay failed"))]
     Run {
-        source: ssh3::session::client::RunError,
+        source: dshell::session::client::RunError,
     },
 }
 
@@ -173,12 +172,12 @@ pub enum SessionError {
 pub enum ForwardError {
     #[snafu(display("failed to bind local forward listener"))]
     BindLocalForward {
-        source: ssh3::forward::client::BindLocalForwardError,
+        source: dshell::forward::client::BindLocalForwardError,
     },
 
     #[snafu(display("failed to request remote forward"))]
     RequestRemoteForward {
-        source: ssh3::forward::client::RequestRemoteForwardError,
+        source: dshell::forward::client::RequestRemoteForwardError,
     },
 
     #[snafu(display("failed to bind dynamic forward listener"))]
@@ -285,7 +284,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     }
 
     // -R remote forwards
-    let mut remote_mappings: Vec<ssh3::forward::client::RemoteForwardEstablished> = Vec::new();
+    let mut remote_mappings: Vec<dshell::forward::client::RemoteForwardEstablished> = Vec::new();
     for spec in &config.remote_forwards {
         let established = spec
             .request(&conversation)
@@ -296,7 +295,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     if !remote_mappings.is_empty() {
         let conv = conversation.clone();
         forward_tasks.spawn(
-            ssh3::forward::client::accept_forwarded_channels(conv, remote_mappings)
+            dshell::forward::client::accept_forwarded_channels(conv, remote_mappings)
                 .instrument(tracing::info_span!("channel_acceptor")),
         );
     }
@@ -317,27 +316,27 @@ pub async fn run(options: Options) -> Result<(), Error> {
     // Open a session channel on a dedicated QUIC stream.
     let (ch_reader, ch_writer) = conversation
         .open_channel(
-            &ssh3::forward::SessionChannelOpen,
-            ssh3::constants::DEFAULT_MAX_MESSAGE_SIZE,
+            &dshell::forward::SessionChannelOpen,
+            dshell::constants::DEFAULT_MAX_MESSAGE_SIZE,
         )
         .await
         .map_err(|e| SessionError::OpenChannel {
             source: snafu::Whatever::without_source(e.to_string()),
         })?;
 
-    let channel = ssh3::conversation::channel::SshChannel::new(ch_reader, ch_writer);
-    let mut session = ssh3::session::client::ClientSession::new(channel);
+    let channel = dshell::conversation::channel::SshChannel::new(ch_reader, ch_writer);
+    let mut session = dshell::session::client::ClientSession::new(channel);
 
     // PTY request
     if options.pseudo {
         let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-        let pty_req = ssh3::session::PtyRequest {
+        let pty_req = dshell::session::PtyRequest {
             term_type: "xterm-256color".into(),
             width_cols: dhttp::h3x::varint::VarInt::from(cols as u32),
             height_rows: dhttp::h3x::varint::VarInt::from(rows as u32),
             width_px: dhttp::h3x::varint::VarInt::from_u32(0),
             height_px: dhttp::h3x::varint::VarInt::from_u32(0),
-            terminal_modes: ssh3::codec::SshBytes::from(Vec::new()),
+            terminal_modes: dshell::codec::SshBytes::from(Vec::new()),
         };
         session
             .request_pty(&pty_req)
@@ -417,11 +416,11 @@ pub async fn run(options: Options) -> Result<(), Error> {
     connection.close(Code::H3_NO_ERROR, "");
 
     let exit_code = match exit_result {
-        Some(ssh3::session::client::ExitResult::Status(code)) => {
+        Some(dshell::session::client::ExitResult::Status(code)) => {
             tracing::debug!(exit_code = code, "remote process exited");
             i32::try_from(code).unwrap_or(1)
         }
-        Some(ssh3::session::client::ExitResult::Signal {
+        Some(dshell::session::client::ExitResult::Signal {
             signal_name,
             core_dumped,
         }) => {
@@ -449,7 +448,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
 /// handles SOCKS5 negotiation and connects to the final destination.
 async fn run_dynamic_forward<S>(
     spec: DynamicForward,
-    conversation: Arc<ssh3::conversation::Conversation<S>>,
+    conversation: Arc<dshell::conversation::Conversation<S>>,
 ) -> Result<std::convert::Infallible, ForwardError>
 where
     S: dhttp::h3x::webtransport::Session + 'static,
@@ -482,8 +481,8 @@ where
             async move {
                 let channel_result = conv
                     .open_channel(
-                        &ssh3::forward::Socks5ChannelOpen,
-                        ssh3::constants::DEFAULT_MAX_MESSAGE_SIZE,
+                        &dshell::forward::Socks5ChannelOpen,
+                        dshell::constants::DEFAULT_MAX_MESSAGE_SIZE,
                     )
                     .await;
 
@@ -500,9 +499,9 @@ where
 
                 let (local_reader, local_writer) = stream.into_split();
                 let s2ch =
-                    tokio::spawn(ssh3::forward::relay(local_reader, ch_writer).in_current_span());
+                    tokio::spawn(dshell::forward::relay(local_reader, ch_writer).in_current_span());
                 let ch2s =
-                    tokio::spawn(ssh3::forward::relay(ch_reader, local_writer).in_current_span());
+                    tokio::spawn(dshell::forward::relay(ch_reader, local_writer).in_current_span());
                 let _ = tokio::join!(s2ch, ch2s);
             }
             .instrument(tracing::info_span!("socks5_conn", %peer)),

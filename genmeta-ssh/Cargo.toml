@@ -1,6 +1,6 @@
 [package]
 name = "genmeta-ssh"
-description = "ssh3 client"
+description = "DShell client"
 version = "0.6.0"
 edition = "2024"
 
@@ -10,7 +10,7 @@ crossterm = { workspace = true }
 dirs = { workspace = true }
 futures = { workspace = true }
 dhttp = { workspace = true }
-dssh = { workspace = true, features = ["cli", "client", "config"] }
+dshell = { workspace = true, features = ["cli", "client", "config"] }
 http = { workspace = true }
 h3x = { workspace = true, features = ["webtransport"] }
 snafu = { workspace = true }
