@@ -2,7 +2,13 @@
 name = "genmeta-identity"
 description = "managing identities for genmeta network"
 version = "0.2.0"
-edition = "2024"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["genmeta", "dhttp", "identity", "certificate", "cli"]
+categories = ["command-line-utilities", "cryptography"]
 
 [dependencies]
 clap = { workspace = true, optional = true }

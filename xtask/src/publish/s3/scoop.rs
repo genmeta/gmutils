@@ -14,7 +14,7 @@ const MANIFEST_NAME: &str = "gmutils.json";
 const CARGO_NAME: &str = "genmeta";
 const DESCRIPTION: &str = "Genmeta Binary Utilities";
 const HOMEPAGE: &str = "https://www.dhttp.net";
-const LICENSE: &str = "Shareware";
+const LICENSE: &str = "Apache-2.0";
 
 #[derive(Debug, Serialize)]
 struct ScoopManifest {

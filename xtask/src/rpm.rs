@@ -50,7 +50,7 @@ const IMAGE_TAG_PREFIX: &str = "gmutils-rpm-v1";
 /// Package metadata baked into the generated spec. Kept here (not in Cargo.toml)
 /// so spec generation stays a single source of truth owned by xtask.
 const RPM_SUMMARY: &str = "Genmeta binary utilities";
-const RPM_LICENSE: &str = "Proprietary";
+const RPM_LICENSE: &str = "Apache-2.0";
 const RPM_URL: &str = "https://www.dhttp.net";
 const RPM_VENDOR: &str = "Genmeta Tech Limited";
 const RPM_DESCRIPTION: &str =

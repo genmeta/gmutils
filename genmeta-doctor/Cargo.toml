@@ -2,7 +2,13 @@
 name = "genmeta-doctor"
 description = "diagnosing and fixing environment issues"
 version = "0.3.0"
-edition = "2024"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["genmeta", "dhttp", "diagnostics", "cli"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 clap = { workspace = true }

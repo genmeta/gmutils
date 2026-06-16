@@ -2,7 +2,13 @@
 name = "genmeta-proxy"
 description = "forward proxy routing .dhttp.net requests over DHTTP/3"
 version = "0.2.0"
-edition = "2024"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["genmeta", "dhttp", "proxy", "http3", "cli"]
+categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
 clap = { workspace = true }
