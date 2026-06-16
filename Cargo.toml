@@ -28,7 +28,7 @@ indicatif = "0.18"
 whoami = "2"
 
 # network
-h3x = "0.3.1"
+h3x = { git = "https://github.com/genmeta/h3x.git", branch = "dev/v0.4.0", version = "0.4.0" }
 http = "1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
@@ -87,9 +87,9 @@ async-compression = { version = "0.4", features = [
 ] }
 
 # workspace
-dhttp-access = "0.1.0"
+dhttp-access = { git = "https://github.com/genmeta/dhttp.git", branch = "dev/v0.2.0", version = "0.2.0" }
 genmeta-access = { path = "genmeta-access", version = "0.2.0" }
-dhttp = "0.1.0"
+dhttp = { git = "https://github.com/genmeta/dhttp.git", branch = "dev/v0.2.0", version = "0.2.0" }
 genmeta-curl = { path = "genmeta-curl", version = "0.5.0" }
 genmeta-discover = { path = "genmeta-discover", version = "0.3.0" }
 genmeta-doctor = { path = "genmeta-doctor", version = "0.3.0" }
@@ -100,7 +100,7 @@ genmeta-ssh = { path = "genmeta-ssh", version = "0.6.0" }
 genmeta-proxy = { path = "genmeta-proxy", version = "0.2.0" }
 
 # DShell
-dshell = { version = "0.3.0", features = [
+dshell = { git = "https://github.com/genmeta/dssh.git", branch = "dev/v0.4.0", version = "0.4.0", features = [
     "config",
 ] }
 

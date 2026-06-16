@@ -86,9 +86,9 @@ that are published for the broader ecosystem.
 
 ### Dependencies
 
-- Release manifests now resolve upstream crates from crates.io: `h3x`
-  v0.3.1, `dhttp` v0.1.0, `dhttp-access` v0.1.0, `dshell` v0.3.0,
-  `dyns` v0.3.0, and `rankey` v0.2.1.
+- Release manifests now target upstream crates from this release wave: `h3x`
+  v0.4.0, `dhttp` v0.2.0, `dhttp-access` v0.2.0, `dshell` v0.4.0,
+  `dyns` v0.4.0, and `rankey` v0.2.1.
 
 ### Components
 
