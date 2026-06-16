@@ -5,6 +5,103 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.6.0] - 2026-06-15
+
+This release brings the command-line tool family onto the public DHTTP
+endpoint stack. The launcher, client tools, identity flows, access
+management, DShell integration, diagnostics, and packaging pipeline now line
+up around the same DHTTP identity, trust, discovery, and transport crates
+that are published for the broader ecosystem.
+
+### Added
+
+- `genmeta-identity` now speaks the certificate server V2 API for identity
+  creation, application, renewal, approval selection, and checkout polling.
+  It supports identity-based and email-based approval paths, staged email
+  verification, local replacement confirmation, and server-assigned chain
+  sequencing.
+- Identity commands render transcript-style progress, chain summaries, and
+  network wait feedback through `indicatif`, including spinners for long
+  certificate and checkout operations.
+- The release `xtask` now stages and verifies manifest-based packages for
+  DEB, RPM, Scoop, and Homebrew outputs, then plans and publishes the
+  corresponding S3/R2 metadata.
+- CI now runs release dry-runs for the product package surfaces and has a
+  separate crates.io publish workflow that skips package versions already
+  present in the registry.
+
+### Changed
+
+- `genmeta`, `genmeta-curl`, `genmeta-discover`, `genmeta-doctor`,
+  `genmeta-identity`, `genmeta-nat`, `genmeta-nslookup`, `genmeta-proxy`,
+  and `genmeta-ssh` now build against the DHTTP endpoint facade and its
+  published transport/discovery stack.
+- `genmeta-ssh` now uses the `dshell` crate and WebTransport conversation
+  API directly, keeping the compatibility CLI while moving protocol handling
+  into the DShell crate.
+- `genmeta-identity` now uses DHTTP identity metadata under `dhttp.net`,
+  consumes `dhttp::trust::DHTTP_ROOT_CA`, and embeds the certificate server
+  base URL from the build-time `DHTTP_CERT_SERVER_URL` environment variable.
+  Runtime `CERT_SERVER_URL` overrides are no longer used.
+- Identity CLI policy now requires explicit approval-path choices when
+  non-interactive input would otherwise be ambiguous. `--auth identity` and
+  `--auth email` remain; automatic guessing is removed from the user-facing
+  flow.
+- `genmeta-curl` normalizes bare DHTTP authorities before request
+  construction, so inputs such as an identity authority resolve to an HTTPS
+  root request.
+- NAT diagnostics use deterministic bootstrap STUN selection, typed failure
+  classification, streamed interface reports, and clearer bullet summaries.
+- Access-control commands use the DHTTP access facade and a simplified path
+  command shape.
+
+### Removed
+
+- The deprecated `genmeta-common` crate has been removed. Tool-specific
+  crates now consume DHTTP endpoint types and helpers directly from the
+  facade.
+- Legacy root-CA bootstrap wiring and old Homebrew content snippets were
+  removed in favor of the current DHTTP trust and package-manifest flows.
+
+### Fixed
+
+- Release packaging now forwards DHTTP bootstrap environment variables into
+  package builds and passes the embedded root CA into DEB builds.
+- Containerized package builds patch sibling dependencies correctly during
+  local integrated runs while official release CI remains standalone.
+- Windows MSVC packaging builds are supported, Scoop cross-builds are
+  serialized where needed, and the S3 client avoids the aws-lc backend that
+  fails on the i686 Windows toolchain.
+- Linux packaging handles current target constraints: unsupported armv7 RPM
+  output is skipped, and the temporary aarch64 Zig linker workaround filters
+  the unsupported Cortex-A53 linker flag.
+- The launcher installs the Rustls crypto provider before initializing tool
+  subcommands.
+- DHTTP client paths wait for WebTransport peer settings before using the
+  connection, and the default connect-timeout path is bounded.
+- `genmeta-nat` observes STUN clients from the active network state before
+  classifying connectivity results.
+
+### Dependencies
+
+- Release manifests now target upstream crates from this release wave: `h3x`
+  v0.4.0, `dhttp` v0.2.0, `dhttp-access` v0.2.0, `dshell` v0.4.0,
+  `dyns` v0.4.0, and `rankey` v0.2.1.
+
+### Components
+
+- `genmeta` v0.6.0
+- `genmeta-curl` v0.5.0
+- `genmeta-ssh` v0.6.0
+- `genmeta-access` v0.2.0
+- `genmeta-identity` v0.2.0
+- `genmeta-proxy` v0.2.0
+- `genmeta-discover` v0.3.0
+- `genmeta-doctor` v0.3.0
+- `genmeta-nat` v0.3.0
+- `genmeta-nslookup` v0.3.0
 
 ## [0.5.0] - 2026-04-20
 
@@ -317,4 +414,3 @@ shapes, and the crate layout have all changed.
 
 ### Components
 - genmeta v0.2
-

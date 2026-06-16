@@ -1,12 +1,41 @@
 use std::{borrow::Cow, fmt::Display};
 
-use dhttp_home::identity::Name;
+use crate::cli::{flow::kind::IdentityKind, validator};
 
-use crate::{
-    REGISTERABLE_SUFFIXES,
-    cert_server::{CertServer, LoginResponse, RegisterResponse},
-    cli::validator,
-};
+pub(crate) const MORE_OPTIONS_LABEL: &str = "More options...";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TextPromptResult {
+    Submitted(String),
+    MoreOptions,
+}
+
+#[derive(Clone)]
+pub(crate) struct MoreOptionsFriendlyValidator<V> {
+    inner: V,
+}
+
+impl<V> MoreOptionsFriendlyValidator<V> {
+    pub(crate) fn new(inner: V) -> Self {
+        Self { inner }
+    }
+}
+
+impl<V> inquire::validator::StringValidator for MoreOptionsFriendlyValidator<V>
+where
+    V: inquire::validator::StringValidator + Clone,
+{
+    fn validate(
+        &self,
+        input: &str,
+    ) -> Result<inquire::validator::Validation, inquire::CustomUserError> {
+        if input == "?" {
+            return Ok(inquire::validator::Validation::Valid);
+        }
+
+        self.inner.validate(input)
+    }
+}
 
 #[derive(Debug)]
 pub enum Error {
@@ -46,22 +75,11 @@ impl std::error::Error for Error {
 }
 
 pub(crate) trait InquireResultExt<T> {
-    /// On `NotTTY`, return `Ok(default())` instead of propagating the error.
-    fn or_not_tty(self, default: impl FnOnce() -> T) -> Result<T, Error>;
-
     /// On `NotTTY`, return `Err(Error::NotInteractive { hint })`.
     fn require_interactive(self, hint: impl Into<Cow<'static, str>>) -> Result<T, Error>;
 }
 
 impl<T> InquireResultExt<T> for Result<T, inquire::InquireError> {
-    fn or_not_tty(self, default: impl FnOnce() -> T) -> Result<T, Error> {
-        match self {
-            Ok(value) => Ok(value),
-            Err(inquire::InquireError::NotTTY) => Ok(default()),
-            Err(source) => Err(Error::Prompt { source }),
-        }
-    }
-
     fn require_interactive(self, hint: impl Into<Cow<'static, str>>) -> Result<T, Error> {
         match self {
             Ok(value) => Ok(value),
@@ -84,31 +102,6 @@ macro_rules! sync {
     };
 }
 
-pub(crate) async fn prompt_suffix() -> Result<&'static str, inquire::InquireError> {
-    sync!(
-        inquire::Select::new(
-            "Select a suffix for registration:",
-            REGISTERABLE_SUFFIXES.to_vec()
-        )
-        .prompt()
-    )
-}
-
-pub(crate) async fn prompt_available_name(
-    cert_server: CertServer,
-    suffix: impl Into<Cow<'static, str>> + Send + 'static,
-) -> Result<String, inquire::InquireError> {
-    sync!(
-        inquire::Text::new("Enter your desired name:")
-            .with_validator(inquire::required!("Name cannot be empty."))
-            .with_validator(validator::UsernameValidator::new(suffix))
-            .with_validator(validator::OnlineAvailableUsernameValidator::new(
-                cert_server
-            ))
-            .prompt()
-    )
-}
-
 pub(crate) async fn prompt_email() -> Result<String, inquire::InquireError> {
     sync!(
         inquire::Text::new("Enter your email address:")
@@ -118,86 +111,182 @@ pub(crate) async fn prompt_email() -> Result<String, inquire::InquireError> {
     )
 }
 
-pub(crate) async fn prompt_available_email(
-    cert_server: CertServer,
+pub(crate) async fn prompt_identity_name(
+    opening: &'static str,
 ) -> Result<String, inquire::InquireError> {
+    prompt_identity_name_with_default(opening, None).await
+}
+
+pub(crate) async fn prompt_identity_name_with_default(
+    opening: &'static str,
+    default: Option<&str>,
+) -> Result<String, inquire::InquireError> {
+    if !opening.is_empty() {
+        crate::cli::flow::transcript::print_block(opening);
+    }
+    let default = default.map(ToOwned::to_owned);
+    sync!({
+        let mut prompt = inquire::Text::new("Enter the identity name:")
+            .with_validator(inquire::required!("Identity name cannot be empty."))
+            .with_validator(|value: &str| {
+                match crate::cli::flow::target::IdentityTarget::parse(value) {
+                    Ok(_) => Ok(inquire::validator::Validation::Valid),
+                    Err(error) => Ok(inquire::validator::Validation::Invalid(
+                        inquire::validator::ErrorMessage::Custom(error.to_string()),
+                    )),
+                }
+            });
+        if let Some(default) = default.as_deref() {
+            prompt = prompt.with_default(default);
+        }
+        prompt.prompt()
+    })
+}
+
+pub(crate) async fn prompt_select_string(
+    message: &str,
+    options: Vec<String>,
+) -> Result<String, inquire::InquireError> {
+    prompt_select_string_with_cursor(message, options, None).await
+}
+
+pub(crate) async fn prompt_verify_code() -> Result<String, inquire::InquireError> {
     sync!(
-        inquire::Text::new("Enter your email address:")
-            .with_validator(inquire::required!("Email address cannot be empty."))
-            .with_validator(validator::EmailValidator)
-            .with_validator(validator::OnlineAvailableEmailValidator::new(cert_server))
+        inquire::Text::new("Enter the verification code sent to your email:")
+            .with_validator(inquire::required!("Verification code cannot be empty."))
+            .with_validator(inquire::length!(
+                6,
+                "Verification code must be exactly 6 characters."
+            ))
             .prompt()
     )
 }
 
-pub(crate) async fn prompt_register_catpcha(
-    cert_server: CertServer,
-    username: String,
-    email: String,
-    csr_pem: String,
-) -> Result<RegisterResponse, inquire::InquireError> {
-    let (validate_captcha, get_response) =
-        validator::RegisterCaptchaValidator::new(cert_server, username, email, csr_pem);
+pub(crate) async fn prompt_kind() -> Result<String, inquire::InquireError> {
+    prompt_kind_with_cursor(None).await
+}
+
+pub(crate) async fn prompt_kind_with_cursor(
+    selected_kind: Option<IdentityKind>,
+) -> Result<String, inquire::InquireError> {
+    let prompt = format!(
+        "{}\n\n{}\n\n{}",
+        IdentityKind::SELECT_PROMPT,
+        IdentityKind::PRIMARY_HELP,
+        IdentityKind::SECONDARY_HELP
+    );
+    let starting_cursor = match selected_kind {
+        Some(IdentityKind::Primary) => Some(0),
+        Some(IdentityKind::Secondary) => Some(1),
+        None => None,
+    };
     sync!(
-        inquire::Text::new("Enter the verification code sent to your email:")
-            .with_validator(inquire::required!("Verification code cannot be empty."))
-            .with_validator(inquire::length!(
-                6,
-                "Verification code must be exactly 6 characters."
-            ))
-            .with_validator(validate_captcha)
-            .prompt()
-    )?;
-    Ok(get_response.await)
-}
-
-pub(crate) async fn prompt_login_catpcha(
-    cert_server: CertServer,
-    email: String,
-) -> Result<LoginResponse, inquire::InquireError> {
-    let (validate_captcha, get_response) =
-        validator::LoginCaptchaValidator::new(cert_server, email);
-    sync!(
-        inquire::Text::new("Enter the verification code sent to your email:")
-            .with_validator(inquire::required!("Verification code cannot be empty."))
-            .with_validator(inquire::length!(
-                6,
-                "Verification code must be exactly 6 characters."
-            ))
-            .with_validator(validate_captcha)
-            .prompt()
-    )?;
-    Ok(get_response.await)
-}
-
-pub(crate) async fn prompt_select_identities(
-    names: Vec<Name<'static>>,
-) -> Result<Vec<Name<'static>>, inquire::InquireError> {
-    sync!(inquire::MultiSelect::new("Select the identities to re-sign:", names.to_vec()).prompt())
-}
-
-pub(crate) async fn prompt_confirm_set_as_default_name(
-    name: Name<'_>,
-) -> Result<bool, inquire::InquireError> {
-    let message = format!("Set {name} as the default identity?");
-    sync!(inquire::Confirm::new(&message).with_default(true).prompt())
-}
-
-pub(crate) async fn prompt_select_default_identity(
-    names: Vec<Name<'static>>,
-) -> Result<Option<Name<'static>>, inquire::InquireError> {
-    let mut options: Vec<String> = names.iter().map(|n| n.to_string()).collect();
-    options.push("(skip)".to_string());
-    let selected = sync!(
         inquire::Select::new(
-            "No default identity configured. Select one as the default identity:",
-            options
+            &prompt,
+            vec![
+                IdentityKind::Primary.to_string(),
+                IdentityKind::Secondary.to_string()
+            ]
         )
+        .with_starting_cursor(starting_cursor.unwrap_or(0))
         .prompt()
-    )?;
-    if selected == "(skip)" {
-        Ok(None)
+    )
+}
+
+fn text_prompt_result(answer: String) -> TextPromptResult {
+    if answer == "?" {
+        TextPromptResult::MoreOptions
     } else {
-        Ok(names.into_iter().find(|n| n.to_string() == selected))
+        TextPromptResult::Submitted(answer)
+    }
+}
+
+pub(crate) async fn prompt_email_with_more_options(
+    default: Option<&str>,
+) -> Result<TextPromptResult, inquire::InquireError> {
+    let default = default.map(ToOwned::to_owned);
+    sync!({
+        let mut prompt = inquire::Text::new("Email:")
+            .with_help_message("Type ? for more options.")
+            .with_validator(MoreOptionsFriendlyValidator::new(inquire::required!(
+                "Email address cannot be empty."
+            )))
+            .with_validator(MoreOptionsFriendlyValidator::new(validator::EmailValidator));
+        if let Some(default) = default.as_deref() {
+            prompt = prompt.with_default(default);
+        }
+        prompt.prompt()
+    })
+    .map(text_prompt_result)
+}
+
+pub(crate) async fn prompt_verify_code_with_more_options(
+    default: Option<&str>,
+) -> Result<TextPromptResult, inquire::InquireError> {
+    let default = default.map(ToOwned::to_owned);
+    sync!({
+        let mut prompt = inquire::Text::new("Verification code:")
+            .with_help_message("Type ? for more options.")
+            .with_validator(MoreOptionsFriendlyValidator::new(inquire::required!(
+                "Verification code cannot be empty."
+            )))
+            .with_validator(MoreOptionsFriendlyValidator::new(inquire::length!(
+                6,
+                "Verification code must be exactly 6 characters."
+            )));
+        if let Some(default) = default.as_deref() {
+            prompt = prompt.with_default(default);
+        }
+        prompt.prompt()
+    })
+    .map(text_prompt_result)
+}
+
+pub(crate) async fn prompt_select_string_with_cursor(
+    message: &str,
+    options: Vec<String>,
+    starting_cursor: Option<usize>,
+) -> Result<String, inquire::InquireError> {
+    let message = message.to_string();
+    sync!({
+        let mut prompt = inquire::Select::new(&message, options);
+        if let Some(starting_cursor) = starting_cursor {
+            prompt = prompt.with_starting_cursor(starting_cursor);
+        }
+        prompt.prompt()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use inquire::validator::{StringValidator, Validation};
+
+    use super::{MORE_OPTIONS_LABEL, MoreOptionsFriendlyValidator};
+
+    #[test]
+    fn question_mark_bypasses_inner_validation() {
+        #[derive(Clone)]
+        struct RejectAll;
+
+        impl StringValidator for RejectAll {
+            fn validate(&self, _input: &str) -> Result<Validation, inquire::CustomUserError> {
+                Ok(Validation::Invalid(inquire::validator::ErrorMessage::from(
+                    "always invalid",
+                )))
+            }
+        }
+
+        let validator = MoreOptionsFriendlyValidator::new(RejectAll);
+
+        assert_eq!(validator.validate("?").unwrap(), Validation::Valid);
+        assert_eq!(
+            validator.validate("value").unwrap(),
+            Validation::Invalid(inquire::validator::ErrorMessage::from("always invalid"))
+        );
+    }
+
+    #[test]
+    fn more_options_label_matches_spec_copy() {
+        assert_eq!(MORE_OPTIONS_LABEL, "More options...");
     }
 }

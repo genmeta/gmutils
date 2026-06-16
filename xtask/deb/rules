@@ -9,22 +9,49 @@
 # before dpkg-buildpackage runs. All paths use /workspace (the bind mount root).
 
 export DH_VERBOSE = 1
+BUILD_PROFILE ?= release
+CARGO_PROFILE_ARGS ?= --release
 
 %:
 	dh $@
 
+# TODO: Remove this cargo-zigbuild workaround after rustc/Zig agree on the
+# Cortex-A53 843419 mitigation linker argument.
 override_dh_auto_build:
 ifdef TRIPLE
 	cd /workspace && \
 	export RUSTFLAGS="$${RUSTFLAGS:-} -L /usr/lib/$(DEB_HOST_MULTIARCH)" && \
-	$(if $(ROOT_CA),export ROOT_CA=$(ROOT_CA) &&) \
-	cargo zigbuild --release --target $(ZIG_TARGET) --bin genmeta
+	if [ "$(TRIPLE)" = "aarch64-unknown-linux-gnu" ]; then \
+		{ \
+			printf '%s\n' '#!/usr/bin/env bash'; \
+			printf '%s\n' 'set -euo pipefail'; \
+			printf '%s\n' 'if [ "$${1:-}" = "cc" ] || [ "$${1:-}" = "c++" ]; then'; \
+			printf '%s\n' '    zig_subcommand="$$1"'; \
+			printf '%s\n' '    shift'; \
+			printf '%s\n' '    filtered_args=()'; \
+			printf '%s\n' '    for arg in "$$@"; do'; \
+			printf '%s\n' '        case "$$arg" in'; \
+			printf '%s\n' '            -Wl,--fix-cortex-a53-843419|--fix-cortex-a53-843419)'; \
+			printf '%s\n' '                continue'; \
+			printf '%s\n' '                ;;'; \
+			printf '%s\n' '        esac'; \
+			printf '%s\n' '        filtered_args+=("$$arg")'; \
+			printf '%s\n' '    done'; \
+			printf '%s\n' '    exec /usr/local/zig/zig "$$zig_subcommand" "$${filtered_args[@]}"'; \
+			printf '%s\n' 'fi'; \
+			printf '%s\n' 'exec /usr/local/zig/zig "$$@"'; \
+		} > /tmp/gmutils-aarch64-zig; \
+		chmod +x /tmp/gmutils-aarch64-zig; \
+		export CARGO_ZIGBUILD_ZIG_PATH=/tmp/gmutils-aarch64-zig; \
+		export RUSTFLAGS="$$RUSTFLAGS -Z unstable-options -Clinker-flavor=gnu-lld-cc"; \
+	fi && \
+	cargo zigbuild $(CARGO_PROFILE_ARGS) --target $(ZIG_TARGET) --bin genmeta
 endif
 
 override_dh_auto_install:
 ifdef TRIPLE
 	mkdir -p debian/gmutils/usr/bin
-	cp /workspace/target/$(TRIPLE)/release/genmeta debian/gmutils/usr/bin/
+	cp /workspace/target/$(TRIPLE)/$(BUILD_PROFILE)/genmeta debian/gmutils/usr/bin/
 	cp /workspace/genmeta-ssh.sh debian/gmutils/usr/bin/
 	chmod 755 debian/gmutils/usr/bin/*
 endif

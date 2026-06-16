@@ -1,16 +1,46 @@
-use std::{borrow::Cow, fmt::Debug, sync::Arc};
-
-use dhttp_home::identity::Name;
 use inquire::validator::{StringValidator, Validation};
-use snafu::Report;
-use tokio::sync::mpsc;
-
-use crate::cert_server::{
-    self, CertServer, CheckEmailResponse, CheckUsernameResponse, LoginResponse, RegisterResponse,
-};
 
 pub(crate) fn validation_failed(message: impl ToString) -> Validation {
     Validation::Invalid(inquire::validator::ErrorMessage::from(message))
+}
+
+pub fn validate_dhttp_label(value: &str) -> Result<(), String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("label cannot be empty".to_string());
+    }
+    if trimmed.contains('.') {
+        return Err("label must not contain dots".to_string());
+    }
+    if trimmed.starts_with('-') || trimmed.ends_with('-') {
+        return Err("label must not start or end with '-'".to_string());
+    }
+    if !trimmed
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+    {
+        return Err("label must contain only lowercase ascii letters, digits, or '-'".to_string());
+    }
+    Ok(())
+}
+
+pub fn validate_kind(value: &str) -> Result<(), String> {
+    match value {
+        "primary" | "secondary" => Ok(()),
+        _ => Err("kind must be primary or secondary".to_string()),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct KindValidator;
+
+impl StringValidator for KindValidator {
+    fn validate(&self, input: &str) -> Result<Validation, inquire::CustomUserError> {
+        Ok(match validate_kind(input) {
+            Ok(()) => Validation::Valid,
+            Err(message) => validation_failed(message),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -26,215 +56,26 @@ impl StringValidator for EmailValidator {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct OnlineAvailableEmailValidator {
-    rt_handle: tokio::runtime::Handle,
-    cert_server: CertServer,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl OnlineAvailableEmailValidator {
-    pub fn new(cert_server: CertServer) -> Self {
-        Self {
-            rt_handle: tokio::runtime::Handle::current(),
-            cert_server,
-        }
+    #[test]
+    fn given_name_accepts_dns_label() {
+        assert_eq!(validate_dhttp_label("alice"), Ok(()));
+        assert_eq!(validate_dhttp_label("alice-1"), Ok(()));
     }
-}
 
-impl StringValidator for OnlineAvailableEmailValidator {
-    fn validate(&self, input: &str) -> Result<Validation, inquire::CustomUserError> {
-        self.rt_handle.block_on(async {
-            match self.cert_server.check_email(input).await {
-                Ok(CheckEmailResponse { exists: false }) => Ok(Validation::Valid),
-                Ok(CheckEmailResponse { exists: true }) => {
-                    Ok(validation_failed("Email is already registered."))
-                }
-                Err(error @ cert_server::Error::Code { .. }) => Ok(validation_failed(format!(
-                    "Server: {}",
-                    Report::from_error(error)
-                ))),
-                Err(error) => Err(Box::new(error) as inquire::CustomUserError),
-            }
-        })
+    #[test]
+    fn given_name_rejects_empty_or_dot() {
+        assert!(validate_dhttp_label("").is_err());
+        assert!(validate_dhttp_label("alice.smith").is_err());
     }
-}
 
-#[derive(Debug, Clone)]
-pub struct UsernameValidator<'d> {
-    suffix: Cow<'d, str>,
-}
-
-impl<'d> UsernameValidator<'d> {
-    pub fn new(suffix: impl Into<Cow<'d, str>>) -> Self {
-        Self {
-            suffix: suffix.into(),
-        }
-    }
-}
-
-impl StringValidator for UsernameValidator<'_> {
-    fn validate(&self, input: &str) -> Result<Validation, inquire::CustomUserError> {
-        let name = format!("{}.{}{}", input, self.suffix, Name::SUFFIX);
-        if let Err(error) = Name::validate(name.as_bytes()) {
-            return Ok(validation_failed(error.to_string()));
-        }
-        Ok(Validation::Valid)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct OnlineAvailableUsernameValidator {
-    rt_handle: tokio::runtime::Handle,
-    cert_server: CertServer,
-}
-
-impl OnlineAvailableUsernameValidator {
-    pub fn new(cert_server: CertServer) -> Self {
-        Self {
-            rt_handle: tokio::runtime::Handle::current(),
-            cert_server,
-        }
-    }
-}
-
-impl StringValidator for OnlineAvailableUsernameValidator {
-    fn validate(&self, input: &str) -> Result<Validation, inquire::CustomUserError> {
-        self.rt_handle.block_on(async {
-            match self.cert_server.check_name(input).await {
-                Ok(CheckUsernameResponse { exists: false }) => Ok(Validation::Valid),
-                Ok(CheckUsernameResponse { exists: true }) => {
-                    Ok(validation_failed("Username is not available."))
-                }
-                Err(error @ cert_server::Error::Code { .. }) => Ok(validation_failed(format!(
-                    "Server: {}",
-                    Report::from_error(error)
-                ))),
-                Err(error) => Err(Box::new(error) as inquire::CustomUserError),
-            }
-        })
-    }
-}
-
-#[derive(Clone)]
-pub struct AsyncValidator {
-    #[allow(clippy::type_complexity)]
-    validate:
-        Arc<dyn Fn(&str) -> Result<Validation, inquire::CustomUserError> + Send + Sync + 'static>,
-}
-
-impl Debug for AsyncValidator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FnValidator").finish()
-    }
-}
-
-impl AsyncValidator {
-    pub fn new<F>(validate: F) -> Self
-    where
-        F: for<'i> AsyncFn(&'i str) -> Result<Validation, inquire::CustomUserError>
-            + Send
-            + Sync
-            + 'static,
-    {
-        let rt_handle = tokio::runtime::Handle::current();
-        Self {
-            validate: Arc::new(move |arg: &str| rt_handle.block_on(validate(arg))),
-        }
-    }
-}
-
-impl StringValidator for AsyncValidator {
-    fn validate(&self, input: &str) -> Result<Validation, inquire::CustomUserError> {
-        (self.validate)(input)
-    }
-}
-
-pub(crate) fn cell<T>() -> (impl Fn(T), impl Future<Output = T>) {
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let set = move |value: T| _ = tx.send(value);
-    let get = async move {
-        match rx.recv().await {
-            Some(value) => value,
-            None => std::future::pending().await,
-        }
-    };
-    (set, get)
-}
-
-#[derive(Debug, Clone)]
-pub struct RegisterCaptchaValidator {
-    validate: AsyncValidator,
-}
-
-impl RegisterCaptchaValidator {
-    pub fn new(
-        cert_server: CertServer,
-        username: String,
-        email: String,
-        csr_pem: String,
-    ) -> (
-        RegisterCaptchaValidator,
-        impl Future<Output = RegisterResponse>,
-    ) {
-        let (set_response, get_response) = cell();
-        let validate = AsyncValidator::new(async move |captcha| {
-            match cert_server
-                .register(&username, &email, captcha, &csr_pem)
-                .await
-            {
-                Ok(response) => {
-                    set_response(response);
-                    Ok(Validation::Valid)
-                }
-                Err(error @ cert_server::Error::Code { .. }) => Ok(validation_failed(format!(
-                    "Server: {}",
-                    Report::from_error(error)
-                ))),
-                Err(error) => Err(Box::new(error) as inquire::CustomUserError),
-            }
-        });
-
-        (RegisterCaptchaValidator { validate }, get_response)
-    }
-}
-
-impl StringValidator for RegisterCaptchaValidator {
-    fn validate(&self, input: &str) -> Result<Validation, inquire::CustomUserError> {
-        self.validate.validate(input)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct LoginCaptchaValidator {
-    validate: AsyncValidator,
-}
-
-impl LoginCaptchaValidator {
-    pub fn new(
-        cert_server: CertServer,
-        email: String,
-    ) -> (LoginCaptchaValidator, impl Future<Output = LoginResponse>) {
-        let (set_response, get_response) = cell();
-        let validate = AsyncValidator::new(async move |captcha| {
-            match cert_server.login(&email, captcha).await {
-                Ok(response) => {
-                    set_response(response);
-                    Ok(Validation::Valid)
-                }
-                Err(error @ cert_server::Error::Code { .. }) => Ok(validation_failed(format!(
-                    "Server: {}",
-                    Report::from_error(error)
-                ))),
-                Err(error) => Err(Box::new(error) as inquire::CustomUserError),
-            }
-        });
-
-        (LoginCaptchaValidator { validate }, get_response)
-    }
-}
-
-impl StringValidator for LoginCaptchaValidator {
-    fn validate(&self, input: &str) -> Result<Validation, inquire::CustomUserError> {
-        self.validate.validate(input)
+    #[test]
+    fn kind_accepts_primary_secondary() {
+        assert_eq!(validate_kind("primary"), Ok(()));
+        assert_eq!(validate_kind("secondary"), Ok(()));
+        assert!(validate_kind("device").is_err());
     }
 }

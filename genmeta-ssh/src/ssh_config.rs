@@ -4,7 +4,7 @@
 //! with support for standard keywords plus the custom `Id` keyword for
 //! genmeta identity selection.
 //!
-//! Uses [`genmeta_ssh_core::config`] for syntax-level parsing (PEG), providing
+//! Uses [`dshell::config`] for syntax-level parsing (PEG), providing
 //! precise source location tracking on all parsed elements.
 //!
 //! ## Supported keywords
@@ -34,7 +34,7 @@ use std::{
     time::Duration,
 };
 
-use genmeta_ssh_core::config::{
+use dshell::config::{
     self as ssh_config, Directive, Entry, HostArgs, Located, Pattern, SourceFile,
 };
 use snafu::prelude::*;
@@ -395,7 +395,7 @@ mod tests {
             "\
 Host example
     User alice
-    Hostname example.genmeta.net
+    Hostname example.dhttp.net
     Port 443
     Id alice
     ConnectTimeout 30
@@ -404,7 +404,7 @@ Host example
         );
         assert!(warnings.is_empty());
         assert_eq!(resolved.user.as_deref(), Some("alice"));
-        assert_eq!(resolved.hostname.as_deref(), Some("example.genmeta.net"));
+        assert_eq!(resolved.hostname.as_deref(), Some("example.dhttp.net"));
         assert_eq!(resolved.port, Some(443));
         assert_eq!(resolved.id.as_deref(), Some("alice"));
         assert_eq!(resolved.connect_timeout, Some(Duration::from_secs(30)));

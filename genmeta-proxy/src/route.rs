@@ -1,24 +1,24 @@
-use dhttp_home::identity::Name;
+use dhttp::name::DhttpName as Name;
 use http::{Method, Uri};
 use hyper::body::Incoming;
 
 /// Classification of an incoming proxy request.
 #[derive(Debug)]
 pub enum Route {
-    /// Plain HTTP request to a genmeta domain — forward via DHTTP/3
+    /// Plain HTTP request to a DHTTP identity domain — forward via DHTTP/3
     GenmetaPlainHttp {
         authority: http::uri::Authority,
         uri: Uri,
     },
-    /// CONNECT request to a genmeta domain — return 502 (Phase 2: MITM)
+    /// CONNECT request to a DHTTP identity domain — return 502 (Phase 2: MITM)
     GenmetaConnect { authority: http::uri::Authority },
-    /// CONNECT request to a non-genmeta domain — standard TCP tunnel
+    /// CONNECT request to a non-DHTTP identity domain — standard TCP tunnel
     TunnelConnect { authority: http::uri::Authority },
-    /// Plain HTTP request to a non-genmeta domain — standard HTTP forward
+    /// Plain HTTP request to a non-DHTTP identity domain — standard HTTP forward
     StandardForward { uri: Uri },
 }
 
-/// Routes incoming requests based on the genmeta domain suffix.
+/// Routes incoming requests based on the DHTTP identity domain suffix.
 pub struct Router {
     /// Reserved for future blacklist filtering (Phase 2+)
     _blacklist: Vec<String>,
@@ -41,7 +41,9 @@ impl Router {
     pub fn is_genmeta(&self, host: &str) -> bool {
         // strip port if present
         let host = host.split(':').next().unwrap_or(host);
-        host.ends_with(Name::SUFFIX) || host.ends_with('~')
+        host.ends_with('~')
+            || (host.len() >= Name::SUFFIX.len()
+                && host[host.len() - Name::SUFFIX.len()..].eq_ignore_ascii_case(Name::SUFFIX))
     }
 
     /// Classify an incoming request into a Route variant.
@@ -89,32 +91,33 @@ mod tests {
     #[test]
     fn test_is_genmeta_exact_suffix() {
         let r = router();
-        assert!(r.is_genmeta("api.genmeta.net"));
-        assert!(r.is_genmeta("test.genmeta.net"));
-        assert!(r.is_genmeta("a.b.genmeta.net"));
+        assert!(r.is_genmeta("api.dhttp.net"));
+        assert!(r.is_genmeta("API.Dhttp.Net"));
+        assert!(r.is_genmeta("test.dhttp.net"));
+        assert!(r.is_genmeta("a.b.dhttp.net"));
     }
 
     #[test]
     fn test_is_genmeta_non_match() {
         let r = router();
         assert!(!r.is_genmeta("example.com"));
-        assert!(!r.is_genmeta("genmeta.net.evil.com"));
-        assert!(!r.is_genmeta("notgenmeta.net"));
+        assert!(!r.is_genmeta("dhttp.net.evil.com"));
+        assert!(!r.is_genmeta("notdhttp.net"));
     }
 
     #[test]
     fn test_is_genmeta_with_port() {
         let r = router();
         // is_genmeta takes host (no port), but let's be safe
-        assert!(r.is_genmeta("api.genmeta.net:443"));
+        assert!(r.is_genmeta("api.dhttp.net:443"));
     }
 
     #[test]
     fn test_is_genmeta_bare_domain() {
-        // "genmeta.net" without subdomain — matches if suffix is ".genmeta.net"?
-        // Depends on implementation. ".genmeta.net" suffix means subdomains only.
-        // "genmeta.net" does NOT end with ".genmeta.net" — correct behavior.
+        // "dhttp.net" without subdomain — matches if suffix is ".dhttp.net"?
+        // Depends on implementation. ".dhttp.net" suffix means subdomains only.
+        // "dhttp.net" does NOT end with ".dhttp.net" — correct behavior.
         let r = router();
-        assert!(!r.is_genmeta("genmeta.net"));
+        assert!(!r.is_genmeta("dhttp.net"));
     }
 }

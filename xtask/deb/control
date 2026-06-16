@@ -1,11 +1,11 @@
 Source: gmutils
 Section: utilities
 Priority: optional
-Maintainer: Genmeta Tech Limited <support@genmeta.net>
+Maintainer: Genmeta Tech Limited <developer@genmeta.net>
 Build-Depends: debhelper-compat (= 13)
 
 Package: gmutils
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: Genmeta Binary Utilities
- Genmeta command-line tools for DHTTP/3, SSH3, DNS, and identity management.
+ Genmeta command-line tools for DHTTP/3, DShell, DNS, and identity management.

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! RPM (.rpm) packaging via a Fedora 40 Docker container and cargo-zigbuild.
 //!
 //! Flow per target triple:
@@ -10,9 +12,11 @@
 //! 5. Move the produced `.rpm` next to the `.deb` outputs under
 //!    `target/{triple}/release/rpm/`.
 
+use std::path::{Path, PathBuf};
+
 use bollard::{
     Docker,
-    models::{ContainerConfig, ContainerCreateBody, HostConfig, Mount, MountTypeEnum},
+    models::{ContainerConfig, ContainerCreateBody, HostConfig, Mount, MountType},
     query_parameters::{
         CommitContainerOptionsBuilder, CreateContainerOptionsBuilder, CreateImageOptionsBuilder,
     },
@@ -24,8 +28,9 @@ use tracing::{Instrument, info, info_span};
 use crate::{
     RpmTarget,
     container::{
-        CARGO_HOME, RUSTUP_HOME, Sibling, ZIG_GLIBC_VERSION, cargo_cache_mounts, check_docker,
-        exec_in_container, force_remove_container, host_uid_gid, remove_container_if_exists,
+        CARGO_HOME, RUSTUP_HOME, Sibling, ZIG_GLIBC_VERSION, cargo_cache_mounts,
+        cargo_config_from_siblings, check_docker, dhttp_bootstrap_from_env, exec_in_container,
+        force_remove_container, host_uid_gid, install_cargo_config, remove_container_if_exists,
         resolve_siblings, start_container,
     },
     package_version, target_dir,
@@ -46,10 +51,61 @@ const IMAGE_TAG_PREFIX: &str = "gmutils-rpm-v1";
 /// so spec generation stays a single source of truth owned by xtask.
 const RPM_SUMMARY: &str = "Genmeta binary utilities";
 const RPM_LICENSE: &str = "Proprietary";
-const RPM_URL: &str = "https://genmeta.net";
+const RPM_URL: &str = "https://www.dhttp.net";
 const RPM_VENDOR: &str = "Genmeta Tech Limited";
 const RPM_DESCRIPTION: &str =
-    "Genmeta command-line tools for DHTTP/3, SSH3, DNS, and identity management.";
+    "Genmeta command-line tools for DHTTP/3, DShell, DNS, and identity management.";
+const AARCH64_ZIGBUILD_RUSTFLAGS_WORKAROUND: &str =
+    "-Z unstable-options -Clinker-flavor=gnu-lld-cc";
+const AARCH64_ZIGBUILD_WORKAROUND_SCRIPT_PREFIX: &str = r#"# TODO: Remove this aarch64 cargo-zigbuild workaround after rustc/Zig/cargo-zigbuild
+# agree on the Cortex-A53 843419 mitigation linker argument.
+cat > /tmp/gmutils-aarch64-zig <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "cc" ] || [ "${1:-}" = "c++" ]; then
+    zig_subcommand="$1"
+    shift
+    filtered_args=()
+    for arg in "$@"; do
+        case "$arg" in
+            -Wl,--fix-cortex-a53-843419|--fix-cortex-a53-843419)
+                continue
+                ;;
+        esac
+        filtered_args+=("$arg")
+    done
+    exec /usr/local/zig/zig "$zig_subcommand" "${filtered_args[@]}"
+fi
+exec /usr/local/zig/zig "$@"
+EOF
+chmod +x /tmp/gmutils-aarch64-zig
+export CARGO_ZIGBUILD_ZIG_PATH=/tmp/gmutils-aarch64-zig
+"#;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RpmArtifact {
+    pub target: String,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, snafu::Snafu)]
+#[snafu(module)]
+enum FindRpmArtifactError {
+    #[snafu(display("failed to read rpm artifact directory"))]
+    ReadDir {
+        source: std::io::Error,
+        path: PathBuf,
+    },
+    #[snafu(display("failed to read rpm artifact directory entry"))]
+    ReadEntry {
+        source: std::io::Error,
+        path: PathBuf,
+    },
+    #[snafu(display("rpm build produced no artifact"))]
+    NoArtifact { path: PathBuf },
+    #[snafu(display("rpm build produced multiple artifacts"))]
+    MultipleArtifacts { path: PathBuf },
+}
 
 /// Map a Rust target triple to the rpm arch name.
 fn rpm_arch(triple: &str) -> Result<&'static str, Whatever> {
@@ -62,7 +118,20 @@ fn rpm_arch(triple: &str) -> Result<&'static str, Whatever> {
     }
 }
 
-pub async fn run(targets: &[RpmTarget], siblings: &[std::path::PathBuf]) -> Result<(), Whatever> {
+fn aarch64_zigbuild_workaround_script(triple: &str) -> String {
+    if triple == "aarch64-unknown-linux-gnu" {
+        format!(
+            "{AARCH64_ZIGBUILD_WORKAROUND_SCRIPT_PREFIX}export RUSTFLAGS=\"$RUSTFLAGS {AARCH64_ZIGBUILD_RUSTFLAGS_WORKAROUND}\"\n"
+        )
+    } else {
+        String::new()
+    }
+}
+
+pub async fn run(
+    targets: &[RpmTarget],
+    siblings: &[std::path::PathBuf],
+) -> Result<Vec<RpmArtifact>, Whatever> {
     info!(target_count = targets.len(), "starting rpm dist build");
     let docker = Docker::connect_with_local_defaults()
         .whatever_context("failed to connect to Docker/Podman")?;
@@ -87,12 +156,14 @@ pub async fn run(targets: &[RpmTarget], siblings: &[std::path::PathBuf]) -> Resu
         );
     }
 
+    let mut artifacts = Vec::new();
     while let Some(result) = tasks.join_next().await {
-        result.whatever_context("rpm build task panicked")??;
+        artifacts.push(result.whatever_context("rpm build task panicked")??);
     }
+    artifacts.sort_by(|left, right| left.target.cmp(&right.target));
 
     info!("finished rpm dist build");
-    Ok(())
+    Ok(artifacts)
 }
 
 /// Build the image if missing, then produce the rpm for this triple.
@@ -208,9 +279,9 @@ async fn build_one(
     docker: &Docker,
     triple: &str,
     version: &str,
-    target_dir: &std::path::Path,
+    target_dir: &Path,
     siblings: &[Sibling],
-) -> Result<(), Whatever> {
+) -> Result<RpmArtifact, Whatever> {
     let arch = rpm_arch(triple)?;
     info!(triple, arch, "ensuring build image");
     let image = ensure_image(docker, triple).await?;
@@ -226,34 +297,22 @@ async fn build_one(
     let mut mounts = vec![Mount {
         target: Some("/workspace".into()),
         source: Some(workspace_dir.to_string_lossy().into_owned()),
-        typ: Some(MountTypeEnum::BIND),
+        typ: Some(MountType::BIND),
         ..Default::default()
     }];
     for sibling in siblings {
         mounts.push(Mount {
             target: Some(format!("/{}", sibling.basename)),
             source: Some(sibling.host.to_string_lossy().into_owned()),
-            typ: Some(MountTypeEnum::BIND),
+            typ: Some(MountType::BIND),
             ..Default::default()
         });
     }
     mounts.extend(cargo_cache_mounts());
 
-    let root_ca_env = if let Ok(host_path) = std::env::var("ROOT_CA") {
-        let host_path = std::path::Path::new(&host_path)
-            .canonicalize()
-            .whatever_context(format!("ROOT_CA path not found: {host_path}"))?;
-        mounts.push(Mount {
-            target: Some("/root-ca/root.crt".into()),
-            source: Some(host_path.to_string_lossy().into_owned()),
-            typ: Some(MountTypeEnum::BIND),
-            read_only: Some(true),
-            ..Default::default()
-        });
-        "export ROOT_CA=/root-ca/root.crt\n"
-    } else {
-        ""
-    };
+    let bootstrap = dhttp_bootstrap_from_env()?;
+    mounts.extend(bootstrap.mounts);
+    let cargo_config = cargo_config_from_siblings(siblings);
 
     let container_name = format!("{CARGO_NAME}-xtask-rpm-{triple}");
     remove_container_if_exists(docker, &container_name).await;
@@ -278,7 +337,16 @@ async fn build_one(
         .whatever_context("failed to create rpm build container")?;
     let container_id = container.id.clone();
 
-    let result = build_one_inner(docker, &container_id, triple, version, arch, root_ca_env).await;
+    let result = build_one_inner(
+        docker,
+        &container_id,
+        triple,
+        version,
+        arch,
+        &bootstrap.exports,
+        cargo_config.as_deref(),
+    )
+    .await;
     force_remove_container(docker, &container_id).await;
     result?;
 
@@ -287,7 +355,44 @@ async fn build_one(
         out = %out_dir.display(),
         "produced rpm"
     );
-    Ok(())
+    let path = find_rpm_artifact(&out_dir)
+        .await
+        .whatever_context("failed to find rpm artifact")?;
+    Ok(RpmArtifact {
+        target: triple.to_string(),
+        path,
+    })
+}
+
+async fn find_rpm_artifact(out_dir: &Path) -> Result<PathBuf, FindRpmArtifactError> {
+    let mut entries =
+        tokio::fs::read_dir(out_dir)
+            .await
+            .context(find_rpm_artifact_error::ReadDirSnafu {
+                path: out_dir.to_path_buf(),
+            })?;
+    let mut artifact = None;
+    while let Some(entry) =
+        entries
+            .next_entry()
+            .await
+            .context(find_rpm_artifact_error::ReadEntrySnafu {
+                path: out_dir.to_path_buf(),
+            })?
+    {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("rpm") {
+            continue;
+        }
+        if artifact.replace(path).is_some() {
+            return Err(FindRpmArtifactError::MultipleArtifacts {
+                path: out_dir.to_path_buf(),
+            });
+        }
+    }
+    artifact.ok_or_else(|| FindRpmArtifactError::NoArtifact {
+        path: out_dir.to_path_buf(),
+    })
 }
 
 async fn build_one_inner(
@@ -296,13 +401,17 @@ async fn build_one_inner(
     triple: &str,
     version: &str,
     arch: &str,
-    root_ca_env: &str,
+    dhttp_bootstrap_exports: &str,
+    cargo_config: Option<&str>,
 ) -> Result<(), Whatever> {
     start_container(docker, container_id).await?;
     info!(triple, "build container started");
 
+    install_cargo_config(docker, container_id, cargo_config).await?;
+
     let user = host_uid_gid()?;
     let spec = render_spec(version, arch);
+    let aarch64_zigbuild_workaround = aarch64_zigbuild_workaround_script(triple);
 
     // All artifacts produced inside target/{triple}/release/rpm/ so they inherit
     // the bind-mount and host ownership. _topdir points into the workspace so
@@ -314,7 +423,9 @@ export HOME=/tmp
 export PATH="{CARGO_HOME}/bin:/usr/local/zig:$PATH"
 export RUSTUP_HOME={RUSTUP_HOME}
 export CARGO_HOME={CARGO_HOME}
-{root_ca_env}
+{dhttp_bootstrap_exports}
+export RUSTFLAGS="${{RUSTFLAGS:-}}"
+{aarch64_zigbuild_workaround}
 cd /workspace
 cargo zigbuild --release --target {triple}.{ZIG_GLIBC_VERSION} --bin genmeta
 
@@ -406,8 +517,28 @@ install -D -m 0755 %{{SOURCE1}} %{{buildroot}}/usr/bin/genmeta-ssh.sh
 /usr/bin/genmeta-ssh.sh
 
 %changelog
-* %(date '+%a %b %d %Y') {RPM_VENDOR} <support@genmeta.net> - {version}-1
+* %(date '+%a %b %d %Y') {RPM_VENDOR} <developer@genmeta.net> - {version}-1
 - release {version}
 "#
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AARCH64_ZIGBUILD_RUSTFLAGS_WORKAROUND, aarch64_zigbuild_workaround_script};
+
+    #[test]
+    fn aarch64_linker_workaround_enables_unstable_flavor_option() {
+        assert!(AARCH64_ZIGBUILD_RUSTFLAGS_WORKAROUND.contains("-Z unstable-options"));
+        assert!(AARCH64_ZIGBUILD_RUSTFLAGS_WORKAROUND.contains("-Clinker-flavor=gnu-lld-cc"));
+    }
+
+    #[test]
+    fn aarch64_zigbuild_workaround_filters_unsupported_cortex_linker_arg() {
+        let script = aarch64_zigbuild_workaround_script("aarch64-unknown-linux-gnu");
+
+        assert!(script.contains("CARGO_ZIGBUILD_ZIG_PATH"));
+        assert!(script.contains("-Wl,--fix-cortex-a53-843419|--fix-cortex-a53-843419"));
+        assert!(script.contains("/usr/local/zig/zig"));
+    }
 }

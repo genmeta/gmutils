@@ -1,15 +1,13 @@
 [package]
 name = "genmeta-discover"
 description = "mdns discover services"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [dependencies]
 clap = { workspace = true }
 futures = { workspace = true }
-gmdns = { workspace = true }
-genmeta-common = { workspace = true, features = ["dns"] }
-h3x = { workspace = true }
+dhttp = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

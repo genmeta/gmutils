@@ -10,11 +10,11 @@ pub mod forward;
 pub mod ssh_config;
 
 use clap::Parser;
-use dhttp_home::identity::Name;
+use dhttp::{
+    ddns::resolvers::DnsScheme, dquic::binds::BindPattern, h3x::error::Code,
+    name::DhttpName as Name,
+};
 use forward::*;
-use genmeta_common::dns;
-use genmeta_ssh_core as ssh3;
-use h3x::{endpoint::binds, error::Code};
 use snafu::{FromString, Report, ResultExt, Snafu};
 use tracing::Instrument;
 use tracing_subscriber::prelude::*;
@@ -114,11 +114,11 @@ pub struct Options {
 
     /// DNS resolution schemes
     #[arg(long, value_name = "scheme", default_value = "mdns,h3", value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
-    dns: Vec<dns::DnsScheme>,
+    dns: Vec<DnsScheme>,
 
     /// Bind patterns for DHTTP/3 connections
     #[arg(long = "interface", value_name = "bind", default_value = "*", hide = cfg!(not(debug_assertions)))]
-    binds: Vec<binds::Bind>,
+    binds: Vec<BindPattern>,
 
     #[arg(value_name = "HOST/URI", long_help = URI_LONG_HELP)]
     host: String,
@@ -148,22 +148,22 @@ pub enum SessionError {
 
     #[snafu(display("failed to set up PTY"))]
     SetupPty {
-        source: ssh3::session::client::SetupError,
+        source: dshell::session::client::SetupError,
     },
 
     #[snafu(display("failed to send exec request"))]
     Exec {
-        source: ssh3::session::client::SetupError,
+        source: dshell::session::client::SetupError,
     },
 
     #[snafu(display("failed to send shell request"))]
     Shell {
-        source: ssh3::session::client::SetupError,
+        source: dshell::session::client::SetupError,
     },
 
     #[snafu(display("session IO relay failed"))]
     Run {
-        source: ssh3::session::client::RunError,
+        source: dshell::session::client::RunError,
     },
 }
 
@@ -172,12 +172,12 @@ pub enum SessionError {
 pub enum ForwardError {
     #[snafu(display("failed to bind local forward listener"))]
     BindLocalForward {
-        source: ssh3::forward::client::BindLocalForwardError,
+        source: dshell::forward::client::BindLocalForwardError,
     },
 
     #[snafu(display("failed to request remote forward"))]
     RequestRemoteForward {
-        source: ssh3::forward::client::RequestRemoteForwardError,
+        source: dshell::forward::client::RequestRemoteForwardError,
     },
 
     #[snafu(display("failed to bind dynamic forward listener"))]
@@ -207,6 +207,49 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     guard
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ShutdownSignal {
+    Interrupt,
+    Terminate,
+}
+
+impl ShutdownSignal {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Interrupt => "interrupt",
+            Self::Terminate => "terminate",
+        }
+    }
+}
+
+async fn shutdown_signal() -> ShutdownSignal {
+    #[cfg(unix)]
+    {
+        let terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
+        match terminate {
+            Ok(mut terminate) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => ShutdownSignal::Interrupt,
+                    _ = terminate.recv() => ShutdownSignal::Terminate,
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %snafu::Report::from_error(&error),
+                    "failed to install terminate signal handler"
+                );
+                let _ = tokio::signal::ctrl_c().await;
+                ShutdownSignal::Interrupt
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        ShutdownSignal::Interrupt
+    }
+}
+
 pub async fn run(options: Options) -> Result<(), Error> {
     let _guard = init_tracing();
 
@@ -219,7 +262,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     };
 
     let connect_result = connect::connect(&config).await?;
-    let _binds_guard = connect_result.binds_guard;
+    let _endpoint = connect_result.endpoint;
     let connection = connect_result.connection;
     let conversation = Arc::new(connect_result.conversation);
 
@@ -241,7 +284,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     }
 
     // -R remote forwards
-    let mut remote_mappings: Vec<ssh3::forward::client::RemoteForwardEstablished> = Vec::new();
+    let mut remote_mappings: Vec<dshell::forward::client::RemoteForwardEstablished> = Vec::new();
     for spec in &config.remote_forwards {
         let established = spec
             .request(&conversation)
@@ -252,7 +295,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     if !remote_mappings.is_empty() {
         let conv = conversation.clone();
         forward_tasks.spawn(
-            ssh3::forward::client::accept_forwarded_channels(conv, remote_mappings)
+            dshell::forward::client::accept_forwarded_channels(conv, remote_mappings)
                 .instrument(tracing::info_span!("channel_acceptor")),
         );
     }
@@ -273,27 +316,27 @@ pub async fn run(options: Options) -> Result<(), Error> {
     // Open a session channel on a dedicated QUIC stream.
     let (ch_reader, ch_writer) = conversation
         .open_channel(
-            &ssh3::forward::SessionChannelOpen,
-            ssh3::constants::DEFAULT_MAX_MESSAGE_SIZE,
+            &dshell::forward::SessionChannelOpen,
+            dshell::constants::DEFAULT_MAX_MESSAGE_SIZE,
         )
         .await
         .map_err(|e| SessionError::OpenChannel {
             source: snafu::Whatever::without_source(e.to_string()),
         })?;
 
-    let channel = ssh3::conversation::channel::SshChannel::new(ch_reader, ch_writer);
-    let mut session = ssh3::session::client::ClientSession::new(channel);
+    let channel = dshell::conversation::channel::SshChannel::new(ch_reader, ch_writer);
+    let mut session = dshell::session::client::ClientSession::new(channel);
 
     // PTY request
     if options.pseudo {
         let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-        let pty_req = ssh3::session::PtyRequest {
+        let pty_req = dshell::session::PtyRequest {
             term_type: "xterm-256color".into(),
-            width_cols: h3x::varint::VarInt::from(cols as u32),
-            height_rows: h3x::varint::VarInt::from(rows as u32),
-            width_px: h3x::varint::VarInt::from_u32(0),
-            height_px: h3x::varint::VarInt::from_u32(0),
-            terminal_modes: ssh3::codec::SshBytes::from(Vec::new()),
+            width_cols: dhttp::h3x::varint::VarInt::from(cols as u32),
+            height_rows: dhttp::h3x::varint::VarInt::from(rows as u32),
+            width_px: dhttp::h3x::varint::VarInt::from_u32(0),
+            height_px: dhttp::h3x::varint::VarInt::from_u32(0),
+            terminal_modes: dshell::codec::SshBytes::from(Vec::new()),
         };
         session
             .request_pty(&pty_req)
@@ -318,13 +361,11 @@ pub async fn run(options: Options) -> Result<(), Error> {
     // tokio runtime shutdown (tokio::io::stdin uses spawn_blocking which
     // cannot be cancelled and hangs the runtime Drop).
     let interactive = options.pseudo && std::io::stdin().is_terminal();
-    let _raw_guard = if interactive {
+    let _raw_guard = interactive.then(|| {
         crossterm::terminal::enable_raw_mode()
             .map(|()| RawModeGuard)
             .ok()
-    } else {
-        None
-    };
+    });
 
     let exit_result = if interactive {
         let resize = sigwinch_stream();
@@ -359,8 +400,8 @@ pub async fn run(options: Options) -> Result<(), Error> {
             "session ended, keeping connection alive for port forwarding"
         );
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!("received interrupt, shutting down forwarding");
+            signal = shutdown_signal() => {
+                tracing::info!(signal = signal.as_str(), "received shutdown signal, shutting down forwarding");
             }
             // All forward tasks completed on their own (unlikely for listeners,
             // but handles the case where they all fail).
@@ -375,11 +416,11 @@ pub async fn run(options: Options) -> Result<(), Error> {
     connection.close(Code::H3_NO_ERROR, "");
 
     let exit_code = match exit_result {
-        Some(ssh3::session::client::ExitResult::Status(code)) => {
+        Some(dshell::session::client::ExitResult::Status(code)) => {
             tracing::debug!(exit_code = code, "remote process exited");
             i32::try_from(code).unwrap_or(1)
         }
-        Some(ssh3::session::client::ExitResult::Signal {
+        Some(dshell::session::client::ExitResult::Signal {
             signal_name,
             core_dumped,
         }) => {
@@ -405,14 +446,14 @@ pub async fn run(options: Options) -> Result<(), Error> {
 /// Run a dynamic SOCKS5 forward: bind a local TCP listener and, for each
 /// accepted connection, open a "socks5" channel to the server. The server
 /// handles SOCKS5 negotiation and connects to the final destination.
-async fn run_dynamic_forward<M>(
+async fn run_dynamic_forward<S>(
     spec: DynamicForward,
-    conversation: Arc<ssh3::conversation::Conversation<M>>,
+    conversation: Arc<dshell::conversation::Conversation<S>>,
 ) -> Result<std::convert::Infallible, ForwardError>
 where
-    M: ssh3::conversation::ManageSessionStream + 'static,
-    M::StreamReader: 'static,
-    M::StreamWriter: 'static,
+    S: dhttp::h3x::webtransport::Session + 'static,
+    S::StreamReader: 'static,
+    S::StreamWriter: 'static,
 {
     let bind_addr = match spec.host.as_str() {
         "" | "*" => "0.0.0.0",
@@ -440,8 +481,8 @@ where
             async move {
                 let channel_result = conv
                     .open_channel(
-                        &ssh3::forward::Socks5ChannelOpen,
-                        ssh3::constants::DEFAULT_MAX_MESSAGE_SIZE,
+                        &dshell::forward::Socks5ChannelOpen,
+                        dshell::constants::DEFAULT_MAX_MESSAGE_SIZE,
                     )
                     .await;
 
@@ -458,9 +499,9 @@ where
 
                 let (local_reader, local_writer) = stream.into_split();
                 let s2ch =
-                    tokio::spawn(ssh3::forward::relay(local_reader, ch_writer).in_current_span());
+                    tokio::spawn(dshell::forward::relay(local_reader, ch_writer).in_current_span());
                 let ch2s =
-                    tokio::spawn(ssh3::forward::relay(ch_reader, local_writer).in_current_span());
+                    tokio::spawn(dshell::forward::relay(ch_reader, local_writer).in_current_span());
                 let _ = tokio::join!(s2ch, ch2s);
             }
             .instrument(tracing::info_span!("socks5_conn", %peer)),

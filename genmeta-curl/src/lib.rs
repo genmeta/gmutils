@@ -1,29 +1,30 @@
 use std::{
     convert::Infallible,
     io::IsTerminal,
-    mem,
     path::PathBuf,
     pin::pin,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use async_compression::tokio::bufread::{DeflateDecoder, GzipDecoder, ZstdDecoder};
 use clap::Parser;
-use dhttp_home::identity::Name;
-use genmeta_common::{
-    dns::{self},
-    h3_client::{self, SetupH3ClientError},
-    id,
-};
-use h3x::{
-    client::Client,
-    endpoint::{ConnectError as EndpointConnectError, QuicEndpoint, binds},
-    hyper::SendMessageError,
-    message::stream::{InitialMessageStreamError, MessageStreamError, WriteStream},
-    pool::ConnectError,
+use dhttp::{
+    ddns::resolvers::DnsScheme,
+    dquic::binds::BindPattern,
+    endpoint::Endpoint,
+    h3x::{
+        dhttp::message::{
+            InitialMessageStreamError, MessageReader, MessageStreamError, MessageWriter,
+        },
+        hyper::SendMessageError,
+    },
+    home::{self, DhttpHome, identity::IdentityProfile},
+    message::IntoUri,
+    name::DhttpName as Name,
 };
 use http::{Method, Request, StatusCode, Uri, header::USER_AGENT};
-use snafu::{OptionExt, ResultExt, Snafu, ensure};
+use snafu::{IntoError, OptionExt, ResultExt, Snafu, ensure};
 use tokio::{
     fs,
     io::{self, AsyncRead, AsyncWrite, AsyncWriteExt},
@@ -32,6 +33,7 @@ use tracing_subscriber::prelude::*;
 
 /// Maximum number of redirects to follow (same default as curl since 8.3.0)
 const MAX_REDIRS_DEFAULT: u32 = 30;
+const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 5;
 
 /// Supported content encodings for --compressed
 const ACCEPT_ENCODING: &str = "deflate, gzip, zstd";
@@ -87,8 +89,10 @@ pub struct Options {
     raw: bool,
 
     /// Maximum time allowed for connection in seconds
-    #[arg(long)]
-    connect_timeout: Option<u64>,
+    ///
+    /// Use 0 to disable the timeout.
+    #[arg(long, default_value_t = DEFAULT_CONNECT_TIMEOUT_SECS)]
+    connect_timeout: u64,
 
     /// Client identity for DHTTP/3 connections
     #[arg(short, long, value_name = "client_identity")]
@@ -108,11 +112,11 @@ pub struct Options {
 
     /// DNS resolution schemes
     #[arg(long, value_name = "scheme", default_value = "mdns,h3", value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
-    dns: Vec<dns::DnsScheme>,
+    dns: Vec<DnsScheme>,
 
     /// Bind patterns for DHTTP/3 connections
     #[arg(long = "interface", value_name = "bind", default_value = "*", hide = cfg!(not(debug_assertions)))]
-    binds: Vec<binds::Bind>,
+    binds: Vec<BindPattern>,
 
     /// Make the operation more talkative
     #[arg(short, long)]
@@ -130,23 +134,39 @@ pub struct Options {
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 pub enum Error {
-    #[snafu(display("missing authority in URI"))]
+    #[snafu(display("missing authority in uri"))]
     MissingAuthority {},
 
-    #[snafu(display("failed to expand identity name in URI"))]
-    ExpandNameInUri { source: id::ExpandNameInUriError },
-
-    #[snafu(transparent)]
-    LoadHomeAndIdentity {
-        source: id::LoadHomeAndIdentityError,
+    #[snafu(display("failed to normalize dhttp uri"))]
+    NormalizeUri {
+        source: dhttp::message::IntoUriError,
     },
 
-    #[snafu(transparent)]
-    SetupH3Client { source: SetupH3ClientError },
+    #[snafu(display("failed to construct normalized request uri"))]
+    ConstructRequestUri { source: http::uri::InvalidUriParts },
+
+    #[snafu(display("failed to locate dhttp config"))]
+    LocateDhttpHome { source: home::LocateDhttpHomeError },
+
+    #[snafu(display("failed to load explicit identity `{name}`"))]
+    LoadExplicitIdentity {
+        name: Name<'static>,
+        source: dhttp::home::identity::ssl::ResolveIdentityProfileError,
+    },
+
+    #[snafu(display("failed to load identity certificate and key"))]
+    LoadIdentitySsl {
+        source: dhttp::home::identity::ssl::LoadIdentityError,
+    },
+
+    #[snafu(display("failed to build dhttp endpoint"))]
+    BuildEndpoint {
+        source: dhttp::endpoint::BuildEndpointError,
+    },
 
     #[snafu(display("failed to connect to server"))]
     Connect {
-        source: ConnectError<EndpointConnectError>,
+        source: dhttp::endpoint::ConnectError,
     },
 
     #[snafu(display("connection timed out"))]
@@ -202,16 +222,6 @@ enum ParseHeaderError {
     MissingKey { input: String },
     #[snafu(display("missing header value in `{input}`"))]
     MissingValue { input: String },
-}
-
-impl Options {
-    #[allow(clippy::result_large_err)]
-    fn expand_name_in_uri(&mut self, self_name: Option<&Name<'_>>) -> Result<(), Error> {
-        ensure!(self.uri.authority().is_some(), error::MissingAuthoritySnafu);
-        self.uri = id::expand_name_in_uri(self.uri.clone(), self_name)
-            .context(error::ExpandNameInUriSnafu)?;
-        Ok(())
-    }
 }
 
 fn parse_header(s: &str) -> Result<(String, String), ParseHeaderError> {
@@ -409,36 +419,77 @@ fn init_tracing(options: &Options) -> tracing_appender::non_blocking::WorkerGuar
     guard
 }
 
-/// Load identity, set up bind interfaces, build DNS resolvers, and construct
-/// the H3 client.
-async fn setup_client(
-    options: &mut Options,
-) -> Result<
-    (
-        Client<QuicEndpoint>,
-        Option<dhttp_home::identity::IdentityHome>,
-        Duration,
-        h3x::endpoint::BindsGuard,
-    ),
-    Error,
-> {
-    let id = if options.anonymous {
-        None
-    } else {
-        id::load_home_and_identity(
-            options.id.is_some(),
-            options
-                .id
-                .as_ref()
-                .map(|id| (&"command line option" as &dyn std::fmt::Display, id.clone())),
-        )
-        .await?
+async fn load_identity_profile(options: &Options) -> Result<Option<IdentityProfile>, Error> {
+    if options.anonymous {
+        return Ok(None);
+    }
+
+    let home = match DhttpHome::load_from_environment() {
+        Ok(home) => home,
+        Err(source) if options.id.is_none() => {
+            tracing::warn!(
+                error = %snafu::Report::from_error(&source),
+                "failed to locate dhttp config, using anonymous endpoint"
+            );
+            return Ok(None);
+        }
+        Err(source) => return Err(error::LocateDhttpHomeSnafu.into_error(source)),
     };
 
-    // Expand ~ in URI using loaded identity (--id > default identity)
-    options.expand_name_in_uri(id.as_ref().map(|id| id.name()))?;
+    if let Some(name) = &options.id {
+        tracing::debug!(%name, "trying to load command line identity");
+        return home
+            .resolve_identity_profile(name.clone())
+            .await
+            .context(error::LoadExplicitIdentitySnafu { name: name.clone() })
+            .map(Some);
+    }
 
-    let binds = binds::Binds::new(mem::take(&mut options.binds));
+    match home.resolve_default_identity_profile().await {
+        Ok(identity) => {
+            tracing::debug!(name = %identity.name(), "using default identity");
+            Ok(Some(identity))
+        }
+        Err(source) => {
+            tracing::debug!(
+                error = %snafu::Report::from_error(&source),
+                "failed to load default identity, using anonymous endpoint"
+            );
+            Ok(None)
+        }
+    }
+}
+
+fn normalize_cli_uri(
+    uri: Uri,
+    self_name: Option<&dhttp::name::DhttpName<'_>>,
+) -> Result<Uri, Error> {
+    let uri = uri.into_uri(self_name).context(error::NormalizeUriSnafu)?;
+
+    let mut parts = uri.into_parts();
+    if parts.scheme.is_none() && parts.authority.is_some() && parts.path_and_query.is_none() {
+        parts.scheme = Some(http::uri::Scheme::HTTPS);
+        parts.path_and_query = Some(http::uri::PathAndQuery::from_static("/"));
+    }
+
+    Uri::from_parts(parts).context(error::ConstructRequestUriSnafu)
+}
+
+/// Load identity, expand the URI, and construct the DHTTP endpoint.
+async fn setup_client(
+    options: &mut Options,
+) -> Result<(Arc<Endpoint>, Option<IdentityProfile>, Duration), Error> {
+    let identity_profile = load_identity_profile(options).await?;
+
+    // Normalize DHTTP shorthand in URI using loaded identity (--id > default identity).
+    options.uri = normalize_cli_uri(
+        options.uri.clone(),
+        identity_profile.as_ref().map(|id| id.name()),
+    )?;
+    ensure!(
+        options.uri.authority().is_some(),
+        error::MissingAuthoritySnafu
+    );
 
     // TODO(-4/-6): the previous address-family filter here (applied post-
     // expansion on `BindUri`s) was a no-op in practice — it restricted the
@@ -448,19 +499,35 @@ async fn setup_client(
     // `Bind` pattern level (e.g. drop binds whose explicit family tag
     // mismatches the requested `-4`/`-6`) rather than post-expansion when
     // it's needed again.
-    let h3_setup = h3_client::setup_h3_client()
-        .binds(&binds)
-        .dns_schemes(&options.dns)
-        .maybe_identity(id.as_ref())
-        .call()
-        .await?;
+    let identity = match &identity_profile {
+        Some(profile) => Some(Arc::new(
+            profile
+                .load_identity()
+                .await
+                .context(error::LoadIdentitySslSnafu)?,
+        )),
+        None => None,
+    };
 
-    let connect_timeout = options
-        .connect_timeout
-        .map(Duration::from_secs)
-        .unwrap_or(Duration::MAX);
+    let mut builder = Endpoint::builder()
+        .bind(Arc::new(options.binds.clone()))
+        .maybe_identity(identity);
+    for scheme in options.dns.iter().copied() {
+        builder = builder.dns(scheme);
+    }
+    let endpoint = Arc::new(builder.build().await.context(error::BuildEndpointSnafu)?);
 
-    Ok((h3_setup.client, id, connect_timeout, h3_setup.binds_guard))
+    let connect_timeout = connect_timeout_from_secs(options.connect_timeout);
+
+    Ok((endpoint, identity_profile, connect_timeout))
+}
+
+fn connect_timeout_from_secs(seconds: u64) -> Duration {
+    if seconds == 0 {
+        Duration::MAX
+    } else {
+        Duration::from_secs(seconds)
+    }
 }
 
 /// Build the HTTP request builder with method, headers, and user-agent.
@@ -488,7 +555,7 @@ fn build_request_builder(uri: &Uri, method: &Method, options: &Options) -> http:
 /// Send the request body (data, file upload, or empty) and close the stream.
 async fn send_request_body(
     request_builder: http::request::Builder,
-    request_stream: &mut WriteStream,
+    request_stream: &mut MessageWriter,
     options: &Options,
     current_method: &Method,
     redirect_count: u32,
@@ -526,7 +593,7 @@ async fn send_request_body(
                 .flush()
                 .await
                 .context(error::UploadFileSnafu { path: path.clone() })?;
-            tracing::warn!(path = %path.display(), redirect_count, "Skipping file upload body on redirect (stream cannot be re-read)");
+            tracing::warn!(path = %path.display(), redirect_count, "skipping file upload body on redirect");
         } else {
             let request = request_builder
                 .body(String::new())
@@ -583,14 +650,14 @@ fn resolve_redirect(
         _ => current_method.clone(),
     };
 
-    tracing::debug!(location = location_str, "Following redirect");
+    tracing::debug!(location = location_str, "following redirect");
 
     Ok(Some((new_uri, new_method)))
 }
 
 /// Stream the response body to a file or stdout, optionally decompressing.
 async fn stream_response_body(
-    mut response_stream: h3x::message::stream::ReadStream,
+    mut response_stream: MessageReader,
     decompress: bool,
     content_encoding: &str,
     output: Option<&PathBuf>,
@@ -633,7 +700,7 @@ async fn stream_response_body(
 /// Process the final response: stream body and optionally print `--write-out`.
 #[allow(clippy::too_many_arguments)]
 async fn process_final_response(
-    response_stream: h3x::message::stream::ReadStream,
+    response_stream: MessageReader,
     response_headers: &http::HeaderMap,
     options: &Options,
     status: StatusCode,
@@ -682,11 +749,11 @@ async fn process_final_response(
 
 /// Connect to the server (with timeout) and open the initial message streams.
 async fn connect_and_open_streams(
-    client: &Client<QuicEndpoint>,
+    client: &Endpoint,
     uri: &Uri,
     connect_timeout: Duration,
     timing: &mut Timing,
-) -> Result<(h3x::message::stream::ReadStream, WriteStream), Error> {
+) -> Result<(MessageReader, MessageWriter), Error> {
     let connect_fut = async {
         client
             .connect(
@@ -717,7 +784,7 @@ async fn check_redirect(
     current_uri: &Uri,
     current_method: &Method,
     redirect_count: u32,
-    response_stream: &mut h3x::message::stream::ReadStream,
+    response_stream: &mut MessageReader,
 ) -> Result<Option<(Uri, Method)>, Error> {
     if !options.location || !status.is_redirection() || status == StatusCode::NOT_MODIFIED {
         return Ok(None);
@@ -746,7 +813,7 @@ fn print_verbose_response(response: &http::response::Parts) {
 /// Receive the response head, record first-byte timing, and optionally print
 /// verbose details.
 async fn receive_response_head(
-    response_stream: &mut h3x::message::stream::ReadStream,
+    response_stream: &mut MessageReader,
     timing: &mut Timing,
     verbose: bool,
 ) -> Result<http::response::Parts, Error> {
@@ -766,7 +833,7 @@ async fn receive_response_head(
 
 pub async fn run(mut options: Options) -> Result<(), Error> {
     let _guard = init_tracing(&options);
-    let (client, _id, connect_timeout, _watcher) = setup_client(&mut options).await?;
+    let (client, _id, connect_timeout) = setup_client(&mut options).await?;
 
     // Determine effective method (may change across redirects).
     let initial_method = options.request.clone().unwrap_or_else(|| match &options {
@@ -834,4 +901,30 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn connect_timeout_zero_disables_timeout() {
+        assert_eq!(connect_timeout_from_secs(0), Duration::MAX);
+    }
+
+    #[test]
+    fn connect_timeout_uses_seconds() {
+        assert_eq!(connect_timeout_from_secs(5), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn normalize_cli_uri_expands_bare_authority_to_https_root() {
+        let uri = "reimu.pilot~".parse::<http::Uri>().unwrap();
+
+        let normalized = normalize_cli_uri(uri, None).unwrap();
+
+        assert_eq!(normalized.to_string(), "https://reimu.pilot.dhttp.net/");
+    }
 }

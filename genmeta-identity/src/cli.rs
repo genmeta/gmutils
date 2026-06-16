@@ -1,23 +1,28 @@
+pub mod flow;
 pub mod prompt;
 pub mod validator;
 
-use std::{borrow::Cow, fmt::Debug, io::IsTerminal, ops::Deref};
+use std::{io::IsTerminal, ops::Deref};
 
 use clap::Parser;
-use dhttp_home::{
-    DhttpHome,
-    identity::{
-        Name,
-        default::{DefaultConfigFile, LoadDefaultConfigError, SaveDefaultConfigError},
-        ssl::{ListIdentitiesError, LoadCertError, LoadIdentityError, SaveIdentityError},
+use dhttp::{
+    certificate::CertificateChainKey,
+    home::{
+        DhttpHome,
+        identity::{
+            settings::{DhttpSettingsFile, LoadDhttpSettingsError, SaveDhttpSettingsError},
+            ssl::{
+                ListIdentityProfilesError, LoadCertsError, LoadIdentityError, LoadKeyError,
+                ResolveIdentityProfileError, SaveIdentityError,
+            },
+        },
     },
+    name::DhttpName as Name,
 };
-use futures::TryStreamExt;
 use indicatif::ProgressStyle;
 use rankey::EncodePem;
 use snafu::{ResultExt, Snafu, Whatever, whatever};
 use tokio::io;
-use tracing::{Instrument, info_span};
 use tracing_indicatif::{IndicatifLayer, span_ext::IndicatifSpanExt};
 use tracing_subscriber::{
     EnvFilter, filter::LevelFilter, prelude::__tracing_subscriber_SubscriberExt,
@@ -25,15 +30,9 @@ use tracing_subscriber::{
 };
 
 use crate::{
-    DEFAULT_CERT_SERVER_BASE_URL, REGISTERABLE_SUFFIXES,
-    cert_server::{
-        self, CertServer, LoginResponse, RegisterResponse, RenewResponse, ResignResponse,
-    },
-    cli::prompt::{
-        InquireResultExt, prompt_available_email, prompt_available_name,
-        prompt_confirm_set_as_default_name, prompt_login_catpcha, prompt_register_catpcha,
-        prompt_select_default_identity, prompt_select_identities, prompt_suffix,
-    },
+    CERT_SERVER_BASE_URL,
+    cert_server::{self, CertServer},
+    cli::prompt::InquireResultExt,
 };
 
 #[derive(Debug, Snafu)]
@@ -45,15 +44,31 @@ pub enum Error {
     #[snafu(transparent)]
     SaveIdentity { source: SaveIdentityError },
     #[snafu(transparent)]
-    LoadDefaultConfig { source: LoadDefaultConfigError },
+    LoadDefaultConfig { source: LoadDhttpSettingsError },
     #[snafu(transparent)]
-    SaveDefaultConfig { source: SaveDefaultConfigError },
+    SaveDefaultConfig { source: SaveDhttpSettingsError },
     #[snafu(transparent)]
-    ListIdentities { source: ListIdentitiesError },
+    ListIdentities { source: ListIdentityProfilesError },
+    #[snafu(transparent)]
+    ResolveIdentityProfile { source: ResolveIdentityProfileError },
+    #[snafu(transparent)]
+    LoadCert { source: LoadCertsError },
+    #[snafu(transparent)]
+    LoadKey { source: LoadKeyError },
     #[snafu(transparent)]
     LoadIdentity { source: LoadIdentityError },
     #[snafu(transparent)]
-    LoadCert { source: LoadCertError },
+    ParseIdentityTarget {
+        source: flow::target::ParseIdentityTargetError,
+    },
+    #[snafu(transparent)]
+    ParseIdentityKind {
+        source: flow::kind::ParseIdentityKindError,
+    },
+    #[snafu(transparent)]
+    LocalIdentity {
+        source: crate::local_identity::Error,
+    },
 
     #[snafu(display("failed to generate private key"))]
     GenerateKey {
@@ -72,7 +87,7 @@ pub enum Error {
 
     #[snafu(transparent)]
     LocateDhttpHome {
-        source: dhttp_home::LocateDhttpHomeError,
+        source: dhttp::home::LocateDhttpHomeError,
     },
 
     #[snafu(transparent)]
@@ -88,6 +103,15 @@ impl snafu::FromString for Error {
 
     fn with_source(source: Self::Source, message: String) -> Self {
         Whatever::with_source(source, message).into()
+    }
+}
+
+fn certificate_chain_key_from_identity(
+    identity: &dhttp::identity::Identity,
+) -> Result<Option<CertificateChainKey>, Error> {
+    match identity.dhttp_subject_key_identifier() {
+        Ok(ski) => Ok(Some(ski.chain().clone())),
+        Err(_) => Ok(None),
     }
 }
 
@@ -114,15 +138,6 @@ fn generate_private_key_and_csr(
     Ok((key_pem, csr_pem))
 }
 
-#[tracing::instrument(skip(cert_server))]
-async fn acquire_captcha(cert_server: &CertServer, email: &str) -> Result<(), Error> {
-    tracing::Span::current().pb_set_message(&format!("Requesting captcha for {email}..."));
-    cert_server.send_captcha(email).await?;
-    tracing::Span::current()
-        .pb_set_finish_message(&format!("Captcha successfully sent to {email}."));
-    Ok(())
-}
-
 async fn save_identity(
     dhttp_home: &DhttpHome,
     name: &Name<'_>,
@@ -135,7 +150,7 @@ async fn save_identity(
         identity_dir.display()
     ));
     dhttp_home
-        .identity_home(name.borrow())
+        .identity_profile(name.borrow())
         .save_identity(cert_pem, key_pem)
         .await?;
     tracing::Span::current().pb_set_finish_message(&format!(
@@ -144,175 +159,22 @@ async fn save_identity(
     ));
     Ok(())
 }
-fn display_cert_info(cert_der: &[u8], indent: &str) -> Result<(), Error> {
-    let (_, cert) = x509_parser::parse_x509_certificate(cert_der)
-        .whatever_context::<_, Error>("failed to parse certificate")?;
-    println!("{}Serial:     {}", indent, cert.serial);
-    println!("{}Subject:    {}", indent, cert.subject());
-    println!("{}Not Before: {}", indent, cert.validity().not_before);
-    println!("{}Not After:  {}", indent, cert.validity().not_after);
-    if let Ok(Some(san)) = cert.subject_alternative_name() {
-        let dns_names: Vec<_> = san
-            .value
-            .general_names
-            .iter()
-            .filter_map(|gn| match gn {
-                x509_parser::prelude::GeneralName::DNSName(n) => Some(*n),
-                _ => None,
-            })
-            .collect();
-        if !dns_names.is_empty() {
-            println!("{}SANs:       {}", indent, dns_names.join(", "));
-        }
-    }
-    if let Ok(Some(ku)) = cert.key_usage() {
-        let flags: Vec<&str> = [
-            ku.value.digital_signature().then_some("digital_signature"),
-            ku.value.non_repudiation().then_some("non_repudiation"),
-            ku.value.key_encipherment().then_some("key_encipherment"),
-            ku.value.data_encipherment().then_some("data_encipherment"),
-            ku.value.key_agreement().then_some("key_agreement"),
-            ku.value.key_cert_sign().then_some("key_cert_sign"),
-            ku.value.crl_sign().then_some("crl_sign"),
-            ku.value.encipher_only().then_some("encipher_only"),
-            ku.value.decipher_only().then_some("decipher_only"),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        if !flags.is_empty() {
-            println!("{}Key Usage:  {}", indent, flags.join(", "));
-        }
-    }
-    if let Ok(Some(eku)) = cert.extended_key_usage() {
-        let purposes: Vec<&str> = [
-            eku.value.any.then_some("any"),
-            eku.value.server_auth.then_some("server_auth"),
-            eku.value.client_auth.then_some("client_auth"),
-            eku.value.code_signing.then_some("code_signing"),
-            eku.value.email_protection.then_some("email_protection"),
-            eku.value.time_stamping.then_some("time_stamping"),
-            eku.value.ocsp_signing.then_some("ocsp_signing"),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        if !purposes.is_empty() {
-            println!("{}EKU:        {}", indent, purposes.join(", "));
-        }
-    }
-    Ok(())
-}
-
-#[tracing::instrument(skip(cert_server))]
-async fn resign_identity(
-    dhttp_home: &DhttpHome,
-    cert_server: &CertServer,
-    access_token: &str,
-    name: &Name<'_>,
-) -> Result<(), Error> {
-    let (key_pem, csr_pem) = generate_private_key_and_csr(name)?;
-
-    tracing::Span::current().pb_set_message(&format!("Re-signing certificate for {name}..."));
-    let ResignResponse { cert_pem } = cert_server
-        .resign_cert(access_token, name.as_full(), &csr_pem)
-        .await?;
-
-    save_identity(dhttp_home, name, key_pem.as_bytes(), &cert_pem).await?;
-
-    Ok(())
-}
-
-#[tracing::instrument(skip(cert_server))]
-async fn resign_identities(
-    dhttp_home: &DhttpHome,
-    cert_server: &CertServer,
-    access_token: &str,
-    names: &[Name<'_>],
-) -> Result<(), Error> {
-    tracing::Span::current().pb_set_style(
-        &ProgressStyle::with_template("{span_child_prefix}{spinner} {msg} {pos}/{len}")
-            .expect("BUG: static progress bar template is valid"),
-    );
-    tracing::Span::current().pb_set_length(names.len() as u64);
-    tracing::Span::current().pb_set_message("Re-signing certificates for selected identities...");
-    for name in names {
-        resign_identity(dhttp_home, cert_server, access_token, name).await?;
-        tracing::Span::current().pb_inc(1);
-    }
-    tracing::Span::current()
-        .pb_set_finish_message("All selected identities have been successfully re-signed.");
-    Ok(())
-}
-
-#[tracing::instrument(skip(cert_server))]
-async fn renew_identity(
-    dhttp_home: &DhttpHome,
-    cert_server: &CertServer,
-    access_token: &str,
-    name: &Name<'_>,
-) -> Result<(), Error> {
-    let (key_pem, csr_pem) = generate_private_key_and_csr(name)?;
-
-    tracing::Span::current().pb_set_message(&format!("Renewing certificate for {name}..."));
-    let RenewResponse { cert_pem } = cert_server
-        .renew_cert(access_token, name.as_full(), &csr_pem)
-        .await?;
-
-    save_identity(dhttp_home, name, key_pem.as_bytes(), &cert_pem).await?;
-
-    Ok(())
-}
-
-#[tracing::instrument(skip(cert_server))]
-async fn renew_identities(
-    dhttp_home: &DhttpHome,
-    cert_server: &CertServer,
-    access_token: &str,
-    names: &[Name<'_>],
-) -> Result<(), Error> {
-    tracing::Span::current().pb_set_style(
-        &ProgressStyle::with_template("{span_child_prefix}{spinner} {msg} {pos}/{len}")
-            .expect("BUG: static progress bar template is valid"),
-    );
-    tracing::Span::current().pb_set_length(names.len() as u64);
-    tracing::Span::current().pb_set_message("Renewing certificates for selected identities...");
-    for name in names {
-        renew_identity(dhttp_home, cert_server, access_token, name).await?;
-        tracing::Span::current().pb_inc(1);
-    }
-    tracing::Span::current()
-        .pb_set_finish_message("All selected identities have been successfully renewed.");
-    Ok(())
-}
 
 #[tracing::instrument()]
-async fn load_current_default_config(
-    dhttp_home: &DhttpHome,
-) -> Result<Option<DefaultConfigFile>, Error> {
-    let path = dhttp_home.identity_default_config_path();
-    tracing::Span::current().pb_set_message(&format!(
-        "Loading default configuration from {}...",
-        path.display()
-    ));
-    let (message, result) = match dhttp_home.load_identity_default_config().await {
-        Ok(default_config) => ("Default configuration loaded.", Ok(Some(default_config))),
-        Err(LoadDefaultConfigError::Io { source, .. })
+async fn load_current_settings(dhttp_home: &DhttpHome) -> Result<Option<DhttpSettingsFile>, Error> {
+    match dhttp_home.load_settings().await {
+        Ok(default_config) => Ok(Some(default_config)),
+        Err(LoadDhttpSettingsError::Io { source, .. })
             if source.kind() == io::ErrorKind::NotFound =>
         {
-            ("No default configuration found.", Ok(None))
+            Ok(None)
         }
-        Err(error) => (
-            "Error loading default configuration.",
-            Err(Error::from(error)),
-        ),
-    };
-    tracing::Span::current().pb_set_finish_message(message);
-    result
+        Err(error) => Err(Error::from(error)),
+    }
 }
 
 #[tracing::instrument()]
-async fn save_default_config(default_config: &DefaultConfigFile) -> Result<(), Error> {
+async fn save_settings(default_config: &DhttpSettingsFile) -> Result<(), Error> {
     let path = default_config.path().display();
     tracing::Span::current().pb_set_message(&format!("Saving default configuration to {path}..."));
     default_config.save().await?;
@@ -321,272 +183,178 @@ async fn save_default_config(default_config: &DefaultConfigFile) -> Result<(), E
     Ok(())
 }
 
-async fn ensure_default_identity(dhttp_home: &DhttpHome, names: &[Name<'_>]) -> Result<(), Error> {
-    let default_config = load_current_default_config(dhttp_home).await?;
-    if default_config
-        .as_ref()
-        .and_then(|c| c.config().name())
-        .is_some()
+async fn resolve_default_target_name(dhttp_home: &DhttpHome) -> Result<Name<'static>, Error> {
+    match load_current_settings(dhttp_home)
+        .await?
+        .and_then(|config| config.settings().default_identity_name().cloned())
+    {
+        Some(name) => Ok(name),
+        None => whatever!(
+            "No default identity configured. Use `genmeta identity default <name>` to set one."
+        ),
+    }
+}
+
+async fn ensure_replace_local_allowed(
+    dhttp_home: &DhttpHome,
+    name: Name<'_>,
+    replace_local: bool,
+) -> Result<(), Error> {
+    if !dhttp_home
+        .identity_profile_exists_exactly(name.clone())
+        .await
     {
         return Ok(());
     }
-
-    let selected = if names.len() == 1 {
-        let confirmed = prompt_confirm_set_as_default_name(names[0].borrow())
-            .await
-            .or_not_tty(|| {
-                tracing::info!(
-                    "no TTY, automatically setting {} as default identity",
-                    names[0]
-                );
-                true
-            })?;
-        if confirmed {
-            Some(names[0].to_owned())
-        } else {
-            None
-        }
-    } else {
-        let owned: Vec<Name<'static>> = names.iter().map(|n| n.to_owned()).collect();
-        prompt_select_default_identity(owned.clone())
-            .await
-            .or_not_tty(|| {
-                tracing::info!(
-                    "no TTY, automatically setting {} as default identity",
-                    owned[0]
-                );
-                Some(owned[0].clone())
-            })?
-    };
-
-    if let Some(name) = selected {
-        let mut config = default_config.unwrap_or_else(|| dhttp_home.new_identity_default_config());
-        config.config_mut().set_name(name);
-        save_default_config(&config).await?;
+    if replace_local {
+        return Ok(());
     }
 
-    Ok(())
+    let message = format!(
+        "Replace the local identity saved at {}?",
+        dhttp_home.join_identity_name(name.clone()).display()
+    );
+    let confirmed =
+        prompt::sync(move || inquire::Confirm::new(&message).with_default(false).prompt())
+            .await
+            .require_interactive("--replace-local")?;
+    if confirmed {
+        Ok(())
+    } else {
+        whatever!("local identity was not replaced")
+    }
 }
 
-#[tracing::instrument()]
-async fn query_exist_names_list(dhttp_home: &DhttpHome) -> Result<Vec<Name<'static>>, Error> {
-    tracing::Span::current().pb_set_message("Querying existing identities...");
-    let (message, result) = match dhttp_home.identities().try_collect::<Vec<_>>().await {
-        Ok(list) => (
-            format!("Found {} existing identities.", list.len()),
-            Ok(list),
-        ),
-        Err(ListIdentitiesError::ReadDir { source, .. })
-            if source.kind() == io::ErrorKind::NotFound =>
-        {
-            ("No existing identities found.".to_string(), Ok(vec![]))
+async fn acquire_verify_code(
+    cert_server: &CertServer,
+    email: &str,
+    provided: Option<String>,
+) -> Result<String, Error> {
+    match flow::email::EmailVerificationAction::from_verify_code(provided) {
+        flow::email::EmailVerificationAction::ReuseProvidedCode(code) => Ok(code),
+        flow::email::EmailVerificationAction::SendAndPrompt => {
+            flow::progress::run_with_spinner(
+                "Sending verification code...",
+                cert_server.send_email_verification(email),
+            )
+            .await?;
+            prompt::prompt_verify_code()
+                .await
+                .require_interactive("--verify-code")
+                .map_err(Error::from)
         }
-        Err(error) => ("Error querying existing identities".to_string(), Err(error)),
+    }
+}
+
+fn parse_identity_name(identity: &str) -> Result<Name<'static>, Error> {
+    Ok(flow::target::IdentityTarget::parse(identity)?.into_dhttp_name())
+}
+
+async fn login_with_email(
+    cert_server: &CertServer,
+    domain: Option<&Name<'_>>,
+    email: Option<String>,
+    verify_code: Option<String>,
+) -> Result<String, Error> {
+    let email = match email {
+        Some(email) => email,
+        None => prompt::prompt_email()
+            .await
+            .require_interactive("--email")?,
     };
-    tracing::Span::current().pb_set_finish_message(&message);
-    Ok(result?)
+    let verify_code = acquire_verify_code(cert_server, &email, verify_code).await?;
+    if let Some(domain) = domain {
+        Ok(flow::progress::run_with_spinner(
+            "Verifying with email...",
+            cert_server.domain_login(domain.as_full(), &email, &verify_code),
+        )
+        .await?
+        .access_token)
+    } else {
+        Ok(flow::progress::run_with_spinner(
+            "Verifying with email...",
+            cert_server.login(&email, &verify_code),
+        )
+        .await?
+        .access_token)
+    }
 }
 
 /// Create a new identity
 #[derive(Parser, Debug, Clone)]
 pub struct Create {
-    #[arg(short, long)]
+    #[arg(value_name = "IDENTITY")]
     pub name: Option<String>,
-    #[arg(short, long)]
-    pub suffix: Option<String>,
+    #[arg(long)]
+    pub kind: Option<String>,
+    #[arg(long)]
+    pub replace_local: bool,
+    #[arg(long)]
+    pub device_name: Option<String>,
     #[arg(short, long)]
     pub email: Option<String>,
-    #[arg(long)]
-    pub captcha: Option<String>,
-}
-
-impl Create {
-    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
-        let suffix: String = match self.suffix.as_ref() {
-            Some(suffix) if !REGISTERABLE_SUFFIXES.contains(&suffix.as_str()) => {
-                whatever!("`{suffix}` is not a registerable suffix")
-            }
-            Some(suffix) => suffix.into(),
-            None => prompt_suffix()
-                .await
-                .require_interactive("--suffix")?
-                .into(),
-        };
-        let username = match self.name.clone() {
-            Some(name) => name,
-            None => prompt_available_name(cert_server.clone(), suffix.clone())
-                .await
-                .require_interactive("--name")?,
-        };
-        let email: String = match self.email.clone() {
-            Some(email) => email,
-            None => prompt_available_email(cert_server.clone())
-                .await
-                .require_interactive("--email")?,
-        };
-        let name = Name::try_from_str_full(format!("{username}.{suffix}{}", Name::SUFFIX))
-            .whatever_context::<_, Error>("invalid identity name format")?;
-        let (key_pem, csr_pem) = generate_private_key_and_csr(&name)?;
-
-        acquire_captcha(cert_server, &email).await?;
-
-        // Non-interactive mode when --captcha is provided
-        let RegisterResponse { cert_pem } = match self.captcha.clone() {
-            Some(captcha) => {
-                cert_server
-                    .register(&username, &email, &captcha, &csr_pem)
-                    .await?
-            }
-            None => prompt_register_catpcha(
-                cert_server.clone(),
-                username.clone(),
-                email.clone(),
-                csr_pem,
-            )
-            .await
-            .require_interactive("--captcha")?,
-        };
-
-        save_identity(dhttp_home, &name, key_pem.as_bytes(), &cert_pem)
-            .instrument(info_span!("save_identity"))
-            .await?;
-
-        ensure_default_identity(dhttp_home, &[name.borrow()]).await?;
-
-        Ok(())
-    }
+    #[arg(long, conflicts_with = "verify_code")]
+    pub send_code: bool,
+    #[arg(long, value_name = "VERIFY_CODE", hide = true)]
+    pub verify_code: Option<String>,
+    #[arg(long, value_enum)]
+    pub auth: Option<crate::auth::AuthMethod>,
 }
 
 /// Apply identity
 #[derive(Parser, Debug, Clone)]
 pub struct Apply {
+    #[arg(value_name = "IDENTITY")]
+    pub name: Option<String>,
+    #[arg(long = "default", conflicts_with = "name")]
+    pub use_default: bool,
+    #[arg(long)]
+    pub kind: Option<String>,
+    #[arg(long)]
+    pub replace_local: bool,
+    #[arg(long)]
+    pub device_name: Option<String>,
     #[arg(short, long)]
     pub email: Option<String>,
-    #[arg(short, long)]
-    pub identities: Option<Vec<Name<'static>>>,
-    #[arg(long)]
-    pub captcha: Option<String>,
-}
-
-impl Apply {
-    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
-        let email = match self.email.clone() {
-            Some(email) => email,
-            None => prompt::prompt_email()
-                .await
-                .require_interactive("--email")?,
-        };
-
-        acquire_captcha(cert_server, &email).await?;
-        let LoginResponse {
-            access_token,
-            domains,
-        } = match self.captcha.clone() {
-            Some(captcha) => cert_server.login(&email, &captcha).await?,
-            None => prompt_login_catpcha(cert_server.clone(), email)
-                .await
-                .require_interactive("--captcha")?,
-        };
-
-        let names: Cow<'_, [Name<'static>]> = match self.identities.as_deref() {
-            Some(identities) => identities.into(),
-            None => prompt_select_identities(domains)
-                .await
-                .require_interactive("--identities")?
-                .into(),
-        };
-        resign_identities(dhttp_home, cert_server, &access_token, &names).await?;
-        ensure_default_identity(dhttp_home, &names).await?;
-
-        Ok(())
-    }
+    #[arg(long, conflicts_with = "verify_code")]
+    pub send_code: bool,
+    #[arg(long, value_name = "VERIFY_CODE", hide = true)]
+    pub verify_code: Option<String>,
+    #[arg(long, value_enum)]
+    pub auth: Option<crate::auth::AuthMethod>,
 }
 
 /// Renew identities
 #[derive(Parser, Debug, Clone)]
 pub struct Renew {
+    #[arg(value_name = "IDENTITY")]
+    pub name: Option<String>,
+    #[arg(long = "default", conflicts_with = "name")]
+    pub use_default: bool,
+    #[arg(long)]
+    pub device_name: Option<String>,
     #[arg(short, long)]
     pub email: Option<String>,
-    #[arg(short, long)]
-    pub identities: Option<Vec<Name<'static>>>,
-    #[arg(long)]
-    pub captcha: Option<String>,
-}
-
-impl Renew {
-    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
-        let email = match self.email.clone() {
-            Some(email) => email,
-            None => prompt::prompt_email()
-                .await
-                .require_interactive("--email")?,
-        };
-
-        acquire_captcha(cert_server, &email).await?;
-        let LoginResponse {
-            access_token,
-            domains,
-        } = match self.captcha.clone() {
-            Some(captcha) => cert_server.login(&email, &captcha).await?,
-            None => prompt_login_catpcha(cert_server.clone(), email)
-                .await
-                .require_interactive("--captcha")?,
-        };
-
-        let names: Cow<'_, [Name<'static>]> = match self.identities.as_deref() {
-            Some(identities) => identities.into(),
-            None => prompt_select_identities(domains)
-                .await
-                .require_interactive("--identities")?
-                .into(),
-        };
-        renew_identities(dhttp_home, cert_server, &access_token, &names).await?;
-        ensure_default_identity(dhttp_home, &names).await?;
-
-        Ok(())
-    }
+    #[arg(long, conflicts_with = "verify_code")]
+    pub send_code: bool,
+    #[arg(long, value_name = "VERIFY_CODE", hide = true)]
+    pub verify_code: Option<String>,
+    #[arg(long, value_enum)]
+    pub auth: Option<crate::auth::AuthMethod>,
 }
 
 /// Set default identity
 #[derive(Parser, Debug, Clone)]
 pub struct Default {
-    pub name: Option<Name<'static>>,
+    #[arg(value_name = "IDENTITY")]
+    pub name: Option<String>,
+    #[arg(long)]
+    pub allow_nonready: bool,
 }
 
 impl Default {
-    pub async fn run(
-        &self,
-        dhttp_home: &DhttpHome,
-        _cert_server: &CertServer,
-    ) -> Result<(), Error> {
-        match self.name.as_ref() {
-            None => {
-                // Show info for current default identity
-                let current_config = load_current_default_config(dhttp_home).await?;
-                let name = match current_config.and_then(|c| c.config().name().cloned()) {
-                    Some(n) => n,
-                    None => whatever!(
-                        "no default identity configured, use `genmeta identity default <name>` to set one"
-                    ),
-                };
-                let identity = dhttp_home.load_identity(name.borrow()).await?;
-                println!("{}", identity.name());
-                let certs = identity.certs().await?;
-                let der = certs[0].as_ref();
-                display_cert_info(der, "  ")?;
-                Ok(())
-            }
-            Some(name) => {
-                // Configure name as default
-                dhttp_home.load_identity(name.borrow()).await?;
-                let current_config = load_current_default_config(dhttp_home).await?;
-                let mut current_config = current_config.unwrap_or_else(|| {
-                    DefaultConfigFile::new(dhttp_home.identity_default_config_path())
-                });
-                current_config.config_mut().set_name(name.to_owned());
-                save_default_config(&current_config).await
-            }
-        }
+    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
+        flow::default_identity::run(self, dhttp_home, cert_server).await
     }
 }
 
@@ -604,31 +372,24 @@ impl List {
         dhttp_home: &DhttpHome,
         _cert_server: &CertServer,
     ) -> Result<(), Error> {
-        let names = query_exist_names_list(dhttp_home).await?;
-        let default_config = load_current_default_config(dhttp_home).await?;
+        let default_config = load_current_settings(dhttp_home).await?;
         let default_name = default_config
             .as_ref()
-            .and_then(|c| c.config().name().cloned());
-        if names.is_empty() {
-            println!("No local identities found.");
+            .and_then(|c| c.settings().default_identity_name().cloned());
+        let inventory = flow::local::load_inventory(
+            dhttp_home,
+            default_name.as_ref().map(|name| name.borrow()),
+        )
+        .await?;
+        if inventory.groups.is_empty() {
+            flow::transcript::print_line("No local identities found");
         } else {
-            for name in &names {
-                let marker = if default_name
-                    .as_ref()
-                    .map(|d| d.borrow() == name.borrow())
-                    .unwrap_or(false)
-                {
-                    "* "
-                } else {
-                    "  "
-                };
-                println!("{marker}{name}");
-                if self.verbose {
-                    let identity = dhttp_home.load_identity(name.borrow()).await?;
-                    let certs = identity.certs().await?;
-                    let der = certs[0].as_ref();
-                    display_cert_info(der, "    ")?;
-                }
+            flow::transcript::print_block(&flow::output::render_inventory(
+                &inventory,
+                std::io::stdout().is_terminal(),
+            ));
+            if self.verbose {
+                tracing::debug!("verbose identity list details are not implemented yet");
             }
         }
         Ok(())
@@ -639,7 +400,8 @@ impl List {
 #[derive(Parser, Debug, Clone)]
 pub struct Info {
     /// Identity name (defaults to current default)
-    pub name: Option<Name<'static>>,
+    #[arg(value_name = "IDENTITY")]
+    pub name: Option<String>,
 }
 
 impl Info {
@@ -648,24 +410,28 @@ impl Info {
         dhttp_home: &DhttpHome,
         _cert_server: &CertServer,
     ) -> Result<(), Error> {
+        let default_name = load_current_settings(dhttp_home)
+            .await?
+            .and_then(|config| config.settings().default_identity_name().cloned());
         let name: Name<'static> = match self.name.as_ref() {
-            Some(n) => n.to_owned(),
-            None => {
-                let cfg = load_current_default_config(dhttp_home).await?;
-                match cfg.and_then(|c| c.config().name().cloned()) {
-                    Some(n) => n,
-                    None => whatever!(
-                        "no default identity configured, use `genmeta identity default <name>` to set one"
-                    ),
-                }
-            }
+            Some(n) => parse_identity_name(n)?,
+            None => match default_name.clone() {
+                Some(n) => n,
+                None => whatever!(
+                    "No default identity configured. Use `genmeta identity default <name>` to set one."
+                ),
+            },
         };
-        let identity = dhttp_home.load_identity(name.borrow()).await?;
-        println!("{}", identity.name());
-
-        let certs = identity.certs().await?;
-        let der = certs[0].as_ref();
-        display_cert_info(der, "  ")?;
+        let summary = flow::local::load_summary(
+            dhttp_home,
+            name.borrow(),
+            default_name.as_ref().map(|default| default.borrow()),
+        )
+        .await?;
+        flow::transcript::print_block(&flow::output::format_info(
+            &summary,
+            std::io::stdout().is_terminal(),
+        ));
 
         Ok(())
     }
@@ -685,14 +451,14 @@ pub enum Options {
 impl Options {
     pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
         match self {
-            Options::Create(cmd) => cmd.run(dhttp_home, cert_server).await,
-            Options::Apply(cmd) => cmd.run(dhttp_home, cert_server).await,
-            Options::Renew(cmd) => cmd.run(dhttp_home, cert_server).await,
-            Options::Default(cmd) => cmd.run(dhttp_home, cert_server).await,
-            Options::Info(cmd) => cmd.run(dhttp_home, cert_server).await,
-            Options::List(cmd) => cmd.run(dhttp_home, cert_server).await,
+            Options::Create(cmd) => flow::run_create(cmd, dhttp_home, cert_server).await,
+            Options::Apply(cmd) => flow::run_apply(cmd, dhttp_home, cert_server).await,
+            Options::Renew(cmd) => flow::run_renew(cmd, dhttp_home, cert_server).await,
+            Options::Default(cmd) => flow::run_default(cmd, dhttp_home, cert_server).await,
+            Options::Info(cmd) => flow::run_info(cmd, dhttp_home, cert_server).await,
+            Options::List(cmd) => flow::run_list(cmd, dhttp_home, cert_server).await,
             Options::Version {} => {
-                println!("{}", env!("CARGO_PKG_VERSION"));
+                flow::transcript::print_line(env!("CARGO_PKG_VERSION"));
                 Ok(())
             }
         }
@@ -725,13 +491,200 @@ fn init_tracing() {
         .init();
 }
 
+fn cert_server_base_url() -> &'static str {
+    CERT_SERVER_BASE_URL
+}
+
 pub async fn run(options: Options) -> Result<(), Error> {
     init_tracing();
 
     let dhttp_home = DhttpHome::load_from_environment()?;
 
     _ = rustls::crypto::ring::default_provider().install_default();
-    let cert_server = CertServer::new(DEFAULT_CERT_SERVER_BASE_URL)?;
+    let cert_server = CertServer::new(cert_server_base_url())?;
 
     options.run(&dhttp_home, &cert_server).await
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{CommandFactory, Parser};
+    use dhttp::{identity::Identity, name::Name};
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+
+    use super::{Create, Options, cert_server_base_url, certificate_chain_key_from_identity};
+    use crate::CERT_SERVER_BASE_URL;
+
+    #[test]
+    fn cert_server_base_url_uses_compile_time_bootstrap_url() {
+        let url = cert_server_base_url();
+        assert_eq!(url, CERT_SERVER_BASE_URL);
+    }
+
+    fn local_identity_with_dhttp_ski() -> Identity {
+        Identity::new(
+            Name::try_from("client.example.com.dhttp.net").unwrap(),
+            vec![CertificateDer::from(
+                include_bytes!("../tests/fixtures/valid.der").to_vec(),
+            )],
+            PrivateKeyDer::Pkcs8(b"dummy".to_vec().into()),
+        )
+    }
+
+    #[test]
+    fn certificate_chain_key_from_identity_reads_dhttp_ski() {
+        let identity = local_identity_with_dhttp_ski();
+        let chain_key = certificate_chain_key_from_identity(&identity)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            chain_key.kind(),
+            dhttp::certificate::CertificateChainKind::Primary
+        );
+        assert_eq!(chain_key.sequence().get(), 0);
+        assert_eq!(chain_key.to_string(), "primary:0");
+    }
+
+    #[test]
+    fn create_rejects_auth_auto() {
+        let error = Options::try_parse_from([
+            "genmeta",
+            "create",
+            "alice.smith",
+            "--kind",
+            "primary",
+            "--auth",
+            "auto",
+        ])
+        .unwrap_err();
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("--auth"), "{rendered}");
+        assert!(rendered.contains("auto"), "{rendered}");
+    }
+
+    #[test]
+    fn verify_code_is_hidden_from_help_but_still_parses() {
+        let mut command = Create::command();
+        let help = command.render_long_help().to_string();
+        assert!(!help.contains("--verify-code"), "{help}");
+
+        assert!(
+            Options::try_parse_from([
+                "genmeta",
+                "create",
+                "alice.smith",
+                "--kind",
+                "primary",
+                "--auth",
+                "email",
+                "--email",
+                "user@example.com",
+                "--verify-code",
+                "000000",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn default_accepts_allow_nonready() {
+        assert!(
+            Options::try_parse_from(["genmeta", "default", "alice.smith", "--allow-nonready",])
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn renew_rejects_kind_and_sequence_flags() {
+        for (flag, value) in [("--kind", "primary"), ("--sequence", "1")] {
+            let error = Options::try_parse_from(["genmeta", "renew", "alice.smith", flag, value])
+                .unwrap_err();
+            let rendered = error.to_string();
+            assert!(rendered.contains(flag), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn create_and_apply_reject_sequence_flag() {
+        for command in ["create", "apply"] {
+            let error = Options::try_parse_from([
+                "genmeta",
+                command,
+                "alice.smith",
+                "--kind",
+                "primary",
+                "--sequence",
+                "1",
+            ])
+            .unwrap_err();
+            let rendered = error.to_string();
+            assert!(rendered.contains("--sequence"), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn create_and_apply_accept_replace_local_flag() {
+        for command in ["create", "apply"] {
+            assert!(
+                Options::try_parse_from([
+                    "genmeta",
+                    command,
+                    "alice.smith",
+                    "--kind",
+                    "primary",
+                    "--replace-local",
+                ])
+                .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn apply_and_renew_accept_default_flag() {
+        assert!(
+            Options::try_parse_from(["genmeta", "apply", "--default", "--kind", "primary",])
+                .is_ok()
+        );
+        assert!(Options::try_parse_from(["genmeta", "renew", "--default"]).is_ok());
+    }
+
+    #[test]
+    fn send_code_is_available_and_mutually_exclusive_with_verify_code() {
+        assert!(
+            Options::try_parse_from([
+                "genmeta",
+                "create",
+                "alice.smith",
+                "--kind",
+                "primary",
+                "--auth",
+                "email",
+                "--email",
+                "user@example.com",
+                "--send-code",
+            ])
+            .is_ok()
+        );
+
+        let error = Options::try_parse_from([
+            "genmeta",
+            "create",
+            "alice.smith",
+            "--kind",
+            "primary",
+            "--auth",
+            "email",
+            "--email",
+            "user@example.com",
+            "--send-code",
+            "--verify-code",
+            "000000",
+        ])
+        .unwrap_err();
+        let rendered = error.to_string();
+        assert!(rendered.contains("--send-code"), "{rendered}");
+        assert!(rendered.contains("--verify-code"), "{rendered}");
+    }
 }

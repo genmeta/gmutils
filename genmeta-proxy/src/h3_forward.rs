@@ -1,7 +1,6 @@
-use h3x::{
-    client::Client,
-    endpoint::QuicEndpoint,
-    message::stream::{MessageStreamError, WriteStream},
+use dhttp::{
+    endpoint::Endpoint,
+    h3x::dhttp::message::{MessageStreamError, MessageWriter},
 };
 use http::uri::{self, Uri};
 use hyper::{
@@ -51,23 +50,23 @@ fn rewrite_request_for_h3(mut req: Request<Incoming>) -> Request<Incoming> {
 /// Close the write stream after request is fully sent.
 ///
 /// Failure to close is non-fatal — the response may already be readable.
-async fn close_write_stream(mut write_stream: WriteStream) {
+async fn close_write_stream(mut write_stream: MessageWriter) {
     if let Err(e) = write_stream.close().await {
         tracing::warn!(error = %snafu::Report::from_error(&e), "failed to close h3 request stream");
     }
 }
 
-/// Forward a plain HTTP request to a genmeta domain via DHTTP/3.
+/// Forward a plain HTTP request to a DHTTP identity domain via DHTTP/3.
 pub async fn forward_h3(
     req: Request<Incoming>,
-    client: &Client<QuicEndpoint>,
+    client: &Endpoint,
 ) -> Result<Response<impl Body<Data = bytes::Bytes, Error = MessageStreamError> + use<>>, Error> {
     let authority = req
         .uri()
         .authority()
         .ok_or_else(|| {
             <Error as snafu::FromString>::without_source(
-                "missing authority in DHTTP/3 request URI".to_string(),
+                "missing authority in dhttp/3 request uri".to_string(),
             )
         })?
         .clone();
@@ -76,7 +75,7 @@ pub async fn forward_h3(
         .connect(authority.clone())
         .await
         .whatever_context::<_, Error>(format!(
-            "failed to connect to DHTTP/3 server `{authority}`"
+            "failed to connect to dhttp/3 server `{authority}`"
         ))?;
 
     let (mut read_stream, mut write_stream) = connection

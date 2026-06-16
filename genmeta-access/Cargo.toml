@@ -1,17 +1,14 @@
 [package]
 name = "genmeta-access"
 description = "access control rule management"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
 clap = { workspace = true }
-firewall-base = { workspace = true, features = ["cli"] }
-firewall-db = { workspace = true }
-genmeta-common = { workspace = true, features = ["error"] }
-dhttp-home = { workspace = true }
+dhttp = { workspace = true }
+dhttp-access = { workspace = true, features = ["cli", "orm", "migration"] }
 sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
-sea-orm-migration = { workspace = true, features = ["sqlx-sqlite"] }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

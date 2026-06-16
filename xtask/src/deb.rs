@@ -1,19 +1,22 @@
+#![allow(dead_code)]
+
 use bollard::{
     Docker,
-    models::{ContainerConfig, ContainerCreateBody, HostConfig, Mount, MountTypeEnum},
+    models::{ContainerConfig, ContainerCreateBody, HostConfig, Mount, MountType},
     query_parameters::{
         CommitContainerOptionsBuilder, CreateContainerOptionsBuilder, CreateImageOptionsBuilder,
     },
 };
 use futures_util::StreamExt;
-use snafu::{ResultExt, Whatever};
+use snafu::{Report, ResultExt, Whatever};
 use tracing::{Instrument, info, info_span};
 
 use crate::{
-    DebTarget,
+    BuildProfile, DebTarget,
     container::{
-        CARGO_HOME, RUSTUP_HOME, Sibling, ZIG_GLIBC_VERSION, cargo_cache_mounts, check_docker,
-        exec_in_container, force_remove_container, host_uid_gid, remove_container_if_exists,
+        CARGO_HOME, RUSTUP_HOME, Sibling, ZIG_GLIBC_VERSION, cargo_cache_mounts,
+        cargo_config_from_siblings, check_docker, dhttp_bootstrap_from_env, exec_in_container,
+        force_remove_container, host_uid_gid, install_cargo_config, remove_container_if_exists,
         resolve_siblings, start_container,
     },
     package_version, target_dir,
@@ -29,9 +32,16 @@ const BASE_IMAGE: &str = "debian:bookworm";
 
 /// Image tag prefix for genmeta deb builds.
 const IMAGE_TAG_PREFIX: &str = "gmutils-deb-v2";
+const BUILD_ATTEMPTS: usize = 2;
 
 /// Relative path from workspace root to the debian packaging source files.
 const DEBIAN_PKG_DIR: &str = "xtask/deb";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebArtifact {
+    pub target: String,
+    pub path: std::path::PathBuf,
+}
 
 fn deb_arch(triple: &str) -> Result<&'static str, Whatever> {
     match triple {
@@ -56,6 +66,34 @@ fn gnu_arch(triple: &str) -> Result<&'static str, Whatever> {
 
 // (shared docker/container helpers live in crate::container)
 
+/// Ensure the Debian base image is available locally.
+///
+/// Docker's pull API contacts the registry even when the tag already exists
+/// locally. Packaging should only depend on the registry when the local image is
+/// missing; otherwise a transient registry timeout can fail an otherwise
+/// reproducible local build.
+async fn ensure_base_image(docker: &Docker) -> Result<(), Whatever> {
+    if docker.inspect_image(BASE_IMAGE).await.is_ok() {
+        info!(image = BASE_IMAGE, "base image already exists");
+        return Ok(());
+    }
+
+    let mut pull_stream = docker.create_image(
+        Some(
+            CreateImageOptionsBuilder::default()
+                .from_image(BASE_IMAGE)
+                .build(),
+        ),
+        None,
+        None,
+    );
+    while let Some(result) = pull_stream.next().await {
+        result.whatever_context(format!("failed to pull base image {BASE_IMAGE}"))?;
+    }
+
+    Ok(())
+}
+
 /// Ensure the build image exists for the given target triple.
 /// If not, pull the base image, create a container, install toolchain, and commit.
 async fn ensure_image(docker: &Docker, triple: &str) -> Result<String, Whatever> {
@@ -70,19 +108,7 @@ async fn ensure_image(docker: &Docker, triple: &str) -> Result<String, Whatever>
 
     info!(tag, "building image");
 
-    // Ensure base image exists (pull if needed)
-    let mut pull_stream = docker.create_image(
-        Some(
-            CreateImageOptionsBuilder::default()
-                .from_image(BASE_IMAGE)
-                .build(),
-        ),
-        None,
-        None,
-    );
-    while let Some(result) = pull_stream.next().await {
-        result.whatever_context(format!("failed to pull base image {BASE_IMAGE}"))?;
-    }
+    ensure_base_image(docker).await?;
 
     // Create temp container from base
     let container_name = format!("{CARGO_NAME}-xtask-setup-{triple}");
@@ -187,8 +213,16 @@ chmod -R a+rX {CARGO_HOME} {RUSTUP_HOME}
     Ok(())
 }
 
-pub async fn run(targets: &[DebTarget], siblings: &[std::path::PathBuf]) -> Result<(), Whatever> {
-    info!(target_count = targets.len(), "starting deb dist build");
+pub async fn run(
+    targets: &[DebTarget],
+    profile: BuildProfile,
+    siblings: &[std::path::PathBuf],
+) -> Result<Vec<DebArtifact>, Whatever> {
+    info!(
+        target_count = targets.len(),
+        profile = profile.target_dir_name(),
+        "starting deb dist build"
+    );
     let docker = Docker::connect_with_local_defaults()
         .whatever_context("failed to connect to Docker/Podman")?;
     check_docker(&docker).await?;
@@ -208,22 +242,58 @@ pub async fn run(targets: &[DebTarget], siblings: &[std::path::PathBuf]) -> Resu
         let target_dir = target_dir.clone();
         let siblings = siblings.clone();
         let triple = target.triple();
-        info!(triple, "queued deb target build");
+        info!(
+            triple,
+            profile = profile.target_dir_name(),
+            "queued deb target build"
+        );
         let span = info_span!("deb", triple);
         tasks.spawn(
-            async move { build_one(&docker, triple, &version, &target_dir, &siblings).await }
-                .instrument(span),
+            async move {
+                build_one_with_retry(&docker, triple, &version, &target_dir, profile, &siblings)
+                    .await
+            }
+            .instrument(span),
         );
     }
 
     info!("waiting for deb target builds to finish");
+    let mut artifacts = Vec::new();
     while let Some(result) = tasks.join_next().await {
-        result.whatever_context("deb build task panicked")??;
+        artifacts.push(result.whatever_context("deb build task panicked")??);
     }
+    artifacts.sort_by(|left, right| left.target.cmp(&right.target));
 
     info!("finished deb dist build");
 
-    Ok(())
+    Ok(artifacts)
+}
+
+async fn build_one_with_retry(
+    docker: &Docker,
+    triple: &str,
+    version: &str,
+    target_dir: &std::path::Path,
+    profile: BuildProfile,
+    siblings: &[Sibling],
+) -> Result<DebArtifact, Whatever> {
+    for attempt in 1..=BUILD_ATTEMPTS {
+        match build_one(docker, triple, version, target_dir, profile, siblings).await {
+            Ok(artifact) => return Ok(artifact),
+            Err(error) if attempt < BUILD_ATTEMPTS => {
+                let report = Report::from_error(&error);
+                tracing::warn!(
+                    %triple,
+                    attempt,
+                    error = %report,
+                    "deb target build failed, retrying"
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("build attempts loop must return")
 }
 
 async fn build_one(
@@ -231,15 +301,17 @@ async fn build_one(
     triple: &str,
     version: &str,
     target_dir: &std::path::Path,
+    profile: BuildProfile,
     siblings: &[Sibling],
-) -> Result<(), Whatever> {
+) -> Result<DebArtifact, Whatever> {
     let arch = deb_arch(triple)?;
     let gnu = gnu_arch(triple)?;
     info!(triple, "ensuring build image");
     let image = ensure_image(docker, triple).await?;
 
     let deb_name = format!("{PACKAGE_NAME}_{version}-1_{arch}.deb");
-    let out_dir = target_dir.join(triple).join("release").join("deb");
+    let profile_dir = profile.target_dir_name();
+    let out_dir = target_dir.join(triple).join(profile_dir).join("deb");
     tokio::fs::create_dir_all(&out_dir)
         .await
         .whatever_context(format!("failed to create {}", out_dir.display()))?;
@@ -250,7 +322,7 @@ async fn build_one(
     let mut mounts = vec![Mount {
         target: Some("/workspace".into()),
         source: Some(workspace_dir.to_string_lossy().into_owned()),
-        typ: Some(MountTypeEnum::BIND),
+        typ: Some(MountType::BIND),
         ..Default::default()
     }];
     // User-requested sibling crates, bind-mounted at /{basename} so that
@@ -260,28 +332,15 @@ async fn build_one(
         mounts.push(Mount {
             target: Some(format!("/{}", sibling.basename)),
             source: Some(sibling.host.to_string_lossy().into_owned()),
-            typ: Some(MountTypeEnum::BIND),
+            typ: Some(MountType::BIND),
             ..Default::default()
         });
     }
     mounts.extend(cargo_cache_mounts());
 
-    // Forward ROOT_CA into the container if set on the host.
-    let root_ca_env = if let Ok(host_path) = std::env::var("ROOT_CA") {
-        let host_path = std::path::Path::new(&host_path)
-            .canonicalize()
-            .whatever_context(format!("ROOT_CA path not found: {host_path}"))?;
-        mounts.push(Mount {
-            target: Some("/root-ca/root.crt".into()),
-            source: Some(host_path.to_string_lossy().into_owned()),
-            typ: Some(MountTypeEnum::BIND),
-            read_only: Some(true),
-            ..Default::default()
-        });
-        "export ROOT_CA=/root-ca/root.crt && "
-    } else {
-        ""
-    };
+    let bootstrap = dhttp_bootstrap_from_env()?;
+    mounts.extend(bootstrap.mounts);
+    let cargo_config = cargo_config_from_siblings(siblings);
 
     let container_name = format!("{CARGO_NAME}-xtask-deb-{triple}");
     info!(triple, container = %container_name, "creating build container");
@@ -316,16 +375,22 @@ async fn build_one(
         version,
         arch,
         gnu,
-        root_ca_env,
+        profile,
+        &bootstrap.exports,
+        cargo_config.as_deref(),
     )
     .await;
     force_remove_container(docker, &container_id).await;
     result?;
 
     info!(deb_name, "produced");
-    Ok(())
+    Ok(DebArtifact {
+        target: triple.to_string(),
+        path: out_dir.join(deb_name),
+    })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn build_one_inner(
     docker: &Docker,
     container_id: &str,
@@ -333,7 +398,9 @@ async fn build_one_inner(
     version: &str,
     arch: &str,
     gnu: &str,
-    root_ca_env: &str,
+    profile: BuildProfile,
+    dhttp_bootstrap_exports: &str,
+    cargo_config: Option<&str>,
 ) -> Result<(), Whatever> {
     start_container(docker, container_id).await?;
     info!(triple, "build container started");
@@ -347,13 +414,16 @@ async fn build_one_inner(
         None,
     )
     .await?;
+    install_cargo_config(docker, container_id, cargo_config).await?;
 
     // dpkg-buildpackage -B builds only Architecture: any packages.
     // -a{arch} sets the host architecture for cross-compilation.
-    // Prepare debian source tree under target/{triple}/release/deb/src/ so that
+    // Prepare debian source tree under target/{triple}/{profile}/deb/src/ so that
     // all temp files and products stay inside target/ (bind-mounted, gitignored).
     // Runs as host uid:gid so files in target/ are owned by the host user.
     let user = host_uid_gid()?;
+    let profile_dir = profile.target_dir_name();
+    let cargo_profile_args = profile.cargo_profile_args().join(" ");
     let build_script = format!(
         r#"set -e
 export HOME=/tmp
@@ -362,12 +432,14 @@ export RUSTUP_HOME={RUSTUP_HOME}
 export CARGO_HOME={CARGO_HOME}
 export TRIPLE={triple}
 export ZIG_TARGET={triple}.{ZIG_GLIBC_VERSION}
+export BUILD_PROFILE={profile_dir}
+export CARGO_PROFILE_ARGS="{cargo_profile_args}"
 export DEB_HOST_MULTIARCH={gnu}
-{root_ca_env}
-SRC=/workspace/target/{triple}/release/deb/src
+{dhttp_bootstrap_exports}
+SRC=/workspace/target/{triple}/{profile_dir}/deb/src
 mkdir -p "$SRC/debian"
 cp -r /workspace/{DEBIAN_PKG_DIR}/. "$SRC/debian/"
-printf '{PACKAGE_NAME} ({version}-1) unstable; urgency=low\n\n  * release {version}\n\n -- Genmeta Tech Limited <support@genmeta.net>  %s\n' \
+printf '{PACKAGE_NAME} ({version}-1) unstable; urgency=low\n\n  * release {version}\n\n -- Genmeta Tech Limited <developer@genmeta.net>  %s\n' \
     "$(date -R)" > "$SRC/debian/changelog"
 cd "$SRC"
 dpkg-buildpackage -B -uc -us -d -a{arch}

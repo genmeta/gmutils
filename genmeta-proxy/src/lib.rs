@@ -1,18 +1,16 @@
-use std::{io::IsTerminal, mem, net::SocketAddr, sync::Arc, time::Duration};
+use std::{io::IsTerminal, net::SocketAddr, sync::Arc, time::Duration};
 
 use clap::Parser;
-use dhttp_home::identity::Name;
-use genmeta_common::{
-    dns,
-    h3_client::{self, SetupH3ClientError},
-    id,
-};
-use h3x::{
-    client::Client,
-    endpoint::{QuicEndpoint, binds},
+use dhttp::{
+    ddns::resolvers::DnsScheme,
+    dquic::binds::BindPattern,
+    endpoint::Endpoint,
+    home::{self, DhttpHome, identity::IdentityProfile},
+    message::IntoUri,
+    name::DhttpName as Name,
 };
 use http_body_util::BodyExt;
-use snafu::{Report, ResultExt, Snafu};
+use snafu::{IntoError, Report, ResultExt, Snafu};
 use tokio::{net::TcpListener, sync::Semaphore, task::JoinSet};
 use tracing::Instrument;
 use tracing_subscriber::prelude::*;
@@ -22,7 +20,7 @@ use tracing_subscriber::prelude::*;
 pub struct Options {
     /// Proxy listen address patterns
     #[arg(long = "listen", value_name = "bind", default_values = ["127.0.0.1:16080", "[::1]:16080"])]
-    pub listens: Vec<binds::Bind>,
+    pub listens: Vec<BindPattern>,
 
     /// Client identity for DHTTP/3 connections
     #[arg(short, long, value_name = "client_identity")]
@@ -34,11 +32,11 @@ pub struct Options {
 
     /// DNS resolution schemes
     #[arg(long, value_name = "scheme", default_values = ["mdns", "h3"], value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
-    pub dns: Vec<dns::DnsScheme>,
+    pub dns: Vec<DnsScheme>,
 
     /// Bind patterns for DHTTP/3 connections
     #[arg(long = "interface", value_name = "bind", default_value = "*", hide = cfg!(not(debug_assertions)))]
-    pub binds: Vec<binds::Bind>,
+    pub binds: Vec<BindPattern>,
 
     /// Show detailed request logging
     #[arg(short, long)]
@@ -56,13 +54,29 @@ pub struct Options {
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
 pub enum Error {
-    #[snafu(transparent)]
-    LoadHomeAndIdentity {
-        source: id::LoadHomeAndIdentityError,
+    #[snafu(display("failed to normalize dhttp uri"))]
+    NormalizeUri {
+        source: dhttp::message::IntoUriError,
     },
 
-    #[snafu(transparent)]
-    SetupH3Client { source: SetupH3ClientError },
+    #[snafu(display("failed to locate dhttp config"))]
+    LocateDhttpHome { source: home::LocateDhttpHomeError },
+
+    #[snafu(display("failed to load explicit identity `{name}`"))]
+    LoadExplicitIdentity {
+        name: Name<'static>,
+        source: dhttp::home::identity::ssl::ResolveIdentityProfileError,
+    },
+
+    #[snafu(display("failed to load identity certificate and key"))]
+    LoadIdentitySsl {
+        source: dhttp::home::identity::ssl::LoadIdentityError,
+    },
+
+    #[snafu(display("failed to build dhttp endpoint"))]
+    BuildEndpoint {
+        source: dhttp::endpoint::BuildEndpointError,
+    },
 
     #[snafu(display("failed to bind proxy listener"))]
     BindListener { source: std::io::Error },
@@ -144,21 +158,23 @@ where
 
 async fn handle_request(
     req: hyper::Request<hyper::body::Incoming>,
-    client: &Client<QuicEndpoint>,
+    client: &Endpoint,
     router: &route::Router,
-    self_name: Option<&Name<'_>>,
 ) -> Result<hyper::Response<BoxBody>, hyper::Error> {
     let route = router.classify(&req);
     tracing::info!(method = %req.method(), uri = %req.uri(), route = ?route, "proxy request");
     match route {
         route::Route::GenmetaPlainHttp { .. } => {
-            // Expand tilde in URI (e.g., reimu.pilot~ → reimu.pilot.genmeta.net,
-            // bare ~ → self identity)
             let mut req = req;
-            match id::expand_name_in_uri(req.uri().clone(), self_name) {
+            let self_name = client.name();
+            match req.uri().clone().into_uri(self_name.as_ref()) {
                 Ok(uri) => *req.uri_mut() = uri,
                 Err(e) => {
-                    tracing::error!(error = %Report::from_error(&e), "failed to expand name in URI");
+                    let error = NormalizeUriSnafu.into_error(e);
+                    tracing::error!(
+                        error = %Report::from_error(&error),
+                        "failed to normalize dhttp uri"
+                    );
                     return Ok(hyper::Response::builder()
                         .status(502)
                         .body(full_body("Bad Gateway"))
@@ -178,7 +194,7 @@ async fn handle_request(
         }
         route::Route::GenmetaConnect { .. } => Ok(hyper::Response::builder()
             .status(502)
-            .body(full_body("HTTPS proxy to .genmeta.net not supported"))
+            .body(full_body("HTTPS proxy to .dhttp.net not supported"))
             .expect("valid static response")),
         route::Route::TunnelConnect { authority } => {
             match tunnel::tunnel_connect(req, authority.as_str()).await {
@@ -246,14 +262,14 @@ fn init_tracing(options: &Options) -> Result<tracing_appender::non_blocking::Wor
 /// Bind TCP listeners on the configured listen addresses.
 async fn bind_listeners(options: &Options) -> Result<Vec<TcpListener>, Error> {
     let mut listeners = Vec::new();
-    for b in &options.listens {
-        let ip = b.host.as_ip_addr().ok_or_else(|| {
+    for bind in &options.listens {
+        let ip = bind.host.as_ip_addr().ok_or_else(|| {
             <Error as snafu::FromString>::without_source(format!(
-                "listen bind `{}` must be a concrete IP address",
-                b.host
+                "listen bind `{}` must be a concrete ip address",
+                bind.host
             ))
         })?;
-        let addr = SocketAddr::new(ip, b.effective_port());
+        let addr = SocketAddr::new(ip, bind.effective_port());
         let listener = TcpListener::bind(addr).await.context(BindListenerSnafu)?;
         tracing::info!(%addr, "proxy listening");
         listeners.push(listener);
@@ -261,48 +277,79 @@ async fn bind_listeners(options: &Options) -> Result<Vec<TcpListener>, Error> {
     Ok(listeners)
 }
 
-pub async fn run(mut options: Options) -> Result<(), Error> {
-    let _guard = init_tracing(&options)?;
+async fn load_identity_profile(options: &Options) -> Result<Option<IdentityProfile>, Error> {
+    if options.anonymous {
+        return Ok(None);
+    }
 
-    let id = if options.anonymous {
-        None
-    } else {
-        id::load_home_and_identity(
-            options.id.is_some(),
-            options
-                .id
-                .as_ref()
-                .map(|id| (&"command line option" as &dyn std::fmt::Display, id.clone())),
-        )
-        .await?
+    let home = match DhttpHome::load_from_environment() {
+        Ok(home) => home,
+        Err(source) if options.id.is_none() => {
+            tracing::warn!(
+                error = %snafu::Report::from_error(&source),
+                "failed to locate dhttp config, using anonymous endpoint"
+            );
+            return Ok(None);
+        }
+        Err(source) => return Err(LocateDhttpHomeSnafu.into_error(source)),
     };
 
-    let binds = binds::Binds::new(mem::take(&mut options.binds));
+    if let Some(name) = &options.id {
+        tracing::debug!(%name, "trying to load command line identity");
+        return home
+            .resolve_identity_profile(name.clone())
+            .await
+            .context(LoadExplicitIdentitySnafu { name: name.clone() })
+            .map(Some);
+    }
 
-    let h3_setup = h3_client::setup_h3_client()
-        .binds(&binds)
-        .dns_schemes(&options.dns)
-        .maybe_identity(id.as_ref())
-        .call()
-        .await?;
+    match home.resolve_default_identity_profile().await {
+        Ok(identity) => {
+            tracing::debug!(name = %identity.name(), "using default identity");
+            Ok(Some(identity))
+        }
+        Err(source) => {
+            tracing::debug!(
+                error = %snafu::Report::from_error(&source),
+                "failed to load default identity, using anonymous endpoint"
+            );
+            Ok(None)
+        }
+    }
+}
 
-    let _binds_guard = h3_setup.binds_guard;
-    let client = h3_setup.client;
+pub async fn run(options: Options) -> Result<(), Error> {
+    let _guard = init_tracing(&options)?;
 
-    let self_name = id.as_ref().map(|id| id.name().clone());
+    let identity_profile = load_identity_profile(&options).await?;
+    let identity = match &identity_profile {
+        Some(profile) => Some(Arc::new(
+            profile
+                .load_identity()
+                .await
+                .context(LoadIdentitySslSnafu)?,
+        )),
+        None => None,
+    };
+
+    let mut builder = Endpoint::builder()
+        .bind(Arc::new(options.binds.clone()))
+        .maybe_identity(identity);
+    for scheme in options.dns.iter().copied() {
+        builder = builder.dns(scheme);
+    }
+    let client = Arc::new(builder.build().await.context(BuildEndpointSnafu)?);
 
     let listeners = bind_listeners(&options).await?;
     let router = Arc::new(route::Router::new());
-    let client = Arc::new(client);
 
     let semaphore = Arc::new(Semaphore::new(1024));
     let mut tasks = JoinSet::new();
     for listener in listeners {
         let client = client.clone();
         let router = router.clone();
-        let self_name = self_name.clone();
         let semaphore = semaphore.clone();
-        tasks.spawn(accept_loop(listener, client, router, self_name, semaphore));
+        tasks.spawn(accept_loop(listener, client, router, semaphore));
     }
 
     while let Some(result) = tasks.join_next().await {
@@ -346,12 +393,10 @@ fn configure_tcp_keepalive(stream: &tokio::net::TcpStream) {
 /// Accept loop for a single TCP listener. Runs until the listener is dropped.
 async fn accept_loop(
     listener: TcpListener,
-    client: Arc<Client<QuicEndpoint>>,
+    client: Arc<Endpoint>,
     router: Arc<route::Router>,
-    self_name: Option<Name<'static>>,
     semaphore: Arc<Semaphore>,
 ) {
-    let self_name = Arc::new(self_name);
     loop {
         let (stream, addr) = match listener.accept().await {
             Ok(accepted) => accepted,
@@ -369,7 +414,6 @@ async fn accept_loop(
         tracing::debug!(%addr, "accepted connection");
         let client = client.clone();
         let router = router.clone();
-        let self_name = self_name.clone();
         let span = tracing::info_span!("conn", %addr);
         // Inherent termination: TCP keepalive detects dead peers (~90s),
         // header_read_timeout closes idle keep-alive connections (120s).
@@ -387,11 +431,7 @@ async fn accept_loop(
                         hyper::service::service_fn(move |req| {
                             let client = client.clone();
                             let router = router.clone();
-                            let self_name = self_name.clone();
-                            async move {
-                                handle_request(req, &client, &router, self_name.as_ref().as_ref())
-                                    .await
-                            }
+                            async move { handle_request(req, &client, &router).await }
                         }),
                     )
                     .with_upgrades()

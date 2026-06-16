@@ -4,7 +4,6 @@ resolver = "3"
 members = [
     "genmeta",
     "genmeta-access",
-    "genmeta-common",
     "genmeta-curl",
     "genmeta-ssh",
     "genmeta-nslookup",
@@ -25,21 +24,16 @@ tokio = { version = "1", features = ["full"] }
 # cli
 clap = { version = "4", features = ["derive"] }
 inquire = "0.9"
-inquire-derive = "0.9"
 indicatif = "0.18"
-rpassword = "7.3"
 whoami = "2"
 
-# debug
-console-subscriber = "0.5"
-
 # network
-gmdns = { git = "ssh://git@github.com/genmeta/gmdns.git", rev = "99e5ee35ae2c3dabbeac57714e9274d9ca006e6b" }
-h3x = { git = "https://github.com/genmeta/h3x.git", branch = "main" }
+h3x = "0.4.0"
 http = "1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
 http-body-util = "0.1"
+urlencoding = "2"
 reqwest = { version = "0.13", default-features = false, features = [
     "charset",
     "http2",
@@ -51,15 +45,15 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 
 # security
-rankey = { git = "ssh://git@github.com/genmeta/rankey.git", rev = "39aaf4fbc774866fadce67ae7eaaf71d1920ba7a" }
+rankey = "0.2.1"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
-x509-parser = "0.14"
+x509-parser = "0.18"
+p384 = "0.14.0-rc.7"
+pkcs8 = { version = "=0.11.0-rc.11", features = ["pem"] }
 
 # serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_cbor = "0.11"
-toml = "1"
 
 # tracing
 tracing = { version = "0.1", default-features = false, features = [
@@ -76,50 +70,37 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 ] }
 tracing-indicatif = { version = "0.3" }
 
-# builder
-bon = "3"
-
 # utils
 base64 = "0.22"
 bytes = "1"
 crossterm = { version = "0.29" }
-dashmap = { version = "6" }
-derive_more = { version = "2" }
 dirs = { version = "6" }
-either = "1"
-globset = "0.4"
-peg = "0.8"
 sea-orm = { version = "1", features = ["runtime-tokio-rustls"] }
-sea-orm-migration = { version = "1", features = ["runtime-tokio-rustls"] }
 snafu = "0.9"
-socket2 = "0.5"
-tokio-util = { version = "0.7" }
+socket2 = "0.6"
+time = "0.3"
 async-compression = { version = "0.4", features = [
     "tokio",
     "gzip",
     "deflate",
     "zstd",
 ] }
-trust-dns-resolver = "0.23.2"
 
 # workspace
-firewall-base = { git = "ssh://git@github.com/genmeta/firewall.git", rev = "85493bbc847cf3e95d54f5b0b7acbf5d3ca85b56" }
-firewall-db = { git = "ssh://git@github.com/genmeta/firewall.git", rev = "85493bbc847cf3e95d54f5b0b7acbf5d3ca85b56" }
-firewall-migration = { git = "ssh://git@github.com/genmeta/firewall.git", rev = "85493bbc847cf3e95d54f5b0b7acbf5d3ca85b56" }
-genmeta-access = { path = "genmeta-access" }
-genmeta-common = { path = "genmeta-common" }
-dhttp-home = { git = "ssh://git@github.com/genmeta/dhttp-home.git", branch = "main" }
-genmeta-curl = { path = "genmeta-curl" }
-genmeta-discover = { path = "genmeta-discover" }
-genmeta-doctor = { path = "genmeta-doctor" }
-genmeta-identity = { path = "genmeta-identity" }
-genmeta-nat = { path = "genmeta-nat" }
-genmeta-nslookup = { path = "genmeta-nslookup" }
-genmeta-ssh = { path = "genmeta-ssh" }
-genmeta-proxy = { path = "genmeta-proxy" }
+dhttp-access = "0.2.0"
+genmeta-access = { path = "genmeta-access", version = "0.2.0" }
+dhttp = "0.2.0"
+genmeta-curl = { path = "genmeta-curl", version = "0.5.0" }
+genmeta-discover = { path = "genmeta-discover", version = "0.3.0" }
+genmeta-doctor = { path = "genmeta-doctor", version = "0.3.0" }
+genmeta-identity = { path = "genmeta-identity", version = "0.2.0" }
+genmeta-nat = { path = "genmeta-nat", version = "0.3.0" }
+genmeta-nslookup = { path = "genmeta-nslookup", version = "0.3.0" }
+genmeta-ssh = { path = "genmeta-ssh", version = "0.6.0" }
+genmeta-proxy = { path = "genmeta-proxy", version = "0.2.0" }
 
-# ssh
-genmeta-ssh-core = { package = "genmeta-ssh", git = "ssh://git@github.com/genmeta/genmeta-ssh.git", rev = "0e3c7130934e493c9a8b7878db0b96163fa1c2d3", features = [
+# DShell
+dshell = { version = "0.4.0", features = [
     "config",
 ] }
 
@@ -129,10 +110,3 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
-
-# Unify h3x: direct dep tracks https://+main to match transitive deps from
-# gmdns and genmeta-ssh-core; this patch redirects to ssh://+rev so exactly
-# one copy of h3x is compiled. The patched source URL must differ from the
-# direct URL (https:// vs ssh://), otherwise cargo rejects the patch.
-[patch."https://github.com/genmeta/h3x.git"]
-h3x = { git = "ssh://git@github.com/genmeta/h3x.git", rev = "6133d31651b31d4b03956946c370b776c203f4c3" }
