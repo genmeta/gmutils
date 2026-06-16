@@ -105,6 +105,11 @@ pub enum Error {
     BuildEndpoint {
         source: dhttp::endpoint::BuildEndpointError,
     },
+
+    #[snafu(display("failed to build dhttp network"))]
+    BuildDhttpNetwork {
+        source: dhttp::ddns::BuildDhttpNetworkWithDnsError,
+    },
 }
 
 #[derive(Debug, snafu::Snafu)]
@@ -329,7 +334,9 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
         // bootstrap STUN endpoint is enough because the STUN changed-address
         // attribute supplies alternate servers for classification.
         .stun_resolver(FirstEndpointResolver::system())
-        .build();
+        .build()
+        .await
+        .context(error::BuildDhttpNetworkSnafu)?;
     let endpoint = Endpoint::builder()
         .bind(bind_patterns)
         .maybe_identity(identity)
