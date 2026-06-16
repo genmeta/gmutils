@@ -329,8 +329,7 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
         // bootstrap STUN endpoint is enough because the STUN changed-address
         // attribute supplies alternate servers for classification.
         .stun_resolver(FirstEndpointResolver::system())
-        .build()
-        .await;
+        .build();
     let endpoint = Endpoint::builder()
         .bind(bind_patterns)
         .maybe_identity(identity)
