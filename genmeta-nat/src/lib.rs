@@ -103,7 +103,7 @@ pub enum Error {
 
     #[snafu(display("failed to build dhttp endpoint"))]
     BuildEndpoint {
-        source: dhttp::endpoint::InvalidEndpointIdentityError,
+        source: dhttp::endpoint::BuildEndpointError,
     },
 }
 
@@ -329,7 +329,8 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
         // bootstrap STUN endpoint is enough because the STUN changed-address
         // attribute supplies alternate servers for classification.
         .stun_resolver(FirstEndpointResolver::system())
-        .build();
+        .build()
+        .await;
     let endpoint = Endpoint::builder()
         .bind(bind_patterns)
         .maybe_identity(identity)

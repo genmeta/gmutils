@@ -61,7 +61,7 @@ pub enum Error {
     },
     #[snafu(display("failed to build dhttp endpoint"))]
     BuildEndpoint {
-        source: dhttp::endpoint::InvalidEndpointIdentityError,
+        source: dhttp::endpoint::BuildEndpointError,
     },
     #[snafu(display("failed to lookup dns records of `{name}`"))]
     LookUp {
