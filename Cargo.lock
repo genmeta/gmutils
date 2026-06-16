@@ -1516,7 +1516,9 @@ dependencies = [
 
 [[package]]
 name = "dhttp"
-version = "0.1.0"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff511421b0de59123d2f7dac10743709adf48a991620d4782f1f71f4d8e20966"
 dependencies = [
  "bon",
  "bytes",
@@ -1537,7 +1539,9 @@ dependencies = [
 
 [[package]]
 name = "dhttp-access"
-version = "0.1.0"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73da9a414cc0264c4511c4a9ba31f275d9d4ae861ace65ec96206e3ac4b38ad1"
 dependencies = [
  "chrono",
  "clap",
@@ -1558,7 +1562,9 @@ dependencies = [
 
 [[package]]
 name = "dhttp-home"
-version = "0.1.0"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecafb614c068796adf0c96af474356d26edec72e0f0ed8d6b7e96489df1e485f"
 dependencies = [
  "dhttp-identity",
  "dirs",
@@ -1573,7 +1579,9 @@ dependencies = [
 
 [[package]]
 name = "dhttp-identity"
-version = "0.1.0"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9006fe9bffd56d64fbe4260182039f104a84d612acdd30ec19a16583bb4ff671"
 dependencies = [
  "bytes",
  "futures",
@@ -1699,9 +1707,9 @@ dependencies = [
 
 [[package]]
 name = "dshell"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23178b3664796029df033e15139b41df9899fb296aaed640090b9ba745ee4bb9"
+checksum = "210e6b448354575feab2fa1f5245a7702c651004a57a0888d4607edc9b7c1bdd"
 dependencies = [
  "base64",
  "bytes",
@@ -1727,7 +1735,9 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "dyns"
-version = "0.3.0"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3c560fa266a789403c88224d3d3ca0a2a50fdce255db43765484ec6c5ba953d"
 dependencies = [
  "base64",
  "bitfield-struct",
@@ -2432,7 +2442,9 @@ dependencies = [
 
 [[package]]
 name = "h3x"
-version = "0.3.1"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbadb89a6ea8f80675b01720854d756e867f35a0e45b438d932ee1e9194ce07a"
 dependencies = [
  "arc-swap",
  "async-channel",
