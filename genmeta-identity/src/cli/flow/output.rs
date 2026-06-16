@@ -388,7 +388,7 @@ reimu.scarlet (not saved locally)\n\
     }
 
     #[test]
-    fn renew_selector_labels_include_parent_root_before_child() {
+    fn renew_chain_key_labels_include_parent_root_before_child() {
         let labels = vec![
             render_choice_label(
                 &InteractiveInventoryChoice::Organization {

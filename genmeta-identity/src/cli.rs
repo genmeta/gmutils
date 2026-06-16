@@ -6,7 +6,7 @@ use std::{io::IsTerminal, ops::Deref};
 
 use clap::Parser;
 use dhttp::{
-    certificate::CertificateChainKind,
+    certificate::CertificateChainKey,
     home::{
         DhttpHome,
         identity::{
@@ -106,38 +106,11 @@ impl snafu::FromString for Error {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ChainSelector {
-    kind: String,
-    sequence: i32,
-}
-
-impl ChainSelector {
-    fn new(kind: String, sequence: i32) -> Result<Self, Error> {
-        let kind = kind.parse::<flow::kind::IdentityKind>()?.to_string();
-        if sequence < 0 {
-            whatever!("certificate sequence must be >= 0");
-        }
-        Ok(Self { kind, sequence })
-    }
-
-    fn from_dhttp_ski(ski: dhttp::certificate::DhttpSubjectKeyIdentifier) -> Result<Self, Error> {
-        let kind = match ski.chain().kind() {
-            CertificateChainKind::Primary => "primary",
-            CertificateChainKind::Secondary => "secondary",
-        }
-        .to_string();
-        let sequence = i32::try_from(ski.chain().sequence().get())
-            .whatever_context::<_, Error>("certificate sequence does not fit CLI sequence range")?;
-        Self::new(kind, sequence)
-    }
-}
-
-fn selector_from_identity(
+fn certificate_chain_key_from_identity(
     identity: &dhttp::identity::Identity,
-) -> Result<Option<ChainSelector>, Error> {
+) -> Result<Option<CertificateChainKey>, Error> {
     match identity.dhttp_subject_key_identifier() {
-        Ok(ski) => ChainSelector::from_dhttp_ski(ski).map(Some),
+        Ok(ski) => Ok(Some(ski.chain().clone())),
         Err(_) => Ok(None),
     }
 }
@@ -539,7 +512,7 @@ mod tests {
     use dhttp::{identity::Identity, name::Name};
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
-    use super::{ChainSelector, Create, Options, cert_server_base_url, selector_from_identity};
+    use super::{Create, Options, cert_server_base_url, certificate_chain_key_from_identity};
     use crate::CERT_SERVER_BASE_URL;
 
     #[test]
@@ -559,17 +532,18 @@ mod tests {
     }
 
     #[test]
-    fn selector_from_identity_reads_dhttp_ski() {
+    fn certificate_chain_key_from_identity_reads_dhttp_ski() {
         let identity = local_identity_with_dhttp_ski();
-        let selector = selector_from_identity(&identity).unwrap().unwrap();
+        let chain_key = certificate_chain_key_from_identity(&identity)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(
-            selector,
-            ChainSelector {
-                kind: "primary".to_string(),
-                sequence: 0,
-            }
+            chain_key.kind(),
+            dhttp::certificate::CertificateChainKind::Primary
         );
+        assert_eq!(chain_key.sequence().get(), 0);
+        assert_eq!(chain_key.to_string(), "primary:0");
     }
 
     #[test]

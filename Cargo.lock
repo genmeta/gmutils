@@ -1517,8 +1517,6 @@ dependencies = [
 [[package]]
 name = "dhttp"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0416f3592b25c3655a6acd02b4588a959241d3b0250e374afb8515f707fce5c3"
 dependencies = [
  "bon",
  "bytes",
@@ -1540,8 +1538,6 @@ dependencies = [
 [[package]]
 name = "dhttp-access"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e02c4c0baad928761eeeddd17c36f2ac9e18ab52f8b4a71f2c5751b2f3cde514"
 dependencies = [
  "chrono",
  "clap",
@@ -1563,8 +1559,6 @@ dependencies = [
 [[package]]
 name = "dhttp-home"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ff587e43dd13e739c48d670302d8fdb53d6a679fe078007637cbe27161125bd"
 dependencies = [
  "dhttp-identity",
  "dirs",
@@ -1580,8 +1574,6 @@ dependencies = [
 [[package]]
 name = "dhttp-identity"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "408a1d3a9e073862b9d8ad97ecfdf3b78a22ee0e338d7f2e959edc5de503f4e6"
 dependencies = [
  "bytes",
  "futures",
@@ -1736,8 +1728,6 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 [[package]]
 name = "dyns"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5eb83f58c5a3ef6259620d311e29bcc4ee3ae72cde4f60a6eb8e4a305189984"
 dependencies = [
  "base64",
  "bitfield-struct",
@@ -2443,8 +2433,6 @@ dependencies = [
 [[package]]
 name = "h3x"
 version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2cfecf65797354bc13654ee320ce85127a49404bf5095ac3d533cf27643a041"
 dependencies = [
  "arc-swap",
  "async-channel",
@@ -6966,6 +6954,7 @@ dependencies = [
  "lazy_static",
  "nom 7.1.3",
  "oid-registry",
+ "ring",
  "rusticata-macros",
  "thiserror",
  "time",

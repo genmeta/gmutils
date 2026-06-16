@@ -552,10 +552,10 @@ async fn run_interactive(
 
         let identity_profile = dhttp_home.resolve_identity_profile(domain.borrow()).await?;
         let local_identity = identity_profile.load_identity().await?;
-        let selector = cli::selector_from_identity(&local_identity)?
+        let chain_key = cli::certificate_chain_key_from_identity(&local_identity)?
             .whatever_context::<_, Error>("local identity does not expose a certificate chain")?;
-        let kind = selector.kind;
-        let sequence = selector.sequence;
+        let kind = chain_key.kind().as_str();
+        let sequence = chain_key.sequence().get();
         let device_name = super::device::resolve_device_name(command.device_name.as_deref());
         let (key_pem, csr_pem) = cli::generate_private_key_and_csr(&domain)?;
 
@@ -595,7 +595,7 @@ async fn run_interactive(
                     cert_server.renew_cert(
                         &token,
                         domain.as_full(),
-                        &kind,
+                        kind,
                         sequence,
                         Some(&device_name),
                         &csr_pem,
@@ -609,7 +609,7 @@ async fn run_interactive(
                     cert_server.renew_cert_with_identity(
                         domain.as_full(),
                         domain.as_full(),
-                        &kind,
+                        kind,
                         sequence,
                         Some(&device_name),
                         &csr_pem,
@@ -664,10 +664,10 @@ pub(crate) async fn run(
         resolve_approval_plan(domain.as_partial(), command.auth, is_interactive).await?;
     let identity_profile = dhttp_home.resolve_identity_profile(domain.borrow()).await?;
     let local_identity = identity_profile.load_identity().await?;
-    let selector = cli::selector_from_identity(&local_identity)?
+    let chain_key = cli::certificate_chain_key_from_identity(&local_identity)?
         .whatever_context::<_, Error>("local identity does not expose a certificate chain")?;
-    let kind = selector.kind;
-    let sequence = selector.sequence;
+    let kind = chain_key.kind().as_str();
+    let sequence = chain_key.sequence().get();
     let device_name = super::device::resolve_device_name(command.device_name.as_deref());
 
     if command.send_code {
@@ -698,7 +698,7 @@ pub(crate) async fn run(
                 cert_server.renew_cert(
                     &token,
                     domain.as_full(),
-                    &kind,
+                    kind,
                     sequence,
                     Some(&device_name),
                     &csr_pem,
@@ -712,7 +712,7 @@ pub(crate) async fn run(
                 cert_server.renew_cert_with_identity(
                     domain.as_full(),
                     domain.as_full(),
-                    &kind,
+                    kind,
                     sequence,
                     Some(&device_name),
                     &csr_pem,

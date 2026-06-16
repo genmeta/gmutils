@@ -250,7 +250,7 @@ pub struct SubdomainQuotaQuote {
 pub struct CertificateDetail {
     pub domain: String,
     pub device_name: Option<String>,
-    pub sequence: i32,
+    pub sequence: u32,
     pub kind: String,
     pub serial_number: Option<String>,
     pub ski: Option<String>,
@@ -292,7 +292,7 @@ pub struct PageInfo {
 pub struct CertificateListItem {
     pub domain: String,
     pub device_name: Option<String>,
-    pub sequence: i32,
+    pub sequence: u32,
     pub kind: String,
     pub serial_number: Option<String>,
     pub ski: Option<String>,
@@ -565,7 +565,7 @@ impl CertServer {
         access_token: &str,
         domain: &str,
         kind: &str,
-        sequence: Option<i32>,
+        sequence: Option<u32>,
         device_name: &str,
         csr_pem: &str,
     ) -> Result<CertificateDetail, Error> {
@@ -605,7 +605,7 @@ impl CertServer {
         identity_domain: &str,
         domain: &str,
         kind: &str,
-        sequence: Option<i32>,
+        sequence: Option<u32>,
         device_name: &str,
         csr_pem: &str,
     ) -> Result<CertificateDetail, Error> {
@@ -629,7 +629,7 @@ impl CertServer {
         access_token: &str,
         domain: &str,
         kind: &str,
-        sequence: i32,
+        sequence: u32,
         device_name: Option<&str>,
         csr_pem: &str,
     ) -> Result<CertificateDetail, Error> {
@@ -654,7 +654,7 @@ impl CertServer {
         identity_domain: &str,
         domain: &str,
         kind: &str,
-        sequence: i32,
+        sequence: u32,
         device_name: Option<&str>,
         csr_pem: &str,
     ) -> Result<CertificateDetail, Error> {
@@ -678,7 +678,7 @@ impl CertServer {
         access_token: &str,
         domain: &str,
         kind: Option<&str>,
-        sequence: Option<i32>,
+        sequence: Option<u32>,
     ) -> Result<CertificateListPage, Error> {
         let mut request = self
             .http_client
@@ -700,7 +700,7 @@ impl CertServer {
         identity_domain: &str,
         domain: &str,
         kind: Option<&str>,
-        sequence: Option<i32>,
+        sequence: Option<u32>,
     ) -> Result<CertificateListPage, Error> {
         let mut query = format!("/v2/cert?domain={}", urlencoding::encode(domain));
         if let Some(kind) = kind {

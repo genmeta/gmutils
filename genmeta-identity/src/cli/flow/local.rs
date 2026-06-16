@@ -416,11 +416,7 @@ async fn assess_profile(
 
     match extract_dhttp_subject_key_identifier(&certs) {
         Ok(ski) => {
-            assessment.certificate_chain = Some(format!(
-                "{}:{}",
-                ski.chain().kind().as_str(),
-                ski.chain().sequence().get()
-            ));
+            assessment.certificate_chain = Some(ski.chain().to_string());
         }
         Err(_) => {
             assessment.certificate = LocalIdentityMaterialState::Invalid(
