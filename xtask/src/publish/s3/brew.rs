@@ -239,6 +239,7 @@ mod tests {
         let formula = render_formula(&manifest, "https://download.example/brew/gmutils")
             .expect("formula should render");
 
+        assert!(formula.contains("license \"Apache-2.0\""));
         assert!(formula.contains("url \"https://download.example/brew/gmutils/gmutils-0.5.2-aarch64-apple-darwin.tar.gz\""));
         assert!(formula.contains("sha256 \"arm-sha\""));
     }

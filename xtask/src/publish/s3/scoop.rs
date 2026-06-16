@@ -254,6 +254,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
 
         assert_eq!(value["version"], "0.5.2");
+        assert_eq!(value["license"], "Apache-2.0");
         assert_eq!(
             value["architecture"]["64bit"]["url"],
             "https://download.example/scoop/gmutils/gmutils-0.5.2-x86_64-pc-windows-msvc.zip"
