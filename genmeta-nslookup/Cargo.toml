@@ -2,7 +2,13 @@
 name = "genmeta-nslookup"
 description = "resolve domain names"
 version = "0.3.0"
-edition = "2024"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["genmeta", "dhttp", "dns", "resolver", "cli"]
+categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
 clap = { workspace = true }

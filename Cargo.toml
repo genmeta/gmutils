@@ -15,6 +15,13 @@ members = [
     "xtask",
 ]
 
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/genmeta/gmutils"
+homepage = "https://www.dhttp.net"
+readme = "README.md"
+
 [workspace.dependencies]
 # async
 futures = "0.3"

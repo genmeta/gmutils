@@ -13,7 +13,7 @@ const PACKAGE_NAME: &str = "gmutils";
 const FORMULA_NAME: &str = "gmutils.rb";
 const DESCRIPTION: &str = "Genmeta Binary Utilities";
 const HOMEPAGE: &str = "https://www.dhttp.net";
-const LICENSE: &str = "Shareware";
+const LICENSE: &str = "Apache-2.0";
 const INSTALL_CONTENT: &str = r##"  def install
     bin.install "genmeta"
     bin.install "genmeta-ssh.sh"
@@ -239,6 +239,7 @@ mod tests {
         let formula = render_formula(&manifest, "https://download.example/brew/gmutils")
             .expect("formula should render");
 
+        assert!(formula.contains("license \"Apache-2.0\""));
         assert!(formula.contains("url \"https://download.example/brew/gmutils/gmutils-0.5.2-aarch64-apple-darwin.tar.gz\""));
         assert!(formula.contains("sha256 \"arm-sha\""));
     }

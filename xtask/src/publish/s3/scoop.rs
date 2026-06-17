@@ -14,7 +14,7 @@ const MANIFEST_NAME: &str = "gmutils.json";
 const CARGO_NAME: &str = "genmeta";
 const DESCRIPTION: &str = "Genmeta Binary Utilities";
 const HOMEPAGE: &str = "https://www.dhttp.net";
-const LICENSE: &str = "Shareware";
+const LICENSE: &str = "Apache-2.0";
 
 #[derive(Debug, Serialize)]
 struct ScoopManifest {
@@ -254,6 +254,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
 
         assert_eq!(value["version"], "0.5.2");
+        assert_eq!(value["license"], "Apache-2.0");
         assert_eq!(
             value["architecture"]["64bit"]["url"],
             "https://download.example/scoop/gmutils/gmutils-0.5.2-x86_64-pc-windows-msvc.zip"

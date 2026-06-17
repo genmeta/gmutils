@@ -50,7 +50,7 @@ const IMAGE_TAG_PREFIX: &str = "gmutils-rpm-v1";
 /// Package metadata baked into the generated spec. Kept here (not in Cargo.toml)
 /// so spec generation stays a single source of truth owned by xtask.
 const RPM_SUMMARY: &str = "Genmeta binary utilities";
-const RPM_LICENSE: &str = "Proprietary";
+const RPM_LICENSE: &str = "Apache-2.0";
 const RPM_URL: &str = "https://www.dhttp.net";
 const RPM_VENDOR: &str = "Genmeta Tech Limited";
 const RPM_DESCRIPTION: &str =
@@ -525,7 +525,9 @@ install -D -m 0755 %{{SOURCE1}} %{{buildroot}}/usr/bin/genmeta-ssh.sh
 
 #[cfg(test)]
 mod tests {
-    use super::{AARCH64_ZIGBUILD_RUSTFLAGS_WORKAROUND, aarch64_zigbuild_workaround_script};
+    use super::{
+        AARCH64_ZIGBUILD_RUSTFLAGS_WORKAROUND, aarch64_zigbuild_workaround_script, render_spec,
+    };
 
     #[test]
     fn aarch64_linker_workaround_enables_unstable_flavor_option() {
@@ -540,5 +542,12 @@ mod tests {
         assert!(script.contains("CARGO_ZIGBUILD_ZIG_PATH"));
         assert!(script.contains("-Wl,--fix-cortex-a53-843419|--fix-cortex-a53-843419"));
         assert!(script.contains("/usr/local/zig/zig"));
+    }
+
+    #[test]
+    fn rpm_spec_declares_apache_2_license() {
+        let spec = render_spec("0.6.0", "x86_64");
+
+        assert!(spec.contains("License:        Apache-2.0\n"));
     }
 }
