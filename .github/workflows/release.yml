@@ -277,7 +277,7 @@ jobs:
       DHTTP_ROOT_CA: ${{ github.workspace }}/gmutils/keychain/root.crt
       RELEASE_BUCKET: download
       SCOOP_PREFIX: scoop/gmutils
-      SCOOP_PUBLIC_BASE_URL: https://download.genmeta.net/scoop/gmutils
+      SCOOP_PUBLIC_BASE_URL: https://download.dhttp.net/scoop/gmutils
     defaults:
       run:
         shell: bash
@@ -387,7 +387,7 @@ jobs:
       DHTTP_ROOT_CA: ${{ github.workspace }}/gmutils/keychain/root.crt
       RELEASE_BUCKET: download
       BREW_PREFIX: brew/gmutils
-      BREW_PUBLIC_BASE_URL: https://download.genmeta.net/brew/gmutils
+      BREW_PUBLIC_BASE_URL: https://download.dhttp.net/brew/gmutils
       HOMEBREW_TAP_REPOSITORY: genmeta/homebrew-genmeta
       HOMEBREW_TAP_BASE_BRANCH: main
     defaults:

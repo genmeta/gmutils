@@ -515,4 +515,15 @@ mod tests {
             Some(&RequestChecksumCalculation::WhenRequired)
         );
     }
+
+    #[test]
+    fn release_workflow_uses_public_r2_download_domain() {
+        let workflow = include_str!("../../../.github/workflows/release.yml");
+
+        assert!(workflow.contains("BREW_PUBLIC_BASE_URL: https://download.dhttp.net/brew/gmutils"));
+        assert!(
+            workflow.contains("SCOOP_PUBLIC_BASE_URL: https://download.dhttp.net/scoop/gmutils")
+        );
+        assert!(!workflow.contains("download.genmeta.net"));
+    }
 }

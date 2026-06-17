@@ -1,7 +1,7 @@
 use aws_sdk_s3::Client;
 use serde::Serialize;
 use snafu::{ResultExt, Snafu, Whatever};
-use tracing::info;
+use tracing::{info, warn};
 
 use super::{
     S3Options, ScoopPublishTarget,
@@ -104,7 +104,7 @@ pub async fn run(
     target: ScoopPublishTarget,
 ) -> Result<(), Whatever> {
     let loaded = super::load_manifest(ArtifactKind::Scoop).await?;
-    let mut uploads = plan_payload_uploads(
+    let (mut uploads, manifest) = plan_payload_uploads(
         client,
         &options.bucket,
         &loaded.target_dir,
@@ -112,7 +112,7 @@ pub async fn run(
         &target.prefix,
     )
     .await?;
-    let json = render_scoop_json(&loaded.manifest, target.public_base_url.as_str())
+    let json = render_scoop_json(&manifest, target.public_base_url.as_str())
         .whatever_context("failed to render scoop json")?;
     let manifest_path = loaded
         .target_dir
@@ -165,9 +165,10 @@ async fn plan_payload_uploads(
     target_dir: &std::path::Path,
     manifest: &PackageManifest,
     prefix: &super::key::RemotePrefix,
-) -> Result<Vec<PlannedUpload>, Whatever> {
+) -> Result<(Vec<PlannedUpload>, PackageManifest), Whatever> {
     let mut uploads = Vec::new();
-    for artifact in &manifest.artifacts {
+    let mut manifest = manifest.clone();
+    for artifact in &mut manifest.artifacts {
         let archive_name = archive_name(artifact)
             .whatever_context("scoop package artifact is missing archive name")?;
         let path = super::artifact_path(target_dir, artifact);
@@ -179,24 +180,32 @@ async fn plan_payload_uploads(
         );
         let key = prefix.join(archive_name);
         let remote = super::remote_artifact_state(client, bucket, &key).await?;
-        let Some(condition) = super::plan::plan_immutable_upload(&key, &actual_sha256, remote)
-            .whatever_context("remote scoop artifact collision")?
-        else {
+        let plan = super::plan::plan_versioned_immutable_payload(&key, &actual_sha256, remote);
+        artifact.sha256 = plan.metadata_sha256().to_string();
+        if let Some(condition) = plan.upload_condition() {
+            uploads.push(PlannedUpload {
+                path,
+                key,
+                entry: false,
+                condition: Some(condition),
+            });
+        } else if plan.remote_sha256_matches_local() {
             info!(
                 key,
                 path = %path.display(),
                 "remote immutable scoop artifact already has matching sha256"
             );
-            continue;
-        };
-        uploads.push(PlannedUpload {
-            path,
-            key,
-            entry: false,
-            condition: Some(condition),
-        });
+        } else {
+            warn!(
+                key,
+                path = %path.display(),
+                local_sha256 = %actual_sha256,
+                remote_sha256 = %plan.metadata_sha256(),
+                "remote immutable scoop artifact already exists with different sha256; reusing remote payload for metadata"
+            );
+        }
     }
-    Ok(uploads)
+    Ok((uploads, manifest))
 }
 
 fn archive_name(artifact: &PackageArtifact) -> Result<&str, RenderScoopError> {
