@@ -432,10 +432,7 @@ mod tests {
             "DHTTP_HTTP_DNS_SERVER".to_string(),
             "https://dns.genmeta.net".to_string(),
         );
-        values.insert(
-            "DHTTP_MDNS_SERVICE".to_string(),
-            "_genmeta.local".to_string(),
-        );
+        values.insert("DHTTP_MDNS_SERVICE".to_string(), "_dhttp.local".to_string());
         values.insert(
             "DHTTP_CERT_SERVER_URL".to_string(),
             "https://license.test".to_string(),
@@ -486,7 +483,7 @@ mod tests {
         assert!(
             bootstrap
                 .exports
-                .contains("export DHTTP_MDNS_SERVICE='_genmeta.local'\n")
+                .contains("export DHTTP_MDNS_SERVICE='_dhttp.local'\n")
         );
         assert!(
             bootstrap
