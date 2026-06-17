@@ -10,9 +10,10 @@ pub enum RemoteArtifactState {
     Present { sha256: String },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UploadCondition {
     IfMissing,
+    IfMatch(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,7 +37,7 @@ impl VersionedImmutablePayloadPlan {
     }
 
     pub fn upload_condition(&self) -> Option<UploadCondition> {
-        self.upload_condition
+        self.upload_condition.clone()
     }
 
     pub fn reuses_remote_payload(&self) -> bool {
