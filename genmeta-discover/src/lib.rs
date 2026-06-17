@@ -15,7 +15,7 @@ use tracing_subscriber::prelude::*;
 #[derive(Parser, Debug, Clone)]
 #[command(name = "discover", version, about)]
 pub struct Options {
-    /// Domain name to discover (e.g. _genmeta.local)
+    /// Domain name to discover (e.g. _dhttp.local)
     #[arg(value_name = "DOMAIN", default_value = "")]
     domain: String,
 
@@ -27,6 +27,17 @@ pub struct Options {
 
 #[derive(Debug, snafu::Snafu)]
 pub enum Error {}
+
+fn domain_with_default_mdns_service(domain: &str) -> String {
+    if domain.is_empty()
+        || domain == DHTTP_MDNS_SERVICE
+        || domain.ends_with(&format!(".{DHTTP_MDNS_SERVICE}"))
+    {
+        domain.to_owned()
+    } else {
+        format!("{domain}.{DHTTP_MDNS_SERVICE}")
+    }
+}
 
 fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     let (stderr, guard) = tracing_appender::non_blocking(std::io::stderr());
@@ -58,12 +69,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let resolvers =
         MdnsResolvers::bind(network, Arc::new(options.binds.clone()), DHTTP_MDNS_SERVICE).await;
 
-    // Auto-append ._genmeta.local suffix if not already present.
-    let with_suffix = if options.domain.is_empty() || options.domain.ends_with("._genmeta.local") {
-        options.domain.clone()
-    } else {
-        format!("{}._genmeta.local", options.domain)
-    };
+    let with_suffix = domain_with_default_mdns_service(&options.domain);
 
     let matches_domain = |name: &str, domain: &str| {
         if domain.is_empty() {
@@ -107,4 +113,32 @@ pub async fn run(options: Options) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DHTTP_MDNS_SERVICE, domain_with_default_mdns_service};
+
+    #[test]
+    fn domain_with_default_mdns_service_appends_configured_service_suffix() {
+        assert_eq!(
+            domain_with_default_mdns_service("reimu.pilot"),
+            format!("reimu.pilot.{DHTTP_MDNS_SERVICE}")
+        );
+    }
+
+    #[test]
+    fn domain_with_default_mdns_service_keeps_empty_and_full_names() {
+        assert_eq!(domain_with_default_mdns_service(""), "");
+        assert_eq!(
+            domain_with_default_mdns_service(DHTTP_MDNS_SERVICE),
+            DHTTP_MDNS_SERVICE
+        );
+        assert_eq!(
+            domain_with_default_mdns_service("_dhttp.local"),
+            format!("_dhttp.local.{DHTTP_MDNS_SERVICE}")
+        );
+        let full_name = format!("reimu.pilot.{DHTTP_MDNS_SERVICE}");
+        assert_eq!(domain_with_default_mdns_service(&full_name), full_name);
+    }
 }
