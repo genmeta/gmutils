@@ -5,7 +5,7 @@
 //! Flow per target triple:
 //! 1. Ensure an image `xtask-{triple}:{IMAGE_TAG_PREFIX}` exists
 //!    (Fedora + rpm-build + rustup nightly + Zig + cargo-zigbuild).
-//! 2. Spin up a container with the workspace bind-mounted at `/workspace`.
+//! 2. Spin up a container with the primary source bind-mounted at `/sources/gmutils`.
 //! 3. Run `cargo zigbuild --target {triple}.{glibc}` as the host uid:gid.
 //! 4. Generate a minimal `.spec` file in Rust (no template files), lay out a
 //!    private `_topdir`, and run `rpmbuild -bb --target={rpm_arch}`.
@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use bollard::{
     Docker,
-    models::{ContainerConfig, ContainerCreateBody, HostConfig, Mount, MountType},
+    models::{ContainerConfig, ContainerCreateBody, HostConfig},
     query_parameters::{
         CommitContainerOptionsBuilder, CreateContainerOptionsBuilder, CreateImageOptionsBuilder,
     },
@@ -28,10 +28,10 @@ use tracing::{Instrument, info, info_span};
 use crate::{
     RpmTarget,
     container::{
-        CARGO_HOME, RUSTUP_HOME, Sibling, ZIG_GLIBC_VERSION, cargo_cache_mounts,
+        CARGO_HOME, ContainerSourceLayout, RUSTUP_HOME, ZIG_GLIBC_VERSION, cargo_cache_mounts,
         cargo_config_from_siblings, check_docker, dhttp_bootstrap_from_env, exec_in_container,
         force_remove_container, host_uid_gid, install_cargo_config, remove_container_if_exists,
-        resolve_siblings, start_container,
+        source_layout, source_mounts, start_container,
     },
     package_version, target_dir,
 };
@@ -137,7 +137,7 @@ pub async fn run(
         .whatever_context("failed to connect to Docker/Podman")?;
     check_docker(&docker).await?;
 
-    let siblings = resolve_siblings(siblings)?;
+    let layout = source_layout("gmutils", siblings)?;
     let version = package_version(CARGO_NAME)?;
     let target_dir = target_dir()?;
 
@@ -146,12 +146,12 @@ pub async fn run(
         let docker = docker.clone();
         let version = version.clone();
         let target_dir = target_dir.clone();
-        let siblings = siblings.clone();
+        let layout = layout.clone();
         let triple = target.triple();
         info!(triple, "queued rpm target build");
         let span = info_span!("rpm", triple);
         tasks.spawn(
-            async move { build_one(&docker, triple, &version, &target_dir, &siblings).await }
+            async move { build_one(&docker, triple, &version, &target_dir, &layout).await }
                 .instrument(span),
         );
     }
@@ -280,7 +280,7 @@ async fn build_one(
     triple: &str,
     version: &str,
     target_dir: &Path,
-    siblings: &[Sibling],
+    layout: &ContainerSourceLayout,
 ) -> Result<RpmArtifact, Whatever> {
     let arch = rpm_arch(triple)?;
     info!(triple, arch, "ensuring build image");
@@ -291,28 +291,12 @@ async fn build_one(
         .await
         .whatever_context(format!("failed to create {}", out_dir.display()))?;
 
-    let workspace_dir =
-        std::env::current_dir().whatever_context("failed to get current directory")?;
-
-    let mut mounts = vec![Mount {
-        target: Some("/workspace".into()),
-        source: Some(workspace_dir.to_string_lossy().into_owned()),
-        typ: Some(MountType::BIND),
-        ..Default::default()
-    }];
-    for sibling in siblings {
-        mounts.push(Mount {
-            target: Some(format!("/{}", sibling.basename)),
-            source: Some(sibling.host.to_string_lossy().into_owned()),
-            typ: Some(MountType::BIND),
-            ..Default::default()
-        });
-    }
+    let mut mounts = source_mounts(layout);
     mounts.extend(cargo_cache_mounts());
 
     let bootstrap = dhttp_bootstrap_from_env()?;
     mounts.extend(bootstrap.mounts);
-    let cargo_config = cargo_config_from_siblings(siblings);
+    let cargo_config = cargo_config_from_siblings(&layout.overrides);
 
     let container_name = format!("{CARGO_NAME}-xtask-rpm-{triple}");
     remove_container_if_exists(docker, &container_name).await;
@@ -343,6 +327,7 @@ async fn build_one(
         triple,
         version,
         arch,
+        &layout.primary.container,
         &bootstrap.exports,
         cargo_config.as_deref(),
     )
@@ -395,12 +380,14 @@ async fn find_rpm_artifact(out_dir: &Path) -> Result<PathBuf, FindRpmArtifactErr
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn build_one_inner(
     docker: &Docker,
     container_id: &str,
     triple: &str,
     version: &str,
     arch: &str,
+    primary_source: &str,
     dhttp_bootstrap_exports: &str,
     cargo_config: Option<&str>,
 ) -> Result<(), Whatever> {
@@ -426,10 +413,10 @@ export CARGO_HOME={CARGO_HOME}
 {dhttp_bootstrap_exports}
 export RUSTFLAGS="${{RUSTFLAGS:-}}"
 {aarch64_zigbuild_workaround}
-cd /workspace
+cd {primary_source}
 cargo zigbuild --release --target {triple}.{ZIG_GLIBC_VERSION} --bin genmeta
 
-TOPDIR=/workspace/target/{triple}/release/rpm
+TOPDIR={primary_source}/target/{triple}/release/rpm
 rm -rf "$TOPDIR"/{{SPECS,BUILD,BUILDROOT,SOURCES,SRPMS,RPMS}}
 mkdir -p "$TOPDIR"/{{SPECS,BUILD,BUILDROOT,SOURCES,SRPMS,RPMS}}
 
@@ -437,8 +424,8 @@ SPEC="$TOPDIR/SPECS/{PACKAGE_NAME}.spec"
 printf '%s' {spec_escaped} > "$SPEC"
 
 # stage prebuilt binary + script as SOURCES so rpmbuild's %install can pick them up
-cp /workspace/target/{triple}/release/genmeta "$TOPDIR/SOURCES/genmeta"
-cp /workspace/genmeta-ssh.sh "$TOPDIR/SOURCES/genmeta-ssh.sh"
+cp {primary_source}/target/{triple}/release/genmeta "$TOPDIR/SOURCES/genmeta"
+cp {primary_source}/genmeta-ssh.sh "$TOPDIR/SOURCES/genmeta-ssh.sh"
 
 rpmbuild -bb \
     --target={arch} \

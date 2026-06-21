@@ -4,17 +4,17 @@ use snafu::{ResultExt, Snafu, Whatever};
 use tracing::{info, warn};
 
 use super::{
-    S3Options, ScoopPublishTarget,
+    ResolvedS3Options, ScoopPublishTarget,
     key::{PublicBaseUrl, PublicBaseUrlError},
     plan::PlannedUpload,
 };
-use crate::package::manifest::{ArtifactKind, PackageArtifact, PackageManifest};
+use crate::{
+    package::manifest::{ArtifactKind, PackageArtifact, PackageManifest},
+    release_contract::{self, ResolvedPackageMetadata},
+};
 
 const MANIFEST_NAME: &str = "gmutils.json";
 const CARGO_NAME: &str = "genmeta";
-const DESCRIPTION: &str = "Genmeta Binary Utilities";
-const HOMEPAGE: &str = "https://www.dhttp.net";
-const LICENSE: &str = "Apache-2.0";
 
 #[derive(Debug, Serialize)]
 struct ScoopManifest {
@@ -52,6 +52,7 @@ pub enum RenderScoopError {
 pub fn render_scoop_json(
     manifest: &PackageManifest,
     public_base_url: &str,
+    metadata: &ResolvedPackageMetadata,
 ) -> Result<String, RenderScoopError> {
     snafu::ensure!(
         manifest.kind == ArtifactKind::Scoop,
@@ -82,9 +83,9 @@ pub fn render_scoop_json(
 
     let scoop_manifest = ScoopManifest {
         version: manifest.version.clone(),
-        description: DESCRIPTION.to_string(),
-        license: LICENSE.to_string(),
-        homepage: HOMEPAGE.to_string(),
+        description: metadata.description.clone(),
+        license: metadata.license.clone(),
+        homepage: metadata.homepage.clone(),
         architecture,
         bin: vec![format!("{CARGO_NAME}.exe"), "genmeta-ssh.bat".to_string()],
         checkver: CheckVer {
@@ -99,7 +100,7 @@ pub fn render_scoop_json(
 }
 
 pub async fn run(
-    options: &S3Options,
+    options: &ResolvedS3Options,
     client: &Client,
     target: ScoopPublishTarget,
 ) -> Result<(), Whatever> {
@@ -112,7 +113,12 @@ pub async fn run(
         &target.prefix,
     )
     .await?;
-    let json = render_scoop_json(&manifest, target.public_base_url.as_str())
+    let metadata = release_contract::resolve_package_metadata(
+        &release_contract::load_release_contract()
+            .whatever_context("failed to load release contract")?,
+    )
+    .whatever_context("failed to resolve package metadata")?;
+    let json = render_scoop_json(&manifest, target.public_base_url.as_str(), &metadata)
         .whatever_context("failed to render scoop json")?;
     let manifest_path = loaded
         .target_dir
@@ -230,7 +236,10 @@ fn scoop_arch_key(target: &str) -> Result<&'static str, RenderScoopError> {
 #[cfg(test)]
 mod tests {
     use super::render_scoop_json;
-    use crate::package::manifest::{ArtifactKind, PackageArtifact, PackageManifest};
+    use crate::{
+        package::manifest::{ArtifactKind, PackageArtifact, PackageManifest},
+        release_contract::ResolvedPackageMetadata,
+    };
 
     #[test]
     fn scoop_json_uses_public_base_url() {
@@ -257,13 +266,27 @@ mod tests {
                 profile: Some("release".to_string()),
             }],
         };
+        let metadata = ResolvedPackageMetadata {
+            name: "gmutils".to_string(),
+            version: "0.5.2".to_string(),
+            description: "Genmeta Binary Utilities".to_string(),
+            homepage: "https://www.dhttp.net".to_string(),
+            license: "Apache-2.0".to_string(),
+            repository: None,
+            authors: Vec::new(),
+        };
 
-        let json = render_scoop_json(&manifest, "https://download.example/scoop/gmutils")
-            .expect("json should render");
+        let json = render_scoop_json(
+            &manifest,
+            "https://download.example/scoop/gmutils",
+            &metadata,
+        )
+        .expect("json should render");
         let value: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
 
         assert_eq!(value["version"], "0.5.2");
         assert_eq!(value["license"], "Apache-2.0");
+        assert_eq!(value["homepage"], "https://www.dhttp.net");
         assert_eq!(
             value["architecture"]["64bit"]["url"],
             "https://download.example/scoop/gmutils/gmutils-0.5.2-x86_64-pc-windows-msvc.zip"

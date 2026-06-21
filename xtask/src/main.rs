@@ -4,8 +4,10 @@ mod deb;
 mod grouped;
 mod package;
 mod publish;
+mod release_contract;
 mod rpm;
 mod scoop;
+mod template;
 mod version_cmp;
 
 use std::{io::IsTerminal, path::PathBuf, process::Stdio};
@@ -343,40 +345,15 @@ mod tests {
 
     #[test]
     fn publish_s3_accepts_grouped_targets() {
-        let cli = Cli::try_parse_from([
-            "xtask",
-            "publish",
-            "s3",
-            "--dry-run",
-            "--endpoint-url",
-            "https://example.invalid",
-            "--bucket",
-            "download",
-            "--access-key-id",
-            "access",
-            "--secret-access-key",
-            "secret",
-            "deb",
-            "--prefix",
-            "apt/gmutils",
-            "--suite",
-            "stable",
-            "--fingerprint",
-            "0123456789ABCDEF0123456789ABCDEF01234567",
-            "brew",
-            "--prefix",
-            "brew/gmutils",
-            "--public-base-url",
-            "https://download.example/brew/gmutils",
-        ])
-        .expect("publish command should parse");
+        let cli = Cli::try_parse_from(["xtask", "publish", "s3", "--dry-run", "deb", "brew"])
+            .expect("publish command should parse");
 
         match cli.command {
             Command::Publish { command } => match command {
                 publish::PublishCommand::S3 { options, targets } => {
                     assert!(options.dry_run);
-                    assert_eq!(options.bucket, "download");
                     assert_eq!(targets[0], std::ffi::OsString::from("deb"));
+                    assert_eq!(targets[1], std::ffi::OsString::from("brew"));
                 }
             },
             _ => panic!("expected publish command"),
@@ -396,6 +373,17 @@ mod tests {
     fn release_workflow_publish_commands_are_tag_mode_safe() {
         assert!(!RELEASE_WORKFLOW.contains("publish_args=()"));
         assert!(!RELEASE_WORKFLOW.contains("\"${publish_args[@]}\""));
+        assert!(RELEASE_WORKFLOW.contains("DHTTP_ROOT_CA: ${{ vars.DHTTP_ROOT_CA }}"));
+        assert!(!RELEASE_WORKFLOW.contains("keychain/root.crt"));
+        assert!(!RELEASE_WORKFLOW.contains("DHTTP_ROOT_CA: ${{ github.workspace }}"));
+        assert!(!RELEASE_WORKFLOW.contains("--endpoint-url"));
+        assert!(!RELEASE_WORKFLOW.contains("--bucket"));
+        assert!(!RELEASE_WORKFLOW.contains("--prefix"));
+        assert!(!RELEASE_WORKFLOW.contains("--public-base-url"));
+        assert!(RELEASE_WORKFLOW.contains("\"${publish_cmd[@]}\" deb"));
+        assert!(RELEASE_WORKFLOW.contains("\"${publish_cmd[@]}\" rpm"));
+        assert!(RELEASE_WORKFLOW.contains("\"${publish_cmd[@]}\" scoop"));
+        assert!(RELEASE_WORKFLOW.contains("\"${publish_cmd[@]}\" brew"));
         assert_eq!(
             RELEASE_WORKFLOW
                 .matches("publish_cmd=(cargo xtask publish s3)")
@@ -439,11 +427,9 @@ mod tests {
 
     #[test]
     fn release_workflow_homebrew_tap_updates_root_formula() {
-        assert!(
-            RELEASE_WORKFLOW
-                .contains("BREW_PUBLIC_BASE_URL: https://download.dhttp.net/brew/gmutils")
-        );
+        assert!(RELEASE_WORKFLOW.contains("id: homebrew_destination"));
         assert!(!RELEASE_WORKFLOW.contains("download.genmeta.net"));
+        assert!(RELEASE_WORKFLOW.contains("tomllib.loads(Path(\"xtask/release.toml\")"));
         assert!(RELEASE_WORKFLOW.contains("formula_dest=\"$tap_dir/$FORMULA_NAME\""));
         assert!(RELEASE_WORKFLOW.contains("git status --porcelain -- \"$FORMULA_NAME\""));
         assert!(RELEASE_WORKFLOW.contains("git add \"$FORMULA_NAME\""));

@@ -1,0 +1,17 @@
+class {{homebrew.class}} < Formula
+  desc "{{package.description}}"
+  version "{{package.version}}"
+  homepage "{{package.homepage}}"
+  license "{{package.license}}"
+
+{{homebrew.urls}}
+
+  def install
+    bin.install "genmeta"
+    bin.install "genmeta-ssh.sh"
+  end
+
+  test do
+    system "#{bin}/genmeta", "version"
+  end
+end

@@ -1,0 +1,45 @@
+[cargo]
+manifest = "genmeta/Cargo.toml"
+
+[package]
+name = "gmutils"
+
+[homebrew.template]
+path = "xtask/templates/gmutils.rb.in"
+
+[build.env]
+required = [
+  "DHTTP_ROOT_CA",
+  "DHTTP_STUN_SERVER",
+  "DHTTP_H3_DNS_SERVER",
+  "DHTTP_HTTP_DNS_SERVER",
+  "DHTTP_MDNS_SERVICE",
+  "DHTTP_CERT_SERVER_URL",
+]
+
+[destination.s3]
+bucket = "download"
+endpoint.env = "XTASK_RELEASE_S3_ENDPOINT_URL"
+access_key_id.env = "XTASK_RELEASE_S3_ACCESS_KEY_ID"
+secret_access_key.env = "XTASK_RELEASE_S3_SECRET_ACCESS_KEY"
+
+[destination.brew]
+prefix = "brew/gmutils"
+public_base_url = "https://download.dhttp.net/brew/gmutils"
+tap.repository = "genmeta/homebrew-genmeta"
+tap.base_branch = "main"
+tap.token.env = "HOMEBREW_TAP_GITHUB_TOKEN"
+
+[destination.deb]
+prefix = "ppa/genmeta"
+suite = "genmeta"
+signing.key.env = "XTASK_RELEASE_APT_SIGNING_KEY"
+signing.passphrase.env = "XTASK_RELEASE_APT_SIGNING_PASSPHRASE"
+fingerprint.env = "XTASK_RELEASE_APT_SIGNING_FINGERPRINT"
+
+[destination.rpm]
+prefix = "rpm/gmutils"
+
+[destination.scoop]
+prefix = "scoop/gmutils"
+public_base_url = "https://download.dhttp.net/scoop/gmutils"

@@ -1,27 +1,20 @@
+use std::{collections::BTreeMap, path::Path};
+
 use aws_sdk_s3::Client;
-use snafu::{ResultExt, Snafu, Whatever};
+use snafu::{OptionExt, ResultExt, Snafu, Whatever};
 use tracing::{info, warn};
 
 use super::{
-    BrewPublishTarget, S3Options,
+    BrewPublishTarget, ResolvedS3Options,
     key::{PublicBaseUrl, PublicBaseUrlError},
     plan::PlannedUpload,
 };
-use crate::package::manifest::{ArtifactKind, PackageArtifact, PackageManifest};
+use crate::{
+    package::manifest::{ArtifactKind, PackageArtifact, PackageManifest},
+    release_contract::{self, ResolvedPackageMetadata},
+};
 
-const PACKAGE_NAME: &str = "gmutils";
 const FORMULA_NAME: &str = "gmutils.rb";
-const DESCRIPTION: &str = "Genmeta Binary Utilities";
-const HOMEPAGE: &str = "https://www.dhttp.net";
-const LICENSE: &str = "Apache-2.0";
-const INSTALL_CONTENT: &str = r##"  def install
-    bin.install "genmeta"
-    bin.install "genmeta-ssh.sh"
-  end
-
-  test do
-    system "#{bin}/genmeta", "version"
-  end"##;
 
 #[derive(Debug, Snafu)]
 #[snafu(module)]
@@ -34,11 +27,17 @@ pub enum RenderBrewError {
     UnsupportedTarget { target: String },
     #[snafu(display("invalid public base url"))]
     PublicBaseUrl { source: PublicBaseUrlError },
+    #[snafu(display("failed to render brew template"))]
+    Template {
+        source: crate::template::RenderTemplateError,
+    },
 }
 
 pub fn render_formula(
     manifest: &PackageManifest,
     public_base_url: &str,
+    metadata: &ResolvedPackageMetadata,
+    template: &str,
 ) -> Result<String, RenderBrewError> {
     snafu::ensure!(
         manifest.kind == ArtifactKind::Brew,
@@ -46,36 +45,34 @@ pub fn render_formula(
     );
     let base =
         PublicBaseUrl::parse(public_base_url).context(render_brew_error::PublicBaseUrlSnafu)?;
-    let class_name = formula_class_name(PACKAGE_NAME);
-    let mut lines = vec![
-        format!("class {class_name} < Formula"),
-        format!("  desc \"{}\"", escape_formula_string(DESCRIPTION)),
-        format!("  version \"{}\"", escape_formula_string(&manifest.version)),
-        format!("  homepage \"{}\"", escape_formula_string(HOMEPAGE)),
-        format!("  license \"{}\"", escape_formula_string(LICENSE)),
-        String::new(),
-    ];
-
-    for artifact in &manifest.artifacts {
-        let archive_name = archive_name(artifact)?;
-        let block = brew_on_block(&artifact.target)?;
-        lines.extend([
-            format!("  {block} do"),
-            format!("    url \"{}\"", base.join(archive_name)),
-            format!("    sha256 \"{}\"", artifact.sha256),
-            "  end".to_string(),
-            String::new(),
-        ]);
-    }
-
-    lines.push(INSTALL_CONTENT.trim_end().to_string());
-    lines.push("end".to_string());
-    lines.push(String::new());
-    Ok(lines.join("\n"))
+    let variables = BTreeMap::from([
+        (
+            "homebrew.class".to_string(),
+            formula_class_name(&metadata.name),
+        ),
+        ("homebrew.urls".to_string(), formula_urls(manifest, &base)?),
+        (
+            "package.description".to_string(),
+            crate::template::ruby_string(&metadata.description),
+        ),
+        (
+            "package.homepage".to_string(),
+            crate::template::ruby_string(&metadata.homepage),
+        ),
+        (
+            "package.license".to_string(),
+            crate::template::ruby_string(&metadata.license),
+        ),
+        (
+            "package.version".to_string(),
+            crate::template::ruby_string(&metadata.version),
+        ),
+    ]);
+    crate::template::render_template(template, &variables).context(render_brew_error::TemplateSnafu)
 }
 
 pub async fn run(
-    options: &S3Options,
+    options: &ResolvedS3Options,
     client: &Client,
     target: BrewPublishTarget,
 ) -> Result<(), Whatever> {
@@ -88,8 +85,14 @@ pub async fn run(
         &target.prefix,
     )
     .await?;
-    let formula = render_formula(&manifest, target.public_base_url.as_str())
-        .whatever_context("failed to render brew formula")?;
+    let (metadata, template) = metadata_and_template().await?;
+    let formula = render_formula(
+        &manifest,
+        target.public_base_url.as_str(),
+        &metadata,
+        &template,
+    )
+    .whatever_context("failed to render brew formula")?;
     let formula_path = loaded
         .target_dir
         .join("common")
@@ -133,6 +136,28 @@ pub async fn run(
         .await?;
     }
     Ok(())
+}
+
+async fn metadata_and_template() -> Result<(ResolvedPackageMetadata, String), Whatever> {
+    let contract = release_contract::load_release_contract()
+        .whatever_context("failed to load release contract")?;
+    let metadata = release_contract::resolve_package_metadata(&contract)
+        .whatever_context("failed to resolve package metadata")?;
+    let homebrew = contract
+        .homebrew
+        .as_ref()
+        .whatever_context("release contract is missing homebrew template")?;
+    let template_path = repo_root().join(&homebrew.template.path);
+    let template = tokio::fs::read_to_string(&template_path)
+        .await
+        .whatever_context(format!("failed to read {}", template_path.display()))?;
+    Ok((metadata, template))
+}
+
+fn repo_root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask manifest directory should have a parent")
 }
 
 async fn plan_payload_uploads(
@@ -184,6 +209,23 @@ async fn plan_payload_uploads(
     Ok((uploads, manifest))
 }
 
+fn formula_urls(
+    manifest: &PackageManifest,
+    base: &PublicBaseUrl,
+) -> Result<String, RenderBrewError> {
+    let mut blocks = Vec::new();
+    for artifact in &manifest.artifacts {
+        let archive_name = archive_name(artifact)?;
+        let block = brew_on_block(&artifact.target)?;
+        blocks.push(format!(
+            "  {block} do\n    url \"{}\"\n    sha256 \"{}\"\n  end",
+            base.join(archive_name),
+            artifact.sha256,
+        ));
+    }
+    Ok(blocks.join("\n\n"))
+}
+
 fn archive_name(artifact: &PackageArtifact) -> Result<&str, RenderBrewError> {
     artifact
         .archive_name
@@ -204,21 +246,30 @@ fn brew_on_block(target: &str) -> Result<&'static str, RenderBrewError> {
 }
 
 fn formula_class_name(name: &str) -> String {
-    let mut chars = name.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().to_string() + chars.as_str(),
-        None => String::new(),
+    let mut output = String::new();
+    let mut uppercase_next = true;
+    for c in name.chars() {
+        if matches!(c, '-' | '_' | '.') {
+            uppercase_next = true;
+            continue;
+        }
+        if uppercase_next {
+            output.extend(c.to_uppercase());
+            uppercase_next = false;
+        } else {
+            output.push(c);
+        }
     }
-}
-
-fn escape_formula_string(value: &str) -> String {
-    value.replace('"', "\\\"")
+    output
 }
 
 #[cfg(test)]
 mod tests {
     use super::render_formula;
-    use crate::package::manifest::{ArtifactKind, PackageArtifact, PackageManifest};
+    use crate::{
+        package::manifest::{ArtifactKind, PackageArtifact, PackageManifest},
+        release_contract::ResolvedPackageMetadata,
+    };
 
     #[test]
     fn formula_uses_public_base_url() {
@@ -244,9 +295,24 @@ mod tests {
                 profile: Some("release".to_string()),
             }],
         };
+        let metadata = ResolvedPackageMetadata {
+            name: "gmutils".to_string(),
+            version: "0.5.2".to_string(),
+            description: "Genmeta Binary Utilities".to_string(),
+            homepage: "https://www.dhttp.net".to_string(),
+            license: "Apache-2.0".to_string(),
+            repository: None,
+            authors: Vec::new(),
+        };
+        let template = include_str!("../../../templates/gmutils.rb.in");
 
-        let formula = render_formula(&manifest, "https://download.example/brew/gmutils")
-            .expect("formula should render");
+        let formula = render_formula(
+            &manifest,
+            "https://download.example/brew/gmutils",
+            &metadata,
+            template,
+        )
+        .expect("formula should render");
 
         assert!(formula.contains("license \"Apache-2.0\""));
         assert!(formula.contains("url \"https://download.example/brew/gmutils/gmutils-0.5.2-aarch64-apple-darwin.tar.gz\""));

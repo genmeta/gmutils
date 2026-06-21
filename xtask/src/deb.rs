@@ -2,7 +2,7 @@
 
 use bollard::{
     Docker,
-    models::{ContainerConfig, ContainerCreateBody, HostConfig, Mount, MountType},
+    models::{ContainerConfig, ContainerCreateBody, HostConfig},
     query_parameters::{
         CommitContainerOptionsBuilder, CreateContainerOptionsBuilder, CreateImageOptionsBuilder,
     },
@@ -14,10 +14,10 @@ use tracing::{Instrument, info, info_span};
 use crate::{
     BuildProfile, DebTarget,
     container::{
-        CARGO_HOME, RUSTUP_HOME, Sibling, ZIG_GLIBC_VERSION, cargo_cache_mounts,
+        CARGO_HOME, ContainerSourceLayout, RUSTUP_HOME, ZIG_GLIBC_VERSION, cargo_cache_mounts,
         cargo_config_from_siblings, check_docker, dhttp_bootstrap_from_env, exec_in_container,
         force_remove_container, host_uid_gid, install_cargo_config, remove_container_if_exists,
-        resolve_siblings, start_container,
+        source_layout, source_mounts, start_container,
     },
     package_version, target_dir,
 };
@@ -229,7 +229,7 @@ pub async fn run(
 
     // Resolve sibling paths up front so every target build sees the same set
     // and path errors surface before we spin up containers.
-    let siblings = resolve_siblings(siblings)?;
+    let layout = source_layout("gmutils", siblings)?;
 
     let version = package_version(CARGO_NAME)?;
     let target_dir = target_dir()?;
@@ -240,7 +240,7 @@ pub async fn run(
         let docker = docker.clone();
         let version = version.clone();
         let target_dir = target_dir.clone();
-        let siblings = siblings.clone();
+        let layout = layout.clone();
         let triple = target.triple();
         info!(
             triple,
@@ -250,8 +250,7 @@ pub async fn run(
         let span = info_span!("deb", triple);
         tasks.spawn(
             async move {
-                build_one_with_retry(&docker, triple, &version, &target_dir, profile, &siblings)
-                    .await
+                build_one_with_retry(&docker, triple, &version, &target_dir, profile, &layout).await
             }
             .instrument(span),
         );
@@ -275,10 +274,10 @@ async fn build_one_with_retry(
     version: &str,
     target_dir: &std::path::Path,
     profile: BuildProfile,
-    siblings: &[Sibling],
+    layout: &ContainerSourceLayout,
 ) -> Result<DebArtifact, Whatever> {
     for attempt in 1..=BUILD_ATTEMPTS {
-        match build_one(docker, triple, version, target_dir, profile, siblings).await {
+        match build_one(docker, triple, version, target_dir, profile, layout).await {
             Ok(artifact) => return Ok(artifact),
             Err(error) if attempt < BUILD_ATTEMPTS => {
                 let report = Report::from_error(&error);
@@ -302,7 +301,7 @@ async fn build_one(
     version: &str,
     target_dir: &std::path::Path,
     profile: BuildProfile,
-    siblings: &[Sibling],
+    layout: &ContainerSourceLayout,
 ) -> Result<DebArtifact, Whatever> {
     let arch = deb_arch(triple)?;
     let gnu = gnu_arch(triple)?;
@@ -316,31 +315,12 @@ async fn build_one(
         .await
         .whatever_context(format!("failed to create {}", out_dir.display()))?;
 
-    let workspace_dir =
-        std::env::current_dir().whatever_context("failed to get current directory")?;
-
-    let mut mounts = vec![Mount {
-        target: Some("/workspace".into()),
-        source: Some(workspace_dir.to_string_lossy().into_owned()),
-        typ: Some(MountType::BIND),
-        ..Default::default()
-    }];
-    // User-requested sibling crates, bind-mounted at /{basename} so that
-    // `path = "../{basename}"` references in Cargo.toml resolve inside the
-    // container.
-    for sibling in siblings {
-        mounts.push(Mount {
-            target: Some(format!("/{}", sibling.basename)),
-            source: Some(sibling.host.to_string_lossy().into_owned()),
-            typ: Some(MountType::BIND),
-            ..Default::default()
-        });
-    }
+    let mut mounts = source_mounts(layout);
     mounts.extend(cargo_cache_mounts());
 
     let bootstrap = dhttp_bootstrap_from_env()?;
     mounts.extend(bootstrap.mounts);
-    let cargo_config = cargo_config_from_siblings(siblings);
+    let cargo_config = cargo_config_from_siblings(&layout.overrides);
 
     let container_name = format!("{CARGO_NAME}-xtask-deb-{triple}");
     info!(triple, container = %container_name, "creating build container");
@@ -376,6 +356,7 @@ async fn build_one(
         arch,
         gnu,
         profile,
+        &layout.primary.container,
         &bootstrap.exports,
         cargo_config.as_deref(),
     )
@@ -399,6 +380,7 @@ async fn build_one_inner(
     arch: &str,
     gnu: &str,
     profile: BuildProfile,
+    primary_source: &str,
     dhttp_bootstrap_exports: &str,
     cargo_config: Option<&str>,
 ) -> Result<(), Whatever> {
@@ -436,9 +418,9 @@ export BUILD_PROFILE={profile_dir}
 export CARGO_PROFILE_ARGS="{cargo_profile_args}"
 export DEB_HOST_MULTIARCH={gnu}
 {dhttp_bootstrap_exports}
-SRC=/workspace/target/{triple}/{profile_dir}/deb/src
+SRC={primary_source}/target/{triple}/{profile_dir}/deb/src
 mkdir -p "$SRC/debian"
-cp -r /workspace/{DEBIAN_PKG_DIR}/. "$SRC/debian/"
+cp -r {primary_source}/{DEBIAN_PKG_DIR}/. "$SRC/debian/"
 printf '{PACKAGE_NAME} ({version}-1) unstable; urgency=low\n\n  * release {version}\n\n -- Genmeta Tech Limited <developer@genmeta.net>  %s\n' \
     "$(date -R)" > "$SRC/debian/changelog"
 cd "$SRC"
