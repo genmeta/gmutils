@@ -20,7 +20,7 @@ const INSTALL_CONTENT: &str = r##"  def install
   end
 
   test do
-    system "#{bin}/genmeta", "-V"
+    system "#{bin}/genmeta", "version"
   end"##;
 
 #[derive(Debug, Snafu)]
@@ -251,5 +251,6 @@ mod tests {
         assert!(formula.contains("license \"Apache-2.0\""));
         assert!(formula.contains("url \"https://download.example/brew/gmutils/gmutils-0.5.2-aarch64-apple-darwin.tar.gz\""));
         assert!(formula.contains("sha256 \"arm-sha\""));
+        assert!(formula.contains(r##"system "#{bin}/genmeta", "version""##));
     }
 }
