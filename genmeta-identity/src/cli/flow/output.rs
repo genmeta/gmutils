@@ -65,15 +65,11 @@ pub(crate) enum DefaultIdentityBlock {
 }
 
 pub(crate) fn summary_line_style(summary: &LocalIdentitySummary) -> LineStyle {
-    if matches!(
-        summary.status,
-        LocalIdentityStatus::Invalid { .. } | LocalIdentityStatus::Incomplete { .. }
-    ) {
-        LineStyle::Dim
-    } else if summary.is_default {
-        LineStyle::Bold
-    } else {
-        LineStyle::Plain
+    match status_line_style(&summary.status) {
+        LineStyle::Dim => LineStyle::Dim,
+        LineStyle::Plain if summary.is_default => LineStyle::Bold,
+        LineStyle::Plain => LineStyle::Plain,
+        LineStyle::Bold => LineStyle::Bold,
     }
 }
 
@@ -89,6 +85,47 @@ fn render_line(text: String, style: LineStyle, ansi: bool) -> String {
     }
 }
 
+pub(crate) fn compact_identity_label(summary: &LocalIdentitySummary) -> String {
+    compact_identity_label_parts(
+        summary.target.short_name(),
+        &summary.status,
+        summary.is_default,
+    )
+}
+
+pub(crate) fn compact_identity_label_parts(
+    name: &str,
+    status: &LocalIdentityStatus,
+    is_default: bool,
+) -> String {
+    let mut label = format!("{name} [{}]", status.label());
+    if is_default {
+        label.push_str(" (default identity)");
+    }
+    label
+}
+
+pub(crate) fn status_line_style(status: &LocalIdentityStatus) -> LineStyle {
+    match status {
+        LocalIdentityStatus::Invalid { .. } | LocalIdentityStatus::Incomplete { .. } => {
+            LineStyle::Dim
+        }
+        LocalIdentityStatus::Ready { .. } | LocalIdentityStatus::Expired { .. } => LineStyle::Plain,
+    }
+}
+
+pub(crate) fn format_current_default_suffix(
+    name: &str,
+    status: &LocalIdentityStatus,
+    ansi: bool,
+) -> String {
+    render_line(
+        format!("(current: {})", compact_identity_label_parts(name, status, false)),
+        LineStyle::Dim,
+        ansi,
+    )
+}
+
 pub(crate) fn render_choice_label(choice: &InteractiveInventoryChoice, ansi: bool) -> String {
     match choice {
         InteractiveInventoryChoice::Saved(summary) => {
@@ -97,15 +134,11 @@ pub(crate) fn render_choice_label(choice: &InteractiveInventoryChoice, ansi: boo
             } else {
                 ""
             };
-            let mut label = format!(
-                "{prefix}{} [{}]",
-                summary.target.short_name(),
-                summary.status.label()
-            );
-            if summary.is_default {
-                label.push_str(" (default identity)");
-            }
-            render_line(label, summary_line_style(summary), ansi)
+            render_line(
+                format!("{prefix}{}", compact_identity_label(summary)),
+                summary_line_style(summary),
+                ansi,
+            )
         }
         InteractiveInventoryChoice::Organization { target } => render_line(
             format!("{} (not saved locally)", target.short_name()),
@@ -256,8 +289,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        DefaultIdentityBlock, LineStyle, format_default_identity_block, format_default_summary,
-        format_info, render_choice_label, render_inventory, summary_line_style,
+        DefaultIdentityBlock, LineStyle, format_current_default_suffix,
+        format_default_identity_block, format_default_summary, format_info,
+        render_choice_label, render_inventory, summary_line_style, compact_identity_label,
     };
     use crate::cli::flow::{
         local::{
@@ -319,6 +353,20 @@ Saved at: /tmp/phone.alice.smith";
     }
 
     #[test]
+    fn compact_label_uses_square_bracket_status_without_chain_id() {
+        let profile = summary(
+            "alice.smith",
+            false,
+            LocalIdentityStatus::Ready {
+                expires_at: EXPIRES_AT,
+            },
+            Some("primary:0"),
+        );
+
+        assert_eq!(compact_identity_label(&profile), "alice.smith [ready]");
+    }
+
+    #[test]
     fn invalid_default_line_prefers_dim_over_bold() {
         let profile = summary(
             "alice.smith",
@@ -330,6 +378,20 @@ Saved at: /tmp/phone.alice.smith";
         );
 
         assert_eq!(summary_line_style(&profile), LineStyle::Dim);
+    }
+
+    #[test]
+    fn current_default_suffix_uses_compact_label_text() {
+        assert_eq!(
+            format_current_default_suffix(
+                "meng.lin",
+                &LocalIdentityStatus::Invalid {
+                    detail: "certificate is unreadable".to_string(),
+                },
+                false,
+            ),
+            "(current: meng.lin [invalid])"
+        );
     }
 
     #[test]

@@ -6,6 +6,12 @@ use super::{local, output, transcript};
 use crate::cli::{self, Error, prompt::InquireResultExt};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CurrentDefaultSummary {
+    pub(crate) name: String,
+    pub(crate) status: local::LocalIdentityStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DefaultSuggestion {
     pub(crate) prompt: String,
     pub(crate) default: bool,
@@ -13,17 +19,21 @@ pub(crate) struct DefaultSuggestion {
 
 pub(crate) fn suggest_default_change(
     saved_name: &str,
-    current_default: Option<&str>,
+    current_default: Option<&CurrentDefaultSummary>,
+    ansi: bool,
 ) -> Option<DefaultSuggestion> {
     match current_default {
-        Some(current) if current == saved_name => None,
-        Some(_) => Some(DefaultSuggestion {
-            prompt: format!("Set {saved_name} as the default identity on this device?"),
-            default: true,
+        Some(current) if current.name == saved_name => None,
+        Some(current) => Some(DefaultSuggestion {
+            prompt: format!(
+                "Set {saved_name} as the default identity on this device? {}",
+                output::format_current_default_suffix(&current.name, &current.status, ansi)
+            ),
+            default: false,
         }),
         None => Some(DefaultSuggestion {
             prompt: format!("Set {saved_name} as the default identity on this device?"),
-            default: false,
+            default: true,
         }),
     }
 }
@@ -53,6 +63,26 @@ async fn current_default_name(dhttp_home: &DhttpHome) -> Result<Option<DhttpName
         .and_then(|config| config.settings().default_identity_name().cloned()))
 }
 
+pub(crate) async fn current_default_summary(
+    dhttp_home: &DhttpHome,
+) -> Result<Option<CurrentDefaultSummary>, Error> {
+    let Some(name) = current_default_name(dhttp_home).await? else {
+        return Ok(None);
+    };
+
+    let status = match local::try_load_summary(dhttp_home, name.borrow(), None).await? {
+        Some(summary) => summary.status,
+        None => local::LocalIdentityStatus::Invalid {
+            detail: "identity is not saved on this device".to_string(),
+        },
+    };
+
+    Ok(Some(CurrentDefaultSummary {
+        name: name.as_partial().to_string(),
+        status,
+    }))
+}
+
 async fn save_default_name(
     dhttp_home: &DhttpHome,
     name: DhttpName<'_>,
@@ -76,6 +106,7 @@ pub(crate) async fn run_lifecycle_epilogue(
 ) -> Result<(), Error> {
     let ansi = std::io::stdout().is_terminal();
     let mut default_after = current_default_name(dhttp_home).await?;
+    let current_default = current_default_summary(dhttp_home).await?;
     let summary = local::load_summary(
         dhttp_home,
         name.clone(),
@@ -89,7 +120,8 @@ pub(crate) async fn run_lifecycle_epilogue(
     if interactive
         && let Some(suggestion) = suggest_default_change(
             name.as_partial(),
-            default_after.as_ref().map(|default| default.as_partial()),
+            current_default.as_ref(),
+            ansi,
         )
     {
         let accepted = crate::cli::prompt::sync(move || {
@@ -142,8 +174,11 @@ mod tests {
     use dhttp::{home::DhttpHome, name::DhttpName};
     use tokio::fs;
 
-    use super::{DefaultSuggestion, default_block, suggest_default_change};
-    use crate::cli::flow::output::DefaultIdentityBlock;
+    use super::{CurrentDefaultSummary, DefaultSuggestion, default_block, suggest_default_change};
+    use crate::cli::flow::{
+        local::LocalIdentityStatus,
+        output::DefaultIdentityBlock,
+    };
 
     fn unique_test_home_path(test_name: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -157,22 +192,37 @@ mod tests {
     }
 
     #[test]
-    fn suggest_new_default_uses_yes_by_default_when_another_default_exists() {
-        let suggestion = suggest_default_change("alice.smith", Some("meng.lin")).unwrap();
+    fn suggest_fill_empty_default_uses_yes_by_default() {
+        let suggestion = suggest_default_change("alice.smith", None, false).unwrap();
 
+        assert!(suggestion.default);
         assert_eq!(
-            suggestion,
-            DefaultSuggestion {
-                prompt: "Set alice.smith as the default identity on this device?".to_string(),
-                default: true,
-            }
+            suggestion.prompt,
+            "Set alice.smith as the default identity on this device?"
         );
     }
 
     #[test]
-    fn suggest_fill_empty_default_uses_no_by_default() {
-        let suggestion = suggest_default_change("alice.smith", None).unwrap();
-        assert!(!suggestion.default);
+    fn suggest_replacing_default_uses_no_by_default_and_shows_current_status() {
+        let suggestion = suggest_default_change(
+            "alice.smith",
+            Some(&CurrentDefaultSummary {
+                name: "meng.lin".to_string(),
+                status: LocalIdentityStatus::Invalid {
+                    detail: "certificate is unreadable".to_string(),
+                },
+            }),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            suggestion,
+            DefaultSuggestion {
+                prompt: "Set alice.smith as the default identity on this device? (current: meng.lin [invalid])".to_string(),
+                default: false,
+            }
+        );
     }
 
     #[test]
