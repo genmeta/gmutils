@@ -12,7 +12,10 @@
 //! 5. Move the produced `.rpm` next to the `.deb` outputs under
 //!    `target/{triple}/release/rpm/`.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use bollard::{
     Docker,
@@ -29,11 +32,13 @@ use crate::{
     RpmTarget,
     container::{
         CARGO_HOME, ContainerSourceLayout, RUSTUP_HOME, ZIG_GLIBC_VERSION, cargo_cache_mounts,
-        cargo_config_from_siblings, check_docker, dhttp_bootstrap_from_env, exec_in_container,
+        cargo_config_from_siblings, check_docker, dhttp_bootstrap_from_values, exec_in_container,
         force_remove_container, host_uid_gid, install_cargo_config, remove_container_if_exists,
         source_layout, source_mounts, start_container,
     },
-    package_version, target_dir,
+    package_version,
+    release_contract::{PackageKind, ReleaseContract, resolve_build_env_from_process},
+    target_dir,
 };
 
 const CARGO_NAME: &str = "genmeta";
@@ -129,6 +134,7 @@ fn aarch64_zigbuild_workaround_script(triple: &str) -> String {
 }
 
 pub async fn run(
+    contract: &ReleaseContract,
     targets: &[RpmTarget],
     siblings: &[std::path::PathBuf],
 ) -> Result<Vec<RpmArtifact>, Whatever> {
@@ -140,6 +146,8 @@ pub async fn run(
     let layout = source_layout("gmutils", siblings)?;
     let version = package_version(CARGO_NAME)?;
     let target_dir = target_dir()?;
+    let build_env = resolve_build_env_from_process(contract, PackageKind::Rpm, None)
+        .whatever_context("failed to resolve build environment for rpm packaging")?;
 
     let mut tasks = tokio::task::JoinSet::new();
     for &target in targets {
@@ -147,11 +155,14 @@ pub async fn run(
         let version = version.clone();
         let target_dir = target_dir.clone();
         let layout = layout.clone();
+        let build_env = build_env.clone();
         let triple = target.triple();
         info!(triple, "queued rpm target build");
         let span = info_span!("rpm", triple);
         tasks.spawn(
-            async move { build_one(&docker, triple, &version, &target_dir, &layout).await }
+            async move {
+                build_one(&docker, triple, &version, &target_dir, &layout, &build_env).await
+            }
                 .instrument(span),
         );
     }
@@ -281,6 +292,7 @@ async fn build_one(
     version: &str,
     target_dir: &Path,
     layout: &ContainerSourceLayout,
+    build_env: &BTreeMap<String, String>,
 ) -> Result<RpmArtifact, Whatever> {
     let arch = rpm_arch(triple)?;
     info!(triple, arch, "ensuring build image");
@@ -294,7 +306,7 @@ async fn build_one(
     let mut mounts = source_mounts(layout);
     mounts.extend(cargo_cache_mounts());
 
-    let bootstrap = dhttp_bootstrap_from_env()?;
+    let bootstrap = dhttp_bootstrap_from_values(build_env.clone())?;
     mounts.extend(bootstrap.mounts);
     let cargo_config = cargo_config_from_siblings(&layout.overrides);
 

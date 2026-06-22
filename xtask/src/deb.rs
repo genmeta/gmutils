@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::collections::BTreeMap;
+
 use bollard::{
     Docker,
     models::{ContainerConfig, ContainerCreateBody, HostConfig},
@@ -15,11 +17,13 @@ use crate::{
     BuildProfile, DebTarget,
     container::{
         CARGO_HOME, ContainerSourceLayout, RUSTUP_HOME, ZIG_GLIBC_VERSION, cargo_cache_mounts,
-        cargo_config_from_siblings, check_docker, dhttp_bootstrap_from_env, exec_in_container,
+        cargo_config_from_siblings, check_docker, dhttp_bootstrap_from_values, exec_in_container,
         force_remove_container, host_uid_gid, install_cargo_config, remove_container_if_exists,
         source_layout, source_mounts, start_container,
     },
-    package_version, target_dir,
+    package_version,
+    release_contract::{PackageKind, ReleaseContract, resolve_build_env_from_process},
+    target_dir,
 };
 
 const CARGO_NAME: &str = "genmeta";
@@ -214,6 +218,7 @@ chmod -R a+rX {CARGO_HOME} {RUSTUP_HOME}
 }
 
 pub async fn run(
+    contract: &ReleaseContract,
     targets: &[DebTarget],
     profile: BuildProfile,
     siblings: &[std::path::PathBuf],
@@ -233,6 +238,8 @@ pub async fn run(
 
     let version = package_version(CARGO_NAME)?;
     let target_dir = target_dir()?;
+    let build_env = resolve_build_env_from_process(contract, PackageKind::Deb, None)
+        .whatever_context("failed to resolve build environment for deb packaging")?;
 
     let mut tasks = tokio::task::JoinSet::new();
 
@@ -241,6 +248,7 @@ pub async fn run(
         let version = version.clone();
         let target_dir = target_dir.clone();
         let layout = layout.clone();
+        let build_env = build_env.clone();
         let triple = target.triple();
         info!(
             triple,
@@ -250,7 +258,16 @@ pub async fn run(
         let span = info_span!("deb", triple);
         tasks.spawn(
             async move {
-                build_one_with_retry(&docker, triple, &version, &target_dir, profile, &layout).await
+                build_one_with_retry(
+                    &docker,
+                    triple,
+                    &version,
+                    &target_dir,
+                    profile,
+                    &layout,
+                    build_env,
+                )
+                .await
             }
             .instrument(span),
         );
@@ -275,9 +292,14 @@ async fn build_one_with_retry(
     target_dir: &std::path::Path,
     profile: BuildProfile,
     layout: &ContainerSourceLayout,
+    build_env: BTreeMap<String, String>,
 ) -> Result<DebArtifact, Whatever> {
     for attempt in 1..=BUILD_ATTEMPTS {
-        match build_one(docker, triple, version, target_dir, profile, layout).await {
+        match build_one(
+            docker, triple, version, target_dir, profile, layout, &build_env,
+        )
+        .await
+        {
             Ok(artifact) => return Ok(artifact),
             Err(error) if attempt < BUILD_ATTEMPTS => {
                 let report = Report::from_error(&error);
@@ -302,6 +324,7 @@ async fn build_one(
     target_dir: &std::path::Path,
     profile: BuildProfile,
     layout: &ContainerSourceLayout,
+    build_env: &BTreeMap<String, String>,
 ) -> Result<DebArtifact, Whatever> {
     let arch = deb_arch(triple)?;
     let gnu = gnu_arch(triple)?;
@@ -318,7 +341,7 @@ async fn build_one(
     let mut mounts = source_mounts(layout);
     mounts.extend(cargo_cache_mounts());
 
-    let bootstrap = dhttp_bootstrap_from_env()?;
+    let bootstrap = dhttp_bootstrap_from_values(build_env.clone())?;
     mounts.extend(bootstrap.mounts);
     let cargo_config = cargo_config_from_siblings(&layout.overrides);
 

@@ -1,12 +1,19 @@
 #![allow(dead_code)]
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use flate2::{Compression, write::GzEncoder};
 use snafu::{ResultExt, Whatever};
 use tracing::{Instrument, info, info_span};
 
-use crate::{BrewTarget, package_meta, run_cmd, run_cmd_quiet, sha256_file, target_dir};
+use crate::{
+    BrewTarget, package_meta,
+    release_contract::{PackageKind, ReleaseContract, resolve_build_env_from_process},
+    run_cmd, run_cmd_quiet, sha256_file, target_dir,
+};
 
 const CARGO_NAME: &str = "genmeta";
 
@@ -39,7 +46,10 @@ fn create_tar_gz(staging: &Path, output: &Path) -> Result<(), Whatever> {
     Ok(())
 }
 
-pub async fn run(targets: &[BrewTarget]) -> Result<Vec<BrewArchive>, Whatever> {
+pub async fn run(
+    contract: &ReleaseContract,
+    targets: &[BrewTarget],
+) -> Result<Vec<BrewArchive>, Whatever> {
     info!(target_count = targets.len(), "starting brew dist build");
     let meta = package_meta(CARGO_NAME)?;
     let target_dir = target_dir()?;
@@ -51,10 +61,12 @@ pub async fn run(targets: &[BrewTarget]) -> Result<Vec<BrewArchive>, Whatever> {
         let target_dir = target_dir.clone();
         let workspace = workspace.clone();
         let triple = target.triple();
+        let build_env = resolve_build_env_from_process(contract, PackageKind::Brew, Some(triple))
+            .whatever_context("failed to resolve build environment for brew target")?;
         info!(triple, "queued brew target build");
         let span = info_span!("brew", triple);
         tasks.spawn(
-            async move { build_one(triple, &version, &target_dir, &workspace).await }
+            async move { build_one(triple, &version, &target_dir, &workspace, build_env).await }
                 .instrument(span),
         );
     }
@@ -75,20 +87,25 @@ async fn build_one(
     version: &str,
     target_dir: &Path,
     workspace: &Path,
+    build_env: BTreeMap<String, String>,
 ) -> Result<BrewArchive, Whatever> {
     info!(triple, "checking cargo availability");
     check_cargo().await?;
 
     // Build
     info!(triple, "starting cargo build for brew target");
-    run_cmd(tokio::process::Command::new("cargo").args([
-        "build",
-        "--release",
-        "--target",
-        triple,
-        "--bin",
-        CARGO_NAME,
-    ]))
+    run_cmd(
+        tokio::process::Command::new("cargo")
+            .envs(&build_env)
+            .args([
+                "build",
+                "--release",
+                "--target",
+                triple,
+                "--bin",
+                CARGO_NAME,
+            ]),
+    )
     .await
     .whatever_context(format!("cargo build failed for {triple}"))?;
     info!(triple, "cargo build finished for brew target");

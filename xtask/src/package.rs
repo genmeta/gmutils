@@ -79,8 +79,6 @@ pub fn parse_package_sections(tokens: &[OsString]) -> Result<Vec<PackageFormat>,
 pub async fn run(options: PackageOptions) -> Result<(), Whatever> {
     let contract = crate::release_contract::load_release_contract()
         .whatever_context("failed to load release contract")?;
-    crate::release_contract::validate_required_build_env(&contract)
-        .whatever_context("failed to validate build environment")?;
     let formats = parse_package_sections(&options.targets).unwrap_or_else(|error| error.exit());
     for format in formats {
         match format {
@@ -90,6 +88,7 @@ pub async fn run(options: PackageOptions) -> Result<(), Whatever> {
                 siblings,
             } => {
                 deb::run(
+                    &contract,
                     &targets,
                     crate::BuildProfile::from_debug(debug),
                     &siblings,
@@ -98,13 +97,13 @@ pub async fn run(options: PackageOptions) -> Result<(), Whatever> {
                 .await?
             }
             PackageFormat::Rpm { targets, siblings } => {
-                rpm::run(&targets, &siblings, options.overwrite_manifest).await?
+                rpm::run(&contract, &targets, &siblings, options.overwrite_manifest).await?
             }
             PackageFormat::Brew { targets } => {
-                brew::run(&targets, options.overwrite_manifest).await?
+                brew::run(&contract, &targets, options.overwrite_manifest).await?
             }
             PackageFormat::Scoop { targets } => {
-                scoop::run(&targets, options.overwrite_manifest).await?
+                scoop::run(&contract, &targets, options.overwrite_manifest).await?
             }
         }
     }

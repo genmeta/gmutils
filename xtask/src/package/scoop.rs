@@ -76,8 +76,12 @@ fn target_relative_path(path: &Path) -> Result<String, ScoopPackageError> {
         .ok_or(ScoopPackageError::ArtifactPathUtf8)
 }
 
-pub async fn run(targets: &[ScoopTarget], overwrite_manifest: bool) -> Result<(), Whatever> {
-    let archives = crate::scoop::run(targets).await?;
+pub async fn run(
+    contract: &crate::release_contract::ReleaseContract,
+    targets: &[ScoopTarget],
+    overwrite_manifest: bool,
+) -> Result<(), Whatever> {
+    let archives = crate::scoop::run(contract, targets).await?;
     let meta = crate::package_meta("genmeta")?;
     let target_dir = crate::target_dir()?;
     let manifest_path = target_dir
