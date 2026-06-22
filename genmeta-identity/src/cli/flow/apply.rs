@@ -7,7 +7,7 @@ use tracing::{Instrument, info_span};
 use super::{
     approval,
     kind::IdentityKind,
-    local::{self, InteractiveInventoryChoice, LocalIdentityStatus, LocalIdentitySummary},
+    local::{self, LocalIdentityStatus, LocalIdentitySummary},
     target::{IdentityLevel, IdentityTarget},
 };
 use crate::{
@@ -105,6 +105,12 @@ fn apply_approval_menu_actions(return_to: Option<&str>) -> Vec<ApplyApprovalMenu
 pub(crate) enum ApplyRunOutcome {
     Applied,
     ReturnedToCaller,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ApplyPostSavePolicy {
+    ManageDefaultSuggestion,
+    SkipDefaultSuggestion,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -376,60 +382,23 @@ fn apply_identity_name_opening() -> &'static str {
     "Apply an existing identity to this device.\n\nThis will create a new certificate chain for an existing identity\nand save it on this device.\n\nUse a dotted name:\n  <given_name>.<surname>\n\nFor example:\n  alice.smith\n\nTo apply a sub-identity, add one more name before it:\n  phone.alice.smith"
 }
 
-async fn resolve_target(
+fn explicit_target_from_command(
     command: &Apply,
-    dhttp_home: &DhttpHome,
-) -> Result<dhttp::name::DhttpName<'static>, Error> {
-    if command.use_default {
-        return cli::resolve_default_target_name(dhttp_home).await;
-    }
+) -> Result<Option<dhttp::name::DhttpName<'static>>, Error> {
+    command.name.as_deref().map(cli::parse_identity_name).transpose()
+}
 
-    match command.name.as_deref() {
-        Some(name) => cli::parse_identity_name(name),
-        None => {
-            let default_name = cli::load_current_settings(dhttp_home)
-                .await?
-                .and_then(|config| config.settings().default_identity_name().cloned());
-            let inventory =
-                local::load_inventory(dhttp_home, default_name.as_ref().map(|name| name.borrow()))
-                    .await?;
-            let choices = local::build_apply_inventory_choices(&inventory);
-            if choices.is_empty() {
-                let identity =
-                    crate::cli::prompt::prompt_identity_name(apply_identity_name_opening())
-                        .await
-                        .require_interactive("IDENTITY")?;
-                return cli::parse_identity_name(&identity);
-            }
-            let labels: Vec<String> = choices
-                .iter()
-                .map(|choice| {
-                    super::output::render_choice_label(choice, std::io::stdout().is_terminal())
-                })
-                .collect();
-            let selected = crate::cli::prompt::prompt_select_string(
-                "Select an identity to apply to this device:",
-                labels.clone(),
-            )
-            .await
-            .require_interactive("IDENTITY")?;
-            let choice = choices
-                .into_iter()
-                .zip(labels)
-                .find_map(|(choice, label)| (label == selected).then_some(choice))
-                .whatever_context::<_, Error>("selected identity choice is unavailable")?;
-            match choice {
-                InteractiveInventoryChoice::Saved(summary) => Ok(summary.target.into_dhttp_name()),
-                InteractiveInventoryChoice::Organization { target } => Ok(target.into_dhttp_name()),
-                InteractiveInventoryChoice::EnterAnotherIdentity => {
-                    let identity =
-                        crate::cli::prompt::prompt_identity_name(apply_identity_name_opening())
-                            .await
-                            .require_interactive("IDENTITY")?;
-                    cli::parse_identity_name(&identity)
-                }
-            }
-        }
+async fn prompt_apply_target() -> Result<dhttp::name::DhttpName<'static>, Error> {
+    let identity = crate::cli::prompt::prompt_identity_name(apply_identity_name_opening())
+        .await
+        .require_interactive("IDENTITY")?;
+    cli::parse_identity_name(&identity)
+}
+
+async fn resolve_target(command: &Apply) -> Result<dhttp::name::DhttpName<'static>, Error> {
+    match explicit_target_from_command(command)? {
+        Some(name) => Ok(name),
+        None => prompt_apply_target().await,
     }
 }
 
@@ -540,7 +509,6 @@ async fn run_helper_apply_action(
         approval::ApprovalHelperAction::Apply | approval::ApprovalHelperAction::Reapply => {
             let command = Apply {
                 name: Some(auth_domain.to_string()),
-                use_default: false,
                 kind: None,
                 replace_local: matches!(action, approval::ApprovalHelperAction::Reapply),
                 device_name: None,
@@ -625,75 +593,45 @@ async fn prompt_apply_approval_menu_action(
         .whatever_context::<_, Error>("selected apply approval action is unavailable")
 }
 
-pub(crate) async fn run_interactive(
+async fn run_post_save_epilogue(
+    post_save: ApplyPostSavePolicy,
+    dhttp_home: &DhttpHome,
+    domain: dhttp::name::DhttpName<'_>,
+    default_identity_when_command_started: Option<dhttp::name::DhttpName<'static>>,
+    interactive: bool,
+) -> Result<(), Error> {
+    match post_save {
+        ApplyPostSavePolicy::ManageDefaultSuggestion => {
+            crate::cli::flow::epilogue::run_lifecycle_epilogue(
+                dhttp_home,
+                domain,
+                default_identity_when_command_started,
+                interactive,
+            )
+            .await
+        }
+        ApplyPostSavePolicy::SkipDefaultSuggestion => {
+            crate::cli::flow::epilogue::run_local_epilogue(dhttp_home, domain).await
+        }
+    }
+}
+
+async fn run_interactive_with_policy(
     command: &Apply,
     dhttp_home: &DhttpHome,
     cert_server: &CertServer,
     return_to: Option<&str>,
+    post_save: ApplyPostSavePolicy,
 ) -> Result<ApplyRunOutcome, Error> {
     let default_identity_when_command_started = cli::load_current_settings(dhttp_home)
         .await?
         .and_then(|config| config.settings().default_identity_name().cloned());
-    let initial_target = if command.use_default {
-        Some(cli::resolve_default_target_name(dhttp_home).await?)
-    } else {
-        command
-            .name
-            .as_deref()
-            .map(cli::parse_identity_name)
-            .transpose()?
-    };
+    let initial_target = explicit_target_from_command(command)?;
     let mut state = InteractiveApplyState::from_command(command, initial_target)?;
 
     loop {
         if state.target.is_none() {
-            let default_name = cli::load_current_settings(dhttp_home)
-                .await?
-                .and_then(|config| config.settings().default_identity_name().cloned());
-            let inventory =
-                local::load_inventory(dhttp_home, default_name.as_ref().map(|name| name.borrow()))
-                    .await?;
-            let choices = local::build_apply_inventory_choices(&inventory);
-            if choices.is_empty() {
-                let identity =
-                    crate::cli::prompt::prompt_identity_name(apply_identity_name_opening())
-                        .await
-                        .require_interactive("IDENTITY")?;
-                state.target = Some(cli::parse_identity_name(&identity)?);
-            } else {
-                let labels: Vec<String> = choices
-                    .iter()
-                    .map(|choice| {
-                        super::output::render_choice_label(choice, std::io::stdout().is_terminal())
-                    })
-                    .collect();
-                let selected = crate::cli::prompt::prompt_select_string(
-                    "Select an identity to apply to this device:",
-                    labels.clone(),
-                )
-                .await
-                .require_interactive("IDENTITY")?;
-                let choice = choices
-                    .into_iter()
-                    .zip(labels)
-                    .find_map(|(choice, label)| (label == selected).then_some(choice))
-                    .whatever_context::<_, Error>("selected identity choice is unavailable")?;
-                match choice {
-                    InteractiveInventoryChoice::Saved(summary) => {
-                        state.target = Some(summary.target.into_dhttp_name());
-                    }
-                    InteractiveInventoryChoice::Organization { target } => {
-                        state.target = Some(target.into_dhttp_name());
-                    }
-                    InteractiveInventoryChoice::EnterAnotherIdentity => {
-                        let identity =
-                            crate::cli::prompt::prompt_identity_name(apply_identity_name_opening())
-                                .await
-                                .require_interactive("IDENTITY")?;
-                        state.target = Some(cli::parse_identity_name(&identity)?);
-                    }
-                }
-            }
+            state.target = Some(prompt_apply_target().await?);
             continue;
         }
 
@@ -963,7 +901,8 @@ pub(crate) async fn run_interactive(
         )
         .instrument(info_span!("save_identity"))
         .await?;
-        crate::cli::flow::epilogue::run_lifecycle_epilogue(
+        run_post_save_epilogue(
+            post_save,
             dhttp_home,
             domain.borrow(),
             default_identity_when_command_started.clone(),
@@ -974,14 +913,33 @@ pub(crate) async fn run_interactive(
     }
 }
 
-pub(crate) async fn run(
+pub(crate) async fn run_interactive(
     command: &Apply,
     dhttp_home: &DhttpHome,
     cert_server: &CertServer,
+    return_to: Option<&str>,
+) -> Result<ApplyRunOutcome, Error> {
+    run_interactive_with_policy(
+        command,
+        dhttp_home,
+        cert_server,
+        return_to,
+        ApplyPostSavePolicy::ManageDefaultSuggestion,
+    )
+    .await
+}
+
+pub(crate) async fn run_with_policy(
+    command: &Apply,
+    dhttp_home: &DhttpHome,
+    cert_server: &CertServer,
+    post_save: ApplyPostSavePolicy,
 ) -> Result<(), Error> {
     let is_interactive = std::io::stdin().is_terminal();
     if is_interactive && !command.send_code {
-        return match run_interactive(command, dhttp_home, cert_server, None).await? {
+        return match run_interactive_with_policy(command, dhttp_home, cert_server, None, post_save)
+            .await?
+        {
             ApplyRunOutcome::Applied => Ok(()),
             ApplyRunOutcome::ReturnedToCaller => whatever!("apply was cancelled"),
         };
@@ -989,7 +947,7 @@ pub(crate) async fn run(
     let default_identity_when_command_started = cli::load_current_settings(dhttp_home)
         .await?
         .and_then(|config| config.settings().default_identity_name().cloned());
-    let domain = resolve_target(command, dhttp_home).await?;
+    let domain = resolve_target(command).await?;
     let target = IdentityTarget::parse(domain.as_partial())?;
     let kind = resolve_kind(command).await?;
     let device_name = super::device::resolve_device_name(command.device_name.as_deref());
@@ -1067,11 +1025,26 @@ pub(crate) async fn run(
     )
     .instrument(info_span!("save_identity"))
     .await?;
-    crate::cli::flow::epilogue::run_lifecycle_epilogue(
+    run_post_save_epilogue(
+        post_save,
         dhttp_home,
         domain.borrow(),
         default_identity_when_command_started,
         is_interactive,
+    )
+    .await
+}
+
+pub(crate) async fn run(
+    command: &Apply,
+    dhttp_home: &DhttpHome,
+    cert_server: &CertServer,
+) -> Result<(), Error> {
+    run_with_policy(
+        command,
+        dhttp_home,
+        cert_server,
+        ApplyPostSavePolicy::ManageDefaultSuggestion,
     )
     .await
 }
@@ -1082,7 +1055,7 @@ mod tests {
         ApplyApprovalMenuAction, ApplyApprovalPlan, ApplyEmailAction, ApplyVerifyCodeAction,
         InteractiveApplyState, apply_approval_menu_actions, apply_email_actions,
         apply_identity_name_opening, apply_verification_options, apply_verify_code_actions,
-        approval_plan_from_selection, build_apply_approval_options,
+        approval_plan_from_selection, build_apply_approval_options, explicit_target_from_command,
         resolve_non_interactive_approval_plan,
     };
     use crate::{
@@ -1098,7 +1071,6 @@ mod tests {
         let mut state = InteractiveApplyState::from_command(
             &Apply {
                 name: Some("alice.smith".to_string()),
-                use_default: false,
                 kind: Some("primary".to_string()),
                 replace_local: false,
                 device_name: None,
@@ -1127,7 +1099,6 @@ mod tests {
         let mut state = InteractiveApplyState::from_command(
             &Apply {
                 name: Some("alice.smith".to_string()),
-                use_default: false,
                 kind: Some("primary".to_string()),
                 replace_local: false,
                 device_name: None,
@@ -1150,6 +1121,23 @@ mod tests {
 
         assert!(state.email_prompt_required);
         assert!(state.verify_code.is_none());
+    }
+
+    #[test]
+    fn explicit_target_from_command_returns_none_without_name() {
+        let target = explicit_target_from_command(&Apply {
+            name: None,
+            kind: None,
+            replace_local: false,
+            device_name: None,
+            email: None,
+            send_code: false,
+            verify_code: None,
+            auth: None,
+        })
+        .unwrap();
+
+        assert!(target.is_none());
     }
 
     #[test]

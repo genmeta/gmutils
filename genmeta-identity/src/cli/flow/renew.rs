@@ -283,8 +283,7 @@ async fn resolve_target(
                 .whatever_context::<_, Error>("selected identity choice is unavailable")?;
             match choice {
                 InteractiveInventoryChoice::Saved(summary) => Ok(summary.target.into_dhttp_name()),
-                InteractiveInventoryChoice::Organization { .. }
-                | InteractiveInventoryChoice::EnterAnotherIdentity => {
+                InteractiveInventoryChoice::Organization { .. } => {
                     whatever!("renew requires a saved local identity profile")
                 }
             }
@@ -405,9 +404,6 @@ async fn run_interactive(
                         target.short_name(),
                     ));
                     state.revisit_target_selection();
-                }
-                InteractiveInventoryChoice::EnterAnotherIdentity => {
-                    whatever!("renew requires a saved local identity profile")
                 }
             }
             continue;

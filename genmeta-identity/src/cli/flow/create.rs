@@ -676,7 +676,6 @@ To continue creating {}, it will {verb} {short_parent_identity} on this device, 
     ));
     let command = crate::cli::Apply {
         name: Some(parent_identity.to_string()),
-        use_default: false,
         kind: None,
         replace_local,
         device_name: None,

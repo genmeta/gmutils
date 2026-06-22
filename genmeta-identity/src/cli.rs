@@ -319,8 +319,6 @@ pub struct Create {
 pub struct Apply {
     #[arg(value_name = "IDENTITY")]
     pub name: Option<String>,
-    #[arg(long = "default", conflicts_with = "name")]
-    pub use_default: bool,
     #[arg(long)]
     pub kind: Option<String>,
     #[arg(long)]
@@ -671,11 +669,12 @@ mod tests {
     }
 
     #[test]
-    fn apply_and_renew_accept_default_flag() {
-        assert!(
-            Options::try_parse_from(["genmeta", "apply", "--default", "--kind", "primary",])
-                .is_ok()
-        );
+    fn apply_rejects_default_flag_while_renew_keeps_it() {
+        let apply_error =
+            Options::try_parse_from(["genmeta", "apply", "--default", "--kind", "primary"])
+                .unwrap_err();
+        assert!(apply_error.to_string().contains("--default"));
+
         assert!(Options::try_parse_from(["genmeta", "renew", "--default"]).is_ok());
     }
 

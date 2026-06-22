@@ -89,9 +89,19 @@ async fn run_helper_apply(
         target.short_name(),
         target.short_name()
     ));
-    let command = crate::cli::Apply {
+    let command = helper_apply_command(target);
+    super::apply::run_with_policy(
+        &command,
+        dhttp_home,
+        cert_server,
+        super::apply::ApplyPostSavePolicy::SkipDefaultSuggestion,
+    )
+    .await
+}
+
+fn helper_apply_command(target: &IdentityTarget) -> crate::cli::Apply {
+    crate::cli::Apply {
         name: Some(target.short_name().to_string()),
-        use_default: false,
         kind: None,
         replace_local: false,
         device_name: None,
@@ -99,8 +109,7 @@ async fn run_helper_apply(
         send_code: false,
         verify_code: None,
         auth: None,
-    };
-    super::apply::run(&command, dhttp_home, cert_server).await
+    }
 }
 
 async fn select_interactive_default_summary(
@@ -156,9 +165,6 @@ async fn select_interactive_default_summary(
                     }
                     DefaultOrganizationAction::ChooseAnotherIdentity => continue,
                 }
-            }
-            InteractiveInventoryChoice::EnterAnotherIdentity => {
-                whatever!("default identity selection does not support free-form identity entry")
             }
         }
     }
@@ -237,8 +243,11 @@ pub(crate) async fn run(
 
 #[cfg(test)]
 mod tests {
+    use crate::cli::flow::target::IdentityTarget;
+
     use super::{
-        DefaultOrganizationAction, default_organization_actions, organization_action_from_selection,
+        DefaultOrganizationAction, default_organization_actions, helper_apply_command,
+        organization_action_from_selection,
     };
 
     #[test]
@@ -271,5 +280,13 @@ mod tests {
             organization_action_from_selection(&options, "Choose another identity").unwrap(),
             DefaultOrganizationAction::ChooseAnotherIdentity,
         );
+    }
+
+    #[test]
+    fn helper_apply_command_uses_explicit_name_without_default_lookup() {
+        let command = helper_apply_command(&IdentityTarget::parse("alice.smith").unwrap());
+
+        assert_eq!(command.name.as_deref(), Some("alice.smith"));
+        assert!(command.kind.is_none());
     }
 }

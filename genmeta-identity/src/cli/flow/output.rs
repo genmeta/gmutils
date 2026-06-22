@@ -145,7 +145,6 @@ pub(crate) fn render_choice_label(choice: &InteractiveInventoryChoice, ansi: boo
             LineStyle::Dim,
             ansi,
         ),
-        InteractiveInventoryChoice::EnterAnotherIdentity => "Enter another identity".to_string(),
     }
 }
 
@@ -511,7 +510,6 @@ reimu.scarlet (not saved locally)\n\
                 )),
                 false,
             ),
-            render_choice_label(&InteractiveInventoryChoice::EnterAnotherIdentity, false),
         ];
 
         assert_eq!(
@@ -520,7 +518,6 @@ reimu.scarlet (not saved locally)\n\
                 "alice.smith [ready] (default identity)".to_string(),
                 "reimu.scarlet (not saved locally)".to_string(),
                 "  tablet.reimu.scarlet [ready]".to_string(),
-                "Enter another identity".to_string(),
             ]
         );
     }

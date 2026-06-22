@@ -91,7 +91,6 @@ pub(crate) struct LocalInventory {
 pub(crate) enum InteractiveInventoryChoice {
     Saved(LocalIdentitySummary),
     Organization { target: IdentityTarget },
-    EnterAnotherIdentity,
 }
 
 pub(crate) fn classify_status(
@@ -265,33 +264,6 @@ pub(crate) async fn load_summary(
             .map(|default| default.as_partial() == name.as_partial())
             .unwrap_or(false),
     })
-}
-
-pub(crate) fn build_apply_inventory_choices(
-    inventory: &LocalInventory,
-) -> Vec<InteractiveInventoryChoice> {
-    let mut choices = Vec::new();
-    for group in &inventory.groups {
-        match &group.root {
-            LocalInventoryRoot::Saved(summary) => {
-                choices.push(InteractiveInventoryChoice::Saved(summary.clone()));
-            }
-            LocalInventoryRoot::Organization { target } => {
-                choices.push(InteractiveInventoryChoice::Organization {
-                    target: target.clone(),
-                });
-            }
-        }
-        choices.extend(
-            group
-                .children
-                .iter()
-                .cloned()
-                .map(InteractiveInventoryChoice::Saved),
-        );
-    }
-    choices.push(InteractiveInventoryChoice::EnterAnotherIdentity);
-    choices
 }
 
 pub(crate) fn build_renew_inventory_choices(
@@ -490,8 +462,8 @@ mod tests {
     use super::{
         InteractiveInventoryChoice, LocalIdentityAssessment, LocalIdentityMaterialState,
         LocalIdentityStatus, LocalIdentitySummary, LocalInventoryRoot,
-        build_apply_inventory_choices, build_default_inventory_choices, build_inventory,
-        build_renew_inventory_choices, classify_status,
+        build_default_inventory_choices, build_inventory, build_renew_inventory_choices,
+        classify_status,
     };
     use crate::cli::flow::target::IdentityTarget;
 
@@ -631,45 +603,6 @@ mod tests {
         assert_eq!(
             inventory.groups[1].children[0].target.short_name(),
             "tablet.reimu.scarlet"
-        );
-    }
-
-    #[test]
-    fn builds_apply_inventory_choices_with_organization_root_and_enter_another_identity() {
-        let mut tv = ready_summary("tv.alice.smith", false, "secondary:3");
-        tv.status = LocalIdentityStatus::Incomplete {
-            detail: "private key missing".to_string(),
-        };
-        tv.certificate_chain = None;
-
-        let inventory = build_inventory(vec![
-            ready_summary("tablet.reimu.scarlet", false, "secondary:1"),
-            tv.clone(),
-            ready_summary("phone.alice.smith", false, "secondary:2"),
-        ]);
-
-        assert_eq!(
-            build_apply_inventory_choices(&inventory),
-            vec![
-                InteractiveInventoryChoice::Organization {
-                    target: IdentityTarget::parse("alice.smith").unwrap(),
-                },
-                InteractiveInventoryChoice::Saved(ready_summary(
-                    "phone.alice.smith",
-                    false,
-                    "secondary:2",
-                )),
-                InteractiveInventoryChoice::Saved(tv),
-                InteractiveInventoryChoice::Organization {
-                    target: IdentityTarget::parse("reimu.scarlet").unwrap(),
-                },
-                InteractiveInventoryChoice::Saved(ready_summary(
-                    "tablet.reimu.scarlet",
-                    false,
-                    "secondary:1",
-                )),
-                InteractiveInventoryChoice::EnterAnotherIdentity,
-            ]
         );
     }
 
