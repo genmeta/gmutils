@@ -532,7 +532,11 @@ mod tests {
     };
 
     use clap::{CommandFactory, Parser};
-    use dhttp::{home::DhttpHome, identity::Identity, name::DhttpName, name::Name};
+    use dhttp::{
+        home::DhttpHome,
+        identity::Identity,
+        name::{DhttpName, Name},
+    };
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
     use super::{
@@ -752,7 +756,10 @@ mod tests {
             name: Some("alice.smith".to_string()),
         };
 
-        let error = command.run(&dhttp_home, &dummy_cert_server()).await.unwrap_err();
+        let error = command
+            .run(&dhttp_home, &dummy_cert_server())
+            .await
+            .unwrap_err();
         let rendered = error.to_string();
 
         assert!(

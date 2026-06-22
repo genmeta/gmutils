@@ -74,22 +74,19 @@ async fn confirm_default_target(
             summary.target.short_name(),
             summary.status.label()
         );
-        let confirmed = cli::prompt::sync(move || {
-            inquire::Confirm::new(&message).with_default(false).prompt()
-        })
-        .await
-        .require_interactive("--allow-nonready")?;
+        let confirmed =
+            cli::prompt::sync(move || inquire::Confirm::new(&message).with_default(false).prompt())
+                .await
+                .require_interactive("--allow-nonready")?;
         if !confirmed {
             whatever!("default identity was not changed");
         }
         return Ok(());
     }
 
-    if let Some(suggestion) = super::epilogue::suggest_default_change(
-        summary.target.short_name(),
-        current_default,
-        ansi,
-    ) {
+    if let Some(suggestion) =
+        super::epilogue::suggest_default_change(summary.target.short_name(), current_default, ansi)
+    {
         let accepted = cli::prompt::sync(move || {
             inquire::Confirm::new(&suggestion.prompt)
                 .with_default(suggestion.default)
@@ -144,9 +141,12 @@ async fn summary_for_named_default_target(
     target: &IdentityTarget,
     configured_default_name: Option<dhttp::name::DhttpName<'_>>,
 ) -> Result<LocalIdentitySummary, Error> {
-    if let Some(summary) =
-        local::try_load_summary(dhttp_home, target.dhttp_name(), configured_default_name.clone())
-            .await?
+    if let Some(summary) = local::try_load_summary(
+        dhttp_home,
+        target.dhttp_name(),
+        configured_default_name.clone(),
+    )
+    .await?
     {
         return Ok(summary);
     }
@@ -302,12 +302,11 @@ pub(crate) async fn run(
 
 #[cfg(test)]
 mod tests {
-    use crate::cli::flow::target::IdentityTarget;
-
     use super::{
         DefaultOrganizationAction, default_organization_actions, helper_apply_command,
         organization_action_from_selection,
     };
+    use crate::cli::flow::target::IdentityTarget;
 
     #[test]
     fn organization_action_menu_matches_spec_copy() {

@@ -118,11 +118,8 @@ pub(crate) async fn run_lifecycle_epilogue(
     transcript::print_line(output::format_safekeeping_reminder(ansi));
 
     if interactive
-        && let Some(suggestion) = suggest_default_change(
-            name.as_partial(),
-            current_default.as_ref(),
-            ansi,
-        )
+        && let Some(suggestion) =
+            suggest_default_change(name.as_partial(), current_default.as_ref(), ansi)
     {
         let accepted = crate::cli::prompt::sync(move || {
             inquire::Confirm::new(&suggestion.prompt)
@@ -175,10 +172,7 @@ mod tests {
     use tokio::fs;
 
     use super::{CurrentDefaultSummary, DefaultSuggestion, default_block, suggest_default_change};
-    use crate::cli::flow::{
-        local::LocalIdentityStatus,
-        output::DefaultIdentityBlock,
-    };
+    use crate::cli::flow::{local::LocalIdentityStatus, output::DefaultIdentityBlock};
 
     fn unique_test_home_path(test_name: &str) -> PathBuf {
         let nonce = SystemTime::now()

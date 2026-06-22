@@ -120,7 +120,10 @@ pub(crate) fn format_current_default_suffix(
     ansi: bool,
 ) -> String {
     render_line(
-        format!("(current: {})", compact_identity_label_parts(name, status, false)),
+        format!(
+            "(current: {})",
+            compact_identity_label_parts(name, status, false)
+        ),
         LineStyle::Dim,
         ansi,
     )
@@ -288,9 +291,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        DefaultIdentityBlock, LineStyle, format_current_default_suffix,
-        format_default_identity_block, format_default_summary, format_info,
-        render_choice_label, render_inventory, summary_line_style, compact_identity_label,
+        DefaultIdentityBlock, LineStyle, compact_identity_label, format_current_default_suffix,
+        format_default_identity_block, format_default_summary, format_info, render_choice_label,
+        render_inventory, summary_line_style,
     };
     use crate::cli::flow::{
         local::{

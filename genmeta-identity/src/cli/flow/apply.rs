@@ -385,7 +385,11 @@ fn apply_identity_name_opening() -> &'static str {
 fn explicit_target_from_command(
     command: &Apply,
 ) -> Result<Option<dhttp::name::DhttpName<'static>>, Error> {
-    command.name.as_deref().map(cli::parse_identity_name).transpose()
+    command
+        .name
+        .as_deref()
+        .map(cli::parse_identity_name)
+        .transpose()
 }
 
 async fn prompt_apply_target() -> Result<dhttp::name::DhttpName<'static>, Error> {
