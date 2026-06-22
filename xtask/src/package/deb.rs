@@ -104,12 +104,13 @@ async fn read_deb_metadata(path: &Path) -> Result<DebMetadata, ReadDebMetadataEr
 }
 
 pub async fn run(
+    contract: &crate::release_contract::ReleaseContract,
     targets: &[DebTarget],
     profile: BuildProfile,
     siblings: &[PathBuf],
     overwrite_manifest: bool,
 ) -> Result<(), Whatever> {
-    let deb_artifacts = crate::deb::run(targets, profile, siblings).await?;
+    let deb_artifacts = crate::deb::run(contract, targets, profile, siblings).await?;
     let meta = crate::package_meta("genmeta")?;
     let target_dir = crate::target_dir()?;
     let manifest_path = target_dir.join("common").join("deb").join("manifest.toml");

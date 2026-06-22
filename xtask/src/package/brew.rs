@@ -76,8 +76,12 @@ fn target_relative_path(path: &Path) -> Result<String, BrewPackageError> {
         .ok_or(BrewPackageError::ArtifactPathUtf8)
 }
 
-pub async fn run(targets: &[BrewTarget], overwrite_manifest: bool) -> Result<(), Whatever> {
-    let archives = crate::brew::run(targets).await?;
+pub async fn run(
+    contract: &crate::release_contract::ReleaseContract,
+    targets: &[BrewTarget],
+    overwrite_manifest: bool,
+) -> Result<(), Whatever> {
+    let archives = crate::brew::run(contract, targets).await?;
     let meta = crate::package_meta("genmeta")?;
     let target_dir = crate::target_dir()?;
     let manifest_path = target_dir.join("common").join("brew").join("manifest.toml");

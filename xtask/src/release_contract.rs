@@ -32,6 +32,14 @@ pub struct PackageOverride {
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct HomebrewContract {
     pub template: TemplateContract,
+    #[serde(default)]
+    pub target: BTreeMap<String, HomebrewTargetContract>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
+pub struct HomebrewTargetContract {
+    #[serde(default)]
+    pub env: BTreeMap<String, BuildEnvBinding>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -44,14 +52,16 @@ pub struct TemplateContract {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
 pub struct BuildContract {
-    pub env: BuildEnvContract,
+    #[serde(default)]
+    pub env: BTreeMap<String, BuildEnvBinding>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct BuildEnvContract {
-    pub required: Vec<String>,
+pub struct BuildEnvBinding {
+    pub env: Option<String>,
+    pub value: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -126,6 +136,14 @@ pub struct ResolvedPackageMetadata {
     pub authors: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageKind {
+    Deb,
+    Rpm,
+    Brew,
+    Scoop,
+}
+
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 pub enum ReleaseContractError {
@@ -152,6 +170,8 @@ pub enum ReleaseContractError {
     MissingHomepage { manifest: PathBuf },
     #[snafu(display("cargo package is missing license"))]
     MissingLicense { manifest: PathBuf },
+    #[snafu(display("build env binding {name} must set exactly one of env or value"))]
+    InvalidBuildEnvBinding { name: String },
     #[snafu(display("missing required build environment variable {name}"))]
     MissingBuildEnv { name: String },
     #[snafu(display("build environment variable {name} must not be empty"))]
@@ -188,9 +208,21 @@ fn parse_release_contract_at(
     path: &Path,
     input: &str,
 ) -> Result<ReleaseContract, ReleaseContractError> {
-    toml::from_str(input).context(release_contract_error::ParseSnafu {
+    let contract = toml::from_str(input).context(release_contract_error::ParseSnafu {
         path: path.to_path_buf(),
-    })
+    })?;
+    validate_release_contract(&contract)?;
+    Ok(contract)
+}
+
+fn validate_release_contract(contract: &ReleaseContract) -> Result<(), ReleaseContractError> {
+    validate_build_env_bindings(&contract.build.env)?;
+    if let Some(homebrew) = &contract.homebrew {
+        for target in homebrew.target.values() {
+            validate_build_env_bindings(&target.env)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn resolve_package_metadata(
@@ -243,27 +275,107 @@ pub fn resolve_package_metadata(
     })
 }
 
-pub fn validate_required_build_env(contract: &ReleaseContract) -> Result<(), ReleaseContractError> {
+pub fn resolve_build_env_from_process(
+    contract: &ReleaseContract,
+    package_kind: PackageKind,
+    target: Option<&str>,
+) -> Result<BTreeMap<String, String>, ReleaseContractError> {
     let values = std::env::vars().collect::<BTreeMap<_, _>>();
-    validate_required_build_env_values(contract, &values)
+    resolve_build_env_values(contract, package_kind, target, &values)
 }
 
-pub fn validate_required_build_env_values(
+pub fn resolve_build_env_values(
     contract: &ReleaseContract,
+    package_kind: PackageKind,
+    target: Option<&str>,
     values: &BTreeMap<String, String>,
-) -> Result<(), ReleaseContractError> {
-    for name in &contract.build.env.required {
-        match values.get(name) {
-            Some(value) if value.is_empty() => {
-                return Err(ReleaseContractError::EmptyBuildEnv { name: name.clone() });
-            }
-            Some(_) => {}
-            None => {
-                return Err(ReleaseContractError::MissingBuildEnv { name: name.clone() });
-            }
+) -> Result<BTreeMap<String, String>, ReleaseContractError> {
+    let mut bindings = contract.build.env.clone();
+    if package_kind == PackageKind::Brew
+        && let (Some(homebrew), Some(target)) = (&contract.homebrew, target)
+        && let Some(target_contract) = homebrew.target.get(target)
+    {
+        bindings.extend(target_contract.env.clone());
+    }
+
+    let mut resolved = BTreeMap::new();
+    for (name, binding) in bindings {
+        if let Some(value) = resolve_build_env_binding_value(&name, &binding, values)? {
+            resolved.insert(name, value);
         }
     }
+    Ok(resolved)
+}
+
+fn validate_build_env_bindings(
+    bindings: &BTreeMap<String, BuildEnvBinding>,
+) -> Result<(), ReleaseContractError> {
+    for (name, binding) in bindings {
+        validate_build_env_binding(name, binding)?;
+    }
     Ok(())
+}
+
+fn validate_build_env_binding(
+    name: &str,
+    binding: &BuildEnvBinding,
+) -> Result<(), ReleaseContractError> {
+    match (&binding.env, &binding.value) {
+        (Some(_), None) | (None, Some(_)) => Ok(()),
+        _ => Err(ReleaseContractError::InvalidBuildEnvBinding {
+            name: name.to_owned(),
+        }),
+    }
+}
+
+fn resolve_build_env_binding_value(
+    name: &str,
+    binding: &BuildEnvBinding,
+    values: &BTreeMap<String, String>,
+) -> Result<Option<String>, ReleaseContractError> {
+    validate_build_env_binding(name, binding)?;
+
+    if let Some(env_name) = &binding.env {
+        return resolve_env_ref(name, env_name, values);
+    }
+
+    let value = binding
+        .value
+        .as_ref()
+        .expect("validated build env binding must have a value");
+    if value.is_empty() {
+        return Err(ReleaseContractError::EmptyBuildEnv {
+            name: name.to_owned(),
+        });
+    }
+    Ok(Some(value.clone()))
+}
+
+fn resolve_env_ref(
+    logical_name: &str,
+    env_name: &str,
+    values: &BTreeMap<String, String>,
+) -> Result<Option<String>, ReleaseContractError> {
+    let Some(value) = values.get(env_name) else {
+        if build_env_is_optional(logical_name) {
+            return Ok(None);
+        }
+        return Err(ReleaseContractError::MissingBuildEnv {
+            name: env_name.to_owned(),
+        });
+    };
+
+    if value.is_empty() {
+        return Err(ReleaseContractError::EmptyBuildEnv {
+            name: env_name.to_owned(),
+        });
+    }
+
+    Ok(Some(value.clone()))
+}
+
+fn build_env_is_optional(name: &str) -> bool {
+    matches!(name, "DHTTP_GLOBAL_HOME")
 }
 
 #[cfg(test)]
@@ -271,7 +383,7 @@ mod tests {
     use std::{collections::BTreeMap, path::Path};
 
     use super::{
-        ReleaseContractError, parse_release_contract_at, validate_required_build_env_values,
+        PackageKind, ReleaseContractError, parse_release_contract_at, resolve_build_env_values,
     };
 
     const CONTRACT: &str = r#"
@@ -284,8 +396,32 @@ name = "gmutils"
 [homebrew.template]
 path = "xtask/templates/gmutils.rb.in"
 
-[build.env]
-required = ["DHTTP_ROOT_CA", "DHTTP_STUN_SERVER"]
+[build.env.DHTTP_ROOT_CA]
+env = "DHTTP_ROOT_CA"
+
+[build.env.DHTTP_STUN_SERVER]
+env = "DHTTP_STUN_SERVER"
+
+[build.env.DHTTP_H3_DNS_SERVER]
+env = "DHTTP_H3_DNS_SERVER"
+
+[build.env.DHTTP_HTTP_DNS_SERVER]
+env = "DHTTP_HTTP_DNS_SERVER"
+
+[build.env.DHTTP_MDNS_SERVICE]
+env = "DHTTP_MDNS_SERVICE"
+
+[build.env.DHTTP_CERT_SERVER_URL]
+env = "DHTTP_CERT_SERVER_URL"
+
+[build.env.DHTTP_GLOBAL_HOME]
+env = "DHTTP_GLOBAL_HOME"
+
+[homebrew.target.aarch64-apple-darwin.env.DHTTP_GLOBAL_HOME]
+value = "/opt/homebrew/etc/dhttp"
+
+[homebrew.target.x86_64-apple-darwin.env.DHTTP_GLOBAL_HOME]
+value = "/usr/local/etc/dhttp"
 
 [destination.s3]
 bucket = "download"
@@ -344,17 +480,100 @@ public_base_url = "https://download.dhttp.net/scoop/gmutils"
     }
 
     #[test]
-    fn rejects_missing_required_build_env() {
+    fn resolves_homebrew_target_override() {
         let contract = parse_release_contract_at(Path::new("xtask/release.toml"), CONTRACT)
             .expect("contract should parse");
-        let values = BTreeMap::new();
+        let values = BTreeMap::from([
+            ("DHTTP_ROOT_CA".to_string(), "/tmp/root.crt".to_string()),
+            (
+                "DHTTP_STUN_SERVER".to_string(),
+                "nat.genmeta.net:20004".to_string(),
+            ),
+            (
+                "DHTTP_H3_DNS_SERVER".to_string(),
+                "https://dns.genmeta.net:4433".to_string(),
+            ),
+            (
+                "DHTTP_HTTP_DNS_SERVER".to_string(),
+                "https://dns.genmeta.net".to_string(),
+            ),
+            ("DHTTP_MDNS_SERVICE".to_string(), "_dhttp.local".to_string()),
+            (
+                "DHTTP_CERT_SERVER_URL".to_string(),
+                "https://license.genmeta.net".to_string(),
+            ),
+            (
+                "DHTTP_GLOBAL_HOME".to_string(),
+                "/runtime/should-be-overridden".to_string(),
+            ),
+        ]);
 
-        let error = validate_required_build_env_values(&contract, &values)
-            .expect_err("missing DHTTP_ROOT_CA should fail");
+        let resolved = resolve_build_env_values(
+            &contract,
+            PackageKind::Brew,
+            Some("aarch64-apple-darwin"),
+            &values,
+        )
+        .expect("build env should resolve");
 
         assert_eq!(
-            error.to_string(),
-            "missing required build environment variable DHTTP_ROOT_CA"
+            resolved.get("DHTTP_GLOBAL_HOME").map(String::as_str),
+            Some("/opt/homebrew/etc/dhttp")
         );
+    }
+
+    #[test]
+    fn skips_missing_optional_global_home_env() {
+        let contract = parse_release_contract_at(Path::new("xtask/release.toml"), CONTRACT)
+            .expect("contract should parse");
+        let values = BTreeMap::from([
+            ("DHTTP_ROOT_CA".to_string(), "/tmp/root.crt".to_string()),
+            (
+                "DHTTP_STUN_SERVER".to_string(),
+                "nat.genmeta.net:20004".to_string(),
+            ),
+            (
+                "DHTTP_H3_DNS_SERVER".to_string(),
+                "https://dns.genmeta.net:4433".to_string(),
+            ),
+            (
+                "DHTTP_HTTP_DNS_SERVER".to_string(),
+                "https://dns.genmeta.net".to_string(),
+            ),
+            ("DHTTP_MDNS_SERVICE".to_string(), "_dhttp.local".to_string()),
+            (
+                "DHTTP_CERT_SERVER_URL".to_string(),
+                "https://license.genmeta.net".to_string(),
+            ),
+        ]);
+
+        let resolved = resolve_build_env_values(&contract, PackageKind::Deb, None, &values)
+            .expect("optional global home may be absent");
+
+        assert!(!resolved.contains_key("DHTTP_GLOBAL_HOME"));
+    }
+
+    #[test]
+    fn rejects_binding_with_env_and_value() {
+        let error = parse_release_contract_at(
+            Path::new("xtask/release.toml"),
+            r#"
+[cargo]
+manifest = "genmeta/Cargo.toml"
+
+[build.env.DHTTP_STUN_SERVER]
+env = "DHTTP_STUN_SERVER"
+value = "nat.genmeta.net:20004"
+
+[destination.s3]
+bucket = "download"
+endpoint.env = "XTASK_RELEASE_S3_ENDPOINT_URL"
+access_key_id.env = "XTASK_RELEASE_S3_ACCESS_KEY_ID"
+secret_access_key.env = "XTASK_RELEASE_S3_SECRET_ACCESS_KEY"
+"#,
+        )
+        .expect_err("conflicting binding must fail");
+
+        assert!(error.to_string().contains("DHTTP_STUN_SERVER"));
     }
 }

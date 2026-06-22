@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::{
+    collections::BTreeMap,
     io::Write,
     path::{Path, PathBuf},
 };
@@ -8,7 +9,11 @@ use std::{
 use snafu::{OptionExt, ResultExt, Whatever};
 use tracing::{Instrument, info, info_span};
 
-use crate::{ScoopTarget, package_meta, run_cmd, run_cmd_quiet, target_dir};
+use crate::{
+    ScoopTarget, package_meta,
+    release_contract::{PackageKind, ReleaseContract, resolve_build_env_from_process},
+    run_cmd, run_cmd_quiet, target_dir,
+};
 
 const CARGO_NAME: &str = "genmeta";
 
@@ -57,7 +62,10 @@ fn create_zip(staging: &Path, output: &Path) -> Result<(), Whatever> {
     Ok(())
 }
 
-pub async fn run(targets: &[ScoopTarget]) -> Result<Vec<ScoopArchive>, Whatever> {
+pub async fn run(
+    contract: &ReleaseContract,
+    targets: &[ScoopTarget],
+) -> Result<Vec<ScoopArchive>, Whatever> {
     info!(target_count = targets.len(), "starting scoop dist build");
     let meta = package_meta(CARGO_NAME)?;
     let target_dir = target_dir()?;
@@ -75,7 +83,9 @@ pub async fn run(targets: &[ScoopTarget]) -> Result<Vec<ScoopArchive>, Whatever>
     for &target in targets {
         let triple = target.triple();
         let span = info_span!("scoop", triple);
-        let archive = build_one(target, &meta.version, &target_dir, &workspace)
+        let build_env = resolve_build_env_from_process(contract, PackageKind::Scoop, Some(triple))
+            .whatever_context("failed to resolve build environment for scoop target")?;
+        let archive = build_one(target, &meta.version, &target_dir, &workspace, build_env)
             .instrument(span)
             .await?;
         archives.push(archive);
@@ -91,6 +101,7 @@ async fn build_one(
     version: &str,
     target_dir: &Path,
     workspace: &Path,
+    build_env: BTreeMap<String, String>,
 ) -> Result<ScoopArchive, Whatever> {
     let triple = target.triple();
     info!(triple, "starting cargo-xwin build for scoop target");
@@ -100,6 +111,7 @@ async fn build_one(
     // Pinning XWIN_ARCH=x86,x86_64 ensures both architectures are present on first splat.
     run_cmd(
         tokio::process::Command::new("cargo-xwin")
+            .envs(&build_env)
             .env("XWIN_ARCH", "x86,x86_64")
             .args([
                 "build",

@@ -30,22 +30,25 @@ const DHTTP_H3_DNS_SERVER: &str = "DHTTP_H3_DNS_SERVER";
 const DHTTP_HTTP_DNS_SERVER: &str = "DHTTP_HTTP_DNS_SERVER";
 const DHTTP_MDNS_SERVICE: &str = "DHTTP_MDNS_SERVICE";
 const DHTTP_CERT_SERVER_URL: &str = "DHTTP_CERT_SERVER_URL";
+const DHTTP_GLOBAL_HOME: &str = "DHTTP_GLOBAL_HOME";
 
-const DHTTP_BOOTSTRAP_VARS: [&str; 6] = [
+const DHTTP_BOOTSTRAP_VARS: [&str; 7] = [
     DHTTP_ROOT_CA,
     DHTTP_STUN_SERVER,
     DHTTP_H3_DNS_SERVER,
     DHTTP_HTTP_DNS_SERVER,
     DHTTP_MDNS_SERVICE,
     DHTTP_CERT_SERVER_URL,
+    DHTTP_GLOBAL_HOME,
 ];
 
-const DHTTP_BOOTSTRAP_SCALAR_VARS: [&str; 5] = [
+const DHTTP_BOOTSTRAP_SCALAR_VARS: [&str; 6] = [
     DHTTP_STUN_SERVER,
     DHTTP_H3_DNS_SERVER,
     DHTTP_HTTP_DNS_SERVER,
     DHTTP_MDNS_SERVICE,
     DHTTP_CERT_SERVER_URL,
+    DHTTP_GLOBAL_HOME,
 ];
 
 #[derive(Debug)]
@@ -487,6 +490,10 @@ mod tests {
             "DHTTP_CERT_SERVER_URL".to_string(),
             "https://license.test".to_string(),
         );
+        values.insert(
+            "DHTTP_GLOBAL_HOME".to_string(),
+            "/opt/homebrew/etc/dhttp".to_string(),
+        );
 
         let bootstrap = dhttp_bootstrap_from_values(values).expect("build bootstrap");
 
@@ -539,6 +546,11 @@ mod tests {
             bootstrap
                 .exports
                 .contains("export DHTTP_CERT_SERVER_URL='https://license.test'\n")
+        );
+        assert!(
+            bootstrap
+                .exports
+                .contains("export DHTTP_GLOBAL_HOME='/opt/homebrew/etc/dhttp'\n")
         );
     }
 
