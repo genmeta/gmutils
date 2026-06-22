@@ -36,8 +36,8 @@ pub enum Error {
     MissingAuthority {},
     #[snafu(display("failed to read ssh configuration"))]
     ReadConfig { source: ssh_config::ReadConfigError },
-    #[snafu(display("failed to locate dhttp config"))]
-    LocateDhttpHome { source: home::LocateDhttpHomeError },
+    #[snafu(display("failed to load dhttp home"))]
+    LoadDhttpHome { source: home::LoadDhttpHomeError },
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
         name: Name<'static>,
@@ -85,16 +85,16 @@ async fn load_identity_profile(
         .map(|name| ("command line options", name))
         .or_else(|| ssh_config_id_name.map(|name| ("ssh config", name)));
 
-    let home = match DhttpHome::load_from_environment() {
+    let home = match DhttpHome::load(options.home_scope()) {
         Ok(home) => home,
         Err(source) if explicit.is_none() => {
             tracing::warn!(
                 error = %snafu::Report::from_error(&source),
-                "failed to locate dhttp config, using anonymous endpoint"
+                "failed to load dhttp home, using anonymous endpoint"
             );
             return Ok(None);
         }
-        Err(source) => return Err(config_error::LocateDhttpHomeSnafu.into_error(source)),
+        Err(source) => return Err(config_error::LoadDhttpHomeSnafu.into_error(source)),
     };
 
     if let Some((source_name, name)) = explicit {

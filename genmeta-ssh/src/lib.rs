@@ -71,6 +71,10 @@ pub struct Options {
     #[arg(short = 'i', long, value_name = "client_identity")]
     id: Option<Name<'static>>,
 
+    /// Use the global dhttp home instead of the default user home
+    #[arg(long)]
+    global: bool,
+
     /// Skip identity loading and use anonymous mode
     #[arg(long, conflicts_with = "id")]
     anonymous: bool,
@@ -126,6 +130,16 @@ pub struct Options {
     /// Command to execute on the remote server
     #[arg(trailing_var_arg = true, value_name = "command [argument ...]")]
     commands: Vec<String>,
+}
+
+impl Options {
+    pub(crate) fn home_scope(&self) -> dhttp::home::HomeScope {
+        if self.global {
+            dhttp::home::HomeScope::Global
+        } else {
+            dhttp::home::HomeScope::User
+        }
+    }
 }
 
 #[derive(Debug, Snafu)]
@@ -632,4 +646,18 @@ fn sigwinch_stream() -> impl futures::Stream<Item = (u16, u16)> + Unpin + Send {
 #[cfg(not(unix))]
 fn sigwinch_stream() -> impl futures::Stream<Item = (u16, u16)> + Unpin + Send {
     futures::stream::empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn options_accept_global_flag() {
+        let options = Options::try_parse_from(["genmeta-ssh", "--global", "alice@example"])
+            .unwrap();
+
+        assert_eq!(options.home_scope(), dhttp::home::HomeScope::Global);
+    }
 }
