@@ -247,6 +247,18 @@ fn help_output_shows_inline_usage() {
     assert!(help.contains("genmeta access \"/\" allow luffy.pilot"));
 }
 
+#[test]
+fn global_flag_parses_and_is_described_in_help() {
+    assert!(Options::try_parse_from(["access", "--global", "list"]).is_ok());
+
+    let mut help = Vec::new();
+    Options::command().write_long_help(&mut help).unwrap();
+    let help = String::from_utf8(help).unwrap();
+
+    assert!(help.contains("--global"));
+    assert!(help.contains("global dhttp home"));
+}
+
 #[tokio::test]
 async fn bare_word_is_rejected_as_location_pattern() {
     let test_home = TestHome::new("bare-word");

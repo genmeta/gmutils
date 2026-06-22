@@ -49,6 +49,13 @@ where
 pub struct Options {
     #[arg(
         long,
+        global = true,
+        help = "use the global dhttp home instead of the default user home"
+    )]
+    global: bool,
+
+    #[arg(
+        long,
         value_name = "NAME",
         help = "identity to manage; defaults to `genmeta identity default`"
     )]
@@ -59,6 +66,14 @@ pub struct Options {
 }
 
 impl Options {
+    pub(crate) fn home_scope(&self) -> dhttp::home::HomeScope {
+        if self.global {
+            dhttp::home::HomeScope::Global
+        } else {
+            dhttp::home::HomeScope::User
+        }
+    }
+
     pub(crate) fn into_parts(self) -> Result<(Option<Name<'static>>, Command), ParseCommandError> {
         let identity = self.identity.map(|ReportFromStr(identity)| identity);
         let command = self.command.try_into()?;
@@ -120,6 +135,23 @@ pub(crate) enum Command {
         pattern: LocationPattern,
         operation: PathOperation,
     },
+}
+
+impl Command {
+    pub(crate) fn writes_store(&self, db_exists: bool) -> bool {
+        match self {
+            Self::Print { .. } => false,
+            Self::List { .. } => !db_exists,
+            Self::RemovePaths { .. } => true,
+            Self::Path { operation, .. } => match operation {
+                PathOperation::List => !db_exists,
+                PathOperation::Remove { .. }
+                | PathOperation::Clear
+                | PathOperation::Allow { .. }
+                | PathOperation::Deny { .. } => true,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -18,7 +18,7 @@ use dhttp::{
             },
         },
     },
-    home::{DhttpHome, LocateDhttpHomeError, identity::settings::LoadDhttpSettingsError},
+    home::{DhttpHome, LoadDhttpHomeError, identity::settings::LoadDhttpSettingsError},
 };
 use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
@@ -33,8 +33,8 @@ pub enum Error {
     #[snafu(transparent)]
     ParseCommand { source: ParseCommandError },
 
-    #[snafu(display("failed to locate DHTTP_CONFIG"))]
-    LocateHome { source: LocateDhttpHomeError },
+    #[snafu(display("failed to load dhttp home"))]
+    LoadHome { source: LoadDhttpHomeError },
 
     #[snafu(display("failed to load default identity config"))]
     LoadDefaultIdentityConfig { source: LoadDhttpSettingsError },
@@ -96,7 +96,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
 pub async fn run(options: Options) -> Result<(), Error> {
     let _guard = init_tracing();
 
-    let home = DhttpHome::load_from_environment().context(error::LocateHomeSnafu)?;
+    let home = DhttpHome::load(options.home_scope()).context(error::LoadHomeSnafu)?;
     let output = run_for_home(&home, options).await?;
 
     if !output.is_empty() {
@@ -106,6 +106,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
 }
 
 pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, Error> {
+    let global = matches!(options.home_scope(), dhttp::home::HomeScope::Global);
     let (identity, command) = options.into_parts()?;
     if let Command::Print { output } = command {
         return Ok(output);
@@ -114,7 +115,16 @@ pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, 
     let identity = resolve_identity(home, identity).await?;
     let identity_profile = home.identity_profile(identity.borrow());
     let db_path = identity_access_db_path(&identity_profile);
-    let db = if db_path.is_file() {
+    let db_exists = db_path.is_file();
+
+    if global && command.writes_store(db_exists) {
+        tracing::warn!(
+            path = %home.as_path().display(),
+            "using the global dhttp home; this operation may require elevated privileges"
+        );
+    }
+
+    let db = if db_exists {
         open_access_database(&identity_profile)
             .await
             .context(error::OpenDatabaseSnafu)?
@@ -218,4 +228,38 @@ async fn run_with(command: Command, db: &sea_orm::DatabaseConnection) -> Result<
     }
 
     Ok(String::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Command, PathOperation};
+
+    #[test]
+    fn command_writes_store_when_store_is_missing() {
+        assert!(Command::List { wide: false }.writes_store(false));
+        assert!(!Command::List { wide: false }.writes_store(true));
+        assert!(Command::RemovePaths { patterns: Vec::new() }.writes_store(true));
+    }
+
+    #[test]
+    fn path_command_writes_store_only_for_mutations() {
+        assert!(!Command::Path {
+            pattern: "/".parse().unwrap(),
+            operation: PathOperation::List,
+        }
+        .writes_store(true));
+        assert!(Command::Path {
+            pattern: "/".parse().unwrap(),
+            operation: PathOperation::List,
+        }
+        .writes_store(false));
+        assert!(Command::Path {
+            pattern: "/".parse().unwrap(),
+            operation: PathOperation::Remove {
+                all: true,
+                sequence: Vec::new(),
+            },
+        }
+        .writes_store(true));
+    }
 }
