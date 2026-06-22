@@ -1,7 +1,7 @@
 #![recursion_limit = "256"]
 
 use clap::{Arg, ArgAction, Command as ClapCommand, CommandFactory, FromArgMatches};
-use genmeta_identity::{Error, Options, run};
+use genmeta_identity::{Cli, Error, run};
 
 fn enable_help(mut cmd: ClapCommand) -> ClapCommand {
     let names: Vec<String> = cmd
@@ -33,7 +33,7 @@ fn enable_help(mut cmd: ClapCommand) -> ClapCommand {
 #[tokio::main]
 #[snafu::report]
 async fn main() -> Result<(), Error> {
-    let mut cmd = Options::command();
+    let mut cmd = Cli::command();
 
     let names: Vec<String> = cmd
         .get_subcommands()
@@ -45,7 +45,7 @@ async fn main() -> Result<(), Error> {
     }
 
     let matches = cmd.get_matches();
-    let options = Options::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    let options = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
     run(options).await.inspect_err(|error| {
         tracing::debug!(?error, "Exit with error");

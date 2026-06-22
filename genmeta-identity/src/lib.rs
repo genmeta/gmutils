@@ -5,7 +5,7 @@ mod bootstrap;
 #[cfg(feature = "cli")]
 pub mod cli;
 #[cfg(feature = "cli")]
-pub use cli::{Error, Options, run};
+pub use cli::{Cli, Error, Options, run};
 
 #[cfg(feature = "cli")]
 pub mod auth;

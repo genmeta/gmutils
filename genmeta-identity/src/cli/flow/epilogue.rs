@@ -26,13 +26,13 @@ pub(crate) fn suggest_default_change(
         Some(current) if current.name == saved_name => None,
         Some(current) => Some(DefaultSuggestion {
             prompt: format!(
-                "Set {saved_name} as the default identity on this device? {}",
+                "Set {saved_name} as the default here? {}",
                 output::format_current_default_suffix(&current.name, &current.status, ansi)
             ),
             default: false,
         }),
         None => Some(DefaultSuggestion {
-            prompt: format!("Set {saved_name} as the default identity on this device?"),
+            prompt: format!("Set {saved_name} as the default here?"),
             default: true,
         }),
     }
@@ -73,7 +73,7 @@ pub(crate) async fn current_default_summary(
     let status = match local::try_load_summary(dhttp_home, name.borrow(), None).await? {
         Some(summary) => summary.status,
         None => local::LocalIdentityStatus::Invalid {
-            detail: "identity is not saved on this device".to_string(),
+            detail: "identity is not saved here".to_string(),
         },
     };
 
@@ -190,10 +190,7 @@ mod tests {
         let suggestion = suggest_default_change("alice.smith", None, false).unwrap();
 
         assert!(suggestion.default);
-        assert_eq!(
-            suggestion.prompt,
-            "Set alice.smith as the default identity on this device?"
-        );
+        assert_eq!(suggestion.prompt, "Set alice.smith as the default here?");
     }
 
     #[test]
@@ -213,7 +210,7 @@ mod tests {
         assert_eq!(
             suggestion,
             DefaultSuggestion {
-                prompt: "Set alice.smith as the default identity on this device? (current: meng.lin [invalid])".to_string(),
+                prompt: "Set alice.smith as the default here? (current: meng.lin [invalid])".to_string(),
                 default: false,
             }
         );

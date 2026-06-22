@@ -379,7 +379,7 @@ async fn resolve_approval_plan(
 }
 
 fn apply_identity_name_opening() -> &'static str {
-    "Apply an existing identity to this device.\n\nThis will create a new certificate chain for an existing identity\nand save it on this device.\n\nUse a dotted name:\n  <given_name>.<surname>\n\nFor example:\n  alice.smith\n\nTo apply a sub-identity, add one more name before it:\n  phone.alice.smith"
+    "Apply an existing identity here.\n\nThis will create a new certificate chain for an existing identity\nand save it here.\n\nUse a dotted name:\n  <given_name>.<surname>\n\nFor example:\n  alice.smith\n\nTo apply a sub-identity, add one more name before it:\n  phone.alice.smith"
 }
 
 fn explicit_target_from_command(
@@ -1202,7 +1202,7 @@ mod tests {
     #[test]
     fn apply_identity_name_opening_matches_spec_copy() {
         let opening = apply_identity_name_opening();
-        assert!(opening.contains("Apply an existing identity to this device."));
+        assert!(opening.contains("Apply an existing identity here."));
         assert!(opening.contains("<given_name>.<surname>"));
         assert!(opening.contains("alice.smith"));
         assert!(opening.contains("phone.alice.smith"));
@@ -1223,7 +1223,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "Verify with email".to_string(),
-                "Re-apply alice.smith to this device, then verify with alice.smith".to_string(),
+                "Re-apply alice.smith here, then verify with alice.smith".to_string(),
             ]
         );
     }
@@ -1244,8 +1244,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "Verify with email".to_string(),
-                "Renew alice.smith on this device, then verify with alice.smith".to_string(),
-                "Re-apply alice.smith to this device, then verify with alice.smith".to_string(),
+                "Renew alice.smith here, then verify with alice.smith".to_string(),
+                "Re-apply alice.smith here, then verify with alice.smith".to_string(),
             ]
         );
     }

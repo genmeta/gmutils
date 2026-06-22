@@ -163,7 +163,7 @@ fn apply_verification_recovery(
 
 fn renew_not_saved_root_message(short_name: &str) -> String {
     format!(
-        "The identity {short_name} is not saved on this device.\n\nRenew updates a local identity already saved on this device.\nThis identity has not been applied locally yet.\n\nApply {short_name} to this device first, then return to renew."
+        "The identity {short_name} is not saved here.\n\nRenew updates an identity already saved here.\nThis identity has not been applied here yet.\n\nApply {short_name} here first, then return to renew."
     )
 }
 
@@ -274,9 +274,7 @@ async fn resolve_target(
                     .await?;
             let choices = local::build_renew_inventory_choices(&inventory);
             if choices.is_empty() {
-                whatever!(
-                    "No local identities found. Renew requires a saved local identity profile."
-                );
+                whatever!("No identities found here. Renew requires an identity saved here.");
             }
             let labels: Vec<String> = choices
                 .iter()
@@ -285,7 +283,7 @@ async fn resolve_target(
                 })
                 .collect();
             let selected = crate::cli::prompt::prompt_select_string(
-                "Select a local identity to renew on this device:",
+                "Select an identity to renew here:",
                 labels.clone(),
             )
             .await
@@ -298,7 +296,7 @@ async fn resolve_target(
             match choice {
                 InteractiveInventoryChoice::Saved(summary) => Ok(summary.target.into_dhttp_name()),
                 InteractiveInventoryChoice::Organization { .. } => {
-                    whatever!("renew requires a saved local identity profile")
+                    whatever!("renew requires an identity already saved here")
                 }
             }
         }
@@ -388,9 +386,7 @@ async fn run_interactive(
                     .await?;
             let choices = local::build_renew_inventory_choices(&inventory);
             if choices.is_empty() {
-                whatever!(
-                    "No local identities found. Renew requires a saved local identity profile."
-                );
+                whatever!("No identities found here. Renew requires an identity saved here.");
             }
             let labels: Vec<String> = choices
                 .iter()
@@ -399,7 +395,7 @@ async fn run_interactive(
                 })
                 .collect();
             let selected = crate::cli::prompt::prompt_select_string(
-                "Select a local identity to renew on this device:",
+                "Select an identity to renew here:",
                 labels.clone(),
             )
             .await
@@ -870,12 +866,12 @@ mod tests {
     fn renew_not_saved_root_message_mentions_apply_and_return() {
         assert_eq!(
             renew_not_saved_root_message("alice.ma"),
-            "The identity alice.ma is not saved on this device.
+            "The identity alice.ma is not saved here.
 
-Renew updates a local identity already saved on this device.
-This identity has not been applied locally yet.
+Renew updates an identity already saved here.
+This identity has not been applied here yet.
 
-Apply alice.ma to this device first, then return to renew."
+Apply alice.ma here first, then return to renew."
         );
     }
 
@@ -898,10 +894,7 @@ Apply alice.ma to this device first, then return to renew."
             .unwrap_err();
         let rendered = error.to_string();
 
-        assert!(
-            rendered.contains("Apply alice.smith to this device first"),
-            "{rendered}"
-        );
+        assert!(rendered.contains("Apply alice.smith here first"), "{rendered}");
     }
 
     #[test]

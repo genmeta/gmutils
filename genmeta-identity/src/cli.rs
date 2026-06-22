@@ -8,7 +8,7 @@ use clap::Parser;
 use dhttp::{
     certificate::CertificateChainKey,
     home::{
-        DhttpHome,
+        DhttpHome, HomeScope, LoadDhttpHomeError,
         identity::{
             settings::{DhttpSettingsFile, LoadDhttpSettingsError, SaveDhttpSettingsError},
             ssl::{
@@ -90,10 +90,8 @@ pub enum Error {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
-    #[snafu(transparent)]
-    LocateDhttpHome {
-        source: dhttp::home::LocateDhttpHomeError,
-    },
+    #[snafu(display("failed to load dhttp home"))]
+    LoadDhttpHome { source: LoadDhttpHomeError },
 
     #[snafu(transparent)]
     Whatever { source: Whatever },
@@ -393,7 +391,7 @@ impl List {
         )
         .await?;
         if inventory.groups.is_empty() {
-            flow::transcript::print_line("No local identities found");
+            flow::transcript::print_line("No identities found here");
         } else {
             flow::transcript::print_block(&flow::output::render_inventory(
                 &inventory,
@@ -441,7 +439,7 @@ impl Info {
         .await?
         else {
             whatever!(
-                "{} is not saved on this device.\n\nTo inspect it locally, apply {} to this device first.",
+                "{} is not saved here.\n\nTo inspect it here, apply {} here first.",
                 name.as_partial(),
                 name.as_partial(),
             );
@@ -454,6 +452,31 @@ impl Info {
         Ok(())
     }
 }
+
+#[derive(Parser, Debug, Clone)]
+#[command(version, about, disable_help_flag = true, disable_version_flag = true)]
+pub struct Cli {
+    #[arg(
+        long,
+        global = true,
+        help = "use the global dhttp home instead of the default user home"
+    )]
+    pub global: bool,
+
+    #[command(subcommand)]
+    pub options: Options,
+}
+
+impl Cli {
+    pub fn home_scope(&self) -> HomeScope {
+        if self.global {
+            HomeScope::Global
+        } else {
+            HomeScope::User
+        }
+    }
+}
+
 #[derive(Parser, Debug, Clone)]
 #[command(about, disable_help_flag = true, disable_version_flag = true)]
 pub enum Options {
@@ -467,6 +490,13 @@ pub enum Options {
 }
 
 impl Options {
+    pub fn writes_home(&self) -> bool {
+        matches!(
+            self,
+            Self::Create(_) | Self::Apply(_) | Self::Renew(_) | Self::Default(_)
+        )
+    }
+
     pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
         match self {
             Options::Create(cmd) => flow::run_create(cmd, dhttp_home, cert_server).await,
@@ -513,15 +543,22 @@ fn cert_server_base_url() -> &'static str {
     CERT_SERVER_BASE_URL
 }
 
-pub async fn run(options: Options) -> Result<(), Error> {
+pub async fn run(options: Cli) -> Result<(), Error> {
     init_tracing();
 
-    let dhttp_home = DhttpHome::load_from_environment()?;
+    let dhttp_home = DhttpHome::load(options.home_scope()).context(LoadDhttpHomeSnafu)?;
+
+    if options.global && options.options.writes_home() {
+        tracing::warn!(
+            path = %dhttp_home.as_path().display(),
+            "using the global dhttp home; this operation may require elevated privileges"
+        );
+    }
 
     _ = rustls::crypto::ring::default_provider().install_default();
     let cert_server = CertServer::new(cert_server_base_url())?;
 
-    options.run(&dhttp_home, &cert_server).await
+    options.options.run(&dhttp_home, &cert_server).await
 }
 
 #[cfg(test)]
@@ -540,7 +577,8 @@ mod tests {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
     use super::{
-        Create, Default, Info, Options, cert_server_base_url, certificate_chain_key_from_identity,
+        Cli, Create, Default, Info, Options, cert_server_base_url,
+        certificate_chain_key_from_identity,
     };
     use crate::CERT_SERVER_BASE_URL;
 
@@ -763,13 +801,10 @@ mod tests {
         let rendered = error.to_string();
 
         assert!(
-            rendered.contains("alice.smith is not saved on this device"),
+            rendered.contains("alice.smith is not saved here"),
             "{rendered}"
         );
-        assert!(
-            rendered.contains("apply alice.smith to this device first"),
-            "{rendered}"
-        );
+        assert!(rendered.contains("apply alice.smith here first"), "{rendered}");
     }
 
     #[tokio::test]
@@ -788,8 +823,33 @@ mod tests {
         let rendered = error.to_string();
 
         assert!(
-            rendered.contains("alice.smith is not saved on this device"),
+            rendered.contains("alice.smith is not saved here"),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn cli_accepts_global_before_and_after_subcommand() {
+        let before = Cli::try_parse_from(["genmeta", "--global", "list"]).unwrap();
+        let after = Cli::try_parse_from(["genmeta", "list", "--global"]).unwrap();
+
+        assert_eq!(before.home_scope(), dhttp::home::HomeScope::Global);
+        assert_eq!(after.home_scope(), dhttp::home::HomeScope::Global);
+    }
+
+    #[test]
+    fn write_commands_are_marked_for_global_warning() {
+        for argv in [
+            ["genmeta", "create", "alice.smith", "--kind", "primary"].as_slice(),
+            ["genmeta", "apply", "alice.smith", "--kind", "primary"].as_slice(),
+            ["genmeta", "renew", "alice.smith"].as_slice(),
+            ["genmeta", "default", "alice.smith"].as_slice(),
+        ] {
+            let cli = Cli::try_parse_from(argv).unwrap();
+            assert!(cli.options.writes_home());
+        }
+
+        let info = Cli::try_parse_from(["genmeta", "info", "alice.smith"]).unwrap();
+        assert!(!info.options.writes_home());
     }
 }

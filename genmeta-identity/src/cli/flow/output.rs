@@ -144,7 +144,7 @@ pub(crate) fn render_choice_label(choice: &InteractiveInventoryChoice, ansi: boo
             )
         }
         InteractiveInventoryChoice::Organization { target } => render_line(
-            format!("{} (not saved locally)", target.short_name()),
+            format!("{} (not saved here)", target.short_name()),
             LineStyle::Dim,
             ansi,
         ),
@@ -229,7 +229,7 @@ fn root_label(root: &LocalInventoryRoot) -> String {
     match root {
         LocalInventoryRoot::Saved(summary) => summary_label(summary),
         LocalInventoryRoot::Organization { target } => {
-            format!("{} (not saved locally)", target.short_name())
+            format!("{} (not saved here)", target.short_name())
         }
     }
 }
@@ -445,7 +445,7 @@ Saved at: /tmp/phone.alice.smith";
 alice.smith (default identity)            ready       primary:0\n\
 ├─ phone.alice.smith                      ready       secondary:2\n\
 └─ tv.alice.smith                         incomplete  (private key missing)\n\
-reimu.scarlet (not saved locally)\n\
+reimu.scarlet (not saved here)\n\
 └─ tablet.reimu.scarlet                   expired     secondary:1";
 
         assert_eq!(render_inventory(&inventory, false), expected);
@@ -476,7 +476,7 @@ reimu.scarlet (not saved locally)\n\
         assert_eq!(
             labels,
             vec![
-                "alice.ma (not saved locally)".to_string(),
+                "alice.ma (not saved here)".to_string(),
                 "  shanghai.alice.ma [ready]".to_string(),
             ]
         );
@@ -519,7 +519,7 @@ reimu.scarlet (not saved locally)\n\
             labels,
             vec![
                 "alice.smith [ready] (default identity)".to_string(),
-                "reimu.scarlet (not saved locally)".to_string(),
+                "reimu.scarlet (not saved here)".to_string(),
                 "  tablet.reimu.scarlet [ready]".to_string(),
             ]
         );

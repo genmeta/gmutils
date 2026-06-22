@@ -11,10 +11,7 @@ enum Options {
         #[command(subcommand)]
         options: genmeta_doctor::Options,
     },
-    Identity {
-        #[command(subcommand)]
-        options: genmeta_identity::Options,
-    },
+    Identity(genmeta_identity::Cli),
     Nslookup(genmeta_nslookup::Options),
     Proxy(genmeta_proxy::Options),
     Ssh(genmeta_ssh::Options),
@@ -119,7 +116,7 @@ async fn run(options: Options) -> Result<(), Error> {
         Options::Curl(options) => genmeta_curl::run(options).await?,
         Options::Discover(options) => genmeta_discover::run(options).await?,
         Options::Doctor { options } => genmeta_doctor::run(options).await?,
-        Options::Identity { options } => genmeta_identity::run(options).await?,
+        Options::Identity(options) => genmeta_identity::run(options).await?,
         Options::Nslookup(options) => genmeta_nslookup::run(options).await?,
         Options::Proxy(options) => genmeta_proxy::run(options).await?,
         Options::Ssh(options) => genmeta_ssh::run(options).await?,
@@ -130,12 +127,20 @@ async fn run(options: Options) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::install_process_crypto_provider;
+    use clap::Parser;
+
+    use super::{Options, install_process_crypto_provider};
 
     #[test]
     fn installs_rustls_crypto_provider() {
         install_process_crypto_provider();
 
         assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+    }
+
+    #[test]
+    fn launcher_accepts_identity_global_flag() {
+        let parsed = Options::try_parse_from(["genmeta", "identity", "--global", "list"]);
+        assert!(parsed.is_ok(), "{parsed:?}");
     }
 }

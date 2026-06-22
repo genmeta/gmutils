@@ -10,8 +10,7 @@ pub(crate) enum IdentityKind {
 }
 
 impl IdentityKind {
-    pub(crate) const SELECT_PROMPT: &str =
-        "Choose how this device should be used for this identity.";
+    pub(crate) const SELECT_PROMPT: &str = "Choose how this identity should be used here.";
     pub(crate) const PRIMARY_HELP: &str =
         "Primary\n  For a main host, server, desktop, home gateway, or always-on endpoint.";
     pub(crate) const SECONDARY_HELP: &str =
@@ -84,7 +83,7 @@ mod tests {
         assert_eq!(IdentityKind::Secondary.to_string(), "secondary");
         assert_eq!(
             IdentityKind::SELECT_PROMPT,
-            "Choose how this device should be used for this identity."
+            "Choose how this identity should be used here."
         );
         assert!(IdentityKind::PRIMARY_HELP.contains("main host"));
         assert!(IdentityKind::SECONDARY_HELP.contains("additional device"));

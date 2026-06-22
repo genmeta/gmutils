@@ -315,7 +315,7 @@ fn resolve_non_interactive_approval_plan(
                 Some(AuthMethod::Identity) => {
                     let Some(ready_parent_identity) = ready_parent_identity else {
                         whatever!(
-                            "creating {} with --auth identity requires a ready local parent identity on this device",
+                            "creating {} with --auth identity requires a ready parent identity saved here",
                             target.short_name()
                         );
                     };
@@ -434,7 +434,7 @@ fn ensure_non_interactive_sub_identity_checkout_not_required(
 }
 
 fn create_identity_name_opening() -> &'static str {
-    "Create a new identity for this device.\n\nThis will create a new identity or sub-identity, complete the required verification,\nand save it on this device.\n\nUse a dotted name:\n  <given_name>.<surname>\n\nFor example:\n  alice.smith\n\nTo create a sub-identity, add one more name before it:\n  phone.alice.smith"
+    "Create a new identity here.\n\nThis will create a new identity or sub-identity, complete the required verification,\nand save it here.\n\nUse a dotted name:\n  <given_name>.<surname>\n\nFor example:\n  alice.smith\n\nTo create a sub-identity, add one more name before it:\n  phone.alice.smith"
 }
 
 async fn prompt_create_email_action(
@@ -598,7 +598,7 @@ async fn ensure_parent_identity_ready(
     match summary.status {
         LocalIdentityStatus::Ready { .. } => Ok(parent),
         _ => whatever!(
-            "creating {} with --auth identity requires a ready local parent identity at {}",
+            "creating {} with --auth identity requires a ready parent identity saved here at {}",
             target.short_name(),
             summary.saved_at.display()
         ),
@@ -669,9 +669,9 @@ async fn run_helper_apply_parent(
         .unwrap_or_else(|_| parent_identity.to_string());
     let verb = if replace_local { "re-apply" } else { "apply" };
     crate::cli::flow::transcript::print_block(&format!(
-        "This command needs {short_parent_identity} available on this device first.
+        "This command needs {short_parent_identity} saved here first.
 
-To continue creating {}, it will {verb} {short_parent_identity} on this device, then return here and continue verification.",
+To continue creating {}, it will {verb} {short_parent_identity} here, then return here and continue verification.",
         target.short_name()
     ));
     let command = crate::cli::Apply {
@@ -1775,10 +1775,7 @@ mod tests {
             resolve_non_interactive_approval_plan(&target, Some(AuthMethod::Identity), None)
                 .unwrap_err();
         let rendered = error.to_string();
-        assert!(
-            rendered.contains("ready local parent identity"),
-            "{rendered}"
-        );
+        assert!(rendered.contains("ready parent identity saved here"), "{rendered}");
         assert!(rendered.contains("phone.alice.smith"), "{rendered}");
     }
 
@@ -1837,7 +1834,7 @@ mod tests {
     #[test]
     fn create_identity_name_opening_matches_spec_copy() {
         let opening = super::create_identity_name_opening();
-        assert!(opening.contains("Create a new identity for this device."));
+        assert!(opening.contains("Create a new identity here."));
         assert!(opening.contains("<given_name>.<surname>"));
         assert!(opening.contains("alice.smith"));
         assert!(opening.contains("phone.alice.smith"));
@@ -1876,7 +1873,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "Verify with email".to_string(),
-                "Apply alice.smith to this device, then verify with alice.smith".to_string(),
+                "Apply alice.smith here, then verify with alice.smith".to_string(),
             ]
         );
     }

@@ -163,15 +163,15 @@ impl ApprovalHelperOption {
     pub(crate) fn label(&self) -> String {
         match self.action {
             ApprovalHelperAction::Apply => format!(
-                "Apply {} to this device, then verify with {}",
+                "Apply {} here, then verify with {}",
                 self.short_name, self.short_name
             ),
             ApprovalHelperAction::Reapply => format!(
-                "Re-apply {} to this device, then verify with {}",
+                "Re-apply {} here, then verify with {}",
                 self.short_name, self.short_name
             ),
             ApprovalHelperAction::Renew => format!(
-                "Renew {} on this device, then verify with {}",
+                "Renew {} here, then verify with {}",
                 self.short_name, self.short_name
             ),
         }
@@ -342,8 +342,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "Verify with email".to_string(),
-                "Renew alice.smith on this device, then verify with alice.smith".to_string(),
-                "Re-apply alice.smith to this device, then verify with alice.smith".to_string(),
+                "Renew alice.smith here, then verify with alice.smith".to_string(),
+                "Re-apply alice.smith here, then verify with alice.smith".to_string(),
             ]
         );
     }
@@ -354,7 +354,7 @@ mod tests {
 
         assert_eq!(
             option.label(),
-            "Apply alice.smith to this device, then verify with alice.smith"
+            "Apply alice.smith here, then verify with alice.smith"
         );
     }
 }

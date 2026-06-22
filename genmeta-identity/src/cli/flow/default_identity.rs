@@ -24,7 +24,7 @@ fn default_organization_actions(target: &str) -> Vec<String> {
         .map(|target| target.short_name().to_string())
         .unwrap_or_else(|_| target.to_string());
     vec![
-        format!("Apply {short_name} to this device"),
+        format!("Apply {short_name} here"),
         "Choose another identity".to_string(),
     ]
 }
@@ -108,7 +108,7 @@ async fn run_helper_apply(
     target: &IdentityTarget,
 ) -> Result<(), Error> {
     crate::cli::flow::transcript::print_block(&format!(
-        "{} is not saved on this device.\n\nTo use it as the default identity, this command will first apply {} to this device, then return here and set it as the default identity.",
+        "{} is not saved here.\n\nTo use it as the default identity, this command will first apply {} here, then return here and set it as the default identity.",
         target.short_name(),
         target.short_name()
     ));
@@ -153,7 +153,7 @@ async fn summary_for_named_default_target(
 
     if !std::io::stdin().is_terminal() {
         whatever!(
-            "{} is not saved on this device.\n\nTo use it as the default identity, apply {} to this device first or rerun this command interactively.",
+            "{} is not saved here.\n\nTo use it as the default identity, apply {} here first or rerun this command interactively.",
             target.short_name(),
             target.short_name(),
         );
@@ -174,7 +174,7 @@ async fn select_interactive_default_summary(
         let inventory = local::load_inventory(dhttp_home, configured_default_name.clone()).await?;
         let choices = local::build_default_inventory_choices(&inventory);
         if choices.is_empty() {
-            whatever!("No local identities found");
+            whatever!("No identities found here");
         }
 
         let ansi = std::io::stdout().is_terminal();
@@ -183,7 +183,7 @@ async fn select_interactive_default_summary(
             .map(|choice| output::render_choice_label(choice, ansi))
             .collect::<Vec<_>>();
         let selected = crate::cli::prompt::prompt_select_string(
-            "Select an identity to set as the default on this device:",
+            "Select an identity to set as the default here:",
             labels.clone(),
         )
         .await
@@ -198,10 +198,7 @@ async fn select_interactive_default_summary(
             InteractiveInventoryChoice::Organization { target } => {
                 let options = default_organization_actions(target.full_name());
                 let selected = crate::cli::prompt::prompt_select_string(
-                    &format!(
-                        "{} is not saved on this device. Choose what to do next:",
-                        target.short_name()
-                    ),
+                    &format!("{} is not saved here. Choose what to do next:", target.short_name()),
                     options.clone(),
                 )
                 .await
@@ -261,7 +258,7 @@ pub(crate) async fn run(
             }
 
             let switch_default = cli::prompt::sync(|| {
-                inquire::Confirm::new("Change the default identity on this device?")
+                inquire::Confirm::new("Change the default identity here?")
                     .with_default(false)
                     .prompt()
             })
@@ -313,7 +310,7 @@ mod tests {
         assert_eq!(
             default_organization_actions("alice.smith.dhttp.net"),
             vec![
-                "Apply alice.smith to this device".to_string(),
+                "Apply alice.smith here".to_string(),
                 "Choose another identity".to_string(),
             ]
         );
@@ -324,8 +321,7 @@ mod tests {
         let options = default_organization_actions("alice.smith.dhttp.net");
 
         assert_eq!(
-            organization_action_from_selection(&options, "Apply alice.smith to this device")
-                .unwrap(),
+            organization_action_from_selection(&options, "Apply alice.smith here").unwrap(),
             DefaultOrganizationAction::ApplyToLocalDevice,
         );
     }
