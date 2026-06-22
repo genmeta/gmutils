@@ -211,15 +211,38 @@ pub(crate) async fn load_inventory(
     dhttp_home: &DhttpHome,
     default_name: Option<DhttpName<'_>>,
 ) -> Result<LocalInventory, Error> {
-    let names = dhttp_home
+    let names = match dhttp_home
         .identity_profile_names()
         .try_collect::<Vec<_>>()
-        .await?;
+        .await
+    {
+        Ok(names) => names,
+        Err(dhttp::home::identity::ssl::ListIdentityProfilesError::ReadDir { source, .. })
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            return Ok(LocalInventory { groups: Vec::new() });
+        }
+        Err(error) => return Err(Error::from(error)),
+    };
     let mut summaries = Vec::with_capacity(names.len());
     for name in names {
         summaries.push(load_summary(dhttp_home, name.borrow(), default_name.clone()).await?);
     }
     Ok(build_inventory(summaries))
+}
+
+pub(crate) async fn try_load_summary(
+    dhttp_home: &DhttpHome,
+    name: DhttpName<'_>,
+    default_name: Option<DhttpName<'_>>,
+) -> Result<Option<LocalIdentitySummary>, Error> {
+    match load_summary(dhttp_home, name, default_name).await {
+        Ok(summary) => Ok(Some(summary)),
+        Err(Error::ResolveIdentityProfile {
+            source: dhttp::home::identity::ssl::ResolveIdentityProfileError::NotFound { .. },
+        }) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) async fn load_summary(
@@ -457,7 +480,12 @@ fn private_key_state_from_error(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use dhttp::{home::DhttpHome, name::DhttpName};
 
     use super::{
         InteractiveInventoryChoice, LocalIdentityAssessment, LocalIdentityMaterialState,
@@ -468,6 +496,17 @@ mod tests {
     use crate::cli::flow::target::IdentityTarget;
 
     const NOW: i64 = 1_794_298_000;
+
+    fn unique_test_home_path(test_name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "genmeta-identity-local-{test_name}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
 
     fn ready_summary(name: &str, is_default: bool, chain: &str) -> LocalIdentitySummary {
         LocalIdentitySummary {
@@ -678,5 +717,28 @@ mod tests {
                 )),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn load_inventory_returns_empty_when_home_directory_is_missing() {
+        let home_path = unique_test_home_path("missing-home-inventory");
+        let dhttp_home = DhttpHome::new(home_path);
+
+        let inventory = super::load_inventory(&dhttp_home, None).await.unwrap();
+
+        assert!(inventory.groups.is_empty());
+    }
+
+    #[tokio::test]
+    async fn try_load_summary_returns_none_when_profile_is_missing() {
+        let home_path = unique_test_home_path("missing-home-summary");
+        let dhttp_home = DhttpHome::new(home_path);
+        let name = DhttpName::try_from("alice.smith").unwrap();
+
+        let summary = super::try_load_summary(&dhttp_home, name.borrow(), None)
+            .await
+            .unwrap();
+
+        assert!(summary.is_none());
     }
 }

@@ -47,6 +47,11 @@ pub enum Error {
     LoadDefaultConfig { source: LoadDhttpSettingsError },
     #[snafu(transparent)]
     SaveDefaultConfig { source: SaveDhttpSettingsError },
+    #[snafu(display("failed to create dhttp home directory at {}", path.display()))]
+    CreateDhttpHomeDir {
+        path: std::path::PathBuf,
+        source: io::Error,
+    },
     #[snafu(transparent)]
     ListIdentities { source: ListIdentityProfilesError },
     #[snafu(transparent)]
@@ -175,6 +180,14 @@ async fn load_current_settings(dhttp_home: &DhttpHome) -> Result<Option<DhttpSet
 
 #[tracing::instrument()]
 async fn save_settings(default_config: &DhttpSettingsFile) -> Result<(), Error> {
+    if let Some(parent) = default_config.path().parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .context(CreateDhttpHomeDirSnafu {
+                path: parent.to_path_buf(),
+            })?;
+    }
+
     let path = default_config.path().display();
     tracing::Span::current().pb_set_message(&format!("Saving default configuration to {path}..."));
     default_config.save().await?;
@@ -508,12 +521,28 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     use clap::{CommandFactory, Parser};
-    use dhttp::{identity::Identity, name::Name};
+    use dhttp::{home::DhttpHome, identity::Identity, name::DhttpName, name::Name};
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
     use super::{Create, Options, cert_server_base_url, certificate_chain_key_from_identity};
     use crate::CERT_SERVER_BASE_URL;
+
+    fn unique_test_home_path(test_name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "genmeta-identity-cli-{test_name}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
 
     #[test]
     fn cert_server_base_url_uses_compile_time_bootstrap_url() {
@@ -686,5 +715,19 @@ mod tests {
         let rendered = error.to_string();
         assert!(rendered.contains("--send-code"), "{rendered}");
         assert!(rendered.contains("--verify-code"), "{rendered}");
+    }
+
+    #[tokio::test]
+    async fn save_settings_creates_missing_home_directory() {
+        let home_path = unique_test_home_path("save-settings");
+        let dhttp_home = DhttpHome::new(home_path.clone());
+        let mut settings = dhttp_home.new_settings();
+        settings
+            .settings_mut()
+            .set_default_identity_name(DhttpName::try_from("alice.smith").unwrap());
+
+        super::save_settings(&settings).await.unwrap();
+
+        assert!(home_path.join("settings.toml").exists());
     }
 }
