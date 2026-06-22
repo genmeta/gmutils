@@ -167,6 +167,20 @@ fn renew_not_saved_root_message(short_name: &str) -> String {
     )
 }
 
+async fn ensure_saved_renew_target(
+    dhttp_home: &DhttpHome,
+    name: dhttp::name::DhttpName<'_>,
+) -> Result<(), Error> {
+    if local::try_load_summary(dhttp_home, name.borrow(), None)
+        .await?
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    whatever!("{}", renew_not_saved_root_message(name.as_partial()));
+}
+
 fn build_renew_approval_options(target: &str) -> Vec<approval::ApprovalMenuOption> {
     approval::build_approval_options(approval::ApprovalMenuSpec {
         email_label: "Verify with email".to_string(),
@@ -413,6 +427,7 @@ async fn run_interactive(
             .target
             .clone()
             .whatever_context::<_, Error>("interactive renew target is unavailable")?;
+        ensure_saved_renew_target(dhttp_home, domain.borrow()).await?;
 
         if state.approval_plan.is_none() {
             if let Some(auth) = command.auth {
@@ -656,6 +671,7 @@ pub(crate) async fn run(
         return run_interactive(command, dhttp_home, cert_server).await;
     }
     let domain = resolve_target(command, dhttp_home).await?;
+    ensure_saved_renew_target(dhttp_home, domain.borrow()).await?;
     let approval_plan =
         resolve_approval_plan(domain.as_partial(), command.auth, is_interactive).await?;
     let identity_profile = dhttp_home.resolve_identity_profile(domain.borrow()).await?;
@@ -730,6 +746,13 @@ pub(crate) async fn run(
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use dhttp::home::DhttpHome;
+
     use super::{
         InteractiveRenewState, RenewApprovalMenuAction, RenewApprovalPlan, RenewEmailAction,
         RenewVerifyCodeAction, approval_plan_from_selection, build_renew_approval_options,
@@ -738,6 +761,22 @@ mod tests {
         resolve_non_interactive_approval_plan,
     };
     use crate::{auth::AuthMethod, cli::Renew};
+
+    fn unique_test_home_path(test_name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "genmeta-identity-renew-{test_name}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    fn dummy_cert_server() -> crate::cert_server::CertServer {
+        _ = rustls::crypto::ring::default_provider().install_default();
+        crate::cert_server::CertServer::new("https://license.genmeta.net").unwrap()
+    }
 
     #[test]
     fn stay_recovery_keeps_renew_verify_state() {
@@ -837,6 +876,31 @@ Renew updates a local identity already saved on this device.
 This identity has not been applied locally yet.
 
 Apply alice.ma to this device first, then return to renew."
+        );
+    }
+
+    #[tokio::test]
+    async fn renew_reports_saved_local_requirement_when_named_identity_is_missing() {
+        let home_path = unique_test_home_path("renew-unsaved");
+        let dhttp_home = DhttpHome::new(home_path);
+        let command = Renew {
+            name: Some("alice.smith".to_string()),
+            use_default: false,
+            device_name: None,
+            email: None,
+            send_code: false,
+            verify_code: None,
+            auth: None,
+        };
+
+        let error = super::run(&command, &dhttp_home, &dummy_cert_server())
+            .await
+            .unwrap_err();
+        let rendered = error.to_string();
+
+        assert!(
+            rendered.contains("Apply alice.smith to this device first"),
+            "{rendered}"
         );
     }
 

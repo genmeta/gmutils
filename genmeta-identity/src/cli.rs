@@ -433,12 +433,19 @@ impl Info {
                 ),
             },
         };
-        let summary = flow::local::load_summary(
+        let Some(summary) = flow::local::try_load_summary(
             dhttp_home,
             name.borrow(),
             default_name.as_ref().map(|default| default.borrow()),
         )
-        .await?;
+        .await?
+        else {
+            whatever!(
+                "{} is not saved on this device.\n\nTo inspect it locally, apply {} to this device first.",
+                name.as_partial(),
+                name.as_partial(),
+            );
+        };
         flow::transcript::print_block(&flow::output::format_info(
             &summary,
             std::io::stdout().is_terminal(),
@@ -528,7 +535,9 @@ mod tests {
     use dhttp::{home::DhttpHome, identity::Identity, name::DhttpName, name::Name};
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
-    use super::{Create, Options, cert_server_base_url, certificate_chain_key_from_identity};
+    use super::{
+        Create, Default, Info, Options, cert_server_base_url, certificate_chain_key_from_identity,
+    };
     use crate::CERT_SERVER_BASE_URL;
 
     fn unique_test_home_path(test_name: &str) -> PathBuf {
@@ -556,6 +565,11 @@ mod tests {
             )],
             PrivateKeyDer::Pkcs8(b"dummy".to_vec().into()),
         )
+    }
+
+    fn dummy_cert_server() -> crate::cert_server::CertServer {
+        _ = rustls::crypto::ring::default_provider().install_default();
+        crate::cert_server::CertServer::new("https://license.genmeta.net").unwrap()
     }
 
     #[test]
@@ -728,5 +742,47 @@ mod tests {
         super::save_settings(&settings).await.unwrap();
 
         assert!(home_path.join("settings.toml").exists());
+    }
+
+    #[tokio::test]
+    async fn info_reports_unsaved_identity_with_business_message() {
+        let home_path = unique_test_home_path("info-unsaved");
+        let dhttp_home = DhttpHome::new(home_path);
+        let command = Info {
+            name: Some("alice.smith".to_string()),
+        };
+
+        let error = command.run(&dhttp_home, &dummy_cert_server()).await.unwrap_err();
+        let rendered = error.to_string();
+
+        assert!(
+            rendered.contains("alice.smith is not saved on this device"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("apply alice.smith to this device first"),
+            "{rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn default_reports_unsaved_identity_non_interactively() {
+        let home_path = unique_test_home_path("default-unsaved");
+        let dhttp_home = DhttpHome::new(home_path);
+        let command = Default {
+            name: Some("alice.smith".to_string()),
+            allow_nonready: false,
+        };
+
+        let error = command
+            .run(&dhttp_home, &dummy_cert_server())
+            .await
+            .unwrap_err();
+        let rendered = error.to_string();
+
+        assert!(
+            rendered.contains("alice.smith is not saved on this device"),
+            "{rendered}"
+        );
     }
 }

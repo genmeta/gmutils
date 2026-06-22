@@ -49,27 +49,10 @@ fn organization_action_from_selection(
 }
 
 async fn set_default_summary(
-    command: &Default,
     dhttp_home: &DhttpHome,
     current_config: Option<dhttp::home::identity::settings::DhttpSettingsFile>,
     summary: LocalIdentitySummary,
 ) -> Result<(), Error> {
-    if !summary.status.is_ready() && !command.allow_nonready {
-        let confirmed = cli::prompt::sync({
-            let message = format!(
-                "{} is {}. Set it as the default identity anyway?",
-                summary.target.short_name(),
-                summary.status.label()
-            );
-            move || inquire::Confirm::new(&message).with_default(false).prompt()
-        })
-        .await
-        .require_interactive("--allow-nonready")?;
-        if !confirmed {
-            whatever!("default identity was not changed");
-        }
-    }
-
     let mut current_config = current_config.unwrap_or_else(|| {
         dhttp::home::identity::settings::DhttpSettingsFile::new(dhttp_home.settings_path())
     });
@@ -77,6 +60,49 @@ async fn set_default_summary(
         .settings_mut()
         .set_default_identity_name(summary.target.into_dhttp_name());
     cli::save_settings(&current_config).await
+}
+
+async fn confirm_default_target(
+    command: &Default,
+    summary: &LocalIdentitySummary,
+    current_default: Option<&super::epilogue::CurrentDefaultSummary>,
+    ansi: bool,
+) -> Result<(), Error> {
+    if !summary.status.is_ready() && !command.allow_nonready {
+        let message = format!(
+            "{} is {}. Set it as the default identity anyway?",
+            summary.target.short_name(),
+            summary.status.label()
+        );
+        let confirmed = cli::prompt::sync(move || {
+            inquire::Confirm::new(&message).with_default(false).prompt()
+        })
+        .await
+        .require_interactive("--allow-nonready")?;
+        if !confirmed {
+            whatever!("default identity was not changed");
+        }
+        return Ok(());
+    }
+
+    if let Some(suggestion) = super::epilogue::suggest_default_change(
+        summary.target.short_name(),
+        current_default,
+        ansi,
+    ) {
+        let accepted = cli::prompt::sync(move || {
+            inquire::Confirm::new(&suggestion.prompt)
+                .with_default(suggestion.default)
+                .prompt()
+        })
+        .await
+        .require_interactive("IDENTITY")?;
+        if !accepted {
+            whatever!("default identity was not changed");
+        }
+    }
+
+    Ok(())
 }
 
 async fn run_helper_apply(
@@ -110,6 +136,33 @@ fn helper_apply_command(target: &IdentityTarget) -> crate::cli::Apply {
         verify_code: None,
         auth: None,
     }
+}
+
+async fn summary_for_named_default_target(
+    dhttp_home: &DhttpHome,
+    cert_server: &CertServer,
+    target: &IdentityTarget,
+    configured_default_name: Option<dhttp::name::DhttpName<'_>>,
+) -> Result<LocalIdentitySummary, Error> {
+    if let Some(summary) =
+        local::try_load_summary(dhttp_home, target.dhttp_name(), configured_default_name.clone())
+            .await?
+    {
+        return Ok(summary);
+    }
+
+    if !std::io::stdin().is_terminal() {
+        whatever!(
+            "{} is not saved on this device.\n\nTo use it as the default identity, apply {} to this device first or rerun this command interactively.",
+            target.short_name(),
+            target.short_name(),
+        );
+    }
+
+    run_helper_apply(dhttp_home, cert_server, target).await?;
+    local::try_load_summary(dhttp_home, target.dhttp_name(), configured_default_name)
+        .await?
+        .whatever_context::<_, Error>("helper apply did not save the requested identity")
 }
 
 async fn select_interactive_default_summary(
@@ -155,10 +208,10 @@ async fn select_interactive_default_summary(
                 .require_interactive("IDENTITY")?;
                 match organization_action_from_selection(&options, &selected)? {
                     DefaultOrganizationAction::ApplyToLocalDevice => {
-                        run_helper_apply(dhttp_home, cert_server, &target).await?;
-                        return local::load_summary(
+                        return summary_for_named_default_target(
                             dhttp_home,
-                            target.dhttp_name(),
+                            cert_server,
+                            &target,
                             configured_default_name,
                         )
                         .await;
@@ -179,6 +232,8 @@ pub(crate) async fn run(
     let configured_default_name = current_config
         .as_ref()
         .and_then(|config| config.settings().default_identity_name().cloned());
+    let current_default = super::epilogue::current_default_summary(dhttp_home).await?;
+    let ansi = std::io::stdout().is_terminal();
 
     match command.name.as_ref() {
         None => {
@@ -224,19 +279,23 @@ pub(crate) async fn run(
                     .map(|default| default.borrow()),
             )
             .await?;
-            set_default_summary(command, dhttp_home, current_config, selected_summary).await
+            confirm_default_target(command, &selected_summary, current_default.as_ref(), ansi)
+                .await?;
+            set_default_summary(dhttp_home, current_config, selected_summary).await
         }
         Some(name) => {
-            let name = cli::parse_identity_name(name)?;
-            let summary = local::load_summary(
+            let target = IdentityTarget::parse(name)?;
+            let summary = summary_for_named_default_target(
                 dhttp_home,
-                name.borrow(),
+                cert_server,
+                &target,
                 configured_default_name
                     .as_ref()
                     .map(|default| default.borrow()),
             )
             .await?;
-            set_default_summary(command, dhttp_home, current_config, summary).await
+            confirm_default_target(command, &summary, current_default.as_ref(), ansi).await?;
+            set_default_summary(dhttp_home, current_config, summary).await
         }
     }
 }
