@@ -70,6 +70,10 @@ pub struct Options {
     #[arg(short, long)]
     pub id: Option<Name<'static>>,
 
+    /// Use the global dhttp home instead of the default user home
+    #[arg(long)]
+    pub global: bool,
+
     /// Skip identity loading and use anonymous mode
     #[arg(long, conflicts_with = "id")]
     pub anonymous: bool,
@@ -84,11 +88,21 @@ pub struct Options {
     pub verbose: bool,
 }
 
+impl Options {
+    fn home_scope(&self) -> home::HomeScope {
+        if self.global {
+            home::HomeScope::Global
+        } else {
+            home::HomeScope::User
+        }
+    }
+}
+
 #[derive(Debug, snafu::Snafu)]
 #[snafu(module)]
 pub enum Error {
-    #[snafu(display("failed to locate dhttp config"))]
-    LocateDhttpHome { source: home::LocateDhttpHomeError },
+    #[snafu(display("failed to load dhttp home"))]
+    LoadDhttpHome { source: home::LoadDhttpHomeError },
 
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
@@ -274,16 +288,16 @@ async fn load_identity_profile(options: &Options) -> Result<Option<IdentityProfi
         return Ok(None);
     }
 
-    let home = match DhttpHome::load_from_environment() {
+    let home = match DhttpHome::load(options.home_scope()) {
         Ok(home) => home,
         Err(source) if options.id.is_none() => {
             tracing::warn!(
                 error = %snafu::Report::from_error(&source),
-                "failed to locate dhttp config, using anonymous endpoint"
+                "failed to load dhttp home, using anonymous endpoint"
             );
             return Ok(None);
         }
-        Err(source) => return Err(error::LocateDhttpHomeSnafu.into_error(source)),
+        Err(source) => return Err(error::LoadDhttpHomeSnafu.into_error(source)),
     };
 
     if let Some(name) = &options.id {
@@ -654,6 +668,13 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn options_accept_global_flag() {
+        let options = Options::try_parse_from(["nat-detect", "--global"]).unwrap();
+
+        assert_eq!(options.home_scope(), dhttp::home::HomeScope::Global);
+    }
 
     #[test]
     fn write_nat_report_prints_failures_without_hiding_successes() {
