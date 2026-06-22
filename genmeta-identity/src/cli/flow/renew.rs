@@ -894,7 +894,10 @@ Apply alice.ma here first, then return to renew."
             .unwrap_err();
         let rendered = error.to_string();
 
-        assert!(rendered.contains("Apply alice.smith here first"), "{rendered}");
+        assert!(
+            rendered.contains("Apply alice.smith here first"),
+            "{rendered}"
+        );
     }
 
     #[test]

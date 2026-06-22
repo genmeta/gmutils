@@ -466,8 +466,9 @@ pub mod tunnel;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::Parser;
+
+    use super::*;
 
     #[test]
     fn options_accept_global_flag() {

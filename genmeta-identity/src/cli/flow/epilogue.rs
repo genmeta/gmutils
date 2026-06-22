@@ -210,7 +210,8 @@ mod tests {
         assert_eq!(
             suggestion,
             DefaultSuggestion {
-                prompt: "Set alice.smith as the default here? (current: meng.lin [invalid])".to_string(),
+                prompt: "Set alice.smith as the default here? (current: meng.lin [invalid])"
+                    .to_string(),
                 default: false,
             }
         );

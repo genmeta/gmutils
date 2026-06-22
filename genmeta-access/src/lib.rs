@@ -238,28 +238,39 @@ mod tests {
     fn command_writes_store_when_store_is_missing() {
         assert!(Command::List { wide: false }.writes_store(false));
         assert!(!Command::List { wide: false }.writes_store(true));
-        assert!(Command::RemovePaths { patterns: Vec::new() }.writes_store(true));
+        assert!(
+            Command::RemovePaths {
+                patterns: Vec::new()
+            }
+            .writes_store(true)
+        );
     }
 
     #[test]
     fn path_command_writes_store_only_for_mutations() {
-        assert!(!Command::Path {
-            pattern: "/".parse().unwrap(),
-            operation: PathOperation::List,
-        }
-        .writes_store(true));
-        assert!(Command::Path {
-            pattern: "/".parse().unwrap(),
-            operation: PathOperation::List,
-        }
-        .writes_store(false));
-        assert!(Command::Path {
-            pattern: "/".parse().unwrap(),
-            operation: PathOperation::Remove {
-                all: true,
-                sequence: Vec::new(),
-            },
-        }
-        .writes_store(true));
+        assert!(
+            !Command::Path {
+                pattern: "/".parse().unwrap(),
+                operation: PathOperation::List,
+            }
+            .writes_store(true)
+        );
+        assert!(
+            Command::Path {
+                pattern: "/".parse().unwrap(),
+                operation: PathOperation::List,
+            }
+            .writes_store(false)
+        );
+        assert!(
+            Command::Path {
+                pattern: "/".parse().unwrap(),
+                operation: PathOperation::Remove {
+                    all: true,
+                    sequence: Vec::new(),
+                },
+            }
+            .writes_store(true)
+        );
     }
 }

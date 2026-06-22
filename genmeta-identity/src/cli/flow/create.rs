@@ -1775,7 +1775,10 @@ mod tests {
             resolve_non_interactive_approval_plan(&target, Some(AuthMethod::Identity), None)
                 .unwrap_err();
         let rendered = error.to_string();
-        assert!(rendered.contains("ready parent identity saved here"), "{rendered}");
+        assert!(
+            rendered.contains("ready parent identity saved here"),
+            "{rendered}"
+        );
         assert!(rendered.contains("phone.alice.smith"), "{rendered}");
     }
 

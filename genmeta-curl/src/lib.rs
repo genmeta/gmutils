@@ -921,8 +921,9 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
 mod tests {
     use std::time::Duration;
 
-    use super::*;
     use clap::Parser;
+
+    use super::*;
 
     #[test]
     fn connect_timeout_zero_disables_timeout() {

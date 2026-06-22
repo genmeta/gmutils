@@ -1517,8 +1517,6 @@ dependencies = [
 [[package]]
 name = "dhttp"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff511421b0de59123d2f7dac10743709adf48a991620d4782f1f71f4d8e20966"
 dependencies = [
  "bon",
  "bytes",
@@ -1540,8 +1538,6 @@ dependencies = [
 [[package]]
 name = "dhttp-access"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73da9a414cc0264c4511c4a9ba31f275d9d4ae861ace65ec96206e3ac4b38ad1"
 dependencies = [
  "chrono",
  "clap",
@@ -1563,8 +1559,6 @@ dependencies = [
 [[package]]
 name = "dhttp-home"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecafb614c068796adf0c96af474356d26edec72e0f0ed8d6b7e96489df1e485f"
 dependencies = [
  "dhttp-identity",
  "dirs",

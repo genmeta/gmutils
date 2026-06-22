@@ -215,13 +215,14 @@ pub async fn run(options: Options) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::Parser;
+
+    use super::*;
 
     #[test]
     fn options_accept_global_flag() {
-        let options = Options::try_parse_from(["nslookup", "--global", "alice.smith", "mdns"])
-            .unwrap();
+        let options =
+            Options::try_parse_from(["nslookup", "--global", "alice.smith", "mdns"]).unwrap();
 
         assert_eq!(options.home_scope(), dhttp::home::HomeScope::Global);
     }

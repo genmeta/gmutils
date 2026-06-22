@@ -804,7 +804,10 @@ mod tests {
             rendered.contains("alice.smith is not saved here"),
             "{rendered}"
         );
-        assert!(rendered.contains("apply alice.smith here first"), "{rendered}");
+        assert!(
+            rendered.contains("apply alice.smith here first"),
+            "{rendered}"
+        );
     }
 
     #[tokio::test]

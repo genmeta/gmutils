@@ -198,7 +198,10 @@ async fn select_interactive_default_summary(
             InteractiveInventoryChoice::Organization { target } => {
                 let options = default_organization_actions(target.full_name());
                 let selected = crate::cli::prompt::prompt_select_string(
-                    &format!("{} is not saved here. Choose what to do next:", target.short_name()),
+                    &format!(
+                        "{} is not saved here. Choose what to do next:",
+                        target.short_name()
+                    ),
                     options.clone(),
                 )
                 .await

@@ -650,13 +650,14 @@ fn sigwinch_stream() -> impl futures::Stream<Item = (u16, u16)> + Unpin + Send {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::Parser;
+
+    use super::*;
 
     #[test]
     fn options_accept_global_flag() {
-        let options = Options::try_parse_from(["genmeta-ssh", "--global", "alice@example"])
-            .unwrap();
+        let options =
+            Options::try_parse_from(["genmeta-ssh", "--global", "alice@example"]).unwrap();
 
         assert_eq!(options.home_scope(), dhttp::home::HomeScope::Global);
     }
