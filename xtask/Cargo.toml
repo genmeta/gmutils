@@ -9,15 +9,6 @@ homepage.workspace = true
 publish = false
 
 [dependencies]
-aws-credential-types = "1"
-# Keep default `default-https-client` disabled. It pulls aws-lc, and aws-lc-sys
-# fails to assemble on i686-pc-windows-msvc under clang-cl during release
-# cross-builds. Enable only the rustls/ring-backed features used by S3 publish.
-aws-sdk-s3 = { version = "1", default-features = false, features = [
-    "rt-tokio",
-    "rustls",
-    "sigv4a",
-] }
 bollard = "0.21"
 cargo_metadata = "0.23"
 clap = { version = "4", features = ["derive", "env"] }
@@ -39,3 +30,17 @@ rpm-version = "0.5.0"
 tokio = { version = "1", features = ["full"] }
 walkdir = "2"
 zip = { version = "8", default-features = false, features = ["deflate"] }
+
+[target.'cfg(xtask_s3_publish)'.dependencies]
+aws-credential-types = "1"
+# Keep default `default-https-client` disabled. It pulls aws-lc, and aws-lc-sys
+# fails to assemble on i686-pc-windows-msvc under clang-cl during release
+# cross-builds. Enable only the rustls/ring-backed features used by S3 publish.
+aws-sdk-s3 = { version = "1", default-features = false, features = [
+    "rt-tokio",
+    "rustls",
+    "sigv4a",
+] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(xtask_s3_publish)'] }

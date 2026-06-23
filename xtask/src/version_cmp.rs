@@ -1,3 +1,5 @@
+#![cfg_attr(not(xtask_s3_publish), allow(dead_code))]
+
 use std::{cmp::Ordering, str::FromStr};
 
 use snafu::{ResultExt, Snafu};

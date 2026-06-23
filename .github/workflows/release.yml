@@ -197,7 +197,7 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
             mode=publish
           fi
-          publish_cmd=(cargo xtask publish s3)
+          publish_cmd=(env RUSTFLAGS="${RUSTFLAGS:-} --cfg xtask_s3_publish" cargo run --package xtask -- publish s3)
           if [[ "$mode" == "dry-run" ]]; then
             publish_cmd+=(--dry-run)
           fi
@@ -327,7 +327,7 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
             mode=publish
           fi
-          publish_cmd=(cargo xtask publish s3)
+          publish_cmd=(env RUSTFLAGS="${RUSTFLAGS:-} --cfg xtask_s3_publish" cargo run --package xtask -- publish s3)
           if [[ "$mode" == "dry-run" ]]; then
             publish_cmd+=(--dry-run)
           fi
@@ -455,7 +455,7 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
             mode=publish
           fi
-          publish_cmd=(cargo xtask publish s3)
+          publish_cmd=(env RUSTFLAGS="${RUSTFLAGS:-} --cfg xtask_s3_publish" cargo run --package xtask -- publish s3)
           if [[ "$mode" == "dry-run" ]]; then
             publish_cmd+=(--dry-run)
           fi
@@ -594,7 +594,7 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
             mode=publish
           fi
-          publish_cmd=(cargo xtask publish s3)
+          publish_cmd=(env RUSTFLAGS="${RUSTFLAGS:-} --cfg xtask_s3_publish" cargo run --package xtask -- publish s3)
           if [[ "$mode" == "dry-run" ]]; then
             publish_cmd+=(--dry-run)
           fi

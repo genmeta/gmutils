@@ -680,6 +680,15 @@ mod tests {
     }
 
     #[test]
+    fn helper_style_read_and_write_subcommands_are_rejected() {
+        for command in ["read", "write"] {
+            let error = Options::try_parse_from(["genmeta", command]).unwrap_err();
+            let rendered = error.to_string();
+            assert!(rendered.contains(command), "{rendered}");
+        }
+    }
+
+    #[test]
     fn renew_rejects_kind_and_sequence_flags() {
         for (flag, value) in [("--kind", "primary"), ("--sequence", "1")] {
             let error = Options::try_parse_from(["genmeta", "renew", "alice.smith", flag, value])
@@ -829,6 +838,36 @@ mod tests {
             rendered.contains("alice.smith is not saved here"),
             "{rendered}"
         );
+    }
+
+    #[tokio::test]
+    async fn default_named_saved_identity_sets_default_non_interactively() {
+        let home_path = unique_test_home_path("default-saved-noninteractive");
+        let dhttp_home = DhttpHome::new(home_path.clone());
+        let name = DhttpName::try_from("alice.smith").unwrap();
+        let profile = dhttp_home.identity_profile(name.borrow());
+        tokio::fs::create_dir_all(profile.path()).await.unwrap();
+
+        let command = Default {
+            name: Some("alice.smith".to_string()),
+            allow_nonready: true,
+        };
+
+        command
+            .run(&dhttp_home, &dummy_cert_server())
+            .await
+            .unwrap();
+
+        let settings = dhttp_home.load_settings().await.unwrap();
+        assert_eq!(
+            settings
+                .settings()
+                .default_identity_name()
+                .map(|name| name.as_partial()),
+            Some("alice.smith")
+        );
+
+        tokio::fs::remove_dir_all(home_path).await.unwrap();
     }
 
     #[test]

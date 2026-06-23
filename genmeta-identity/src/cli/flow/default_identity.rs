@@ -67,6 +67,7 @@ async fn confirm_default_target(
     summary: &LocalIdentitySummary,
     current_default: Option<&super::epilogue::CurrentDefaultSummary>,
     ansi: bool,
+    stdin_is_terminal: bool,
 ) -> Result<(), Error> {
     if !summary.status.is_ready() && !command.allow_nonready {
         let message = format!(
@@ -81,6 +82,14 @@ async fn confirm_default_target(
         if !confirmed {
             whatever!("default identity was not changed");
         }
+        return Ok(());
+    }
+
+    // Non-interactive default changes must go through the explicit
+    // `genmeta identity default <name>` command, not through create/apply
+    // side effects. When the user has already named the target here, treat
+    // that explicit command as sufficient confirmation.
+    if command.name.is_some() && !stdin_is_terminal {
         return Ok(());
     }
 
@@ -234,6 +243,7 @@ pub(crate) async fn run(
         .and_then(|config| config.settings().default_identity_name().cloned());
     let current_default = super::epilogue::current_default_summary(dhttp_home).await?;
     let ansi = std::io::stdout().is_terminal();
+    let stdin_is_terminal = std::io::stdin().is_terminal();
 
     match command.name.as_ref() {
         None => {
@@ -256,7 +266,7 @@ pub(crate) async fn run(
                 std::io::stdout().is_terminal(),
             ));
 
-            if !std::io::stdin().is_terminal() {
+            if !stdin_is_terminal {
                 return Ok(());
             }
 
@@ -279,8 +289,14 @@ pub(crate) async fn run(
                     .map(|default| default.borrow()),
             )
             .await?;
-            confirm_default_target(command, &selected_summary, current_default.as_ref(), ansi)
-                .await?;
+            confirm_default_target(
+                command,
+                &selected_summary,
+                current_default.as_ref(),
+                ansi,
+                stdin_is_terminal,
+            )
+            .await?;
             set_default_summary(dhttp_home, current_config, selected_summary).await
         }
         Some(name) => {
@@ -294,7 +310,14 @@ pub(crate) async fn run(
                     .map(|default| default.borrow()),
             )
             .await?;
-            confirm_default_target(command, &summary, current_default.as_ref(), ansi).await?;
+            confirm_default_target(
+                command,
+                &summary,
+                current_default.as_ref(),
+                ansi,
+                stdin_is_terminal,
+            )
+            .await?;
             set_default_summary(dhttp_home, current_config, summary).await
         }
     }

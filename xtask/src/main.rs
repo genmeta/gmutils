@@ -3,6 +3,7 @@ mod container;
 mod deb;
 mod grouped;
 mod package;
+#[cfg(xtask_s3_publish)]
 mod publish;
 mod release_contract;
 mod rpm;
@@ -45,6 +46,7 @@ enum Command {
         targets: Vec<std::ffi::OsString>,
     },
     /// Publish package manifests to a backend
+    #[cfg(xtask_s3_publish)]
     Publish {
         #[command(subcommand)]
         command: publish::PublishCommand,
@@ -267,7 +269,9 @@ pub async fn run_cmd(cmd: &mut tokio::process::Command) -> Result<(), Whatever> 
 mod tests {
     use clap::{CommandFactory, Parser, error::ErrorKind};
 
-    use super::{BuildProfile, Cli, Command, publish};
+    #[cfg(xtask_s3_publish)]
+    use super::publish;
+    use super::{BuildProfile, Cli, Command};
 
     const RELEASE_WORKFLOW: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -299,7 +303,10 @@ mod tests {
         let names = subcommand_names(&command);
 
         assert!(names.contains(&"package"));
+        #[cfg(xtask_s3_publish)]
         assert!(names.contains(&"publish"));
+        #[cfg(not(xtask_s3_publish))]
+        assert!(!names.contains(&"publish"));
         assert!(!names.contains(&"dist"));
         assert!(!names.contains(&"stage"));
         assert!(!names.contains(&"verify"));
@@ -320,30 +327,31 @@ mod tests {
         ])
         .expect("package command should parse");
 
-        match cli.command {
+        let (overwrite_manifest, targets) = match cli.command {
             Command::Package {
                 overwrite_manifest,
                 targets,
-            } => {
-                assert!(overwrite_manifest);
-                assert_eq!(
-                    targets,
-                    [
-                        "deb",
-                        "--target",
-                        "x86_64-unknown-linux-gnu",
-                        "rpm",
-                        "--target",
-                        "aarch64-unknown-linux-gnu",
-                    ]
-                    .map(std::ffi::OsString::from)
-                );
-            }
+            } => (overwrite_manifest, targets),
+            #[cfg(xtask_s3_publish)]
             _ => panic!("expected package command"),
-        }
+        };
+        assert!(overwrite_manifest);
+        assert_eq!(
+            targets,
+            [
+                "deb",
+                "--target",
+                "x86_64-unknown-linux-gnu",
+                "rpm",
+                "--target",
+                "aarch64-unknown-linux-gnu",
+            ]
+            .map(std::ffi::OsString::from)
+        );
     }
 
     #[test]
+    #[cfg(xtask_s3_publish)]
     fn publish_s3_accepts_grouped_targets() {
         let cli = Cli::try_parse_from(["xtask", "publish", "s3", "--dry-run", "deb", "brew"])
             .expect("publish command should parse");
@@ -386,7 +394,7 @@ mod tests {
         assert!(RELEASE_WORKFLOW.contains("\"${publish_cmd[@]}\" brew"));
         assert_eq!(
             RELEASE_WORKFLOW
-                .matches("publish_cmd=(cargo xtask publish s3)")
+                .matches(r#"publish_cmd=(env RUSTFLAGS="${RUSTFLAGS:-} --cfg xtask_s3_publish" cargo run --package xtask -- publish s3)"#)
                 .count(),
             4
         );
@@ -525,6 +533,7 @@ async fn main() -> Result<(), Whatever> {
             })
             .await?
         }
+        #[cfg(xtask_s3_publish)]
         Command::Publish { command } => publish::run(command).await?,
     }
     Ok(())

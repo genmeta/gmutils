@@ -440,6 +440,7 @@ export ZIG_TARGET={triple}.{ZIG_GLIBC_VERSION}
 export BUILD_PROFILE={profile_dir}
 export CARGO_PROFILE_ARGS="{cargo_profile_args}"
 export DEB_HOST_MULTIARCH={gnu}
+export SOURCE_ROOT={primary_source}
 {dhttp_bootstrap_exports}
 SRC={primary_source}/target/{triple}/{profile_dir}/deb/src
 mkdir -p "$SRC/debian"

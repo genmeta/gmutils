@@ -1,6 +1,5 @@
 use std::{
     collections::BTreeMap,
-    fmt,
     io::{IsTerminal, Write as _},
     net::SocketAddr,
     str::FromStr,
@@ -20,7 +19,6 @@ use dhttp::{
                 DetectNatTypeError, DetectOuterAddrError, StunClientsComponent, StunProbeError,
             },
         },
-        resolver::{Resolve, ResolveFuture, handy::SystemResolver},
     },
     endpoint::Endpoint,
     home::{self, DhttpHome, identity::IdentityProfile},
@@ -34,34 +32,6 @@ use tracing_subscriber::prelude::*;
 
 const STUN_AGENT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 const STUN_AGENT_DISCOVERY_INTERVAL: Duration = Duration::from_millis(100);
-
-#[derive(Debug, Clone)]
-struct FirstEndpointResolver {
-    inner: Arc<dyn Resolve + Send + Sync>,
-}
-
-impl FirstEndpointResolver {
-    fn system() -> Arc<Self> {
-        Arc::new(Self {
-            inner: Arc::new(SystemResolver),
-        })
-    }
-}
-
-impl fmt::Display for FirstEndpointResolver {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "first endpoint of {}", self.inner)
-    }
-}
-
-impl Resolve for FirstEndpointResolver {
-    fn lookup<'l>(&'l self, name: &'l str) -> ResolveFuture<'l> {
-        Box::pin(async move {
-            let records = self.inner.lookup(name).await?;
-            Ok(records.take(1).boxed())
-        })
-    }
-}
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "nat-detect", version, about)]
@@ -343,11 +313,9 @@ async fn diagnose_nat(options: &mut Options) -> Result<(), Error> {
 
     let bind_patterns = Arc::new(options.binds.clone());
     let network = DhttpNetwork::builder()
-        // NAT filtering tests are stateful: probing multiple STUN agents in
-        // parallel can open holes and misclassify restricted NATs. A single
-        // bootstrap STUN endpoint is enough because the STUN changed-address
-        // attribute supplies alternate servers for classification.
-        .stun_resolver(FirstEndpointResolver::system())
+        .bind(bind_patterns.clone())
+        .dns(DnsScheme::H3)
+        .dns(DnsScheme::System)
         .build()
         .await
         .context(error::BuildDhttpNetworkSnafu)?;
@@ -853,5 +821,19 @@ mod tests {
             ]
         );
         assert!(!wrote_summary);
+    }
+
+    #[test]
+    fn diagnose_nat_uses_dhttp_dns_plan_without_endpoint_truncation() {
+        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"));
+        let first_endpoint_resolver = ["First", "Endpoint", "Resolver"].concat();
+        let take_one = [".take", "(1)"].concat();
+        let single_resolver = ["single_stun", "_endpoint_resolver("].concat();
+
+        assert!(!source.contains(&first_endpoint_resolver));
+        assert!(!source.contains(&take_one));
+        assert!(!source.contains(&single_resolver));
+        assert!(source.contains(".dns(DnsScheme::H3)"));
+        assert!(source.contains(".dns(DnsScheme::System)"));
     }
 }

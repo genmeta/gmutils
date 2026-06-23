@@ -6,11 +6,13 @@
 # cargo-zigbuild (e.g. x86_64-unknown-linux-gnu.2.28).
 #
 # This file lives in xtask/deb/ and is copied into target/.../deb/src/debian/
-# before dpkg-buildpackage runs. All paths use /workspace (the bind mount root).
+# before dpkg-buildpackage runs. xtask points SOURCE_ROOT at the primary source
+# bind mount inside the build container.
 
 export DH_VERBOSE = 1
 BUILD_PROFILE ?= release
 CARGO_PROFILE_ARGS ?= --release
+SOURCE_ROOT ?= /workspace
 
 %:
 	dh $@
@@ -19,7 +21,7 @@ CARGO_PROFILE_ARGS ?= --release
 # Cortex-A53 843419 mitigation linker argument.
 override_dh_auto_build:
 ifdef TRIPLE
-	cd /workspace && \
+	cd $(SOURCE_ROOT) && \
 	export RUSTFLAGS="$${RUSTFLAGS:-} -L /usr/lib/$(DEB_HOST_MULTIARCH)" && \
 	if [ "$(TRIPLE)" = "aarch64-unknown-linux-gnu" ]; then \
 		{ \
@@ -51,8 +53,8 @@ endif
 override_dh_auto_install:
 ifdef TRIPLE
 	mkdir -p debian/gmutils/usr/bin
-	cp /workspace/target/$(TRIPLE)/$(BUILD_PROFILE)/genmeta debian/gmutils/usr/bin/
-	cp /workspace/genmeta-ssh.sh debian/gmutils/usr/bin/
+	cp $(SOURCE_ROOT)/target/$(TRIPLE)/$(BUILD_PROFILE)/genmeta debian/gmutils/usr/bin/
+	cp $(SOURCE_ROOT)/genmeta-ssh.sh debian/gmutils/usr/bin/
 	chmod 755 debian/gmutils/usr/bin/*
 endif
 
