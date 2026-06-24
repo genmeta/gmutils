@@ -634,7 +634,13 @@ async fn run_interactive(
         )
         .instrument(info_span!("save_identity"))
         .await?;
-        return crate::cli::flow::epilogue::run_local_epilogue(dhttp_home, domain.borrow()).await;
+        return crate::cli::flow::epilogue::run_local_epilogue(
+            dhttp_home,
+            domain.borrow(),
+            crate::cli::flow::output::SavedIdentityAction::Renewed,
+            None,
+        )
+        .await;
     }
 }
 
@@ -737,7 +743,13 @@ pub(crate) async fn run(
         detail.cert_pem.as_bytes(),
     )
     .await?;
-    crate::cli::flow::epilogue::run_local_epilogue(dhttp_home, domain.borrow()).await
+    crate::cli::flow::epilogue::run_local_epilogue(
+        dhttp_home,
+        domain.borrow(),
+        crate::cli::flow::output::SavedIdentityAction::Renewed,
+        None,
+    )
+    .await
 }
 
 #[cfg(test)]

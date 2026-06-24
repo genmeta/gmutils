@@ -19,6 +19,7 @@ use dhttp::{
     },
     name::DhttpName as Name,
 };
+pub use flow::welcome::WelcomeServiceError;
 use indicatif::ProgressStyle;
 use rankey::EncodePem;
 use snafu::{ResultExt, Snafu, Whatever, whatever};
@@ -70,6 +71,8 @@ pub enum Error {
     ParseIdentityKind {
         source: flow::kind::ParseIdentityKindError,
     },
+    #[snafu(transparent)]
+    WelcomeService { source: WelcomeServiceError },
     #[snafu(transparent)]
     LocalIdentity {
         source: crate::local_identity::Error,
@@ -362,8 +365,13 @@ pub struct Default {
 }
 
 impl Default {
-    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
-        flow::default_identity::run(self, dhttp_home, cert_server).await
+    pub async fn run(
+        &self,
+        dhttp_home: &DhttpHome,
+        home_scope: HomeScope,
+        cert_server: &CertServer,
+    ) -> Result<(), Error> {
+        flow::default_identity::run(self, dhttp_home, home_scope, cert_server).await
     }
 }
 
@@ -497,12 +505,21 @@ impl Options {
         )
     }
 
-    pub async fn run(&self, dhttp_home: &DhttpHome, cert_server: &CertServer) -> Result<(), Error> {
+    pub async fn run(
+        &self,
+        dhttp_home: &DhttpHome,
+        home_scope: HomeScope,
+        cert_server: &CertServer,
+    ) -> Result<(), Error> {
         match self {
-            Options::Create(cmd) => flow::run_create(cmd, dhttp_home, cert_server).await,
-            Options::Apply(cmd) => flow::run_apply(cmd, dhttp_home, cert_server).await,
+            Options::Create(cmd) => {
+                flow::run_create(cmd, dhttp_home, home_scope, cert_server).await
+            }
+            Options::Apply(cmd) => flow::run_apply(cmd, dhttp_home, home_scope, cert_server).await,
             Options::Renew(cmd) => flow::run_renew(cmd, dhttp_home, cert_server).await,
-            Options::Default(cmd) => flow::run_default(cmd, dhttp_home, cert_server).await,
+            Options::Default(cmd) => {
+                flow::run_default(cmd, dhttp_home, home_scope, cert_server).await
+            }
             Options::Info(cmd) => flow::run_info(cmd, dhttp_home, cert_server).await,
             Options::List(cmd) => flow::run_list(cmd, dhttp_home, cert_server).await,
             Options::Version {} => {
@@ -546,7 +563,8 @@ fn cert_server_base_url() -> &'static str {
 pub async fn run(options: Cli) -> Result<(), Error> {
     init_tracing();
 
-    let dhttp_home = DhttpHome::load(options.home_scope()).context(LoadDhttpHomeSnafu)?;
+    let home_scope = options.home_scope();
+    let dhttp_home = DhttpHome::load(home_scope).context(LoadDhttpHomeSnafu)?;
 
     if options.global && options.options.writes_home() {
         tracing::warn!(
@@ -558,7 +576,10 @@ pub async fn run(options: Cli) -> Result<(), Error> {
     _ = rustls::crypto::ring::default_provider().install_default();
     let cert_server = CertServer::new(cert_server_base_url())?;
 
-    options.options.run(&dhttp_home, &cert_server).await
+    options
+        .options
+        .run(&dhttp_home, home_scope, &cert_server)
+        .await
 }
 
 #[cfg(test)]
@@ -570,7 +591,7 @@ mod tests {
 
     use clap::{CommandFactory, Parser};
     use dhttp::{
-        home::DhttpHome,
+        home::{DhttpHome, HomeScope},
         identity::Identity,
         name::{DhttpName, Name},
     };
@@ -829,7 +850,7 @@ mod tests {
         };
 
         let error = command
-            .run(&dhttp_home, &dummy_cert_server())
+            .run(&dhttp_home, HomeScope::User, &dummy_cert_server())
             .await
             .unwrap_err();
         let rendered = error.to_string();
@@ -854,7 +875,7 @@ mod tests {
         };
 
         command
-            .run(&dhttp_home, &dummy_cert_server())
+            .run(&dhttp_home, HomeScope::User, &dummy_cert_server())
             .await
             .unwrap();
 

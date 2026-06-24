@@ -103,6 +103,8 @@ pub(crate) async fn run_lifecycle_epilogue(
     name: DhttpName<'_>,
     default_at_start: Option<DhttpName<'static>>,
     interactive: bool,
+    action: output::SavedIdentityAction,
+    welcome: Option<&super::welcome::WelcomeServiceCreated>,
 ) -> Result<(), Error> {
     let ansi = std::io::stdout().is_terminal();
     let mut default_after = current_default_name(dhttp_home).await?;
@@ -114,7 +116,9 @@ pub(crate) async fn run_lifecycle_epilogue(
     )
     .await?;
 
-    transcript::print_block(&output::format_info(&summary, ansi));
+    transcript::print_block(&output::format_saved_identity_result(
+        action, &summary, ansi,
+    ));
     transcript::print_line(output::format_safekeeping_reminder(ansi));
 
     if interactive
@@ -140,13 +144,18 @@ pub(crate) async fn run_lifecycle_epilogue(
             .map(|default| default.as_partial()),
         default_after.as_ref().map(|default| default.as_partial()),
     );
-    transcript::print_line(output::format_default_identity_block(&block));
+    transcript::print_line(output::format_default_identity_sentence(&block));
+    if let Some(welcome) = welcome {
+        transcript::print_block(&super::welcome::format_welcome_service_created(welcome));
+    }
     Ok(())
 }
 
 pub(crate) async fn run_local_epilogue(
     dhttp_home: &DhttpHome,
     name: DhttpName<'_>,
+    action: output::SavedIdentityAction,
+    welcome: Option<&super::welcome::WelcomeServiceCreated>,
 ) -> Result<(), Error> {
     let ansi = std::io::stdout().is_terminal();
     let default_name = current_default_name(dhttp_home).await?;
@@ -156,8 +165,13 @@ pub(crate) async fn run_local_epilogue(
         default_name.as_ref().map(|default| default.borrow()),
     )
     .await?;
-    transcript::print_block(&output::format_info(&summary, ansi));
+    transcript::print_block(&output::format_saved_identity_result(
+        action, &summary, ansi,
+    ));
     transcript::print_line(output::format_safekeeping_reminder(ansi));
+    if let Some(welcome) = welcome {
+        transcript::print_block(&super::welcome::format_welcome_service_created(welcome));
+    }
     Ok(())
 }
 
@@ -236,9 +250,16 @@ mod tests {
         let profile = dhttp_home.identity_profile(name.borrow());
         fs::create_dir_all(profile.ssl_dir()).await.unwrap();
 
-        super::run_lifecycle_epilogue(&dhttp_home, name.borrow(), None, false)
-            .await
-            .unwrap();
+        super::run_lifecycle_epilogue(
+            &dhttp_home,
+            name.borrow(),
+            None,
+            false,
+            crate::cli::flow::output::SavedIdentityAction::Created,
+            None,
+        )
+        .await
+        .unwrap();
 
         assert!(
             super::current_default_name(&dhttp_home)

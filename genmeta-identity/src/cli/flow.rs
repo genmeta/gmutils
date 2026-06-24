@@ -13,8 +13,9 @@ pub(crate) mod recovery;
 pub(crate) mod renew;
 pub(crate) mod target;
 pub(crate) mod transcript;
+pub(crate) mod welcome;
 
-use dhttp::home::DhttpHome;
+use dhttp::home::{DhttpHome, HomeScope};
 
 use crate::{
     cert_server::CertServer,
@@ -24,17 +25,19 @@ use crate::{
 pub(crate) async fn run_create(
     command: &Create,
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
 ) -> Result<(), Error> {
-    create::run(command, dhttp_home, cert_server).await
+    create::run(command, dhttp_home, home_scope, cert_server).await
 }
 
 pub(crate) async fn run_apply(
     command: &Apply,
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
 ) -> Result<(), Error> {
-    apply::run(command, dhttp_home, cert_server).await
+    apply::run(command, dhttp_home, home_scope, cert_server).await
 }
 
 pub(crate) async fn run_renew(
@@ -48,9 +51,10 @@ pub(crate) async fn run_renew(
 pub(crate) async fn run_default(
     command: &Default,
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
 ) -> Result<(), Error> {
-    default_identity::run(command, dhttp_home, cert_server).await
+    default_identity::run(command, dhttp_home, home_scope, cert_server).await
 }
 
 pub(crate) async fn run_info(

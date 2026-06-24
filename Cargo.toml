@@ -85,6 +85,7 @@ dirs = { version = "6" }
 sea-orm = { version = "1", features = ["runtime-tokio-rustls"] }
 snafu = "0.9"
 socket2 = "0.6"
+nix = { version = "0.31", default-features = false, features = ["user"] }
 time = "0.3"
 async-compression = { version = "0.4", features = [
     "tokio",

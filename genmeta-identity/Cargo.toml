@@ -48,3 +48,6 @@ cli = [
     "dep:crossterm",
     "dep:whoami",
 ]
+
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }

@@ -1,6 +1,6 @@
 use std::io::IsTerminal;
 
-use dhttp::home::DhttpHome;
+use dhttp::home::{DhttpHome, HomeScope};
 use snafu::{FromString, OptionExt, whatever};
 use tracing::{Instrument, info_span};
 
@@ -659,6 +659,7 @@ async fn resolve_parent_candidate(
 
 async fn run_helper_apply_parent(
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
     target: &IdentityTarget,
     parent_identity: &str,
@@ -687,6 +688,7 @@ To continue creating {}, it will {verb} {short_parent_identity} here, then retur
     match super::apply::run_interactive(
         &command,
         dhttp_home,
+        home_scope,
         cert_server,
         Some(&format!("create {}", target.short_name())),
     )
@@ -699,6 +701,7 @@ To continue creating {}, it will {verb} {short_parent_identity} here, then retur
 
 async fn run_helper_parent_action(
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
     target: &IdentityTarget,
     parent_identity: &str,
@@ -706,10 +709,26 @@ async fn run_helper_parent_action(
 ) -> Result<bool, Error> {
     match action {
         approval::ApprovalHelperAction::Apply => {
-            run_helper_apply_parent(dhttp_home, cert_server, target, parent_identity, false).await
+            run_helper_apply_parent(
+                dhttp_home,
+                home_scope,
+                cert_server,
+                target,
+                parent_identity,
+                false,
+            )
+            .await
         }
         approval::ApprovalHelperAction::Reapply => {
-            run_helper_apply_parent(dhttp_home, cert_server, target, parent_identity, true).await
+            run_helper_apply_parent(
+                dhttp_home,
+                home_scope,
+                cert_server,
+                target,
+                parent_identity,
+                true,
+            )
+            .await
         }
         approval::ApprovalHelperAction::Renew => {
             super::renew::run_helper_for_verification(
@@ -916,6 +935,7 @@ async fn create_sub_identity_with_email_interactively(
 async fn run_interactive(
     command: &Create,
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
 ) -> Result<(), Error> {
     let default_identity_when_command_started = cli::load_current_settings(dhttp_home)
@@ -1032,8 +1052,15 @@ async fn run_interactive(
                 .parent_identity
                 .as_deref()
                 .whatever_context::<_, Error>("helper apply path is missing its parent identity")?;
-            if !run_helper_parent_action(dhttp_home, cert_server, &target, parent_identity, action)
-                .await?
+            if !run_helper_parent_action(
+                dhttp_home,
+                home_scope,
+                cert_server,
+                &target,
+                parent_identity,
+                action,
+            )
+            .await?
             {
                 state.approval_plan = None;
                 state.reset_after_approval_change();
@@ -1389,11 +1416,19 @@ async fn run_interactive(
             }
         }
 
+        let welcome = super::welcome::maybe_create_welcome_service(
+            dhttp_home,
+            target.dhttp_name(),
+            home_scope,
+        )
+        .await?;
         crate::cli::flow::epilogue::run_lifecycle_epilogue(
             dhttp_home,
             target.dhttp_name(),
             default_identity_when_command_started.clone(),
             std::io::stdin().is_terminal(),
+            super::output::SavedIdentityAction::Created,
+            welcome.as_ref(),
         )
         .await?;
         return Ok(());
@@ -1403,11 +1438,12 @@ async fn run_interactive(
 pub(crate) async fn run(
     command: &Create,
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
 ) -> Result<(), Error> {
     let is_interactive = std::io::stdin().is_terminal();
     if is_interactive && !command.send_code {
-        return run_interactive(command, dhttp_home, cert_server).await;
+        return run_interactive(command, dhttp_home, home_scope, cert_server).await;
     }
     let default_identity_when_command_started = cli::load_current_settings(dhttp_home)
         .await?
@@ -1442,8 +1478,15 @@ pub(crate) async fn run(
             .parent_identity
             .as_deref()
             .whatever_context::<_, Error>("helper apply path is missing its parent identity")?;
-        if !run_helper_parent_action(dhttp_home, cert_server, &target, parent_identity, action)
-            .await?
+        if !run_helper_parent_action(
+            dhttp_home,
+            home_scope,
+            cert_server,
+            &target,
+            parent_identity,
+            action,
+        )
+        .await?
         {
             whatever!("create was cancelled");
         }
@@ -1604,11 +1647,16 @@ pub(crate) async fn run(
         }
     }
 
+    let welcome =
+        super::welcome::maybe_create_welcome_service(dhttp_home, target.dhttp_name(), home_scope)
+            .await?;
     crate::cli::flow::epilogue::run_lifecycle_epilogue(
         dhttp_home,
         target.dhttp_name(),
         default_identity_when_command_started,
         is_interactive,
+        super::output::SavedIdentityAction::Created,
+        welcome.as_ref(),
     )
     .await
 }

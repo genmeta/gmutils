@@ -1,5 +1,4 @@
 use crossterm::style::Stylize;
-use time::OffsetDateTime;
 
 use super::{
     local::{
@@ -62,6 +61,23 @@ pub(crate) enum DefaultIdentityBlock {
     NewlySet { name: String },
     Unchanged { name: String },
     Changed { old: String, new: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SavedIdentityAction {
+    Created,
+    Applied,
+    Renewed,
+}
+
+impl SavedIdentityAction {
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Created => "Created",
+            Self::Applied => "Applied",
+            Self::Renewed => "Renewed",
+        }
+    }
 }
 
 pub(crate) fn summary_line_style(summary: &LocalIdentitySummary) -> LineStyle {
@@ -151,17 +167,13 @@ pub(crate) fn render_choice_label(choice: &InteractiveInventoryChoice, ansi: boo
     }
 }
 
-pub(crate) fn format_default_identity_block(block: &DefaultIdentityBlock) -> String {
+pub(crate) fn format_default_identity_sentence(block: &DefaultIdentityBlock) -> String {
     match block {
-        DefaultIdentityBlock::None => "Default identity: (none)".to_string(),
-        DefaultIdentityBlock::NewlySet { name } => {
-            format!("Default identity: {name} (newly set)")
-        }
-        DefaultIdentityBlock::Unchanged { name } => {
-            format!("Default identity: {name} (unchanged)")
-        }
+        DefaultIdentityBlock::None => "No default identity is set here".to_string(),
+        DefaultIdentityBlock::NewlySet { name } => format!("Default identity set to {name}"),
+        DefaultIdentityBlock::Unchanged { name } => format!("Default identity remains {name}"),
         DefaultIdentityBlock::Changed { old, new } => {
-            format!("Default identity: {new} (changed from {old})")
+            format!("Default identity changed from {old} to {new}")
         }
     }
 }
@@ -174,23 +186,55 @@ pub(crate) fn format_safekeeping_reminder(ansi: bool) -> String {
     )
 }
 
-pub(crate) fn format_info(summary: &LocalIdentitySummary, ansi: bool) -> String {
+pub(crate) fn format_saved_identity_result(
+    action: SavedIdentityAction,
+    summary: &LocalIdentitySummary,
+    ansi: bool,
+) -> String {
     let mut lines = Vec::new();
     lines.push(render_line(
-        format!("Name: {}", summary_name(summary)),
+        format!(
+            "{} identity {}",
+            action.verb(),
+            compact_identity_label(summary)
+        ),
         summary_line_style(summary),
         ansi,
     ));
-    if let Some(certificate_chain) = summary.certificate_chain.as_ref() {
-        lines.push(format!("Certificate chain: {certificate_chain}"));
-    }
-    lines.push(format!("Status: {}", format_status(summary.status.clone())));
-    lines.push(format!("Saved at: {}", summary.saved_at.display()));
+    lines.extend(detail_lines(summary));
+    lines.join("\n")
+}
+
+pub(crate) fn format_info(summary: &LocalIdentitySummary, ansi: bool) -> String {
+    let mut lines = Vec::new();
+    lines.push(render_line(
+        compact_identity_label(summary),
+        summary_line_style(summary),
+        ansi,
+    ));
+    lines.extend(detail_lines(summary));
     lines.join("\n")
 }
 
 pub(crate) fn format_default_summary(summary: &LocalIdentitySummary, ansi: bool) -> String {
     format_info(summary, ansi)
+}
+
+fn detail_lines(summary: &LocalIdentitySummary) -> Vec<String> {
+    let mut lines = Vec::new();
+    match (&summary.status, summary.certificate_chain.as_deref()) {
+        (LocalIdentityStatus::Ready { .. }, Some(chain))
+        | (LocalIdentityStatus::Expired { .. }, Some(chain)) => {
+            lines.push(format!("  uses certificate chain {chain}"));
+        }
+        (LocalIdentityStatus::Incomplete { detail }, _)
+        | (LocalIdentityStatus::Invalid { detail }, _) => {
+            lines.push(format!("  {detail}"));
+        }
+        _ => {}
+    }
+    lines.push(format!("  saved at {}", summary.saved_at.display()));
+    lines
 }
 
 fn render_root(root: &LocalInventoryRoot, width: usize, ansi: bool) -> String {
@@ -246,54 +290,15 @@ fn summary_label(summary: &LocalIdentitySummary) -> String {
     label
 }
 
-fn summary_name(summary: &LocalIdentitySummary) -> String {
-    let mut name = summary.target.short_name().to_string();
-    if matches!(summary.target.level(), IdentityLevel::SubIdentity)
-        && let Some(parent) = summary.target.parent()
-    {
-        name.push_str(&format!(" (sub-identity of {})", parent.as_partial()));
-    }
-    if summary.is_default {
-        name.push_str(" (default identity)");
-    }
-    name
-}
-
-fn format_status(status: LocalIdentityStatus) -> String {
-    match status {
-        LocalIdentityStatus::Ready { expires_at } => {
-            format!("ready (expires after {})", format_timestamp(expires_at))
-        }
-        LocalIdentityStatus::Expired { expired_at } => {
-            format!("expired (expired after {})", format_timestamp(expired_at))
-        }
-        LocalIdentityStatus::Incomplete { detail } => format!("incomplete ({detail})"),
-        LocalIdentityStatus::Invalid { detail } => format!("invalid ({detail})"),
-    }
-}
-
-fn format_timestamp(timestamp: i64) -> String {
-    let datetime = OffsetDateTime::from_unix_timestamp(timestamp)
-        .expect("BUG: timestamps should be representable");
-    format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
-        datetime.year(),
-        u8::from(datetime.month()),
-        datetime.day(),
-        datetime.hour(),
-        datetime.minute(),
-        datetime.second()
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
     use super::{
-        DefaultIdentityBlock, LineStyle, compact_identity_label, format_current_default_suffix,
-        format_default_identity_block, format_default_summary, format_info, render_choice_label,
-        render_inventory, summary_line_style,
+        DefaultIdentityBlock, LineStyle, SavedIdentityAction, compact_identity_label,
+        format_current_default_suffix, format_default_identity_sentence, format_default_summary,
+        format_info, format_saved_identity_result, render_choice_label, render_inventory,
+        summary_line_style,
     };
     use crate::cli::flow::{
         local::{
@@ -330,14 +335,29 @@ mod tests {
             Some("secondary:2"),
         );
 
-        let expected = "\
-Name: phone.alice.smith (sub-identity of alice.smith) (default identity)\n\
-Certificate chain: secondary:2\n\
-Status: ready (expires after 2026-11-10 08:12:44 UTC)\n\
-Saved at: /tmp/phone.alice.smith";
+        let expected = "phone.alice.smith [ready] (default identity)\n  uses certificate chain secondary:2\n  saved at /tmp/phone.alice.smith";
 
         assert_eq!(format_info(&profile, false), expected);
         assert_eq!(format_default_summary(&profile, false), expected);
+    }
+
+    #[test]
+    fn formats_created_identity_result() {
+        let profile = summary(
+            "alice.smith",
+            false,
+            LocalIdentityStatus::Ready {
+                expires_at: EXPIRES_AT,
+            },
+            Some("primary:0"),
+        );
+
+        let expected = "Created identity alice.smith [ready]\n  uses certificate chain primary:0\n  saved at /tmp/alice.smith";
+
+        assert_eq!(
+            format_saved_identity_result(SavedIdentityAction::Created, &profile, false),
+            expected,
+        );
     }
 
     #[test]
@@ -383,6 +403,22 @@ Saved at: /tmp/phone.alice.smith";
     }
 
     #[test]
+    fn formats_invalid_identity_without_field_labels() {
+        let profile = summary(
+            "alice.smith",
+            false,
+            LocalIdentityStatus::Invalid {
+                detail: "certificate chain metadata is invalid".to_string(),
+            },
+            None,
+        );
+
+        let expected = "alice.smith [invalid]\n  certificate chain metadata is invalid\n  saved at /tmp/alice.smith";
+
+        assert_eq!(format_info(&profile, false), expected);
+    }
+
+    #[test]
     fn current_default_suffix_uses_compact_label_text() {
         assert_eq!(
             format_current_default_suffix(
@@ -397,10 +433,29 @@ Saved at: /tmp/phone.alice.smith";
     }
 
     #[test]
-    fn formats_none_default_block() {
+    fn formats_default_identity_sentences() {
         assert_eq!(
-            format_default_identity_block(&DefaultIdentityBlock::None),
-            "Default identity: (none)"
+            format_default_identity_sentence(&DefaultIdentityBlock::NewlySet {
+                name: "alice.smith".to_string(),
+            }),
+            "Default identity set to alice.smith"
+        );
+        assert_eq!(
+            format_default_identity_sentence(&DefaultIdentityBlock::Changed {
+                old: "meng.lin".to_string(),
+                new: "alice.smith".to_string(),
+            }),
+            "Default identity changed from meng.lin to alice.smith"
+        );
+        assert_eq!(
+            format_default_identity_sentence(&DefaultIdentityBlock::Unchanged {
+                name: "alice.smith".to_string(),
+            }),
+            "Default identity remains alice.smith"
+        );
+        assert_eq!(
+            format_default_identity_sentence(&DefaultIdentityBlock::None),
+            "No default identity is set here"
         );
     }
 

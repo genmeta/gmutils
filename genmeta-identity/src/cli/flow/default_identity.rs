@@ -1,6 +1,6 @@
 use std::io::IsTerminal;
 
-use dhttp::home::DhttpHome;
+use dhttp::home::{DhttpHome, HomeScope};
 use snafu::{OptionExt, whatever};
 
 use super::{
@@ -113,6 +113,7 @@ async fn confirm_default_target(
 
 async fn run_helper_apply(
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
     target: &IdentityTarget,
 ) -> Result<(), Error> {
@@ -125,6 +126,7 @@ async fn run_helper_apply(
     super::apply::run_with_policy(
         &command,
         dhttp_home,
+        home_scope,
         cert_server,
         super::apply::ApplyPostSavePolicy::SkipDefaultSuggestion,
     )
@@ -146,6 +148,7 @@ fn helper_apply_command(target: &IdentityTarget) -> crate::cli::Apply {
 
 async fn summary_for_named_default_target(
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
     target: &IdentityTarget,
     configured_default_name: Option<dhttp::name::DhttpName<'_>>,
@@ -168,7 +171,7 @@ async fn summary_for_named_default_target(
         );
     }
 
-    run_helper_apply(dhttp_home, cert_server, target).await?;
+    run_helper_apply(dhttp_home, home_scope, cert_server, target).await?;
     local::try_load_summary(dhttp_home, target.dhttp_name(), configured_default_name)
         .await?
         .whatever_context::<_, Error>("helper apply did not save the requested identity")
@@ -176,6 +179,7 @@ async fn summary_for_named_default_target(
 
 async fn select_interactive_default_summary(
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
     configured_default_name: Option<dhttp::name::DhttpName<'_>>,
 ) -> Result<LocalIdentitySummary, Error> {
@@ -219,6 +223,7 @@ async fn select_interactive_default_summary(
                     DefaultOrganizationAction::ApplyToLocalDevice => {
                         return summary_for_named_default_target(
                             dhttp_home,
+                            home_scope,
                             cert_server,
                             &target,
                             configured_default_name,
@@ -235,6 +240,7 @@ async fn select_interactive_default_summary(
 pub(crate) async fn run(
     command: &Default,
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
 ) -> Result<(), Error> {
     let current_config = cli::load_current_settings(dhttp_home).await?;
@@ -283,6 +289,7 @@ pub(crate) async fn run(
 
             let selected_summary = select_interactive_default_summary(
                 dhttp_home,
+                home_scope,
                 cert_server,
                 configured_default_name
                     .as_ref()
@@ -297,12 +304,23 @@ pub(crate) async fn run(
                 stdin_is_terminal,
             )
             .await?;
-            set_default_summary(dhttp_home, current_config, selected_summary).await
+            set_default_summary(dhttp_home, current_config, selected_summary.clone()).await?;
+            let block = super::epilogue::default_block(
+                configured_default_name
+                    .as_ref()
+                    .map(|default| default.as_partial()),
+                Some(selected_summary.target.short_name()),
+            );
+            crate::cli::flow::transcript::print_line(output::format_default_identity_sentence(
+                &block,
+            ));
+            Ok(())
         }
         Some(name) => {
             let target = IdentityTarget::parse(name)?;
             let summary = summary_for_named_default_target(
                 dhttp_home,
+                home_scope,
                 cert_server,
                 &target,
                 configured_default_name
@@ -318,7 +336,17 @@ pub(crate) async fn run(
                 stdin_is_terminal,
             )
             .await?;
-            set_default_summary(dhttp_home, current_config, summary).await
+            set_default_summary(dhttp_home, current_config, summary.clone()).await?;
+            let block = super::epilogue::default_block(
+                configured_default_name
+                    .as_ref()
+                    .map(|default| default.as_partial()),
+                Some(summary.target.short_name()),
+            );
+            crate::cli::flow::transcript::print_line(output::format_default_identity_sentence(
+                &block,
+            ));
+            Ok(())
         }
     }
 }

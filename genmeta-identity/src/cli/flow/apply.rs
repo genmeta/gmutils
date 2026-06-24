@@ -1,6 +1,6 @@
 use std::io::IsTerminal;
 
-use dhttp::home::DhttpHome;
+use dhttp::home::{DhttpHome, HomeScope};
 use snafu::{OptionExt, whatever};
 use tracing::{Instrument, info_span};
 
@@ -504,6 +504,7 @@ async fn resolve_apply_candidate(
 
 async fn run_helper_apply_action(
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
     auth_domain: &str,
     action: approval::ApprovalHelperAction,
@@ -524,6 +525,7 @@ async fn run_helper_apply_action(
             match Box::pin(run_interactive(
                 &command,
                 dhttp_home,
+                home_scope,
                 cert_server,
                 return_to,
             ))
@@ -603,6 +605,7 @@ async fn run_post_save_epilogue(
     domain: dhttp::name::DhttpName<'_>,
     default_identity_when_command_started: Option<dhttp::name::DhttpName<'static>>,
     interactive: bool,
+    welcome: Option<&super::welcome::WelcomeServiceCreated>,
 ) -> Result<(), Error> {
     match post_save {
         ApplyPostSavePolicy::ManageDefaultSuggestion => {
@@ -611,11 +614,19 @@ async fn run_post_save_epilogue(
                 domain,
                 default_identity_when_command_started,
                 interactive,
+                super::output::SavedIdentityAction::Applied,
+                welcome,
             )
             .await
         }
         ApplyPostSavePolicy::SkipDefaultSuggestion => {
-            crate::cli::flow::epilogue::run_local_epilogue(dhttp_home, domain).await
+            crate::cli::flow::epilogue::run_local_epilogue(
+                dhttp_home,
+                domain,
+                super::output::SavedIdentityAction::Applied,
+                welcome,
+            )
+            .await
         }
     }
 }
@@ -623,6 +634,7 @@ async fn run_post_save_epilogue(
 async fn run_interactive_with_policy(
     command: &Apply,
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
     return_to: Option<&str>,
     post_save: ApplyPostSavePolicy,
@@ -711,8 +723,15 @@ async fn run_interactive_with_policy(
             action,
         } = approval_plan.clone()
         {
-            if !run_helper_apply_action(dhttp_home, cert_server, &auth_domain, action, return_to)
-                .await?
+            if !run_helper_apply_action(
+                dhttp_home,
+                home_scope,
+                cert_server,
+                &auth_domain,
+                action,
+                return_to,
+            )
+            .await?
             {
                 state.approval_plan = None;
                 state.revisit_verification_method();
@@ -905,12 +924,16 @@ async fn run_interactive_with_policy(
         )
         .instrument(info_span!("save_identity"))
         .await?;
+        let welcome =
+            super::welcome::maybe_create_welcome_service(dhttp_home, domain.borrow(), home_scope)
+                .await?;
         run_post_save_epilogue(
             post_save,
             dhttp_home,
             domain.borrow(),
             default_identity_when_command_started.clone(),
             std::io::stdin().is_terminal(),
+            welcome.as_ref(),
         )
         .await?;
         return Ok(ApplyRunOutcome::Applied);
@@ -920,12 +943,14 @@ async fn run_interactive_with_policy(
 pub(crate) async fn run_interactive(
     command: &Apply,
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
     return_to: Option<&str>,
 ) -> Result<ApplyRunOutcome, Error> {
     run_interactive_with_policy(
         command,
         dhttp_home,
+        home_scope,
         cert_server,
         return_to,
         ApplyPostSavePolicy::ManageDefaultSuggestion,
@@ -936,13 +961,21 @@ pub(crate) async fn run_interactive(
 pub(crate) async fn run_with_policy(
     command: &Apply,
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
     post_save: ApplyPostSavePolicy,
 ) -> Result<(), Error> {
     let is_interactive = std::io::stdin().is_terminal();
     if is_interactive && !command.send_code {
-        return match run_interactive_with_policy(command, dhttp_home, cert_server, None, post_save)
-            .await?
+        return match run_interactive_with_policy(
+            command,
+            dhttp_home,
+            home_scope,
+            cert_server,
+            None,
+            post_save,
+        )
+        .await?
         {
             ApplyRunOutcome::Applied => Ok(()),
             ApplyRunOutcome::ReturnedToCaller => whatever!("apply was cancelled"),
@@ -1029,12 +1062,16 @@ pub(crate) async fn run_with_policy(
     )
     .instrument(info_span!("save_identity"))
     .await?;
+    let welcome =
+        super::welcome::maybe_create_welcome_service(dhttp_home, domain.borrow(), home_scope)
+            .await?;
     run_post_save_epilogue(
         post_save,
         dhttp_home,
         domain.borrow(),
         default_identity_when_command_started,
         is_interactive,
+        welcome.as_ref(),
     )
     .await
 }
@@ -1042,11 +1079,13 @@ pub(crate) async fn run_with_policy(
 pub(crate) async fn run(
     command: &Apply,
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
 ) -> Result<(), Error> {
     run_with_policy(
         command,
         dhttp_home,
+        home_scope,
         cert_server,
         ApplyPostSavePolicy::ManageDefaultSuggestion,
     )
