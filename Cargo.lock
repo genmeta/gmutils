@@ -1516,7 +1516,7 @@ dependencies = [
 
 [[package]]
 name = "dhttp"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bon",
  "bytes",
@@ -1681,7 +1681,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "dquic"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "arc-swap",
  "dashmap",
@@ -1697,9 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "dshell"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "210e6b448354575feab2fa1f5245a7702c651004a57a0888d4607edc9b7c1bdd"
+version = "0.5.0"
 dependencies = [
  "base64",
  "bytes",
@@ -1725,7 +1723,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "dyns"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64",
  "bitfield-struct",
@@ -2136,7 +2134,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "clap",
  "genmeta-access",
@@ -2155,7 +2153,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-access"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "dhttp",
@@ -2170,7 +2168,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-curl"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "async-compression",
  "bytes",
@@ -2187,7 +2185,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-discover"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "clap",
  "dhttp",
@@ -2201,7 +2199,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-doctor"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "clap",
  "genmeta-nat",
@@ -2212,7 +2210,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-identity"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64",
  "bytes",
@@ -2223,6 +2221,7 @@ dependencies = [
  "http 1.4.2",
  "indicatif",
  "inquire",
+ "nix 0.31.3",
  "p384",
  "pkcs8 0.11.0-rc.11",
  "rankey",
@@ -2243,7 +2242,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nat"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "clap",
  "dhttp",
@@ -2257,7 +2256,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nslookup"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "clap",
  "dhttp",
@@ -2271,7 +2270,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-proxy"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bytes",
  "clap",
@@ -2291,7 +2290,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-ssh"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "clap",
  "crossterm",
@@ -2430,7 +2429,7 @@ dependencies = [
 
 [[package]]
 name = "h3x"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "arc-swap",
  "async-channel",
@@ -2747,7 +2746,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -3963,7 +3962,7 @@ dependencies = [
 
 [[package]]
 name = "qbase"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "bitflags",
  "bytes",
@@ -3984,7 +3983,7 @@ dependencies = [
 
 [[package]]
 name = "qcongestion"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "qbase",
  "qevent",
@@ -3996,7 +3995,7 @@ dependencies = [
 
 [[package]]
 name = "qconnection"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "bytes",
  "dashmap",
@@ -4022,7 +4021,7 @@ dependencies = [
 
 [[package]]
 name = "qdatagram"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "bytes",
  "qbase",
@@ -4032,7 +4031,7 @@ dependencies = [
 
 [[package]]
 name = "qevent"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "bytes",
  "derive_builder",
@@ -4049,7 +4048,7 @@ dependencies = [
 
 [[package]]
 name = "qinterface"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "bytes",
  "dashmap",
@@ -4081,7 +4080,7 @@ dependencies = [
 
 [[package]]
 name = "qrecovery"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -4095,7 +4094,7 @@ dependencies = [
 
 [[package]]
 name = "qresolve"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "futures",
  "qbase",
@@ -4104,7 +4103,7 @@ dependencies = [
 
 [[package]]
 name = "qtraversal"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "bon",
  "bytes",
@@ -4126,7 +4125,7 @@ dependencies = [
 
 [[package]]
 name = "qudp"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -5295,7 +5294,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -5307,7 +5306,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f103c50866b8743da9429b8a581d81a27c2d3a9c4ac7df8f8571c1dd7896eda"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -6508,7 +6507,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7169,3 +7168,7 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "qprotocol"
+version = "0.6.0"

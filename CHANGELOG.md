@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-06-24
+
+### Added
+
+- CLI tools now support scoped dhttp home selection across identity, access,
+  curl, nslookup, NAT, proxy, and SSH flows.
+- Release packaging now reads its build and destination contract from
+  `xtask/release.toml`, including per-target build environment bindings.
+
+### Changed
+
+- Identity flows use explicit apply targets, replacement-aware default prompts,
+  and selected-home local-state behavior for missing identity homes.
+- Homebrew and S3/R2 package generation use the normalized manifest-first
+  packaging contract.
+
+### Fixed
+
+- Identity `default` and `renew` commands now report missing selected-home state
+  through user-facing business errors instead of raw filesystem/profile errors.
+- CLI and package integration are aligned with the scoped dhttp home rollout.
+
+### Dependencies
+
+- Release manifests now target `h3x` v0.5.0, `dhttp` v0.3.0,
+  `dhttp-access` v0.2.0, `dshell` v0.5.0, `dyns` v0.5.0, and `rankey` v0.2.1.
+
+### Components
+
+- `genmeta` v0.6.1
+- `genmeta-curl` v0.5.1
+- `genmeta-ssh` v0.6.1
+- `genmeta-access` v0.2.1
+- `genmeta-identity` v0.2.1
+- `genmeta-proxy` v0.2.1
+- `genmeta-discover` v0.3.1
+- `genmeta-doctor` v0.3.1
+- `genmeta-nat` v0.3.1
+- `genmeta-nslookup` v0.3.1
+
 ## [0.6.0] - 2026-06-15
 
 This release brings the command-line tool family onto the public DHTTP
