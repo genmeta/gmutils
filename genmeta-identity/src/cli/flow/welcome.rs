@@ -10,7 +10,7 @@ use tokio::{fs, io::AsyncWriteExt};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WelcomeServiceCreated {
     pub(crate) server_conf_path: PathBuf,
-    pub(crate) index_html_path: PathBuf,
+    pub(crate) welcome_page_path: PathBuf,
     pub(crate) url: String,
 }
 
@@ -23,6 +23,12 @@ pub enum WelcomeServiceError {
 
     #[snafu(display("failed to create identity profile directory at {}", path.display()))]
     CreateProfileDir {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[snafu(display("failed to create welcome page directory at {}", path.display()))]
+    CreateWelcomePageDir {
         path: PathBuf,
         source: std::io::Error,
     },
@@ -56,11 +62,13 @@ const SERVER_CONF_TEMPLATE: &str = "server {
     listen all 0;
 
     location / {
-        root .;
+        root templates/welcome;
         index index.html;
     }
 }
 ";
+
+const WELCOME_PAGE_PATH: &str = "templates/welcome/index.html";
 
 pub(crate) async fn maybe_create_welcome_service(
     dhttp_home: &DhttpHome,
@@ -86,9 +94,9 @@ where
 
     let profile = dhttp_home.identity_profile(name.borrow());
     let server_conf_path = profile.server_conf_path();
-    let index_html_path = profile.join("index.html");
+    let welcome_page_path = profile.join(WELCOME_PAGE_PATH);
 
-    if path_exists(&server_conf_path).await? || path_exists(&index_html_path).await? {
+    if path_exists(&server_conf_path).await? || path_exists(&welcome_page_path).await? {
         return Ok(None);
     }
 
@@ -98,11 +106,20 @@ where
         },
     )?;
 
+    let welcome_page_dir = welcome_page_path
+        .parent()
+        .expect("welcome page path should have a parent directory");
+    fs::create_dir_all(welcome_page_dir).await.context(
+        welcome_service_error::CreateWelcomePageDirSnafu {
+            path: welcome_page_dir.to_path_buf(),
+        },
+    )?;
+
     write_new_file(&server_conf_path, SERVER_CONF_TEMPLATE.as_bytes()).await?;
 
-    let index_html = render_index_html(name.as_partial());
+    let welcome_page = render_welcome_page();
 
-    if let Err(error) = write_new_file(&index_html_path, index_html.as_bytes()).await {
+    if let Err(error) = write_new_file(&welcome_page_path, welcome_page.as_bytes()).await {
         if let Err(source) = fs::remove_file(&server_conf_path).await {
             return Err(welcome_service_error::RollbackDeleteSnafu {
                 path: server_conf_path.clone(),
@@ -114,35 +131,96 @@ where
 
     Ok(Some(WelcomeServiceCreated {
         server_conf_path,
-        index_html_path,
+        welcome_page_path,
         url: format!("https://{}/", name.as_partial()),
     }))
 }
 
 pub(crate) fn format_welcome_service_created(created: &WelcomeServiceCreated) -> String {
     format!(
-        "Welcome service created\n  Created server.conf at {}\n  Created index.html at {}\n  Open {} after pishoo starts or reloads",
+        "Welcome service created\n  Created server.conf at {}\n  Created welcome page at {}\n  Open {} after pishoo starts or reloads",
         created.server_conf_path.display(),
-        created.index_html_path.display(),
+        created.welcome_page_path.display(),
         created.url,
     )
 }
 
-fn render_index_html(name: &str) -> String {
-    format!(
-        "<!DOCTYPE html>\n\
+fn render_welcome_page() -> &'static str {
+    "<!DOCTYPE html>\n\
 <html lang=\"en\">\n\
   <head>\n\
     <meta charset=\"utf-8\">\n\
-    <title>{name}</title>\n\
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
+    <title>Hello from DHTTP</title>\n\
+    <style>\n\
+      body {\n\
+        margin: 0;\n\
+        min-height: 100vh;\n\
+        display: grid;\n\
+        place-items: center;\n\
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n\
+        color: #172033;\n\
+        background: #f7f8fb;\n\
+      }\n\
+\n\
+      main {\n\
+        width: min(40rem, calc(100vw - 3rem));\n\
+        padding: 3rem;\n\
+        border-radius: 1.5rem;\n\
+        background: #ffffff;\n\
+        box-shadow: 0 24px 80px rgba(23, 32, 51, 0.08);\n\
+      }\n\
+\n\
+      h1 {\n\
+        margin: 0 0 0.75rem;\n\
+        font-size: clamp(2rem, 5vw, 3.5rem);\n\
+        line-height: 1;\n\
+      }\n\
+\n\
+      p {\n\
+        margin: 0.75rem 0;\n\
+        color: #4d5a73;\n\
+        font-size: 1rem;\n\
+        line-height: 1.6;\n\
+      }\n\
+\n\
+      h2 {\n\
+        margin: 2rem 0 0.75rem;\n\
+        font-size: 0.9rem;\n\
+        letter-spacing: 0.08em;\n\
+        text-transform: uppercase;\n\
+      }\n\
+\n\
+      ul {\n\
+        margin: 0;\n\
+        padding-left: 1.25rem;\n\
+        color: #4d5a73;\n\
+        line-height: 1.7;\n\
+      }\n\
+\n\
+      .note {\n\
+        margin-top: 2rem;\n\
+        font-size: 0.875rem;\n\
+        color: #7a8499;\n\
+      }\n\
+    </style>\n\
   </head>\n\
   <body>\n\
-    <h1>Welcome to {name}</h1>\n\
-    <p>This page was created by genmeta identity.</p>\n\
-    <p>If you can open this page, pishoo is serving this identity.</p>\n\
+    <main>\n\
+      <h1>Hello from DHTTP.</h1>\n\
+      <p>This identity is ready to serve.</p>\n\
+\n\
+      <h2>Next steps</h2>\n\
+      <ul>\n\
+        <li>Replace this page with your own site.</li>\n\
+        <li>Add routes in server.conf to serve files or proxy services.</li>\n\
+        <li>Reload pishoo after changing your service configuration.</li>\n\
+      </ul>\n\
+\n\
+      <p class=\"note\">Generated by genmeta identity.</p>\n\
+    </main>\n\
   </body>\n\
 </html>\n"
-    )
 }
 
 fn welcome_onboarding_allowed<F>(
@@ -279,8 +357,42 @@ mod tests {
         .unwrap();
 
         let created = created.expect("global scope should create welcome files");
+        let profile = home.identity_profile(name.borrow());
         assert!(created.server_conf_path.exists());
-        assert!(created.index_html_path.exists());
+        assert!(created.welcome_page_path.exists());
+        assert_eq!(
+            created.welcome_page_path,
+            profile.join("templates/welcome/index.html")
+        );
+        assert!(!profile.join("index.html").exists());
+
+        let server_conf = tokio::fs::read_to_string(&created.server_conf_path)
+            .await
+            .unwrap();
+        assert!(
+            server_conf.contains("root templates/welcome;"),
+            "{server_conf}"
+        );
+
+        let welcome_page = tokio::fs::read_to_string(&created.welcome_page_path)
+            .await
+            .unwrap();
+        assert!(
+            welcome_page.contains("<h1>Hello from DHTTP.</h1>"),
+            "{welcome_page}"
+        );
+        assert!(
+            welcome_page.contains("This identity is ready to serve."),
+            "{welcome_page}"
+        );
+        assert!(
+            welcome_page.contains("Add routes in server.conf"),
+            "{welcome_page}"
+        );
+        assert!(
+            !welcome_page.contains("templates/welcome"),
+            "{welcome_page}"
+        );
     }
 
     #[tokio::test]
@@ -303,7 +415,7 @@ mod tests {
         .unwrap();
 
         assert!(created.is_none());
-        assert!(!profile.join("index.html").exists());
+        assert!(!profile.join("templates/welcome/index.html").exists());
     }
 
     #[cfg(unix)]
@@ -315,9 +427,12 @@ mod tests {
         let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
         let profile = home.identity_profile(name.borrow());
         tokio::fs::create_dir_all(profile.path()).await.unwrap();
+        tokio::fs::create_dir_all(profile.join("templates/welcome"))
+            .await
+            .unwrap();
         symlink(
             profile.join("missing-index-html-target"),
-            profile.join("index.html"),
+            profile.join("templates/welcome/index.html"),
         )
         .unwrap();
 
@@ -339,11 +454,11 @@ mod tests {
     fn renders_welcome_service_created_block() {
         let created = super::WelcomeServiceCreated {
             server_conf_path: PathBuf::from("/tmp/alice/server.conf"),
-            index_html_path: PathBuf::from("/tmp/alice/index.html"),
+            welcome_page_path: PathBuf::from("/tmp/alice/templates/welcome/index.html"),
             url: "https://alice.smith/".to_string(),
         };
 
-        let expected = "Welcome service created\n  Created server.conf at /tmp/alice/server.conf\n  Created index.html at /tmp/alice/index.html\n  Open https://alice.smith/ after pishoo starts or reloads";
+        let expected = "Welcome service created\n  Created server.conf at /tmp/alice/server.conf\n  Created welcome page at /tmp/alice/templates/welcome/index.html\n  Open https://alice.smith/ after pishoo starts or reloads";
 
         assert_eq!(format_welcome_service_created(&created), expected);
     }
