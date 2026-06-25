@@ -22,25 +22,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust stable toolchain
+      - name: Install Rust nightly toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component clippy
-          rustup default stable
-
-      - name: Install Rust nightly for formatting
-        run: rustup toolchain install nightly --profile minimal --component rustfmt
+          rustup toolchain install nightly --profile minimal --component rustfmt --component clippy
+          rustup default nightly
 
       - name: Check formatting
         run: cargo +nightly fmt -- --check
 
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo +nightly clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Run tests
-        run: cargo test --workspace --all-targets --all-features
+        run: cargo +nightly test --workspace --all-targets --all-features
 
       - name: Validate workspace publish graph
-        run: cargo publish --workspace --exclude xtask --dry-run --locked
+        run: cargo +nightly publish --workspace --exclude xtask --dry-run --locked
 
       - name: Plan crates.io publish packages
         id: publish_plan
@@ -90,7 +87,7 @@ jobs:
             exit 0
           fi
 
-          cargo metadata --format-version 1 > "$RUNNER_TEMP/workspace-metadata.json"
+          cargo +nightly metadata --format-version 1 > "$RUNNER_TEMP/workspace-metadata.json"
           package_versions="$(
             PACKAGES="$(printf '%s\n' "${packages[@]}")" RUNNER_TEMP="$RUNNER_TEMP" python3 - <<'PY'
           import json
@@ -163,10 +160,10 @@ jobs:
           fi
 
           if [[ "$mode" == "dry-run" ]]; then
-            publish_args=(cargo publish --dry-run --locked)
+            publish_args=(cargo +nightly publish --dry-run --locked)
             echo "dry-run publish packages: ${packages_to_publish[*]}"
           else
-            publish_args=(cargo publish --locked)
+            publish_args=(cargo +nightly publish --locked)
             echo "publish packages: ${packages_to_publish[*]}"
           fi
 
