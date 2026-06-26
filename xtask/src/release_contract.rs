@@ -164,8 +164,8 @@ pub enum ReleaseContractError {
         source: cargo_metadata::Error,
         manifest: PathBuf,
     },
-    #[snafu(display("cargo metadata did not return a root package"))]
-    MissingRootPackage { manifest: PathBuf },
+    #[snafu(display("cargo metadata did not return package for manifest"))]
+    MissingPackageForManifest { manifest: PathBuf },
     #[snafu(display("cargo package is missing description"))]
     MissingDescription { manifest: PathBuf },
     #[snafu(display("cargo package is missing homepage"))]
@@ -242,12 +242,17 @@ pub fn resolve_package_metadata(
         .context(release_contract_error::CargoMetadataSnafu {
             manifest: manifest.clone(),
         })?;
-    let package =
-        metadata
-            .root_package()
-            .ok_or_else(|| ReleaseContractError::MissingRootPackage {
-                manifest: manifest.clone(),
-            })?;
+    let package = metadata
+        .root_package()
+        .or_else(|| {
+            metadata
+                .packages
+                .iter()
+                .find(|package| package.manifest_path.as_std_path() == manifest)
+        })
+        .ok_or_else(|| ReleaseContractError::MissingPackageForManifest {
+            manifest: manifest.clone(),
+        })?;
     let name = contract
         .package
         .as_ref()
@@ -512,6 +517,16 @@ public_base_url = "https://download.dhttp.net/scoop"
             .expect("scoop destination should exist");
         assert_eq!(scoop.prefix, "scoop");
         assert_eq!(scoop.public_base_url, "https://download.dhttp.net/scoop");
+    }
+
+    #[test]
+    fn committed_release_contract_resolves_package_metadata() {
+        let contract = super::load_release_contract().expect("committed contract should load");
+        let metadata =
+            super::resolve_package_metadata(&contract).expect("package metadata should resolve");
+
+        assert_eq!(metadata.name, "gmutils");
+        assert_eq!(metadata.version, "0.7.0");
     }
 
     #[test]
