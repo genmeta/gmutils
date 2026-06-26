@@ -431,13 +431,17 @@ mod tests {
         assert!(RELEASE_WORKFLOW.contains("assets=(target/*/release/deb/*.deb)"));
         assert!(RELEASE_WORKFLOW.contains("assets=(target/*/release/rpm/*.rpm)"));
         assert!(
-            RELEASE_WORKFLOW
-                .contains("assets=(target/*/release/scoop/*.zip target/common/scoop/*.json)")
+            RELEASE_WORKFLOW.contains(
+                "assets=(target/*/release/scoop/*.zip target/common/scoop/gmutils-*.json)"
+            )
         );
+        assert!(!RELEASE_WORKFLOW.contains("target/common/scoop/*.json)"));
         assert!(
-            RELEASE_WORKFLOW
-                .contains("assets=(target/*/release/brew/*.tar.gz target/common/brew/*.rb)")
+            RELEASE_WORKFLOW.contains(
+                "assets=(target/*/release/brew/*.tar.gz target/common/brew/gmutils-*.rb)"
+            )
         );
+        assert!(!RELEASE_WORKFLOW.contains("target/common/brew/*.rb)"));
     }
 
     #[test]

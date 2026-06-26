@@ -41,8 +41,8 @@ access_key_id.env = "XTASK_RELEASE_S3_ACCESS_KEY_ID"
 secret_access_key.env = "XTASK_RELEASE_S3_SECRET_ACCESS_KEY"
 
 [destination.brew]
-prefix = "brew/gmutils"
-public_base_url = "https://download.dhttp.net/brew/gmutils"
+prefix = "homebrew"
+public_base_url = "https://download.dhttp.net/homebrew"
 tap.repository = "genmeta/homebrew-genmeta"
 tap.base_branch = "main"
 tap.token.env = "HOMEBREW_TAP_GITHUB_TOKEN"
@@ -58,5 +58,5 @@ fingerprint.env = "XTASK_RELEASE_APT_SIGNING_FINGERPRINT"
 prefix = "rpm/gmutils"
 
 [destination.scoop]
-prefix = "scoop/gmutils"
-public_base_url = "https://download.dhttp.net/scoop/gmutils"
+prefix = "scoop"
+public_base_url = "https://download.dhttp.net/scoop"

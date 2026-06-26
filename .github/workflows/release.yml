@@ -514,7 +514,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=(target/*/release/scoop/*.zip target/common/scoop/*.json)
+          assets=(target/*/release/scoop/*.zip target/common/scoop/gmutils-*.json)
           if [ "${#assets[@]}" -eq 0 ]; then
             echo "no scoop release assets found" >&2
             exit 1
@@ -704,7 +704,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=(target/*/release/brew/*.tar.gz target/common/brew/*.rb)
+          assets=(target/*/release/brew/*.tar.gz target/common/brew/gmutils-*.rb)
           if [ "${#assets[@]}" -eq 0 ]; then
             echo "no Homebrew release assets found" >&2
             exit 1

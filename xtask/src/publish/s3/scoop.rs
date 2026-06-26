@@ -16,6 +16,10 @@ use crate::{
 const MANIFEST_NAME: &str = "gmutils.json";
 const CARGO_NAME: &str = "genmeta";
 
+fn versioned_manifest_name(version: &str) -> String {
+    format!("gmutils-{version}.json")
+}
+
 #[derive(Debug, Serialize)]
 struct ScoopManifest {
     version: String,
@@ -120,14 +124,19 @@ pub async fn run(
     .whatever_context("failed to resolve package metadata")?;
     let json = render_scoop_json(&manifest, target.public_base_url.as_str(), &metadata)
         .whatever_context("failed to render scoop json")?;
-    let manifest_path = loaded
-        .target_dir
-        .join("common")
-        .join("scoop")
-        .join(MANIFEST_NAME);
+    let manifest_dir = loaded.target_dir.join("common").join("scoop");
+    let manifest_path = manifest_dir.join(MANIFEST_NAME);
+    let versioned_manifest_name = versioned_manifest_name(&manifest.version);
+    let versioned_manifest_path = manifest_dir.join(&versioned_manifest_name);
     uploads.push(PlannedUpload {
         path: manifest_path.clone(),
         key: target.prefix.join(MANIFEST_NAME),
+        entry: true,
+        condition: None,
+    });
+    uploads.push(PlannedUpload {
+        path: versioned_manifest_path.clone(),
+        key: target.prefix.join(&versioned_manifest_name),
         entry: true,
         condition: None,
     });
@@ -137,9 +146,15 @@ pub async fn run(
             .then_with(|| left.key.cmp(&right.key))
     });
 
-    tokio::fs::write(&manifest_path, json)
+    tokio::fs::write(&manifest_path, &json)
         .await
         .whatever_context(format!("failed to write {}", manifest_path.display()))?;
+    tokio::fs::write(&versioned_manifest_path, json)
+        .await
+        .whatever_context(format!(
+            "failed to write {}",
+            versioned_manifest_path.display()
+        ))?;
 
     if options.dry_run {
         for upload in &uploads {
@@ -242,6 +257,14 @@ mod tests {
     };
 
     #[test]
+    fn versioned_manifest_name_uses_package_version() {
+        assert_eq!(
+            super::versioned_manifest_name("0.6.1"),
+            "gmutils-0.6.1.json"
+        );
+    }
+
+    #[test]
     fn scoop_json_uses_public_base_url() {
         let manifest = PackageManifest {
             schema_version: 1,
@@ -276,12 +299,8 @@ mod tests {
             authors: Vec::new(),
         };
 
-        let json = render_scoop_json(
-            &manifest,
-            "https://download.example/scoop/gmutils",
-            &metadata,
-        )
-        .expect("json should render");
+        let json = render_scoop_json(&manifest, "https://download.example/scoop", &metadata)
+            .expect("json should render");
         let value: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
 
         assert_eq!(value["version"], "0.5.2");
@@ -289,8 +308,12 @@ mod tests {
         assert_eq!(value["homepage"], "https://www.dhttp.net");
         assert_eq!(
             value["architecture"]["64bit"]["url"],
-            "https://download.example/scoop/gmutils/gmutils-0.5.2-x86_64-pc-windows-msvc.zip"
+            "https://download.example/scoop/gmutils-0.5.2-x86_64-pc-windows-msvc.zip"
         );
         assert_eq!(value["architecture"]["64bit"]["hash"], "zip-sha");
+        assert_eq!(
+            value["checkver"]["url"],
+            "https://download.example/scoop/gmutils.json"
+        );
     }
 }

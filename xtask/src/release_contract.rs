@@ -432,8 +432,8 @@ access_key_id.env = "XTASK_RELEASE_S3_ACCESS_KEY_ID"
 secret_access_key.env = "XTASK_RELEASE_S3_SECRET_ACCESS_KEY"
 
 [destination.brew]
-prefix = "brew/gmutils"
-public_base_url = "https://download.dhttp.net/brew/gmutils"
+prefix = "homebrew"
+public_base_url = "https://download.dhttp.net/homebrew"
 tap.repository = "genmeta/homebrew-genmeta"
 tap.base_branch = "main"
 tap.token.env = "HOMEBREW_TAP_GITHUB_TOKEN"
@@ -448,8 +448,8 @@ signing.passphrase.env = "XTASK_RELEASE_APT_SIGNING_PASSPHRASE"
 prefix = "rpm/gmutils"
 
 [destination.scoop]
-prefix = "scoop/gmutils"
-public_base_url = "https://download.dhttp.net/scoop/gmutils"
+prefix = "scoop"
+public_base_url = "https://download.dhttp.net/scoop"
 "#;
 
     #[test]
@@ -463,14 +463,55 @@ public_base_url = "https://download.dhttp.net/scoop/gmutils"
             contract.destination.s3.endpoint.env,
             "XTASK_RELEASE_S3_ENDPOINT_URL"
         );
-        assert_eq!(
-            contract.destination.brew.unwrap().tap.token.env,
-            "HOMEBREW_TAP_GITHUB_TOKEN"
-        );
-        assert_eq!(
-            contract.destination.deb.unwrap().signing.key.env,
-            "XTASK_RELEASE_APT_SIGNING_KEY"
-        );
+        let brew = contract
+            .destination
+            .brew
+            .as_ref()
+            .expect("brew destination should parse");
+        assert_eq!(brew.prefix, "homebrew");
+        assert_eq!(brew.public_base_url, "https://download.dhttp.net/homebrew");
+        assert_eq!(brew.tap.token.env, "HOMEBREW_TAP_GITHUB_TOKEN");
+        let deb = contract
+            .destination
+            .deb
+            .as_ref()
+            .expect("deb destination should parse");
+        assert_eq!(deb.prefix, "ppa/genmeta");
+        assert_eq!(deb.suite, "genmeta");
+        assert_eq!(deb.signing.key.env, "XTASK_RELEASE_APT_SIGNING_KEY");
+        let scoop = contract
+            .destination
+            .scoop
+            .as_ref()
+            .expect("scoop destination should parse");
+        assert_eq!(scoop.prefix, "scoop");
+        assert_eq!(scoop.public_base_url, "https://download.dhttp.net/scoop");
+    }
+
+    #[test]
+    fn committed_release_contract_uses_flat_product_layout() {
+        let contract = super::load_release_contract().expect("committed contract should load");
+        let brew = contract
+            .destination
+            .brew
+            .as_ref()
+            .expect("brew destination should exist");
+        assert_eq!(brew.prefix, "homebrew");
+        assert_eq!(brew.public_base_url, "https://download.dhttp.net/homebrew");
+        let deb = contract
+            .destination
+            .deb
+            .as_ref()
+            .expect("deb destination should exist");
+        assert_eq!(deb.prefix, "ppa/genmeta");
+        assert_eq!(deb.suite, "genmeta");
+        let scoop = contract
+            .destination
+            .scoop
+            .as_ref()
+            .expect("scoop destination should exist");
+        assert_eq!(scoop.prefix, "scoop");
+        assert_eq!(scoop.public_base_url, "https://download.dhttp.net/scoop");
     }
 
     #[test]

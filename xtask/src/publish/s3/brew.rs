@@ -16,6 +16,10 @@ use crate::{
 
 const FORMULA_NAME: &str = "gmutils.rb";
 
+fn versioned_formula_name(version: &str) -> String {
+    format!("gmutils-{version}.rb")
+}
+
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 pub enum RenderBrewError {
@@ -93,14 +97,19 @@ pub async fn run(
         &template,
     )
     .whatever_context("failed to render brew formula")?;
-    let formula_path = loaded
-        .target_dir
-        .join("common")
-        .join("brew")
-        .join(FORMULA_NAME);
+    let formula_dir = loaded.target_dir.join("common").join("brew");
+    let formula_path = formula_dir.join(FORMULA_NAME);
+    let versioned_formula_name = versioned_formula_name(&manifest.version);
+    let versioned_formula_path = formula_dir.join(&versioned_formula_name);
     uploads.push(PlannedUpload {
         path: formula_path.clone(),
         key: target.prefix.join(FORMULA_NAME),
+        entry: true,
+        condition: None,
+    });
+    uploads.push(PlannedUpload {
+        path: versioned_formula_path.clone(),
+        key: target.prefix.join(&versioned_formula_name),
         entry: true,
         condition: None,
     });
@@ -110,9 +119,15 @@ pub async fn run(
             .then_with(|| left.key.cmp(&right.key))
     });
 
-    tokio::fs::write(&formula_path, formula)
+    tokio::fs::write(&formula_path, &formula)
         .await
         .whatever_context(format!("failed to write {}", formula_path.display()))?;
+    tokio::fs::write(&versioned_formula_path, formula)
+        .await
+        .whatever_context(format!(
+            "failed to write {}",
+            versioned_formula_path.display()
+        ))?;
 
     if options.dry_run {
         for upload in &uploads {
@@ -272,6 +287,11 @@ mod tests {
     };
 
     #[test]
+    fn versioned_formula_name_uses_package_version() {
+        assert_eq!(super::versioned_formula_name("0.6.1"), "gmutils-0.6.1.rb");
+    }
+
+    #[test]
     fn formula_uses_public_base_url() {
         let manifest = PackageManifest {
             schema_version: 1,
@@ -308,14 +328,16 @@ mod tests {
 
         let formula = render_formula(
             &manifest,
-            "https://download.example/brew/gmutils",
+            "https://download.example/homebrew",
             &metadata,
             template,
         )
         .expect("formula should render");
 
         assert!(formula.contains("license \"Apache-2.0\""));
-        assert!(formula.contains("url \"https://download.example/brew/gmutils/gmutils-0.5.2-aarch64-apple-darwin.tar.gz\""));
+        assert!(formula.contains(
+            "url \"https://download.example/homebrew/gmutils-0.5.2-aarch64-apple-darwin.tar.gz\""
+        ));
         assert!(formula.contains("sha256 \"arm-sha\""));
         assert!(formula.contains(r##"system "#{bin}/genmeta", "version""##));
     }
