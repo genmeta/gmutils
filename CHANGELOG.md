@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.1] - 2026-06-24
+## [0.7.0] - 2026-06-26
 
 ### Added
 
@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Components
 
-- `genmeta` v0.6.1
+- `genmeta` v0.7.0
 - `genmeta-curl` v0.6.0
 - `genmeta-ssh` v0.6.1
 - `genmeta-access` v0.3.0
