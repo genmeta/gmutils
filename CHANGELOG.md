@@ -31,21 +31,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
-- Release manifests now target `h3x` v0.5.0, `dhttp` v0.3.0,
-  `dhttp-access` v0.2.0, `dshell` v0.5.0, `dyns` v0.5.0, and `rankey` v0.2.1.
+- Release manifests now target `h3x` v0.5.0, `dhttp` v0.4.0,
+  `dhttp-access` v0.3.0, `dshell` v0.5.0, `dyns` v0.5.0, and `rankey` v0.2.1.
 
 ### Components
 
 - `genmeta` v0.6.1
-- `genmeta-curl` v0.5.1
+- `genmeta-curl` v0.6.0
 - `genmeta-ssh` v0.6.1
-- `genmeta-access` v0.2.1
-- `genmeta-identity` v0.2.1
-- `genmeta-proxy` v0.2.1
+- `genmeta-access` v0.3.0
+- `genmeta-identity` v0.3.0
+- `genmeta-proxy` v0.3.0
 - `genmeta-discover` v0.3.1
 - `genmeta-doctor` v0.3.1
-- `genmeta-nat` v0.3.1
-- `genmeta-nslookup` v0.3.1
+- `genmeta-nat` v0.4.0
+- `genmeta-nslookup` v0.4.0
 
 ## [0.6.0] - 2026-06-15
 

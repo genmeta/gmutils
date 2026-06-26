@@ -246,7 +246,7 @@ where
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_vendor = "apple")))]
 fn user_in_pishoo_group() -> Result<bool, WelcomeServiceError> {
     use nix::unistd::{Group, getegid, getgroups};
 
@@ -262,6 +262,11 @@ fn user_in_pishoo_group() -> Result<bool, WelcomeServiceError> {
 
     let groups = getgroups().context(welcome_service_error::EligibilityLookupSnafu)?;
     Ok(groups.into_iter().any(|gid| gid == group.gid))
+}
+
+#[cfg(all(unix, target_vendor = "apple"))]
+fn user_in_pishoo_group() -> Result<bool, WelcomeServiceError> {
+    Ok(false)
 }
 
 #[cfg(not(unix))]
