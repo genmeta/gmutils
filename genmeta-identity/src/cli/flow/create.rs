@@ -220,16 +220,28 @@ fn apply_verification_recovery(
 ) -> bool {
     match recovery {
         crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep { message } => {
-            crate::cli::flow::transcript::print_line(*message);
+            crate::cli::flow::transcript::print_line(message);
             true
         }
         crate::cli::flow::recovery::VerificationRecovery::BackToEmail { message } => {
-            crate::cli::flow::transcript::print_line(*message);
+            crate::cli::flow::transcript::print_line(message);
             state.revisit_email_prompt();
             true
         }
         crate::cli::flow::recovery::VerificationRecovery::Abort => false,
     }
+}
+
+fn is_domain_not_found(error: &crate::cert_server::Error) -> bool {
+    error.is_api_code("domain_not_found")
+}
+
+fn is_domain_conflict(error: &crate::cert_server::Error) -> bool {
+    error.is_api_code("domain_conflict")
+}
+
+pub(crate) fn is_subdomain_quota_exceeded(error: &crate::cert_server::Error) -> bool {
+    error.is_api_code("subdomain_quota_exceeded")
 }
 
 fn build_create_approval_options(
@@ -405,7 +417,7 @@ async fn resolve_approval_plan(
     }
 }
 
-fn ensure_non_interactive_root_checkout_not_required(
+pub(crate) fn ensure_non_interactive_root_checkout_not_required(
     target: &IdentityTarget,
     response: &CreateDomainResponse,
 ) -> Result<(), Error> {
@@ -420,13 +432,13 @@ fn ensure_non_interactive_root_checkout_not_required(
     }
 }
 
-fn ensure_non_interactive_sub_identity_checkout_not_required(
+pub(crate) fn ensure_non_interactive_sub_identity_checkout_not_required(
     target: &IdentityTarget,
     response: &CreateSubdomainResponse,
 ) -> Result<(), Error> {
     if response.invoice.is_some() {
         whatever!(
-            "creating {} requires interactive checkout; rerun this command in an interactive terminal to expand the parent identity quota",
+            "creating {} exceeded the sub-identity quota and requires interactive checkout; rerun this command in an interactive terminal to expand the parent identity quota",
             target.short_name()
         );
     }
@@ -492,7 +504,7 @@ async fn prompt_create_approval_menu_action() -> Result<CreateApprovalMenuAction
         .whatever_context::<_, Error>("selected create approval action is unavailable")
 }
 
-async fn prompt_restart_checkout(message: &str) -> Result<bool, Error> {
+pub(crate) async fn prompt_restart_checkout(message: &str) -> Result<bool, Error> {
     let message = message.to_string();
     Ok(
         prompt::sync(move || inquire::Confirm::new(&message).with_default(true).prompt())
@@ -505,7 +517,10 @@ fn can_switch_verification_method(target: &IdentityTarget) -> bool {
     target.level() == IdentityLevel::SubIdentity
 }
 
-fn print_root_checkout_instructions(target: &IdentityTarget, response: &CreateDomainResponse) {
+pub(crate) fn print_root_checkout_instructions(
+    target: &IdentityTarget,
+    response: &CreateDomainResponse,
+) {
     if let Some(payment_entry) = response.payment_entry.as_ref() {
         crate::cli::flow::transcript::print_block(&format!(
             "Payment is required to create {}.\n\nOpen this checkout page to continue:\n  {}",
@@ -521,7 +536,7 @@ fn print_subdomain_checkout_instructions(
     quote: &SubdomainQuotaQuote,
 ) {
     crate::cli::flow::transcript::print_block(&format!(
-        "Adding one more sub-identity slot is required to create {}.\n\nAmount due now: {} {}\nOpen this checkout page to continue:\n  {}",
+        "Creating {} exceeded the sub-identity quota.\n\nAmount due now to expand and continue: {} {}\nOpen this checkout page to continue:\n  {}",
         target.short_name(),
         quote.currency,
         format_minor_amount(quote.due),
@@ -846,7 +861,145 @@ async fn wait_for_invoice_terminal(
     .await
 }
 
-async fn create_sub_identity_with_email_interactively(
+pub(crate) async fn ensure_root_identity_exists_with_token(
+    cert_server: &CertServer,
+    parent: &dhttp::name::DhttpName<'_>,
+    access_token: &str,
+) -> Result<(), Error> {
+    let parent_target = IdentityTarget::parse(parent.as_partial())?;
+    ensure_identity_exists_with_token(
+        cert_server,
+        &parent_target,
+        access_token,
+        "Creating parent identity...",
+    )
+    .await
+}
+
+pub(crate) async fn ensure_identity_exists_with_token(
+    cert_server: &CertServer,
+    target: &IdentityTarget,
+    access_token: &str,
+    progress_message: &str,
+) -> Result<(), Error> {
+    let created = match super::progress::run_with_spinner(
+        progress_message,
+        cert_server.create_domain_with_token(access_token, target.full_name()),
+    )
+    .await
+    {
+        Ok(created) => created,
+        Err(error) if is_domain_conflict(&error) => return Ok(()),
+        Err(error) => return Err(Error::from(error)),
+    };
+
+    ensure_non_interactive_root_checkout_not_required(target, &created)?;
+    Ok(())
+}
+
+pub(crate) async fn ensure_root_identity_exists_with_token_interactively(
+    cert_server: &CertServer,
+    parent: &dhttp::name::DhttpName<'_>,
+    access_token: &str,
+) -> Result<(), Error> {
+    let parent_target = IdentityTarget::parse(parent.as_partial())?;
+    ensure_identity_exists_with_token_interactively(
+        cert_server,
+        &parent_target,
+        access_token,
+        "Creating parent identity...",
+    )
+    .await
+}
+
+pub(crate) async fn ensure_identity_exists_with_token_interactively(
+    cert_server: &CertServer,
+    target: &IdentityTarget,
+    access_token: &str,
+    progress_message: &str,
+) -> Result<(), Error> {
+    loop {
+        let created = match super::progress::run_with_spinner(
+            progress_message,
+            cert_server.create_domain_with_token(access_token, target.full_name()),
+        )
+        .await
+        {
+            Ok(created) => created,
+            Err(error) if is_domain_conflict(&error) => return Ok(()),
+            Err(error) => return Err(Error::from(error)),
+        };
+
+        if created.payment_entry.is_none() {
+            return Ok(());
+        }
+
+        print_root_checkout_instructions(target, &created);
+        let completed = crate::checkout::wait_for_checkout_completion(
+            cert_server,
+            &created
+                .payment_entry
+                .as_ref()
+                .expect("payment entry just checked")
+                .checkout_token,
+        )
+        .await?;
+
+        match crate::checkout::classify_checkout(&completed) {
+            crate::checkout::CheckoutState::Completed => return Ok(()),
+            crate::checkout::CheckoutState::Expired => {
+                if !prompt_restart_checkout(
+                    "This checkout expired. Start a new checkout for this identity?",
+                )
+                .await?
+                {
+                    whatever!("checkout was not completed");
+                }
+            }
+            crate::checkout::CheckoutState::Cancelled => {
+                if !prompt_restart_checkout(
+                    "This checkout was cancelled. Start a new checkout for this identity?",
+                )
+                .await?
+                {
+                    whatever!("checkout was not completed");
+                }
+            }
+            crate::checkout::CheckoutState::Pending => {
+                whatever!("checkout did not reach a terminal state");
+            }
+        }
+    }
+}
+
+pub(crate) async fn create_sub_identity_with_token(
+    cert_server: &CertServer,
+    _target: &IdentityTarget,
+    access_token: &str,
+    parent: &dhttp::name::DhttpName<'_>,
+    label: &str,
+) -> Result<CreateSubdomainResponse, Error> {
+    match super::progress::run_with_spinner(
+        "Creating sub-identity...",
+        cert_server.create_subdomain(access_token, parent.as_full(), label, None),
+    )
+    .await
+    {
+        Ok(created) => Ok(created),
+        Err(error) if is_domain_not_found(&error) => {
+            ensure_root_identity_exists_with_token(cert_server, parent, access_token).await?;
+            super::progress::run_with_spinner(
+                "Creating sub-identity...",
+                cert_server.create_subdomain(access_token, parent.as_full(), label, None),
+            )
+            .await
+            .map_err(Error::from)
+        }
+        Err(error) => Err(Error::from(error)),
+    }
+}
+
+pub(crate) async fn create_sub_identity_with_token_interactively(
     cert_server: &CertServer,
     target: &IdentityTarget,
     access_token: &str,
@@ -858,12 +1011,12 @@ async fn create_sub_identity_with_email_interactively(
             "Creating sub-identity...",
             cert_server.create_subdomain_attempt(access_token, parent.as_full(), label, None),
         )
-        .await?
+        .await
         {
-            CreateSubdomainAttempt::Created(response) => return Ok(response),
-            CreateSubdomainAttempt::QuotaExceeded(quote) => {
+            Ok(CreateSubdomainAttempt::Created(response)) => return Ok(response),
+            Ok(CreateSubdomainAttempt::QuotaExceeded(quote)) => {
                 let continue_checkout = prompt_restart_checkout(&format!(
-                    "Creating {} needs one more sub-identity slot under {}. Start checkout now?",
+                    "Creating {} exceeded the sub-identity quota under {}. Expand quota and continue?",
                     target.short_name(),
                     parent.as_partial()
                 ))
@@ -928,6 +1081,18 @@ async fn create_sub_identity_with_email_interactively(
                     }
                 }
             }
+            Err(error) if is_domain_not_found(&error) => {
+                ensure_root_identity_exists_with_token_interactively(
+                    cert_server,
+                    parent,
+                    access_token,
+                )
+                .await?;
+                crate::cli::flow::transcript::print_line(
+                    "Parent identity was created. Continuing with sub-identity creation...",
+                );
+            }
+            Err(error) => return Err(Error::from(error)),
         }
     }
 }
@@ -1321,7 +1486,7 @@ async fn run_interactive(
                                 return Err(Error::from(error));
                             }
                         };
-                        create_sub_identity_with_email_interactively(
+                        create_sub_identity_with_token_interactively(
                             cert_server,
                             &target,
                             &access_token,
@@ -1376,20 +1541,17 @@ async fn run_interactive(
                         .await
                         {
                             Ok(_) => {}
-                            Err(error) => {
-                                let rendered = error.to_string();
-                                if rendered.contains("subdomain quota exceeded") {
-                                    crate::cli::flow::transcript::print_block(&format!(
-                                        "Creating {} needs checkout to add one more sub-identity slot under {}.\nChoose email verification to continue with checkout.",
-                                        target.short_name(),
-                                        parent.as_partial(),
-                                    ));
-                                    state.approval_plan = None;
-                                    state.reset_after_approval_change();
-                                    continue;
-                                }
-                                return Err(Error::from(error));
+                            Err(error) if is_subdomain_quota_exceeded(&error) => {
+                                crate::cli::flow::transcript::print_block(&format!(
+                                    "Creating {} exceeded the sub-identity quota under {}.\nChoose email verification to expand quota and continue.",
+                                    target.short_name(),
+                                    parent.as_partial(),
+                                ));
+                                state.approval_plan = None;
+                                state.reset_after_approval_change();
+                                continue;
                             }
+                            Err(error) => return Err(Error::from(error)),
                         }
                         let cert = super::progress::run_with_spinner(
                             "Verifying with local identity...",
@@ -1435,7 +1597,7 @@ async fn run_interactive(
     }
 }
 
-pub(crate) async fn run(
+pub(crate) async fn run_with_policy(
     command: &Create,
     dhttp_home: &DhttpHome,
     home_scope: HomeScope,
@@ -1582,9 +1744,12 @@ pub(crate) async fn run(
                     )
                     .await?
                     .access_token;
-                    let created = super::progress::run_with_spinner(
-                        "Creating sub-identity...",
-                        cert_server.create_subdomain(&access_token, parent.as_full(), label, None),
+                    let created = create_sub_identity_with_token(
+                        cert_server,
+                        &target,
+                        &access_token,
+                        &parent,
+                        label,
                     )
                     .await?;
                     ensure_non_interactive_sub_identity_checkout_not_required(&target, &created)?;
@@ -1661,6 +1826,15 @@ pub(crate) async fn run(
     .await
 }
 
+pub(crate) async fn run(
+    command: &Create,
+    dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
+    cert_server: &CertServer,
+) -> Result<(), Error> {
+    run_with_policy(command, dhttp_home, home_scope, cert_server).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1701,7 +1875,7 @@ mod tests {
         super::apply_verification_recovery(
             &mut state,
             &crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep {
-                message: "retry later",
+                message: "retry later".to_string(),
             },
         );
 
@@ -1730,7 +1904,7 @@ mod tests {
         super::apply_verification_recovery(
             &mut state,
             &crate::cli::flow::recovery::VerificationRecovery::BackToEmail {
-                message: "start over",
+                message: "start over".to_string(),
             },
         );
 
@@ -1878,6 +2052,10 @@ mod tests {
         let error = ensure_non_interactive_sub_identity_checkout_not_required(&target, &response)
             .unwrap_err();
         let rendered = error.to_string();
+        assert!(
+            rendered.contains("exceeded the sub-identity quota"),
+            "{rendered}"
+        );
         assert!(rendered.contains("interactive checkout"), "{rendered}");
         assert!(rendered.contains("phone.alice.smith"), "{rendered}");
     }

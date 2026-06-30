@@ -1,7 +1,7 @@
 use std::io::IsTerminal;
 
 use dhttp::home::{DhttpHome, HomeScope};
-use snafu::{OptionExt, whatever};
+use snafu::{FromString, OptionExt, whatever};
 use tracing::{Instrument, info_span};
 
 use super::{
@@ -294,15 +294,42 @@ fn apply_verification_recovery(
 ) -> bool {
     match recovery {
         crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep { message } => {
-            crate::cli::flow::transcript::print_line(*message);
+            crate::cli::flow::transcript::print_line(message);
             true
         }
         crate::cli::flow::recovery::VerificationRecovery::BackToEmail { message } => {
-            crate::cli::flow::transcript::print_line(*message);
+            crate::cli::flow::transcript::print_line(message);
             state.revisit_email();
             true
         }
         crate::cli::flow::recovery::VerificationRecovery::Abort => false,
+    }
+}
+
+fn is_domain_not_found(error: &crate::cert_server::Error) -> bool {
+    error.is_api_code("domain_not_found")
+}
+
+fn is_subdomain_quota_exceeded(error: &crate::cert_server::Error) -> bool {
+    super::create::is_subdomain_quota_exceeded(error)
+}
+
+fn rewrite_apply_registration_error(target: &IdentityTarget, error: Error) -> Error {
+    match error {
+        Error::CertServer { source } if source.is_api_code("starter_domain_limit_reached") => {
+            Error::with_source(
+                Box::new(source),
+                format!(
+                    "applying {} would need to register free starter identity {}, but this account already holds the maximum 3 free starter domains. The cert server did not create a checkout for this case.",
+                    target.short_name(),
+                    target
+                        .parent()
+                        .map(|parent| parent.as_partial().to_string())
+                        .unwrap_or_else(|| target.short_name().to_string()),
+                ),
+            )
+        }
+        other => other,
     }
 }
 
@@ -379,7 +406,7 @@ async fn resolve_approval_plan(
 }
 
 fn apply_identity_name_opening() -> &'static str {
-    "Apply an existing identity here.\n\nThis will create a new certificate chain for an existing identity\nand save it here.\n\nUse a dotted name:\n  <given_name>.<surname>\n\nFor example:\n  alice.smith\n\nTo apply a sub-identity, add one more name before it:\n  phone.alice.smith"
+    "Apply an identity here.\n\nThis will create a new certificate chain for the selected identity and save it here.\nIf the identity does not exist yet, this flow can register it first and then continue.\n\nUse a dotted name:\n  <given_name>.<surname>\n\nFor example:\n  alice.smith\n\nTo apply a sub-identity, add one more name before it:\n  phone.alice.smith"
 }
 
 fn explicit_target_from_command(
@@ -631,6 +658,123 @@ async fn run_post_save_epilogue(
     }
 }
 
+fn register_during_apply_message(target: &IdentityTarget) -> String {
+    match target.level() {
+        IdentityLevel::Identity => format!(
+            "{} does not exist yet.\n\nApply will register {} first, then apply its certificate chain here.\nThis may require payment.\n\nContinue?",
+            target.short_name(),
+            target.short_name()
+        ),
+        IdentityLevel::SubIdentity => {
+            let parent = target
+                .parent()
+                .map(|name| name.as_partial().to_string())
+                .unwrap_or_else(|| "<parent>".to_string());
+            format!(
+                "{} does not exist yet.\n\nApply will register {} first if needed, then create {} and apply its certificate chain here.\nThis may require payment or quota expansion.\n\nContinue?",
+                target.short_name(),
+                parent,
+                target.short_name()
+            )
+        }
+    }
+}
+
+async fn prompt_register_during_apply(target: &IdentityTarget) -> Result<bool, Error> {
+    let message = register_during_apply_message(target);
+    Ok(crate::cli::prompt::sync(move || {
+        inquire::Confirm::new(&message).with_default(true).prompt()
+    })
+    .await
+    .require_interactive("interactive input")?)
+}
+
+async fn ensure_identity_exists_after_apply_login(
+    target: &IdentityTarget,
+    cert_server: &CertServer,
+    access_token: &str,
+    interactive: bool,
+) -> Result<(), Error> {
+    match target.level() {
+        IdentityLevel::Identity => {
+            if interactive {
+                super::create::ensure_identity_exists_with_token_interactively(
+                    cert_server,
+                    target,
+                    access_token,
+                    "Creating identity...",
+                )
+                .await
+            } else {
+                super::create::ensure_identity_exists_with_token(
+                    cert_server,
+                    target,
+                    access_token,
+                    "Creating identity...",
+                )
+                .await
+            }
+        }
+        IdentityLevel::SubIdentity => {
+            let parent = target.parent().whatever_context::<_, Error>(
+                "sub-identity target is missing its parent identity",
+            )?;
+            let label = target.sub_identity_label().whatever_context::<_, Error>(
+                "sub-identity target is missing its direct child label",
+            )?;
+            let created = if interactive {
+                super::create::create_sub_identity_with_token_interactively(
+                    cert_server,
+                    target,
+                    access_token,
+                    &parent,
+                    label,
+                )
+                .await?
+            } else {
+                let created = super::create::create_sub_identity_with_token(
+                    cert_server,
+                    target,
+                    access_token,
+                    &parent,
+                    label,
+                )
+                .await?;
+                super::create::ensure_non_interactive_sub_identity_checkout_not_required(
+                    target, &created,
+                )?;
+                created
+            };
+            let _ = created;
+            Ok(())
+        }
+    }
+}
+
+async fn ensure_sub_identity_exists_with_identity_interactively(
+    target: &IdentityTarget,
+    cert_server: &CertServer,
+    identity_domain: &str,
+) -> Result<(), Error> {
+    let parent = target
+        .parent()
+        .whatever_context::<_, Error>("sub-identity target is missing its parent identity")?;
+    let label = target
+        .sub_identity_label()
+        .whatever_context::<_, Error>("sub-identity target is missing its direct child label")?;
+
+    match super::progress::run_with_spinner(
+        "Creating sub-identity...",
+        cert_server.create_subdomain_with_identity(identity_domain, parent.as_full(), label, None),
+    )
+    .await
+    {
+        Ok(_) => Ok(()),
+        Err(crate::cert_server::Error::Api { code, .. }) if code == "subdomain_conflict" => Ok(()),
+        Err(error) => Err(Error::from(error)),
+    }
+}
+
 async fn run_interactive_with_policy(
     command: &Apply,
     dhttp_home: &DhttpHome,
@@ -864,7 +1008,7 @@ async fn run_interactive_with_policy(
                 )?;
                 let token = match super::progress::run_with_spinner(
                     "Verifying with email...",
-                    cert_server.domain_login(domain.as_full(), &email, verify_code),
+                    cert_server.login(&email, verify_code),
                 )
                 .await
                 {
@@ -884,7 +1028,7 @@ async fn run_interactive_with_policy(
                         return Err(Error::from(error));
                     }
                 };
-                super::progress::run_with_spinner(
+                match super::progress::run_with_spinner(
                     "Applying identity...",
                     cert_server.issue_cert(
                         &token,
@@ -895,9 +1039,90 @@ async fn run_interactive_with_policy(
                         &csr_pem,
                     ),
                 )
-                .await?
+                .await
+                {
+                    Ok(detail) => detail,
+                    Err(error) if is_domain_not_found(&error) => {
+                        if !prompt_register_during_apply(&target).await? {
+                            return Ok(ApplyRunOutcome::ReturnedToCaller);
+                        }
+                        if let Err(error) = ensure_identity_exists_after_apply_login(
+                            &target,
+                            cert_server,
+                            &token,
+                            true,
+                        )
+                        .await
+                        {
+                            return Err(rewrite_apply_registration_error(&target, error));
+                        }
+                        let detail = super::progress::run_with_spinner(
+                            "Applying identity...",
+                            cert_server.issue_cert(
+                                &token,
+                                domain.as_full(),
+                                kind.as_str(),
+                                None,
+                                &device_name,
+                                &csr_pem,
+                            ),
+                        )
+                        .await?;
+                        cli::save_identity(
+                            dhttp_home,
+                            &domain,
+                            key_pem.as_bytes(),
+                            detail.cert_pem.as_bytes(),
+                        )
+                        .instrument(info_span!("save_identity"))
+                        .await?;
+                        let welcome = super::welcome::maybe_create_welcome_service(
+                            dhttp_home,
+                            domain.borrow(),
+                            home_scope,
+                        )
+                        .await?;
+                        run_post_save_epilogue(
+                            post_save,
+                            dhttp_home,
+                            domain.borrow(),
+                            default_identity_when_command_started.clone(),
+                            std::io::stdin().is_terminal(),
+                            welcome.as_ref(),
+                        )
+                        .await?;
+                        return Ok(ApplyRunOutcome::Applied);
+                    }
+                    Err(error) => return Err(Error::from(error)),
+                }
             }
             ApplyApprovalPlan::DirectIdentity { auth_domain } => {
+                if target.level() == IdentityLevel::SubIdentity {
+                    match ensure_sub_identity_exists_with_identity_interactively(
+                        &target,
+                        cert_server,
+                        &auth_domain,
+                    )
+                    .await
+                    {
+                        Ok(()) => {}
+                        Err(Error::CertServer { source })
+                            if is_subdomain_quota_exceeded(&source) =>
+                        {
+                            crate::cli::flow::transcript::print_block(&format!(
+                                "Creating {} exceeded the sub-identity quota under {}.\nChoose email verification to expand quota and continue.",
+                                target.short_name(),
+                                target
+                                    .parent()
+                                    .map(|parent| parent.as_partial().to_string())
+                                    .unwrap_or_else(|| "<parent>".to_string()),
+                            ));
+                            state.revisit_verification_method();
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
                 super::progress::run_with_spinner(
                     "Verifying with local identity...",
                     cert_server.issue_cert_with_identity(
@@ -1015,14 +1240,26 @@ pub(crate) async fn run_with_policy(
     let detail = match approval_plan {
         ApplyApprovalPlan::Email => {
             let email = resolve_email(command).await?;
-            let token = cli::login_with_email(
-                cert_server,
-                Some(&domain),
-                Some(email),
-                command.verify_code.clone(),
+            let verify_code = match command.verify_code.clone() {
+                Some(code) => code,
+                None => {
+                    super::progress::run_with_spinner(
+                        "Sending verification code...",
+                        cert_server.send_email_verification(&email),
+                    )
+                    .await?;
+                    crate::cli::prompt::prompt_verify_code()
+                        .await
+                        .require_interactive("--verify-code")?
+                }
+            };
+            let token = super::progress::run_with_spinner(
+                "Verifying with email...",
+                cert_server.login(&email, &verify_code),
             )
-            .await?;
-            super::progress::run_with_spinner(
+            .await?
+            .access_token;
+            match super::progress::run_with_spinner(
                 "Applying identity...",
                 cert_server.issue_cert(
                     &token,
@@ -1033,10 +1270,20 @@ pub(crate) async fn run_with_policy(
                     &csr_pem,
                 ),
             )
-            .await?
+            .await
+            {
+                Ok(detail) => detail,
+                Err(error) if is_domain_not_found(&error) => {
+                    whatever!(
+                        "applying {} would register it first; rerun this command in an interactive terminal to confirm registration",
+                        target.short_name()
+                    );
+                }
+                Err(error) => return Err(Error::from(error)),
+            }
         }
         ApplyApprovalPlan::DirectIdentity { auth_domain } => {
-            super::progress::run_with_spinner(
+            match super::progress::run_with_spinner(
                 "Verifying with local identity...",
                 cert_server.issue_cert_with_identity(
                     &auth_domain,
@@ -1047,7 +1294,17 @@ pub(crate) async fn run_with_policy(
                     &csr_pem,
                 ),
             )
-            .await?
+            .await
+            {
+                Ok(detail) => detail,
+                Err(error) if is_domain_not_found(&error) => {
+                    whatever!(
+                        "applying {} would register it first; rerun this command in an interactive terminal to confirm registration",
+                        target.short_name()
+                    );
+                }
+                Err(error) => return Err(Error::from(error)),
+            }
         }
         ApplyApprovalPlan::HelperIdentity { .. } => {
             unreachable!("helper approval plan should be resolved before issuing certificate")
@@ -1099,13 +1356,17 @@ mod tests {
         InteractiveApplyState, apply_approval_menu_actions, apply_email_actions,
         apply_identity_name_opening, apply_verification_options, apply_verify_code_actions,
         approval_plan_from_selection, build_apply_approval_options, explicit_target_from_command,
-        resolve_non_interactive_approval_plan,
+        register_during_apply_message, resolve_non_interactive_approval_plan,
+        rewrite_apply_registration_error,
     };
     use crate::{
         auth::AuthMethod,
         cli::{
             Apply,
-            flow::approval::{ApprovalMenuOption, LocalApprovalCandidate},
+            flow::{
+                approval::{ApprovalMenuOption, LocalApprovalCandidate},
+                target::IdentityTarget,
+            },
         },
     };
 
@@ -1130,7 +1391,7 @@ mod tests {
         super::apply_verification_recovery(
             &mut state,
             &crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep {
-                message: "retry later",
+                message: "retry later".to_string(),
             },
         );
 
@@ -1158,7 +1419,7 @@ mod tests {
         super::apply_verification_recovery(
             &mut state,
             &crate::cli::flow::recovery::VerificationRecovery::BackToEmail {
-                message: "start over",
+                message: "start over".to_string(),
             },
         );
 
@@ -1241,10 +1502,94 @@ mod tests {
     #[test]
     fn apply_identity_name_opening_matches_spec_copy() {
         let opening = apply_identity_name_opening();
-        assert!(opening.contains("Apply an existing identity here."));
+        assert!(opening.contains("Apply an identity here."));
         assert!(opening.contains("<given_name>.<surname>"));
         assert!(opening.contains("alice.smith"));
         assert!(opening.contains("phone.alice.smith"));
+        assert!(opening.contains("register it first"), "{opening}");
+    }
+
+    #[test]
+    fn register_during_apply_message_mentions_root_registration() {
+        let message = register_during_apply_message(&IdentityTarget::parse("alice.smith").unwrap());
+
+        assert!(
+            message.contains("alice.smith does not exist yet."),
+            "{message}"
+        );
+        assert!(message.contains("register alice.smith first"), "{message}");
+        assert!(message.contains("This may require payment."), "{message}");
+    }
+
+    #[test]
+    fn register_during_apply_message_mentions_subidentity_registration() {
+        let message =
+            register_during_apply_message(&IdentityTarget::parse("phone.alice.smith").unwrap());
+
+        assert!(
+            message.contains("phone.alice.smith does not exist yet."),
+            "{message}"
+        );
+        assert!(
+            message.contains("register alice.smith first if needed"),
+            "{message}"
+        );
+        assert!(message.contains("create phone.alice.smith"), "{message}");
+        assert!(
+            message.contains("This may require payment or quota expansion."),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn starter_domain_limit_registration_error_keeps_api_code_and_adds_apply_context() {
+        let target = IdentityTarget::parse("phone.alice.smith").unwrap();
+        let error = rewrite_apply_registration_error(
+            &target,
+            crate::cli::Error::CertServer {
+                source: crate::cert_server::Error::Api {
+                    status: reqwest::StatusCode::CONFLICT,
+                    code: "starter_domain_limit_reached".to_string(),
+                    message: "starter plan is limited to 3 free domains per account".to_string(),
+                },
+            },
+        );
+        let rendered = error.to_string();
+        assert!(rendered.contains("phone.alice.smith"), "{rendered}");
+        assert!(rendered.contains("alice.smith"), "{rendered}");
+        assert!(
+            rendered.contains("maximum 3 free starter domains"),
+            "{rendered}"
+        );
+        match error {
+            crate::cli::Error::Whatever { source } => {
+                let inner = std::error::Error::source(&source)
+                    .and_then(|inner| inner.downcast_ref::<crate::cert_server::Error>());
+                assert!(matches!(
+                    inner,
+                    Some(error) if error.is_api_code("starter_domain_limit_reached")
+                ));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn subdomain_quota_helper_matches_api_code_only() {
+        assert!(super::is_subdomain_quota_exceeded(
+            &crate::cert_server::Error::Api {
+                status: reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+                code: "subdomain_quota_exceeded".to_string(),
+                message: "subdomain quota exceeded".to_string(),
+            }
+        ));
+        assert!(!super::is_subdomain_quota_exceeded(
+            &crate::cert_server::Error::Api {
+                status: reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+                code: "domain_not_found".to_string(),
+                message: "domain not found".to_string(),
+            }
+        ));
     }
 
     #[test]
