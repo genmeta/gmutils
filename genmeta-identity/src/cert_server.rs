@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use reqwest::header;
 use serde::{Deserialize, de::DeserializeOwned};
-use serde_json::json;
+use serde_json::{Value, json};
 use snafu::{FromString, ResultExt, Snafu, Whatever};
 
 #[derive(Debug, Snafu)]
@@ -70,19 +70,33 @@ struct DetailedErrorEnvelope<T> {
     details: T,
 }
 
-#[derive(Debug, Deserialize)]
-struct SubdomainQuotaQuoteDetailsEnvelope {
-    domain: String,
-    quota_quote: SubdomainQuotaQuoteDetails,
+fn extract_string_field(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| value.get(*key)?.as_str().map(ToOwned::to_owned))
 }
 
-#[derive(Debug, Deserialize)]
-struct SubdomainQuotaQuoteDetails {
-    due: i64,
-    currency: String,
-    days_left: i64,
-    days_total: i64,
-    renewal: i64,
+fn extract_i64_field(value: &Value, keys: &[&str]) -> Option<i64> {
+    keys.iter().find_map(|key| value.get(*key)?.as_i64())
+}
+
+fn extract_subdomain_quota_quote(details: &Value) -> Option<SubdomainQuotaQuote> {
+    let quote_source = details
+        .get("quota_quote")
+        .or_else(|| details.get("quote"))
+        .unwrap_or(details);
+    let domain = extract_string_field(details, &["domain"])
+        .or_else(|| extract_string_field(quote_source, &["domain"]))?;
+    let due = extract_i64_field(quote_source, &["due"])?;
+    let currency = extract_string_field(quote_source, &["currency"])?;
+
+    Some(SubdomainQuotaQuote {
+        domain,
+        due,
+        currency,
+        days_left: extract_i64_field(quote_source, &["days_left"]).unwrap_or(0),
+        days_total: extract_i64_field(quote_source, &["days_total"]).unwrap_or(0),
+        renewal: extract_i64_field(quote_source, &["renewal"]).unwrap_or(0),
+    })
 }
 
 fn parse_subdomain_quota_quote(
@@ -93,9 +107,7 @@ fn parse_subdomain_quota_quote(
         return Ok(None);
     }
 
-    let Ok(parsed) =
-        serde_json::from_slice::<DetailedErrorResponse<SubdomainQuotaQuoteDetailsEnvelope>>(body)
-    else {
+    let Ok(parsed) = serde_json::from_slice::<DetailedErrorResponse<Value>>(body) else {
         return Ok(None);
     };
     if parsed.error.code != "subdomain_quota_exceeded" {
@@ -103,14 +115,7 @@ fn parse_subdomain_quota_quote(
     }
     let _ = &parsed.error.message;
 
-    Ok(Some(SubdomainQuotaQuote {
-        domain: parsed.error.details.domain,
-        due: parsed.error.details.quota_quote.due,
-        currency: parsed.error.details.quota_quote.currency,
-        days_left: parsed.error.details.quota_quote.days_left,
-        days_total: parsed.error.details.quota_quote.days_total,
-        renewal: parsed.error.details.quota_quote.renewal,
-    }))
+    Ok(extract_subdomain_quota_quote(&parsed.error.details))
 }
 
 pub fn parse_error_body(status: reqwest::StatusCode, body: &[u8]) -> Result<(), Error> {
@@ -487,6 +492,26 @@ impl CertServer {
         parse_create_domain_response(response).await
     }
 
+    pub async fn create_domain_with_token(
+        &self,
+        access_token: &str,
+        domain: &str,
+    ) -> Result<CreateDomainResponse, Error> {
+        let response = self
+            .http_client
+            .post(format!("{}/v2/domain", self.base_url))
+            .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
+            .json(&json!({
+                "domain": domain,
+                "redirect_mode": "payment_required",
+                "terms_accepted": true,
+                "terms_version": "v1",
+            }))
+            .send()
+            .await?;
+        parse_create_domain_response(response).await
+    }
+
     pub async fn get_checkout(&self, checkout_token: &str) -> Result<CreateDomainResponse, Error> {
         let response = self
             .http_client
@@ -746,6 +771,17 @@ impl Error {
     pub fn identity_fallback_disabled() -> Self {
         Self::IdentityFallbackUnavailable
     }
+
+    pub fn api_code(&self) -> Option<&str> {
+        match self {
+            Self::Api { code, .. } => Some(code.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn is_api_code(&self, expected: &str) -> bool {
+        matches!(self.api_code(), Some(code) if code == expected)
+    }
 }
 
 #[cfg(test)]
@@ -769,6 +805,19 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn api_code_helpers_match_api_errors() {
+        let error = Error::Api {
+            status: reqwest::StatusCode::CONFLICT,
+            code: "starter_domain_limit_reached".to_string(),
+            message: "starter plan is limited to 3 free domains per account".to_string(),
+        };
+
+        assert_eq!(error.api_code(), Some("starter_domain_limit_reached"));
+        assert!(error.is_api_code("starter_domain_limit_reached"));
+        assert!(!error.is_api_code("domain_not_found"));
     }
 
     #[test]
@@ -819,6 +868,64 @@ mod tests {
                 days_left: 120,
                 days_total: 365,
                 renewal: 1200,
+            })
+        );
+    }
+
+    #[test]
+    fn subdomain_quota_error_details_accept_missing_term_fields() {
+        let payload = br#"{
+          "error": {
+            "code": "subdomain_quota_exceeded",
+            "message": "subdomain quota exceeded",
+            "details": {
+              "domain": "phone.alice.smith.dhttp.net",
+              "quota_quote": {
+                "due": 500,
+                "currency": "USD"
+              }
+            }
+          }
+        }"#;
+
+        assert_eq!(
+            parse_subdomain_quota_quote(reqwest::StatusCode::UNPROCESSABLE_ENTITY, payload)
+                .unwrap(),
+            Some(SubdomainQuotaQuote {
+                domain: "phone.alice.smith.dhttp.net".to_string(),
+                due: 500,
+                currency: "USD".to_string(),
+                days_left: 0,
+                days_total: 0,
+                renewal: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn subdomain_quota_error_details_accept_flat_quote_fields() {
+        let payload = br#"{
+          "error": {
+            "code": "subdomain_quota_exceeded",
+            "message": "subdomain quota exceeded",
+            "details": {
+              "domain": "phone.alice.smith.dhttp.net",
+              "due": 500,
+              "currency": "USD"
+            }
+          }
+        }"#;
+
+        assert_eq!(
+            parse_subdomain_quota_quote(reqwest::StatusCode::UNPROCESSABLE_ENTITY, payload)
+                .unwrap(),
+            Some(SubdomainQuotaQuote {
+                domain: "phone.alice.smith.dhttp.net".to_string(),
+                due: 500,
+                currency: "USD".to_string(),
+                days_left: 0,
+                days_total: 0,
+                renewal: 0,
             })
         );
     }

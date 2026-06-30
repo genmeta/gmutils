@@ -149,11 +149,11 @@ fn apply_verification_recovery(
 ) -> bool {
     match recovery {
         crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep { message } => {
-            crate::cli::flow::transcript::print_line(*message);
+            crate::cli::flow::transcript::print_line(message);
             true
         }
         crate::cli::flow::recovery::VerificationRecovery::BackToEmail { message } => {
-            crate::cli::flow::transcript::print_line(*message);
+            crate::cli::flow::transcript::print_line(message);
             state.revisit_email();
             true
         }
@@ -805,7 +805,7 @@ mod tests {
         super::apply_verification_recovery(
             &mut state,
             &crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep {
-                message: "retry later",
+                message: "retry later".to_string(),
             },
         );
 
@@ -831,7 +831,7 @@ mod tests {
         super::apply_verification_recovery(
             &mut state,
             &crate::cli::flow::recovery::VerificationRecovery::BackToEmail {
-                message: "start over",
+                message: "start over".to_string(),
             },
         );
 
