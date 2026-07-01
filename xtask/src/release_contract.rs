@@ -6,6 +6,7 @@ use std::{
 };
 
 use cargo_metadata::MetadataCommand;
+use genmeta_xtask_release::{contract as shared_contract, system::PackageSystem};
 use serde::Deserialize;
 use snafu::{ResultExt, Snafu};
 
@@ -64,6 +65,8 @@ pub struct BuildContract {
 pub struct BuildEnvBinding {
     pub env: Option<String>,
     pub value: Option<String>,
+    #[serde(default)]
+    pub optional: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -159,6 +162,20 @@ pub enum ReleaseContractError {
         source: toml::de::Error,
         path: PathBuf,
     },
+    #[snafu(display("invalid shared release contract"))]
+    SharedInvalid {
+        source: shared_contract::ValidateContractError,
+        path: PathBuf,
+    },
+    #[snafu(display("shared release contract must define one product package"))]
+    SharedPackageCount { path: PathBuf },
+    #[snafu(display("shared release contract product package must define manifest"))]
+    SharedMissingManifest { path: PathBuf },
+    #[snafu(display("shared release contract {system} branch missing template"))]
+    SharedMissingTemplate {
+        path: PathBuf,
+        system: PackageSystem,
+    },
     #[snafu(display("failed to read cargo metadata"))]
     CargoMetadata {
         source: cargo_metadata::Error,
@@ -210,11 +227,168 @@ fn parse_release_contract_at(
     path: &Path,
     input: &str,
 ) -> Result<ReleaseContract, ReleaseContractError> {
+    if let Ok(contract) = toml::from_str::<shared_contract::ReleaseContract>(input) {
+        contract
+            .validate()
+            .context(release_contract_error::SharedInvalidSnafu {
+                path: path.to_path_buf(),
+            })?;
+        return release_contract_from_shared(path, contract);
+    }
+
     let contract = toml::from_str(input).context(release_contract_error::ParseSnafu {
         path: path.to_path_buf(),
     })?;
     validate_release_contract(&contract)?;
     Ok(contract)
+}
+
+fn release_contract_from_shared(
+    path: &Path,
+    contract: shared_contract::ReleaseContract,
+) -> Result<ReleaseContract, ReleaseContractError> {
+    let mut packages = contract.package.iter();
+    let Some((package_id, package)) = packages.next() else {
+        return Err(ReleaseContractError::SharedPackageCount {
+            path: path.to_path_buf(),
+        });
+    };
+    if packages.next().is_some() {
+        return Err(ReleaseContractError::SharedPackageCount {
+            path: path.to_path_buf(),
+        });
+    }
+    let manifest =
+        package
+            .manifest
+            .clone()
+            .ok_or_else(|| ReleaseContractError::SharedMissingManifest {
+                path: path.to_path_buf(),
+            })?;
+    let homebrew = package
+        .brew
+        .as_ref()
+        .map(|branch| shared_homebrew_contract(path, branch))
+        .transpose()?;
+    let scoop = package
+        .scoop
+        .as_ref()
+        .map(|branch| shared_scoop_contract(path, branch))
+        .transpose()?;
+    Ok(ReleaseContract {
+        cargo: CargoSource { manifest },
+        package: Some(PackageOverride {
+            name: Some(package_id.as_str().to_string()),
+        }),
+        homebrew,
+        scoop,
+        build: BuildContract {
+            env: shared_build_env(&package.build.env),
+        },
+        destination: shared_destination_contract(contract.destination),
+    })
+}
+
+fn shared_homebrew_contract(
+    path: &Path,
+    branch: &shared_contract::BrewBranch,
+) -> Result<HomebrewContract, ReleaseContractError> {
+    let template = branch.manifest_template.clone().ok_or_else(|| {
+        ReleaseContractError::SharedMissingTemplate {
+            path: path.to_path_buf(),
+            system: PackageSystem::Brew,
+        }
+    })?;
+    Ok(HomebrewContract {
+        template: TemplateContract { path: template },
+        target: branch
+            .target
+            .iter()
+            .map(|(target, contract)| {
+                (
+                    target.clone(),
+                    HomebrewTargetContract {
+                        env: shared_build_env(&contract.env),
+                    },
+                )
+            })
+            .collect(),
+    })
+}
+
+fn shared_scoop_contract(
+    path: &Path,
+    branch: &shared_contract::ScoopBranch,
+) -> Result<ScoopContract, ReleaseContractError> {
+    let template = branch.manifest_template.clone().ok_or_else(|| {
+        ReleaseContractError::SharedMissingTemplate {
+            path: path.to_path_buf(),
+            system: PackageSystem::Scoop,
+        }
+    })?;
+    Ok(ScoopContract {
+        template: TemplateContract { path: template },
+    })
+}
+
+fn shared_build_env(
+    env: &BTreeMap<String, shared_contract::EnvBinding>,
+) -> BTreeMap<String, BuildEnvBinding> {
+    env.iter()
+        .map(|(name, binding)| {
+            (
+                name.clone(),
+                BuildEnvBinding {
+                    env: binding.env.clone(),
+                    value: binding.value.clone(),
+                    optional: binding.optional,
+                },
+            )
+        })
+        .collect()
+}
+
+fn shared_destination_contract(
+    destination: shared_contract::DestinationContract,
+) -> DestinationContract {
+    let s3 = destination.s3;
+    DestinationContract {
+        s3: S3Destination {
+            bucket: s3.bucket,
+            endpoint: shared_env_ref(s3.endpoint),
+            access_key_id: shared_env_ref(s3.access_key_id),
+            secret_access_key: shared_env_ref(s3.secret_access_key),
+        },
+        brew: s3.brew.map(|branch| BrewDestination {
+            prefix: branch.prefix,
+            public_base_url: branch.public_base_url,
+            tap: TapDestination {
+                repository: branch.tap.repository,
+                base_branch: branch.tap.base_branch,
+                token: shared_env_ref(branch.tap.token),
+            },
+        }),
+        deb: s3.deb.map(|branch| DebDestination {
+            prefix: branch.prefix,
+            suite: branch.suite,
+            signing: DebSigning {
+                key: shared_env_ref(branch.signing.key),
+                passphrase: shared_env_ref(branch.signing.passphrase),
+            },
+            fingerprint: branch.fingerprint.map(shared_env_ref),
+        }),
+        rpm: s3.rpm.map(|branch| RpmDestination {
+            prefix: branch.prefix,
+        }),
+        scoop: s3.scoop.map(|branch| ScoopDestination {
+            prefix: branch.prefix,
+            public_base_url: branch.public_base_url,
+        }),
+    }
+}
+
+fn shared_env_ref(ref_: shared_contract::EnvRef) -> EnvRef {
+    EnvRef { env: ref_.env }
 }
 
 fn validate_release_contract(contract: &ReleaseContract) -> Result<(), ReleaseContractError> {
@@ -343,7 +517,7 @@ fn resolve_build_env_binding_value(
     validate_build_env_binding(name, binding)?;
 
     if let Some(env_name) = &binding.env {
-        return resolve_env_ref(name, env_name, values);
+        return resolve_env_ref(name, env_name, binding.optional, values);
     }
 
     let value = binding
@@ -361,10 +535,11 @@ fn resolve_build_env_binding_value(
 fn resolve_env_ref(
     logical_name: &str,
     env_name: &str,
+    optional: bool,
     values: &BTreeMap<String, String>,
 ) -> Result<Option<String>, ReleaseContractError> {
     let Some(value) = values.get(env_name) else {
-        if build_env_is_optional(logical_name) {
+        if optional || build_env_is_optional(logical_name) {
             return Ok(None);
         }
         return Err(ReleaseContractError::MissingBuildEnv {
