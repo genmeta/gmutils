@@ -157,7 +157,7 @@ pub enum ReleaseContractError {
         source: std::io::Error,
         path: PathBuf,
     },
-    #[snafu(display("failed to parse release contract"))]
+    #[snafu(display("failed to parse shared release contract"))]
     Parse {
         source: toml::de::Error,
         path: PathBuf,
@@ -227,20 +227,17 @@ fn parse_release_contract_at(
     path: &Path,
     input: &str,
 ) -> Result<ReleaseContract, ReleaseContractError> {
-    if let Ok(contract) = toml::from_str::<shared_contract::ReleaseContract>(input) {
-        contract
-            .validate()
-            .context(release_contract_error::SharedInvalidSnafu {
-                path: path.to_path_buf(),
-            })?;
-        return release_contract_from_shared(path, contract);
-    }
-
-    let contract = toml::from_str(input).context(release_contract_error::ParseSnafu {
-        path: path.to_path_buf(),
-    })?;
-    validate_release_contract(&contract)?;
-    Ok(contract)
+    let contract = toml::from_str::<shared_contract::ReleaseContract>(input).context(
+        release_contract_error::ParseSnafu {
+            path: path.to_path_buf(),
+        },
+    )?;
+    contract
+        .validate()
+        .context(release_contract_error::SharedInvalidSnafu {
+            path: path.to_path_buf(),
+        })?;
+    release_contract_from_shared(path, contract)
 }
 
 fn release_contract_from_shared(
@@ -293,14 +290,16 @@ fn shared_homebrew_contract(
     path: &Path,
     branch: &shared_contract::BrewBranch,
 ) -> Result<HomebrewContract, ReleaseContractError> {
-    let template = branch.manifest_template.clone().ok_or_else(|| {
+    let manifest_template = branch.manifest_template.clone().ok_or_else(|| {
         ReleaseContractError::SharedMissingTemplate {
             path: path.to_path_buf(),
             system: PackageSystem::Brew,
         }
     })?;
     Ok(HomebrewContract {
-        template: TemplateContract { path: template },
+        template: TemplateContract {
+            path: manifest_template,
+        },
         target: branch
             .target
             .iter()
@@ -320,14 +319,16 @@ fn shared_scoop_contract(
     path: &Path,
     branch: &shared_contract::ScoopBranch,
 ) -> Result<ScoopContract, ReleaseContractError> {
-    let template = branch.manifest_template.clone().ok_or_else(|| {
+    let manifest_template = branch.manifest_template.clone().ok_or_else(|| {
         ReleaseContractError::SharedMissingTemplate {
             path: path.to_path_buf(),
             system: PackageSystem::Scoop,
         }
     })?;
     Ok(ScoopContract {
-        template: TemplateContract { path: template },
+        template: TemplateContract {
+            path: manifest_template,
+        },
     })
 }
 
@@ -389,16 +390,6 @@ fn shared_destination_contract(
 
 fn shared_env_ref(ref_: shared_contract::EnvRef) -> EnvRef {
     EnvRef { env: ref_.env }
-}
-
-fn validate_release_contract(contract: &ReleaseContract) -> Result<(), ReleaseContractError> {
-    validate_build_env_bindings(&contract.build.env)?;
-    if let Some(homebrew) = &contract.homebrew {
-        for target in homebrew.target.values() {
-            validate_build_env_bindings(&target.env)?;
-        }
-    }
-    Ok(())
 }
 
 pub fn resolve_package_metadata(
@@ -488,15 +479,6 @@ pub fn resolve_build_env_values(
     Ok(resolved)
 }
 
-fn validate_build_env_bindings(
-    bindings: &BTreeMap<String, BuildEnvBinding>,
-) -> Result<(), ReleaseContractError> {
-    for (name, binding) in bindings {
-        validate_build_env_binding(name, binding)?;
-    }
-    Ok(())
-}
-
 fn validate_build_env_binding(
     name: &str,
     binding: &BuildEnvBinding,
@@ -533,13 +515,13 @@ fn resolve_build_env_binding_value(
 }
 
 fn resolve_env_ref(
-    logical_name: &str,
+    _logical_name: &str,
     env_name: &str,
     optional: bool,
     values: &BTreeMap<String, String>,
 ) -> Result<Option<String>, ReleaseContractError> {
     let Some(value) = values.get(env_name) else {
-        if optional || build_env_is_optional(logical_name) {
+        if optional {
             return Ok(None);
         }
         return Err(ReleaseContractError::MissingBuildEnv {
@@ -556,10 +538,6 @@ fn resolve_env_ref(
     Ok(Some(value.clone()))
 }
 
-fn build_env_is_optional(name: &str) -> bool {
-    matches!(name, "DHTTP_GLOBAL_HOME")
-}
-
 #[cfg(test)]
 mod tests {
     use std::{collections::BTreeMap, path::Path};
@@ -569,41 +547,55 @@ mod tests {
     };
 
     const CONTRACT: &str = r#"
-[cargo]
+[package.gmutils]
 manifest = "genmeta/Cargo.toml"
 
-[package]
-name = "gmutils"
-
-[homebrew.template]
-path = "xtask/templates/gmutils.rb.in"
-
-[build.env.DHTTP_ROOT_CA]
+[package.gmutils.build.env.DHTTP_ROOT_CA]
 env = "DHTTP_ROOT_CA"
+container_path = "/dhttp-bootstrap/root.crt"
 
-[build.env.DHTTP_STUN_SERVER]
+[package.gmutils.build.env.DHTTP_STUN_SERVER]
 env = "DHTTP_STUN_SERVER"
 
-[build.env.DHTTP_H3_DNS_SERVER]
+[package.gmutils.build.env.DHTTP_H3_DNS_SERVER]
 env = "DHTTP_H3_DNS_SERVER"
 
-[build.env.DHTTP_HTTP_DNS_SERVER]
+[package.gmutils.build.env.DHTTP_HTTP_DNS_SERVER]
 env = "DHTTP_HTTP_DNS_SERVER"
 
-[build.env.DHTTP_MDNS_SERVICE]
+[package.gmutils.build.env.DHTTP_MDNS_SERVICE]
 env = "DHTTP_MDNS_SERVICE"
 
-[build.env.DHTTP_CERT_SERVER_URL]
+[package.gmutils.build.env.DHTTP_CERT_SERVER_URL]
 env = "DHTTP_CERT_SERVER_URL"
 
-[build.env.DHTTP_GLOBAL_HOME]
+[package.gmutils.build.env.DHTTP_GLOBAL_HOME]
 env = "DHTTP_GLOBAL_HOME"
+optional = true
 
-[homebrew.target.aarch64-apple-darwin.env.DHTTP_GLOBAL_HOME]
+[package.gmutils.deb]
+revision = "1"
+architecture = "target"
+dockerfile = "xtask/release/deb/Dockerfile"
+
+[package.gmutils.rpm]
+release = "1"
+architecture = "target"
+dockerfile = "xtask/release/rpm/Dockerfile"
+
+[package.gmutils.brew]
+script = "xtask/release/brew/gmutils.sh"
+manifest_template = "xtask/templates/gmutils.rb.in"
+
+[package.gmutils.brew.target.aarch64-apple-darwin.env.DHTTP_GLOBAL_HOME]
 value = "/opt/homebrew/etc/dhttp"
 
-[homebrew.target.x86_64-apple-darwin.env.DHTTP_GLOBAL_HOME]
+[package.gmutils.brew.target.x86_64-apple-darwin.env.DHTTP_GLOBAL_HOME]
 value = "/usr/local/etc/dhttp"
+
+[package.gmutils.scoop]
+script = "xtask/release/scoop/gmutils.sh"
+manifest_template = "xtask/templates/gmutils.json.in"
 
 [destination.s3]
 bucket = "download"
@@ -611,29 +603,29 @@ endpoint.env = "XTASK_RELEASE_S3_ENDPOINT_URL"
 access_key_id.env = "XTASK_RELEASE_S3_ACCESS_KEY_ID"
 secret_access_key.env = "XTASK_RELEASE_S3_SECRET_ACCESS_KEY"
 
-[destination.brew]
+[destination.s3.brew]
 prefix = "homebrew"
 public_base_url = "https://download.dhttp.net/homebrew"
 tap.repository = "genmeta/homebrew-genmeta"
 tap.base_branch = "main"
 tap.token.env = "HOMEBREW_TAP_GITHUB_TOKEN"
 
-[destination.deb]
+[destination.s3.scoop]
+prefix = "scoop"
+public_base_url = "https://download.dhttp.net/scoop"
+
+[destination.s3.deb]
 prefix = "ppa/genmeta"
 suite = "genmeta"
 signing.key.env = "XTASK_RELEASE_APT_SIGNING_KEY"
 signing.passphrase.env = "XTASK_RELEASE_APT_SIGNING_PASSPHRASE"
+fingerprint.env = "XTASK_RELEASE_APT_SIGNING_FINGERPRINT"
 
-[destination.rpm]
+[destination.s3.rpm]
 prefix = "rpm/gmutils"
-
-[destination.scoop]
-prefix = "scoop"
-public_base_url = "https://download.dhttp.net/scoop"
 "#;
-
     #[test]
-    fn parses_dotted_snake_case_contract() {
+    fn parses_shared_release_contract() {
         let contract = parse_release_contract_at(Path::new("xtask/release.toml"), CONTRACT)
             .expect("contract should parse");
 
@@ -791,22 +783,34 @@ public_base_url = "https://download.dhttp.net/scoop"
         let error = parse_release_contract_at(
             Path::new("xtask/release.toml"),
             r#"
-[cargo]
+[package.gmutils]
 manifest = "genmeta/Cargo.toml"
 
-[build.env.DHTTP_STUN_SERVER]
+[package.gmutils.build.env.DHTTP_STUN_SERVER]
 env = "DHTTP_STUN_SERVER"
 value = "nat.genmeta.net:20004"
+
+[package.gmutils.deb]
+revision = "1"
+architecture = "target"
+dockerfile = "xtask/release/deb/Dockerfile"
 
 [destination.s3]
 bucket = "download"
 endpoint.env = "XTASK_RELEASE_S3_ENDPOINT_URL"
 access_key_id.env = "XTASK_RELEASE_S3_ACCESS_KEY_ID"
 secret_access_key.env = "XTASK_RELEASE_S3_SECRET_ACCESS_KEY"
+
+[destination.s3.deb]
+prefix = "ppa/genmeta"
+suite = "genmeta"
+signing.key.env = "XTASK_RELEASE_APT_SIGNING_KEY"
+signing.passphrase.env = "XTASK_RELEASE_APT_SIGNING_PASSPHRASE"
 "#,
         )
         .expect_err("conflicting binding must fail");
 
-        assert!(error.to_string().contains("DHTTP_STUN_SERVER"));
+        let report = snafu::Report::from_error(&error);
+        assert!(report.to_string().contains("DHTTP_STUN_SERVER"));
     }
 }
