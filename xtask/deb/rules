@@ -47,7 +47,7 @@ ifdef TRIPLE
 		export CARGO_ZIGBUILD_ZIG_PATH=/tmp/gmutils-aarch64-zig; \
 		export RUSTFLAGS="$$RUSTFLAGS -Z unstable-options -Clinker-flavor=gnu-lld-cc"; \
 	fi && \
-	cargo zigbuild $(CARGO_PROFILE_ARGS) --target $(ZIG_TARGET) --bin genmeta
+	cargo zigbuild $(CARGO_PROFILE_ARGS) --manifest-path genmeta/Cargo.toml --target $(ZIG_TARGET) --bin genmeta
 endif
 
 override_dh_auto_install:

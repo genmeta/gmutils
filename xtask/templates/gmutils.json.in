@@ -1,0 +1,16 @@
+{
+  "version": {{scoop.version.json}},
+  "description": {{scoop.description.json}},
+  "license": {{scoop.license.json}},
+  "homepage": {{scoop.homepage.json}},
+  "architecture": {{scoop.architecture.json}},
+  "bin": [
+    "genmeta.exe",
+    "genmeta-ssh.bat"
+  ],
+  "checkver": {
+    "url": "https://download.dhttp.net/scoop/gmutils.json",
+    "re": "\\\"version\\\"\\\\s*:\\\\s*\\\"([^\\\"]+)\\\""
+  },
+  "autoupdate": {{scoop.autoupdate.json}}
+}
