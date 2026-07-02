@@ -846,8 +846,9 @@ async fn run_interactive_with_policy(
             continue;
         }
 
-        cli::ensure_replace_local_allowed(dhttp_home, domain.borrow(), command.replace_local)
-            .await?;
+        let local_identity_save =
+            cli::ensure_replace_local_allowed(dhttp_home, domain.borrow(), command.replace_local)
+                .await?;
         let (key_pem, csr_pem) = cli::generate_private_key_and_csr(&domain)?;
         let kind = state
             .kind
@@ -924,9 +925,12 @@ async fn run_interactive_with_policy(
         )
         .instrument(info_span!("save_identity"))
         .await?;
-        let welcome =
-            super::welcome::maybe_create_welcome_service(dhttp_home, domain.borrow(), home_scope)
-                .await?;
+        let welcome = super::welcome::maybe_create_welcome_service(
+            dhttp_home,
+            domain.borrow(),
+            local_identity_save.created_new_identity(),
+        )
+        .await?;
         run_post_save_epilogue(
             post_save,
             dhttp_home,
@@ -1010,7 +1014,9 @@ pub(crate) async fn run_with_policy(
         return Ok(());
     }
 
-    cli::ensure_replace_local_allowed(dhttp_home, domain.borrow(), command.replace_local).await?;
+    let local_identity_save =
+        cli::ensure_replace_local_allowed(dhttp_home, domain.borrow(), command.replace_local)
+            .await?;
     let (key_pem, csr_pem) = cli::generate_private_key_and_csr(&domain)?;
     let detail = match approval_plan {
         ApplyApprovalPlan::Email => {
@@ -1062,9 +1068,12 @@ pub(crate) async fn run_with_policy(
     )
     .instrument(info_span!("save_identity"))
     .await?;
-    let welcome =
-        super::welcome::maybe_create_welcome_service(dhttp_home, domain.borrow(), home_scope)
-            .await?;
+    let welcome = super::welcome::maybe_create_welcome_service(
+        dhttp_home,
+        domain.borrow(),
+        local_identity_save.created_new_identity(),
+    )
+    .await?;
     run_post_save_epilogue(
         post_save,
         dhttp_home,

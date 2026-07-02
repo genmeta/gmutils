@@ -166,6 +166,18 @@ async fn save_identity(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LocalIdentitySave {
+    New,
+    Replace,
+}
+
+impl LocalIdentitySave {
+    pub(crate) fn created_new_identity(self) -> bool {
+        matches!(self, Self::New)
+    }
+}
+
 #[tracing::instrument()]
 async fn load_current_settings(dhttp_home: &DhttpHome) -> Result<Option<DhttpSettingsFile>, Error> {
     match dhttp_home.load_settings().await {
@@ -213,15 +225,15 @@ async fn ensure_replace_local_allowed(
     dhttp_home: &DhttpHome,
     name: Name<'_>,
     replace_local: bool,
-) -> Result<(), Error> {
+) -> Result<LocalIdentitySave, Error> {
     if !dhttp_home
         .identity_profile_exists_exactly(name.clone())
         .await
     {
-        return Ok(());
+        return Ok(LocalIdentitySave::New);
     }
     if replace_local {
-        return Ok(());
+        return Ok(LocalIdentitySave::Replace);
     }
 
     let message = format!(
@@ -233,7 +245,7 @@ async fn ensure_replace_local_allowed(
             .await
             .require_interactive("--replace-local")?;
     if confirmed {
-        Ok(())
+        Ok(LocalIdentitySave::Replace)
     } else {
         whatever!("local identity was not replaced")
     }

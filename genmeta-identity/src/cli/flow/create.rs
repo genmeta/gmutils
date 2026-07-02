@@ -1187,8 +1187,12 @@ async fn run_interactive(
             continue;
         }
 
-        cli::ensure_replace_local_allowed(dhttp_home, target.dhttp_name(), command.replace_local)
-            .await?;
+        let local_identity_save = cli::ensure_replace_local_allowed(
+            dhttp_home,
+            target.dhttp_name(),
+            command.replace_local,
+        )
+        .await?;
         let (key_pem, csr_pem) = cli::generate_private_key_and_csr(&target.dhttp_name())?;
         let kind = state
             .kind
@@ -1419,7 +1423,7 @@ async fn run_interactive(
         let welcome = super::welcome::maybe_create_welcome_service(
             dhttp_home,
             target.dhttp_name(),
-            home_scope,
+            local_identity_save.created_new_identity(),
         )
         .await?;
         crate::cli::flow::epilogue::run_lifecycle_epilogue(
@@ -1492,8 +1496,9 @@ pub(crate) async fn run(
         }
     }
 
-    cli::ensure_replace_local_allowed(dhttp_home, target.dhttp_name(), command.replace_local)
-        .await?;
+    let local_identity_save =
+        cli::ensure_replace_local_allowed(dhttp_home, target.dhttp_name(), command.replace_local)
+            .await?;
     let (key_pem, csr_pem) = cli::generate_private_key_and_csr(&target.dhttp_name())?;
 
     match target.level() {
@@ -1647,9 +1652,12 @@ pub(crate) async fn run(
         }
     }
 
-    let welcome =
-        super::welcome::maybe_create_welcome_service(dhttp_home, target.dhttp_name(), home_scope)
-            .await?;
+    let welcome = super::welcome::maybe_create_welcome_service(
+        dhttp_home,
+        target.dhttp_name(),
+        local_identity_save.created_new_identity(),
+    )
+    .await?;
     crate::cli::flow::epilogue::run_lifecycle_epilogue(
         dhttp_home,
         target.dhttp_name(),

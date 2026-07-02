@@ -1,9 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use dhttp::{
-    home::{DhttpHome, HomeScope},
-    name::DhttpName,
-};
+use dhttp::{home::DhttpHome, name::DhttpName};
 use snafu::{IntoError, ResultExt, Snafu};
 use tokio::{fs, io::AsyncWriteExt};
 
@@ -17,10 +14,6 @@ pub(crate) struct WelcomeServiceCreated {
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 pub enum WelcomeServiceError {
-    #[cfg(unix)]
-    #[snafu(display("failed to determine whether welcome service onboarding is allowed"))]
-    EligibilityLookup { source: nix::errno::Errno },
-
     #[snafu(display("failed to create identity profile directory at {}", path.display()))]
     CreateProfileDir {
         path: PathBuf,
@@ -73,22 +66,9 @@ const WELCOME_PAGE_PATH: &str = "templates/welcome/index.html";
 pub(crate) async fn maybe_create_welcome_service(
     dhttp_home: &DhttpHome,
     name: DhttpName<'_>,
-    home_scope: HomeScope,
+    identity_was_newly_saved: bool,
 ) -> Result<Option<WelcomeServiceCreated>, WelcomeServiceError> {
-    maybe_create_welcome_service_with_probe(dhttp_home, name, home_scope, user_in_pishoo_group)
-        .await
-}
-
-pub(crate) async fn maybe_create_welcome_service_with_probe<F>(
-    dhttp_home: &DhttpHome,
-    name: DhttpName<'_>,
-    home_scope: HomeScope,
-    user_in_pishoo_group: F,
-) -> Result<Option<WelcomeServiceCreated>, WelcomeServiceError>
-where
-    F: Fn() -> Result<bool, WelcomeServiceError>,
-{
-    if !welcome_onboarding_allowed(home_scope, &user_in_pishoo_group)? {
+    if !identity_was_newly_saved {
         return Ok(None);
     }
 
@@ -223,57 +203,6 @@ fn render_welcome_page() -> &'static str {
 </html>\n"
 }
 
-fn welcome_onboarding_allowed<F>(
-    home_scope: HomeScope,
-    user_in_pishoo_group: &F,
-) -> Result<bool, WelcomeServiceError>
-where
-    F: Fn() -> Result<bool, WelcomeServiceError>,
-{
-    #[cfg(unix)]
-    {
-        match home_scope {
-            HomeScope::Global => Ok(true),
-            HomeScope::User => user_in_pishoo_group(),
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = home_scope;
-        let _ = user_in_pishoo_group;
-        Ok(false)
-    }
-}
-
-#[cfg(all(unix, not(target_vendor = "apple")))]
-fn user_in_pishoo_group() -> Result<bool, WelcomeServiceError> {
-    use nix::unistd::{Group, getegid, getgroups};
-
-    let Some(group) =
-        Group::from_name("pishoo").context(welcome_service_error::EligibilityLookupSnafu)?
-    else {
-        return Ok(false);
-    };
-
-    if getegid() == group.gid {
-        return Ok(true);
-    }
-
-    let groups = getgroups().context(welcome_service_error::EligibilityLookupSnafu)?;
-    Ok(groups.into_iter().any(|gid| gid == group.gid))
-}
-
-#[cfg(all(unix, target_vendor = "apple"))]
-fn user_in_pishoo_group() -> Result<bool, WelcomeServiceError> {
-    Ok(false)
-}
-
-#[cfg(not(unix))]
-fn user_in_pishoo_group() -> Result<bool, WelcomeServiceError> {
-    Ok(false)
-}
-
 async fn path_exists(path: &Path) -> Result<bool, WelcomeServiceError> {
     match fs::try_exists(path).await {
         Ok(exists) => Ok(exists),
@@ -308,12 +237,9 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use dhttp::{
-        home::{DhttpHome, HomeScope},
-        name::DhttpName,
-    };
+    use dhttp::{home::DhttpHome, name::DhttpName};
 
-    use super::{format_welcome_service_created, maybe_create_welcome_service_with_probe};
+    use super::{format_welcome_service_created, maybe_create_welcome_service};
 
     fn unique_test_home_path(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -327,41 +253,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn user_scope_requires_pishoo_group_for_welcome_onboarding() {
-        let home = DhttpHome::new(unique_test_home_path("user-scope-no-group"));
+    async fn user_scope_creates_welcome_onboarding_without_pishoo_group() {
+        let home = DhttpHome::new(unique_test_home_path("user-scope-new-identity"));
         let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
 
-        let created =
-            maybe_create_welcome_service_with_probe(&home, name.borrow(), HomeScope::User, || {
-                Ok(false)
-            })
+        let created = maybe_create_welcome_service(&home, name.borrow(), true)
+            .await
+            .unwrap();
+
+        let created = created.expect("new user identity should create welcome files");
+        assert!(created.server_conf_path.exists());
+        assert!(created.welcome_page_path.exists());
+    }
+
+    #[tokio::test]
+    async fn skips_welcome_onboarding_when_identity_was_replaced() {
+        let home = DhttpHome::new(unique_test_home_path("replaced-identity"));
+        let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
+
+        let created = maybe_create_welcome_service(&home, name.borrow(), false)
             .await
             .unwrap();
 
         assert!(created.is_none());
-        assert!(
-            !home
-                .identity_profile(name.borrow())
-                .server_conf_path()
-                .exists()
-        );
+        let profile = home.identity_profile(name.borrow());
+        assert!(!profile.server_conf_path().exists());
+        assert!(!profile.join("templates/welcome/index.html").exists());
     }
 
     #[tokio::test]
-    async fn global_scope_bypasses_group_gate() {
-        let home = DhttpHome::new(unique_test_home_path("global-scope"));
+    async fn creates_welcome_files_for_new_identity() {
+        let home = DhttpHome::new(unique_test_home_path("new-identity"));
         let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
 
-        let created = maybe_create_welcome_service_with_probe(
-            &home,
-            name.borrow(),
-            HomeScope::Global,
-            || Ok(false),
-        )
-        .await
-        .unwrap();
+        let created = maybe_create_welcome_service(&home, name.borrow(), true)
+            .await
+            .unwrap();
 
-        let created = created.expect("global scope should create welcome files");
+        let created = created.expect("new identity should create welcome files");
         let profile = home.identity_profile(name.borrow());
         assert!(created.server_conf_path.exists());
         assert!(created.welcome_page_path.exists());
@@ -410,14 +339,9 @@ mod tests {
             .await
             .unwrap();
 
-        let created = maybe_create_welcome_service_with_probe(
-            &home,
-            name.borrow(),
-            HomeScope::Global,
-            || Ok(true),
-        )
-        .await
-        .unwrap();
+        let created = maybe_create_welcome_service(&home, name.borrow(), true)
+            .await
+            .unwrap();
 
         assert!(created.is_none());
         assert!(!profile.join("templates/welcome/index.html").exists());
@@ -441,14 +365,9 @@ mod tests {
         )
         .unwrap();
 
-        let error = maybe_create_welcome_service_with_probe(
-            &home,
-            name.borrow(),
-            HomeScope::Global,
-            || Ok(true),
-        )
-        .await
-        .expect_err("index.html directory should make file creation fail");
+        let error = maybe_create_welcome_service(&home, name.borrow(), true)
+            .await
+            .expect_err("index.html directory should make file creation fail");
 
         let rendered = error.to_string();
         assert!(rendered.contains("welcome service"), "{rendered}");
