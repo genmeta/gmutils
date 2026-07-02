@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0-beta.1] - 2026-07-02
+
+### Changed
+
+- Prepared the CLI workspace for the DHTTP beta dependency line.
+
+### Dependencies
+
+- Release manifests now target `h3x` v0.6.0-beta.1, `dhttp`
+  v0.5.0-beta.1, `dhttp-access` v0.3.0, `dshell` v0.6.0-beta.1,
+  `dyns` v0.6.0-beta.1, and `rankey` v0.2.1.
+
+### Components
+
+- `genmeta` v0.8.0-beta.1
+- `genmeta-curl` v0.7.0-beta.1
+- `genmeta-ssh` v0.7.0-beta.1
+- `genmeta-access` v0.4.0-beta.1
+- `genmeta-identity` v0.4.0-beta.1
+- `genmeta-proxy` v0.4.0-beta.1
+- `genmeta-discover` v0.4.0-beta.1
+- `genmeta-doctor` v0.4.0-beta.1
+- `genmeta-nat` v0.5.0-beta.1
+- `genmeta-nslookup` v0.5.0-beta.1
+
 ## [0.7.0] - 2026-06-26
 
 ### Added
