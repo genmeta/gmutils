@@ -2,12 +2,15 @@
 name = "xtask"
 description = "release packaging tasks for gmutils"
 version = "0.0.0"
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
-homepage.workspace = true
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/genmeta/gmutils"
+homepage = "https://www.dhttp.net"
 publish = false
 
+[workspace]
+resolver = "3"
+
 [dependencies]
-genmeta-xtask-release = { git = "https://github.com/genmeta/genmeta-xtask-release.git", tag = "v0.1.0", version = "0.1.0" }
+genmeta-xtask-release = { git = "https://github.com/genmeta/genmeta-xtask-release.git", tag = "v0.2.0-beta.1", version = "0.2.0-beta.1" }
 snafu = "0.9"

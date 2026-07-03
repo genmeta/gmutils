@@ -12,8 +12,8 @@ members = [
     "genmeta-doctor",
     "genmeta-identity",
     "genmeta-proxy",
-    "xtask",
 ]
+exclude = ["xtask"]
 
 [workspace.package]
 edition = "2024"

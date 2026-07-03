@@ -2,7 +2,7 @@
 DHTTP_ROOT_CA = { value = "keychain/root.crt", relative = true }
 
 [alias]
-xtask = "run --package xtask --"
+xtask = "run --manifest-path xtask/Cargo.toml --"
 
 [target.x86_64-unknown-linux-gnu]
 strip = { path = "llvm-strip" }
