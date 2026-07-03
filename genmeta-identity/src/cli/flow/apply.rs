@@ -1118,7 +1118,7 @@ async fn run_interactive_with_policy(
                         let welcome = super::welcome::maybe_create_welcome_service(
                             dhttp_home,
                             domain.borrow(),
-                            home_scope,
+                            true,
                         )
                         .await?;
                         run_post_save_epilogue(
