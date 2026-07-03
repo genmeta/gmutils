@@ -1841,7 +1841,7 @@ dependencies = [
 [[package]]
 name = "genmeta-xtask-release"
 version = "0.1.0"
-source = "git+https://github.com/genmeta/genmeta-xtask-release.git#67b525b6153c8eb55335a664298eb2127a0de911"
+source = "git+https://github.com/genmeta/genmeta-xtask-release.git?tag=v0.1.0#67b525b6153c8eb55335a664298eb2127a0de911"
 dependencies = [
  "cargo_metadata",
  "clap",
