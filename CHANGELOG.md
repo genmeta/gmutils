@@ -12,12 +12,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Prepared the CLI workspace for the DHTTP beta dependency line.
+- Release packaging now resolves package destinations by stable/preview
+  channel and pins the shared `genmeta-xtask-release` tooling to the
+  reproducible `v0.1.0` git tag.
+
+### Fixed
+
+- Identity apply/create flows recover from owner-email mismatches and missing
+  target identities during apply, then create the welcome service files for
+  newly saved local identities.
+- Certificate server quota/error parsing accepts the current V2 response
+  shapes used by sub-identity registration.
 
 ### Dependencies
 
 - Release manifests now target `h3x` v0.6.0-beta.1, `dhttp`
   v0.5.0-beta.1, `dhttp-access` v0.3.0, `dshell` v0.6.0-beta.1,
   `dyns` v0.6.0-beta.1, and `rankey` v0.2.1.
+- Release tooling uses `genmeta-xtask-release` v0.1.0 from the public
+  `v0.1.0` git tag.
 
 ### Components
 
