@@ -310,6 +310,44 @@ fn is_domain_not_found(error: &crate::cert_server::Error) -> bool {
     error.is_api_code("domain_not_found")
 }
 
+fn classify_apply_email_issue_error(
+    target: &IdentityTarget,
+    error: &crate::cert_server::Error,
+) -> Option<crate::cli::flow::recovery::VerificationRecovery> {
+    match error {
+        crate::cert_server::Error::Api {
+            status,
+            code,
+            message,
+        } if *status == reqwest::StatusCode::FORBIDDEN && code == "domain_forbidden" => Some(
+            crate::cli::flow::recovery::VerificationRecovery::BackToEmail {
+                message: format!(
+                    "{message}. To continue, enter the owner email for {} again or choose another option.",
+                    target.short_name()
+                ),
+            },
+        ),
+        _ => None,
+    }
+}
+
+fn rewrite_apply_email_issue_error(
+    target: &IdentityTarget,
+    error: crate::cert_server::Error,
+) -> Error {
+    if error.is_api_code("domain_forbidden") {
+        Error::with_source(
+            Box::new(error),
+            format!(
+                "applying {} requires the owner email for this identity; rerun with --email <owner-email> or use --auth identity with a local identity that can authorize it",
+                target.short_name(),
+            ),
+        )
+    } else {
+        Error::from(error)
+    }
+}
+
 fn is_subdomain_quota_exceeded(error: &crate::cert_server::Error) -> bool {
     super::create::is_subdomain_quota_exceeded(error)
 }
@@ -1094,7 +1132,15 @@ async fn run_interactive_with_policy(
                         .await?;
                         return Ok(ApplyRunOutcome::Applied);
                     }
-                    Err(error) => return Err(Error::from(error)),
+                    Err(error) => {
+                        if let Some(recovery) = classify_apply_email_issue_error(&target, &error) {
+                            state.verify_code = None;
+                            if apply_verification_recovery(&mut state, &recovery) {
+                                continue;
+                            }
+                        }
+                        return Err(Error::from(error));
+                    }
                 }
             }
             ApplyApprovalPlan::DirectIdentity { auth_domain } => {
@@ -1285,7 +1331,7 @@ pub(crate) async fn run_with_policy(
                         target.short_name()
                     );
                 }
-                Err(error) => return Err(Error::from(error)),
+                Err(error) => return Err(rewrite_apply_email_issue_error(&target, error)),
             }
         }
         ApplyApprovalPlan::DirectIdentity { auth_domain } => {
@@ -1364,9 +1410,10 @@ mod tests {
         ApplyApprovalMenuAction, ApplyApprovalPlan, ApplyEmailAction, ApplyVerifyCodeAction,
         InteractiveApplyState, apply_approval_menu_actions, apply_email_actions,
         apply_identity_name_opening, apply_verification_options, apply_verify_code_actions,
-        approval_plan_from_selection, build_apply_approval_options, explicit_target_from_command,
+        approval_plan_from_selection, build_apply_approval_options,
+        classify_apply_email_issue_error, explicit_target_from_command,
         register_during_apply_message, resolve_non_interactive_approval_plan,
-        rewrite_apply_registration_error,
+        rewrite_apply_email_issue_error, rewrite_apply_registration_error,
     };
     use crate::{
         auth::AuthMethod,
@@ -1434,6 +1481,39 @@ mod tests {
 
         assert!(state.email_prompt_required);
         assert!(state.verify_code.is_none());
+    }
+
+    #[test]
+    fn apply_email_issue_domain_forbidden_reopens_owner_email_prompt() {
+        let error = crate::cert_server::Error::Api {
+            status: reqwest::StatusCode::FORBIDDEN,
+            code: "domain_forbidden".to_string(),
+            message: "domain access is forbidden".to_string(),
+        };
+        let target = IdentityTarget::parse("alice.smith").unwrap();
+
+        assert_eq!(
+            classify_apply_email_issue_error(&target, &error),
+            Some(crate::cli::flow::recovery::VerificationRecovery::BackToEmail {
+                message: "domain access is forbidden. To continue, enter the owner email for alice.smith again or choose another option.".to_string(),
+            }),
+        );
+    }
+
+    #[test]
+    fn non_interactive_apply_email_domain_forbidden_mentions_owner_email() {
+        let error = crate::cert_server::Error::Api {
+            status: reqwest::StatusCode::FORBIDDEN,
+            code: "domain_forbidden".to_string(),
+            message: "domain access is forbidden".to_string(),
+        };
+        let target = IdentityTarget::parse("alice.smith").unwrap();
+
+        let rendered = rewrite_apply_email_issue_error(&target, error).to_string();
+
+        assert!(rendered.contains("alice.smith"), "{rendered}");
+        assert!(rendered.contains("owner email"), "{rendered}");
+        assert!(rendered.contains("--auth identity"), "{rendered}");
     }
 
     #[test]
