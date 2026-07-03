@@ -131,7 +131,7 @@ export RUSTFLAGS="${RUSTFLAGS:-}"
 write_aarch64_zig_workaround
 
 cd "$product_source"
-cargo zigbuild $profile_args --manifest-path genmeta/Cargo.toml --target "$target.2.28" --bin genmeta
+cargo zigbuild $profile_args --manifest-path genmeta/Cargo.toml --target "$target" --bin genmeta
 
 release_dir="$product_source/target/$target/$profile"
 topdir="${XTASK_RELEASE_OUT_DIR:?}/rpmbuild"
