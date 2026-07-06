@@ -3,7 +3,7 @@ use std::{path::PathBuf, pin::pin};
 use async_compression::tokio::bufread::{DeflateDecoder, GzipDecoder, ZstdDecoder};
 use dhttp::h3x::dhttp::message::MessageReader;
 use snafu::ResultExt;
-use tokio::io::{self, AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
     cli::Options,
@@ -13,6 +13,8 @@ use crate::{
     verbose::{CurlVerbose, LineWriter},
     write_out::{WriteOutContext, expand_write_out},
 };
+
+const DOWNLOAD_BUFFER_SIZE: usize = 16 * 1024;
 
 pub(crate) struct ResponseContext<'a, W> {
     pub(crate) options: &'a Options,
@@ -26,48 +28,83 @@ pub(crate) struct ResponseContext<'a, W> {
     pub(crate) progress_mode: ProgressMode,
 }
 
-async fn copy_all<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+async fn copy_decoded<R, O, W>(
     reader: &mut R,
-    writer: &mut W,
-) -> io::Result<u64> {
-    io::copy(reader, writer).await
+    writer: &mut O,
+    verbose: &CurlVerbose<W>,
+    progress: Option<&progress::TransferProgress>,
+) -> Result<u64, Error>
+where
+    R: AsyncRead + Unpin,
+    O: AsyncWrite + Unpin,
+    W: LineWriter,
+{
+    let mut buf = [0_u8; DOWNLOAD_BUFFER_SIZE];
+    let mut total = 0_u64;
+    let mut emitted_marker = false;
+
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .await
+            .context(error::ReadResponseSnafu)?;
+        if n == 0 {
+            break;
+        }
+        if !emitted_marker {
+            verbose
+                .download_chunk(n)
+                .context(error::WriteVerboseSnafu)?;
+            emitted_marker = true;
+        }
+        writer
+            .write_all(&buf[..n])
+            .await
+            .context(error::ReadResponseSnafu)?;
+        if let Some(pb) = progress {
+            pb.inc(n as u64);
+        }
+        total += n as u64;
+    }
+
+    Ok(total)
 }
 
-async fn decompress_copy<R, W>(
+async fn decompress_copy<R, O, W>(
     reader: R,
-    writer: &mut W,
+    writer: &mut O,
     content_encoding: &str,
+    verbose: &CurlVerbose<W>,
+    progress_mode: ProgressMode,
 ) -> Result<u64, Error>
 where
     R: tokio::io::AsyncBufRead + Unpin,
-    W: AsyncWrite + Unpin,
+    O: AsyncWrite + Unpin,
+    W: LineWriter,
 {
-    match content_encoding {
+    let progress = progress::progress_bar(progress_mode, None, "Downloading");
+    let result = match content_encoding {
         "gzip" | "x-gzip" => {
             let mut dec = GzipDecoder::new(reader);
-            copy_all(&mut dec, writer)
-                .await
-                .context(error::ReadResponseSnafu)
+            copy_decoded(&mut dec, writer, verbose, progress.as_ref()).await
         }
         "deflate" => {
             let mut dec = DeflateDecoder::new(reader);
-            copy_all(&mut dec, writer)
-                .await
-                .context(error::ReadResponseSnafu)
+            copy_decoded(&mut dec, writer, verbose, progress.as_ref()).await
         }
         "zstd" => {
             let mut dec = ZstdDecoder::new(reader);
-            copy_all(&mut dec, writer)
-                .await
-                .context(error::ReadResponseSnafu)
+            copy_decoded(&mut dec, writer, verbose, progress.as_ref()).await
         }
         _ => {
             let mut r = reader;
-            copy_all(&mut r, writer)
-                .await
-                .context(error::ReadResponseSnafu)
+            copy_decoded(&mut r, writer, verbose, progress.as_ref()).await
         }
+    };
+    if let Some(pb) = progress {
+        pb.finish();
     }
+    result
 }
 
 async fn copy_response_data<W, O>(
@@ -135,7 +172,14 @@ where
 
         let n = if decompress {
             let body_reader = pin!(response_stream.as_reader());
-            decompress_copy(body_reader, &mut file, content_encoding).await?
+            decompress_copy(
+                body_reader,
+                &mut file,
+                content_encoding,
+                ctx.verbose,
+                ctx.progress_mode,
+            )
+            .await?
         } else {
             copy_response_data(
                 &mut response_stream,
@@ -154,7 +198,14 @@ where
 
         let n = if decompress {
             let body_reader = pin!(response_stream.as_reader());
-            decompress_copy(body_reader, &mut stdout, content_encoding).await?
+            decompress_copy(
+                body_reader,
+                &mut stdout,
+                content_encoding,
+                ctx.verbose,
+                ctx.progress_mode,
+            )
+            .await?
         } else {
             copy_response_data(
                 &mut response_stream,
@@ -221,4 +272,52 @@ where
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io::Cursor,
+        sync::{Arc, Mutex},
+    };
+
+    use tokio::io::BufReader;
+
+    use super::decompress_copy;
+    use crate::{
+        progress::ProgressMode,
+        verbose::{CurlVerbose, LineWriter},
+    };
+
+    #[derive(Clone, Default)]
+    struct Capture(Arc<Mutex<Vec<String>>>);
+
+    impl LineWriter for Capture {
+        fn write_line(&self, line: &str) -> std::io::Result<()> {
+            self.0.lock().unwrap().push(line.to_string());
+            Ok(())
+        }
+    }
+
+    impl Capture {
+        fn lines(&self) -> Vec<String> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn decompressed_response_emits_verbose_data_marker() {
+        let writer = Capture::default();
+        let verbose = CurlVerbose::enabled(writer.clone());
+        let reader = BufReader::new(Cursor::new(b"hello".to_vec()));
+        let mut output = Vec::new();
+
+        let n = decompress_copy(reader, &mut output, "", &verbose, ProgressMode::Disabled)
+            .await
+            .unwrap();
+
+        assert_eq!(n, 5);
+        assert_eq!(output, b"hello");
+        assert_eq!(writer.lines(), vec!["{ [5 bytes data]"]);
+    }
 }
