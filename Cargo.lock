@@ -1638,6 +1638,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-appender",
+ "tracing-indicatif",
  "tracing-subscriber",
  "url",
 ]

@@ -13,6 +13,7 @@ mod error;
 mod redirect;
 mod request;
 mod timing;
+mod verbose;
 mod write_out;
 
 pub use cli::Options;
