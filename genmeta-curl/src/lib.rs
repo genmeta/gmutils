@@ -9,25 +9,23 @@ use dhttp::{
     home::{DhttpHome, identity::IdentityProfile},
     message::IntoUri,
 };
-use http::{Method, Request, StatusCode, Uri, header::USER_AGENT};
+use http::{Method, StatusCode, Uri};
 use snafu::{IntoError, ResultExt, ensure};
-use tokio::{
-    fs,
-    io::{self, AsyncRead, AsyncWrite, AsyncWriteExt},
-};
+use tokio::{fs, io::{self, AsyncRead, AsyncWrite, AsyncWriteExt}};
 use tracing_subscriber::prelude::*;
 
 mod cli;
 mod error;
+mod request;
 mod timing;
 mod write_out;
 
 pub use cli::Options;
 pub use curl_error::Error;
 
-use cli::ACCEPT_ENCODING;
 use error as curl_error;
 use timing::Timing;
+use request::RequestPlan;
 use write_out::{WriteOutContext, expand_write_out};
 
 /// Copy `reader` into `writer`, returning the number of bytes written.
@@ -220,88 +218,6 @@ fn connect_timeout_from_secs(seconds: u64) -> Duration {
     } else {
         Duration::from_secs(seconds)
     }
-}
-
-/// Build the HTTP request builder with method, headers, and user-agent.
-fn build_request_builder(uri: &Uri, method: &Method, options: &Options) -> http::request::Builder {
-    let user_agent = format!("genmeta-curl/{}", env!("CARGO_PKG_VERSION"));
-    let mut builder = Request::builder()
-        .uri(uri.clone())
-        .version(http::Version::HTTP_3)
-        .header(USER_AGENT, user_agent)
-        .header("Accept", "*/*");
-
-    if options.compressed && !options.raw {
-        builder = builder.header("Accept-Encoding", ACCEPT_ENCODING);
-    }
-
-    builder = builder.method(method);
-
-    for (k, v) in options.header.iter() {
-        builder = builder.header(k, v);
-    }
-
-    builder
-}
-
-/// Send the request body (data, file upload, or empty) and close the stream.
-async fn send_request_body(
-    request_builder: http::request::Builder,
-    request_stream: &mut MessageWriter,
-    options: &Options,
-    current_method: &Method,
-    redirect_count: u32,
-) -> Result<(), Error> {
-    // After a redirect to GET/HEAD, skip sending a body
-    let skip_body = redirect_count > 0 && matches!(current_method, &Method::GET | &Method::HEAD);
-
-    if skip_body || options.data.is_none() && options.upload_file.is_none() {
-        let request = request_builder
-            .body(String::new())
-            .context(curl_error::BuildRequestSnafu)?;
-        request_stream
-            .send_hyper_request(request)
-            .await
-            .context(curl_error::SendRequestSnafu)?;
-    } else if let Some(ref data) = options.data {
-        let request = request_builder
-            .body(data.clone())
-            .context(curl_error::BuildRequestSnafu)?;
-        request_stream
-            .send_hyper_request(request)
-            .await
-            .context(curl_error::SendRequestSnafu)?;
-    } else if let Some(ref path) = options.upload_file {
-        // File upload only on first attempt (stream cannot be re-read)
-        if redirect_count == 0 {
-            let mut stream_writer = pin!(request_stream.as_writer());
-            let mut file = fs::File::open(path)
-                .await
-                .context(curl_error::OpenUploadFileSnafu { path: path.clone() })?;
-            io::copy(&mut file, &mut stream_writer)
-                .await
-                .context(curl_error::UploadFileSnafu { path: path.clone() })?;
-            stream_writer
-                .flush()
-                .await
-                .context(curl_error::UploadFileSnafu { path: path.clone() })?;
-            tracing::warn!(path = %path.display(), redirect_count, "skipping file upload body on redirect");
-        } else {
-            let request = request_builder
-                .body(String::new())
-                .context(curl_error::BuildRequestSnafu)?;
-            request_stream
-                .send_hyper_request(request)
-                .await
-                .context(curl_error::SendRequestSnafu)?;
-        }
-    }
-
-    request_stream
-        .close()
-        .await
-        .context(curl_error::CloseRequestStreamSnafu)?;
-    Ok(())
 }
 
 /// Check whether a response is a redirect and resolve the new target.
@@ -527,32 +443,16 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     let _guard = init_tracing(&options);
     let (client, _id, connect_timeout) = setup_client(&mut options).await?;
 
-    // Determine effective method (may change across redirects).
-    let initial_method = options.request.clone().unwrap_or_else(|| match &options {
-        o if o.data.is_some() => Method::POST,
-        o if o.upload_file.is_some() => Method::PUT,
-        _ => Method::GET,
-    });
-
-    let mut current_uri = options.uri.clone();
-    let mut current_method = initial_method;
+    let mut plan = RequestPlan::initial(&options);
     let mut redirect_count: u32 = 0;
 
     loop {
         let mut timing = Timing::new();
 
         let (mut response_stream, mut request_stream) =
-            connect_and_open_streams(&client, &current_uri, connect_timeout, &mut timing).await?;
+            connect_and_open_streams(&client, &plan.uri, connect_timeout, &mut timing).await?;
 
-        let request_builder = build_request_builder(&current_uri, &current_method, &options);
-        send_request_body(
-            request_builder,
-            &mut request_stream,
-            &options,
-            &current_method,
-            redirect_count,
-        )
-        .await?;
+        let _bytes_uploaded = request::send_request_body(&plan, &mut request_stream).await?;
 
         let response =
             receive_response_head(&mut response_stream, &mut timing, options.verbose).await?;
@@ -565,14 +465,15 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             &options,
             status,
             &response.headers,
-            &current_uri,
-            &current_method,
+            &plan.uri,
+            &plan.method,
             redirect_count,
             &mut response_stream,
         )
         .await?
         {
-            (current_uri, current_method) = (new_uri, new_method);
+            plan.uri = new_uri;
+            plan.method = new_method;
             redirect_count += 1;
             continue;
         }
@@ -583,8 +484,8 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             &options,
             status,
             http_version,
-            &current_uri,
-            &current_method,
+            &plan.uri,
+            &plan.method,
             &timing,
         )
         .await?;
