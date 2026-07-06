@@ -1,3 +1,7 @@
+use std::io::IsTerminal;
+
+use qrcode::{QrCode, types::QrError};
+
 use crate::{cert_server::CreateDomainResponse, cli::flow::transcript};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +38,13 @@ pub fn classify_checkout(response: &CreateDomainResponse) -> CheckoutState {
 }
 
 pub fn print_payment_instructions(response: &CreateDomainResponse) {
+    transcript::print_err_block(&payment_instruction_block(
+        response,
+        std::io::stderr().is_terminal(),
+    ));
+}
+
+fn payment_instruction_block(response: &CreateDomainResponse, include_qr: bool) -> String {
     let mut lines = vec![
         format!("payment required for {}", response.domain),
         format!("currency: {}", response.quotes.currency),
@@ -52,11 +63,33 @@ pub fn print_payment_instructions(response: &CreateDomainResponse) {
         ));
     }
     if let Some(payment_entry) = &response.payment_entry {
-        lines.push(format!("payment url: {}", payment_entry.url));
         lines.push(format!("checkout token: {}", payment_entry.checkout_token));
         lines.push(format!("checkout expires at: {}", payment_entry.expires_at));
+        return checkout_instruction_block(&lines.join("\n"), &payment_entry.url, include_qr);
     }
-    transcript::print_block(&lines.join("\n"));
+    lines.join("\n")
+}
+
+fn render_terminal_qr(url: &str) -> Result<String, QrError> {
+    let code = QrCode::new(url.as_bytes())?;
+    Ok(code
+        .render()
+        .dark_color("\u{1b}[40m  \u{1b}[0m")
+        .light_color("\u{1b}[47m  \u{1b}[0m")
+        .build())
+}
+
+pub(crate) fn checkout_instruction_block(summary: &str, url: &str, include_qr: bool) -> String {
+    let mut block = summary.to_string();
+
+    if include_qr && let Ok(qr) = render_terminal_qr(url) {
+        block.push_str("\n\nScan this QR code to pay:\n");
+        block.push_str(&qr);
+    }
+
+    block.push_str("\n\nCheckout URL:\n  ");
+    block.push_str(url);
+    block
 }
 
 pub async fn wait_for_checkout_completion(
@@ -100,5 +133,51 @@ mod tests {
         )
         .unwrap();
         assert_eq!(classify_checkout(&response), CheckoutState::Expired);
+    }
+
+    #[test]
+    fn checkout_block_includes_terminal_qr_when_stderr_is_terminal() {
+        let block = checkout_instruction_block(
+            "Payment is required to create alice.smith.",
+            "https://pay.example.test/checkout/ckt_123",
+            true,
+        );
+
+        assert!(block.contains("Payment is required to create alice.smith."));
+        assert!(block.contains("Scan this QR code to pay:"));
+        assert!(block.contains("\u{1b}[47m"), "{block:?}");
+        assert!(block.contains("Checkout URL:\n  https://pay.example.test/checkout/ckt_123"));
+    }
+
+    #[test]
+    fn checkout_block_omits_terminal_qr_when_stderr_is_not_terminal() {
+        let block = checkout_instruction_block(
+            "Payment is required to create alice.smith.",
+            "https://pay.example.test/checkout/ckt_123",
+            false,
+        );
+
+        assert!(block.contains("Payment is required to create alice.smith."));
+        assert!(!block.contains("Scan this QR code to pay:"));
+        assert!(!block.contains("\u{1b}[47m"));
+        assert_eq!(
+            block,
+            "Payment is required to create alice.smith.\n\nCheckout URL:\n  https://pay.example.test/checkout/ckt_123"
+        );
+    }
+
+    #[test]
+    fn payment_instruction_block_adds_qr_to_payment_entry() {
+        let response: CreateDomainResponse = serde_json::from_str(
+            r#"{"domain":"alice.smith.dhttp.net","quotes":{"currency":"USD","monthly":9900,"yearly":99000,"default_billing_cycle":"yearly"},"next_action":"payment","payment_entry":{"url":"https://pay.example.com","checkout_token":"tok_123","expires_at":123456}}"#,
+        )
+        .unwrap();
+
+        let block = payment_instruction_block(&response, true);
+
+        assert!(block.contains("payment required for alice.smith.dhttp.net"));
+        assert!(block.contains("currency: USD"));
+        assert!(block.contains("Scan this QR code to pay:"));
+        assert!(block.contains("Checkout URL:\n  https://pay.example.com"));
     }
 }

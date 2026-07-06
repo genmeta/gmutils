@@ -521,13 +521,29 @@ pub(crate) fn print_root_checkout_instructions(
     target: &IdentityTarget,
     response: &CreateDomainResponse,
 ) {
-    if let Some(payment_entry) = response.payment_entry.as_ref() {
-        crate::cli::flow::transcript::print_block(&format!(
-            "Payment is required to create {}.\n\nOpen this checkout page to continue:\n  {}",
-            target.short_name(),
-            payment_entry.url
-        ));
+    if let Some(block) =
+        root_checkout_instruction_block(target, response, std::io::stderr().is_terminal())
+    {
+        crate::cli::flow::transcript::print_err_block(&block);
     }
+}
+
+fn root_checkout_summary(target: &IdentityTarget) -> String {
+    format!("Payment is required to create {}.", target.short_name())
+}
+
+fn root_checkout_instruction_block(
+    target: &IdentityTarget,
+    response: &CreateDomainResponse,
+    include_qr: bool,
+) -> Option<String> {
+    response.payment_entry.as_ref().map(|payment_entry| {
+        crate::checkout::checkout_instruction_block(
+            &root_checkout_summary(target),
+            &payment_entry.url,
+            include_qr,
+        )
+    })
 }
 
 fn print_subdomain_checkout_instructions(
@@ -535,13 +551,34 @@ fn print_subdomain_checkout_instructions(
     invoice: &InvoiceDetail,
     quote: &SubdomainQuotaQuote,
 ) {
-    crate::cli::flow::transcript::print_block(&format!(
-        "Creating {} exceeded the sub-identity quota.\n\nAmount due now to expand and continue: {} {}\nOpen this checkout page to continue:\n  {}",
+    crate::cli::flow::transcript::print_err_block(&subdomain_checkout_instruction_block(
+        target,
+        invoice,
+        quote,
+        std::io::stderr().is_terminal(),
+    ));
+}
+
+fn subdomain_checkout_summary(target: &IdentityTarget, quote: &SubdomainQuotaQuote) -> String {
+    format!(
+        "Creating {} exceeded the sub-identity quota.\n\nAmount due now to expand and continue: {} {}",
         target.short_name(),
         quote.currency,
         format_minor_amount(quote.due),
-        invoice.url
-    ));
+    )
+}
+
+fn subdomain_checkout_instruction_block(
+    target: &IdentityTarget,
+    invoice: &InvoiceDetail,
+    quote: &SubdomainQuotaQuote,
+    include_qr: bool,
+) -> String {
+    crate::checkout::checkout_instruction_block(
+        &subdomain_checkout_summary(target, quote),
+        &invoice.url,
+        include_qr,
+    )
 }
 
 fn format_minor_amount(amount: i64) -> String {
@@ -1678,7 +1715,7 @@ pub(crate) async fn run_with_policy(
                 if !is_interactive {
                     ensure_non_interactive_root_checkout_not_required(&target, &created)?;
                 }
-                crate::checkout::print_payment_instructions(&created);
+                print_root_checkout_instructions(&target, &created);
                 let completed = crate::checkout::wait_for_checkout_completion(
                     cert_server,
                     &payment_entry.checkout_token,
@@ -1850,11 +1887,14 @@ mod tests {
         build_create_approval_options, create_email_actions, create_verify_code_actions,
         ensure_non_interactive_root_checkout_not_required,
         ensure_non_interactive_sub_identity_checkout_not_required,
-        resolve_non_interactive_approval_plan,
+        resolve_non_interactive_approval_plan, root_checkout_instruction_block,
+        subdomain_checkout_instruction_block,
     };
     use crate::{
         auth::AuthMethod,
-        cert_server::{CreateDomainResponse, CreateSubdomainResponse},
+        cert_server::{
+            CreateDomainResponse, CreateSubdomainResponse, InvoiceDetail, SubdomainQuotaQuote,
+        },
         cli::{
             Create,
             flow::{
@@ -2039,6 +2079,22 @@ mod tests {
     }
 
     #[test]
+    fn root_checkout_instruction_block_includes_terminal_qr_and_checkout_url() {
+        let target = IdentityTarget::parse("alice.smith").unwrap();
+        let response: CreateDomainResponse = serde_json::from_str(
+            r#"{"domain":"alice.smith.dhttp.net","quotes":{"currency":"USD","monthly":9900,"yearly":99000,"default_billing_cycle":"yearly"},"next_action":"payment","payment_entry":{"url":"https://pay.example.com","checkout_token":"tok_123","expires_at":123456}}"#,
+        )
+        .unwrap();
+
+        let block = root_checkout_instruction_block(&target, &response, true).unwrap();
+
+        assert!(block.contains("Payment is required to create alice.smith."));
+        assert!(!block.contains("Open this checkout page"));
+        assert!(block.contains("Scan this QR code to pay:"));
+        assert!(block.contains("Checkout URL:\n  https://pay.example.com"));
+    }
+
+    #[test]
     fn direct_sub_identity_create_does_not_require_interactive_checkout() {
         let target = IdentityTarget::parse("phone.alice.smith").unwrap();
         let response: CreateSubdomainResponse = serde_json::from_str(
@@ -2066,6 +2122,37 @@ mod tests {
         );
         assert!(rendered.contains("interactive checkout"), "{rendered}");
         assert!(rendered.contains("phone.alice.smith"), "{rendered}");
+    }
+
+    #[test]
+    fn subdomain_checkout_instruction_block_includes_amount_qr_and_checkout_url() {
+        let target = IdentityTarget::parse("phone.alice.smith").unwrap();
+        let invoice = InvoiceDetail {
+            invoice_no: "INV-123".to_string(),
+            domain: "phone.alice.smith.dhttp.net".to_string(),
+            status: "open".to_string(),
+            amount: 500,
+            currency: "USD".to_string(),
+            url: "https://pay.example.com/invoice/INV-123".to_string(),
+            expires_at: None,
+            updated_at: None,
+        };
+        let quote = SubdomainQuotaQuote {
+            domain: "phone.alice.smith.dhttp.net".to_string(),
+            due: 500,
+            currency: "USD".to_string(),
+            days_left: 10,
+            days_total: 365,
+            renewal: 500,
+        };
+
+        let block = subdomain_checkout_instruction_block(&target, &invoice, &quote, true);
+
+        assert!(block.contains("Creating phone.alice.smith exceeded the sub-identity quota."));
+        assert!(block.contains("Amount due now to expand and continue: USD 5.00"));
+        assert!(!block.contains("Open this checkout page"));
+        assert!(block.contains("Scan this QR code to pay:"));
+        assert!(block.contains("Checkout URL:\n  https://pay.example.com/invoice/INV-123"));
     }
 
     #[test]

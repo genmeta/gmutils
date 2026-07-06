@@ -24,6 +24,7 @@ dhttp = { workspace = true }
 rankey = { workspace = true }
 p384 = { workspace = true }
 pkcs8 = { workspace = true }
+qrcode = { workspace = true }
 reqwest = { workspace = true }
 rustls = { workspace = true }
 snafu = { workspace = true }
