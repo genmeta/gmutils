@@ -1,11 +1,14 @@
-use std::{path::PathBuf, pin::pin};
+use std::{
+    path::{Path, PathBuf},
+    pin::pin,
+};
 
 use dhttp::h3x::dhttp::message::MessageWriter;
 use http::{HeaderName, HeaderValue, Method, Request, Uri, header::USER_AGENT};
 use snafu::ResultExt;
 use tokio::{
     fs,
-    io::{self, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
 };
 
 use crate::{
@@ -14,6 +17,8 @@ use crate::{
     progress::{self, ProgressMode},
     verbose::{CurlVerbose, LineWriter},
 };
+
+const UPLOAD_BUFFER_SIZE: usize = 16 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RequestBody {
@@ -178,17 +183,28 @@ pub(crate) async fn send_request_body<W: LineWriter>(
         RequestBody::UploadFile(path) => {
             let len = fs::metadata(path).await.ok().map(|metadata| metadata.len());
             let progress = progress::progress_bar(progress_mode, len, "Uploading");
+            let mut file = fs::File::open(path)
+                .await
+                .context(error::OpenUploadFileSnafu { path: path.clone() })?;
+            let request = plan
+                .request_builder()
+                .body(())
+                .context(error::BuildRequestSnafu)?;
+            let (parts, ()) = request.into_parts();
+            request_stream
+                .send_hyper_request_parts(parts)
+                .await
+                .context(error::SendRequestSnafu)?;
             let n = {
                 let mut stream_writer = pin!(request_stream.as_writer());
-                let mut file = fs::File::open(path)
-                    .await
-                    .context(error::OpenUploadFileSnafu { path: path.clone() })?;
-                let n = io::copy(&mut file, &mut stream_writer)
-                    .await
-                    .context(error::UploadFileSnafu { path: path.clone() })?;
-                if let Some(pb) = progress.as_ref() {
-                    pb.inc(n);
-                }
+                let n = copy_upload_file(
+                    &mut file,
+                    &mut stream_writer,
+                    path,
+                    verbose,
+                    progress.as_ref(),
+                )
+                .await?;
                 stream_writer
                     .flush()
                     .await
@@ -198,9 +214,6 @@ pub(crate) async fn send_request_body<W: LineWriter>(
             if let Some(pb) = progress {
                 pb.finish();
             }
-            verbose
-                .upload_data_marker(n)
-                .context(error::WriteVerboseSnafu)?;
             request_stream
                 .close()
                 .await
@@ -211,6 +224,49 @@ pub(crate) async fn send_request_body<W: LineWriter>(
             Ok(n)
         }
     }
+}
+
+async fn copy_upload_file<W, O>(
+    file: &mut fs::File,
+    writer: &mut O,
+    path: &Path,
+    verbose: &CurlVerbose<W>,
+    progress: Option<&progress::TransferProgress>,
+) -> Result<u64, Error>
+where
+    W: LineWriter,
+    O: AsyncWrite + Unpin,
+{
+    let mut buf = [0_u8; UPLOAD_BUFFER_SIZE];
+    let mut total = 0_u64;
+    let mut emitted_marker = false;
+
+    loop {
+        let n = file.read(&mut buf).await.context(error::UploadFileSnafu {
+            path: path.to_path_buf(),
+        })?;
+        if n == 0 {
+            break;
+        }
+        if !emitted_marker {
+            verbose
+                .upload_data_marker(n as u64)
+                .context(error::WriteVerboseSnafu)?;
+            emitted_marker = true;
+        }
+        writer
+            .write_all(&buf[..n])
+            .await
+            .context(error::UploadFileSnafu {
+                path: path.to_path_buf(),
+            })?;
+        if let Some(pb) = progress {
+            pb.inc(n as u64);
+        }
+        total += n as u64;
+    }
+
+    Ok(total)
 }
 
 #[cfg(test)]
