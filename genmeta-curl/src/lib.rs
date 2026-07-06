@@ -1,356 +1,34 @@
-use std::{
-    convert::Infallible,
-    io::IsTerminal,
-    path::PathBuf,
-    pin::pin,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{io::IsTerminal, path::PathBuf, pin::pin, sync::Arc, time::Duration};
 
 use async_compression::tokio::bufread::{DeflateDecoder, GzipDecoder, ZstdDecoder};
-use clap::Parser;
 use dhttp::{
-    ddns::resolvers::DnsScheme,
-    dquic::binds::BindPattern,
     endpoint::Endpoint,
     h3x::{
-        dhttp::message::{
-            InitialMessageStreamError, MessageReader, MessageStreamError, MessageWriter,
-        },
-        hyper::SendMessageError,
+        dhttp::message::{MessageReader, MessageWriter},
     },
-    home::{self, DhttpHome, identity::IdentityProfile},
+    home::{DhttpHome, identity::IdentityProfile},
     message::IntoUri,
-    name::DhttpName as Name,
 };
 use http::{Method, Request, StatusCode, Uri, header::USER_AGENT};
-use snafu::{IntoError, OptionExt, ResultExt, Snafu, ensure};
+use snafu::{IntoError, ResultExt, ensure};
 use tokio::{
     fs,
     io::{self, AsyncRead, AsyncWrite, AsyncWriteExt},
 };
 use tracing_subscriber::prelude::*;
 
-/// Maximum number of redirects to follow (same default as curl since 8.3.0)
-const MAX_REDIRS_DEFAULT: u32 = 30;
-const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 5;
+mod cli;
+mod error;
+mod timing;
+mod write_out;
 
-/// Supported content encodings for --compressed
-const ACCEPT_ENCODING: &str = "deflate, gzip, zstd";
+pub use cli::Options;
+pub use curl_error::Error;
 
-#[derive(Parser, Debug, Clone)]
-#[command(version, about)]
-pub struct Options {
-    /// URL to request
-    uri: Uri,
-
-    /// Specify request method to use
-    #[arg(short = 'X', long)]
-    request: Option<Method>,
-
-    /// Send data in a POST request
-    #[arg(short, long, conflicts_with("upload_file"))]
-    data: Option<String>,
-
-    /// Transfer local file to destination
-    #[arg(short = 'T', long, conflicts_with("data"))]
-    upload_file: Option<PathBuf>,
-
-    /// Pass custom header(s) to server
-    #[arg(short = 'H', long, value_parser = parse_header)]
-    header: Vec<(String, String)>,
-
-    /// Follow redirects
-    #[arg(short = 'L', long)]
-    location: bool,
-
-    /// Maximum number of redirects to follow
-    #[arg(long, default_value_t = MAX_REDIRS_DEFAULT)]
-    max_redirs: u32,
-
-    /// Write output to file instead of stdout
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-
-    /// Define output format for response metadata
-    ///
-    /// Supported: %{response_code}, %{http_code}, %{url}, %{method},
-    /// %{scheme}, %{http_version}, %{time_total}, %{time_connect},
-    /// %{time_starttransfer}, %{size_download}, %{header{name}}
-    #[arg(short = 'w', long = "write-out")]
-    write_out: Option<String>,
-
-    /// Request compressed response and decompress it
-    #[arg(long)]
-    compressed: bool,
-
-    /// Disable content decoding; pass raw bytes through
-    #[arg(long, conflicts_with("compressed"))]
-    raw: bool,
-
-    /// Maximum time allowed for connection in seconds
-    ///
-    /// Use 0 to disable the timeout.
-    #[arg(long, default_value_t = DEFAULT_CONNECT_TIMEOUT_SECS)]
-    connect_timeout: u64,
-
-    /// Client identity for DHTTP/3 connections
-    #[arg(short, long, value_name = "client_identity")]
-    id: Option<Name<'static>>,
-
-    /// Use the global dhttp home instead of the default user home
-    #[arg(long)]
-    global: bool,
-
-    /// Skip identity loading and use anonymous mode
-    #[arg(long, conflicts_with = "id")]
-    anonymous: bool,
-
-    /// Resolve names to IPv4 addresses only
-    #[arg(short = '4', long = "ipv4")]
-    ipv4: bool,
-
-    /// Resolve names to IPv6 addresses only
-    #[arg(short = '6', long = "ipv6")]
-    ipv6: bool,
-
-    /// DNS resolution schemes
-    #[arg(long, value_name = "scheme", default_value = "mdns,h3", value_delimiter = ',', hide = cfg!(not(debug_assertions)))]
-    dns: Vec<DnsScheme>,
-
-    /// Bind patterns for DHTTP/3 connections
-    #[arg(long = "interface", value_name = "bind", default_value = "*", hide = cfg!(not(debug_assertions)))]
-    binds: Vec<BindPattern>,
-
-    /// Make the operation more talkative
-    #[arg(short, long)]
-    verbose: bool,
-
-    /// Suppress progress and error messages
-    #[arg(short = 's', long)]
-    silent: bool,
-
-    /// Show error messages even when --silent is active
-    #[arg(short = 'S', long = "show-error")]
-    show_error: bool,
-}
-
-impl Options {
-    fn home_scope(&self) -> home::HomeScope {
-        if self.global {
-            home::HomeScope::Global
-        } else {
-            home::HomeScope::User
-        }
-    }
-}
-
-#[derive(Debug, Snafu)]
-#[snafu(module)]
-pub enum Error {
-    #[snafu(display("missing authority in uri"))]
-    MissingAuthority {},
-
-    #[snafu(display("failed to normalize dhttp uri"))]
-    NormalizeUri {
-        source: dhttp::message::IntoUriError,
-    },
-
-    #[snafu(display("failed to construct normalized request uri"))]
-    ConstructRequestUri { source: http::uri::InvalidUriParts },
-
-    #[snafu(display("failed to load dhttp home"))]
-    LoadDhttpHome { source: home::LoadDhttpHomeError },
-
-    #[snafu(display("failed to load explicit identity `{name}`"))]
-    LoadExplicitIdentity {
-        name: Name<'static>,
-        source: dhttp::home::identity::ssl::ResolveIdentityProfileError,
-    },
-
-    #[snafu(display("failed to load identity certificate and key"))]
-    LoadIdentitySsl {
-        source: dhttp::home::identity::ssl::LoadIdentityError,
-    },
-
-    #[snafu(display("failed to build dhttp endpoint"))]
-    BuildEndpoint {
-        source: dhttp::endpoint::BuildEndpointError,
-    },
-
-    #[snafu(display("failed to connect to server"))]
-    Connect {
-        source: dhttp::endpoint::ConnectError,
-    },
-
-    #[snafu(display("connection timed out"))]
-    Timedout {},
-
-    #[snafu(display("failed to open request stream"))]
-    InitialMessageStream { source: InitialMessageStreamError },
-
-    #[snafu(display("failed to build HTTP request"))]
-    BuildRequest { source: http::Error },
-
-    #[snafu(display("failed to send HTTP request"))]
-    SendRequest {
-        source: SendMessageError<Infallible>,
-    },
-
-    #[snafu(display("failed to open file `{}` to upload", path.display()))]
-    OpenUploadFile { path: PathBuf, source: io::Error },
-
-    #[snafu(display("failed to upload file `{}` to server", path.display()))]
-    UploadFile { path: PathBuf, source: io::Error },
-
-    #[snafu(display("failed to close request stream"))]
-    CloseRequestStream { source: MessageStreamError },
-
-    #[snafu(display("failed to receive response"))]
-    ReceiveResponse { source: MessageStreamError },
-
-    #[snafu(display("failed to create output file"))]
-    CreateOutputFile { source: io::Error },
-
-    #[snafu(display("failed to read response body or write to output"))]
-    ReadResponse { source: io::Error },
-
-    #[snafu(display("failed to flush output"))]
-    FlushOutput { source: io::Error },
-
-    #[snafu(display("too many redirects"))]
-    TooManyRedirects {},
-
-    #[snafu(display("redirect location is missing or invalid"))]
-    InvalidRedirectLocation { source: http::uri::InvalidUri },
-
-    #[snafu(display("failed to parse redirect URL `{url}`"))]
-    ParseRedirectUrl {
-        url: String,
-        source: url::ParseError,
-    },
-}
-#[derive(Debug, Snafu)]
-enum ParseHeaderError {
-    #[snafu(display("missing header key in `{input}`"))]
-    MissingKey { input: String },
-    #[snafu(display("missing header value in `{input}`"))]
-    MissingValue { input: String },
-}
-
-fn parse_header(s: &str) -> Result<(String, String), ParseHeaderError> {
-    let mut parts = s.splitn(2, ':');
-    let key = parts
-        .next()
-        .context(MissingKeySnafu { input: s })?
-        .trim()
-        .to_string();
-    let value = parts
-        .next()
-        .context(MissingValueSnafu { input: s })?
-        .trim()
-        .to_string();
-    Ok((key, value))
-}
-
-/// Timing checkpoints collected during a single request-response cycle.
-struct Timing {
-    start: Instant,
-    connected: Option<Instant>,
-    first_byte: Option<Instant>,
-}
-
-impl Timing {
-    fn new() -> Self {
-        Timing {
-            start: Instant::now(),
-            connected: None,
-            first_byte: None,
-        }
-    }
-
-    fn time_connect(&self) -> f64 {
-        self.connected
-            .map(|t| t.duration_since(self.start).as_secs_f64())
-            .unwrap_or(0.0)
-    }
-
-    fn time_starttransfer(&self) -> f64 {
-        self.first_byte
-            .map(|t| t.duration_since(self.start).as_secs_f64())
-            .unwrap_or(0.0)
-    }
-
-    fn time_total(&self) -> f64 {
-        self.start.elapsed().as_secs_f64()
-    }
-}
-
-/// Context for `--write-out` variable expansion.
-struct WriteOutContext<'a> {
-    status: u16,
-    uri: &'a Uri,
-    method: &'a Method,
-    http_version: http::Version,
-    timing: &'a Timing,
-    size_download: u64,
-    response_headers: &'a http::HeaderMap,
-}
-
-/// Expand a `--write-out` format string, substituting `%{var}` tokens.
-fn expand_write_out(fmt: &str, ctx: &WriteOutContext<'_>) -> String {
-    let mut out = String::with_capacity(fmt.len());
-    let mut chars = fmt.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '%' {
-            out.push(c);
-            continue;
-        }
-        match chars.peek() {
-            Some('{') => {
-                chars.next(); // consume '{'
-                let var: String = chars.by_ref().take_while(|&c| c != '}').collect();
-                let value = expand_variable(&var, ctx);
-                out.push_str(&value);
-            }
-            Some('%') => {
-                chars.next();
-                out.push('%');
-            }
-            _ => out.push('%'),
-        }
-    }
-    // Replace escape sequences
-    out.replace("\\n", "\n")
-        .replace("\\t", "\t")
-        .replace("\\r", "\r")
-}
-
-fn expand_variable(var: &str, ctx: &WriteOutContext<'_>) -> String {
-    // Handle %{header{name}} pattern: var == "header{some-header}"
-    if let Some(rest) = var.strip_prefix("header{") {
-        let header_name = rest.trim_end_matches('}');
-        return ctx
-            .response_headers
-            .get(header_name)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-    }
-
-    match var {
-        "response_code" | "http_code" => ctx.status.to_string(),
-        "url" => ctx.uri.to_string(),
-        "method" => ctx.method.to_string(),
-        "scheme" => ctx.uri.scheme_str().unwrap_or("").to_string(),
-        "http_version" => format!("{:?}", ctx.http_version).replace("HTTP/", ""),
-        "time_total" => format!("{:.6}", ctx.timing.time_total()),
-        "time_connect" => format!("{:.6}", ctx.timing.time_connect()),
-        "time_starttransfer" => format!("{:.6}", ctx.timing.time_starttransfer()),
-        "size_download" => ctx.size_download.to_string(),
-        _ => String::new(),
-    }
-}
+use cli::ACCEPT_ENCODING;
+use error as curl_error;
+use timing::Timing;
+use write_out::{WriteOutContext, expand_write_out};
 
 /// Copy `reader` into `writer`, returning the number of bytes written.
 async fn copy_all<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
@@ -376,26 +54,26 @@ where
             let mut dec = GzipDecoder::new(reader);
             copy_all(&mut dec, writer)
                 .await
-                .context(error::ReadResponseSnafu)
+                .context(curl_error::ReadResponseSnafu)
         }
         "deflate" => {
             let mut dec = DeflateDecoder::new(reader);
             copy_all(&mut dec, writer)
                 .await
-                .context(error::ReadResponseSnafu)
+                .context(curl_error::ReadResponseSnafu)
         }
         "zstd" => {
             let mut dec = ZstdDecoder::new(reader);
             copy_all(&mut dec, writer)
                 .await
-                .context(error::ReadResponseSnafu)
+                .context(curl_error::ReadResponseSnafu)
         }
         _ => {
             // identity or unknown encoding — pass through
             let mut r = reader;
             copy_all(&mut r, writer)
                 .await
-                .context(error::ReadResponseSnafu)
+                .context(curl_error::ReadResponseSnafu)
         }
     }
 }
@@ -447,7 +125,7 @@ async fn load_identity_profile(options: &Options) -> Result<Option<IdentityProfi
             );
             return Ok(None);
         }
-        Err(source) => return Err(error::LoadDhttpHomeSnafu.into_error(source)),
+        Err(source) => return Err(curl_error::LoadDhttpHomeSnafu.into_error(source)),
     };
 
     if let Some(name) = &options.id {
@@ -455,7 +133,7 @@ async fn load_identity_profile(options: &Options) -> Result<Option<IdentityProfi
         return home
             .resolve_identity_profile(name.clone())
             .await
-            .context(error::LoadExplicitIdentitySnafu { name: name.clone() })
+            .context(curl_error::LoadExplicitIdentitySnafu { name: name.clone() })
             .map(Some);
     }
 
@@ -478,7 +156,7 @@ fn normalize_cli_uri(
     uri: Uri,
     self_name: Option<&dhttp::name::DhttpName<'_>>,
 ) -> Result<Uri, Error> {
-    let uri = uri.into_uri(self_name).context(error::NormalizeUriSnafu)?;
+    let uri = uri.into_uri(self_name).context(curl_error::NormalizeUriSnafu)?;
 
     let mut parts = uri.into_parts();
     if parts.scheme.is_none() && parts.authority.is_some() && parts.path_and_query.is_none() {
@@ -486,7 +164,7 @@ fn normalize_cli_uri(
         parts.path_and_query = Some(http::uri::PathAndQuery::from_static("/"));
     }
 
-    Uri::from_parts(parts).context(error::ConstructRequestUriSnafu)
+    Uri::from_parts(parts).context(curl_error::ConstructRequestUriSnafu)
 }
 
 /// Load identity, expand the URI, and construct the DHTTP endpoint.
@@ -502,7 +180,7 @@ async fn setup_client(
     )?;
     ensure!(
         options.uri.authority().is_some(),
-        error::MissingAuthoritySnafu
+        curl_error::MissingAuthoritySnafu
     );
 
     // TODO(-4/-6): the previous address-family filter here (applied post-
@@ -518,7 +196,7 @@ async fn setup_client(
             profile
                 .load_identity()
                 .await
-                .context(error::LoadIdentitySslSnafu)?,
+                .context(curl_error::LoadIdentitySslSnafu)?,
         )),
         None => None,
     };
@@ -529,7 +207,7 @@ async fn setup_client(
     for scheme in options.dns.iter().copied() {
         builder = builder.dns(scheme);
     }
-    let endpoint = Arc::new(builder.build().await.context(error::BuildEndpointSnafu)?);
+    let endpoint = Arc::new(builder.build().await.context(curl_error::BuildEndpointSnafu)?);
 
     let connect_timeout = connect_timeout_from_secs(options.connect_timeout);
 
@@ -580,49 +258,49 @@ async fn send_request_body(
     if skip_body || options.data.is_none() && options.upload_file.is_none() {
         let request = request_builder
             .body(String::new())
-            .context(error::BuildRequestSnafu)?;
+            .context(curl_error::BuildRequestSnafu)?;
         request_stream
             .send_hyper_request(request)
             .await
-            .context(error::SendRequestSnafu)?;
+            .context(curl_error::SendRequestSnafu)?;
     } else if let Some(ref data) = options.data {
         let request = request_builder
             .body(data.clone())
-            .context(error::BuildRequestSnafu)?;
+            .context(curl_error::BuildRequestSnafu)?;
         request_stream
             .send_hyper_request(request)
             .await
-            .context(error::SendRequestSnafu)?;
+            .context(curl_error::SendRequestSnafu)?;
     } else if let Some(ref path) = options.upload_file {
         // File upload only on first attempt (stream cannot be re-read)
         if redirect_count == 0 {
             let mut stream_writer = pin!(request_stream.as_writer());
             let mut file = fs::File::open(path)
                 .await
-                .context(error::OpenUploadFileSnafu { path: path.clone() })?;
+                .context(curl_error::OpenUploadFileSnafu { path: path.clone() })?;
             io::copy(&mut file, &mut stream_writer)
                 .await
-                .context(error::UploadFileSnafu { path: path.clone() })?;
+                .context(curl_error::UploadFileSnafu { path: path.clone() })?;
             stream_writer
                 .flush()
                 .await
-                .context(error::UploadFileSnafu { path: path.clone() })?;
+                .context(curl_error::UploadFileSnafu { path: path.clone() })?;
             tracing::warn!(path = %path.display(), redirect_count, "skipping file upload body on redirect");
         } else {
             let request = request_builder
                 .body(String::new())
-                .context(error::BuildRequestSnafu)?;
+                .context(curl_error::BuildRequestSnafu)?;
             request_stream
                 .send_hyper_request(request)
                 .await
-                .context(error::SendRequestSnafu)?;
+                .context(curl_error::SendRequestSnafu)?;
         }
     }
 
     request_stream
         .close()
         .await
-        .context(error::CloseRequestStreamSnafu)?;
+        .context(curl_error::CloseRequestStreamSnafu)?;
     Ok(())
 }
 
@@ -645,18 +323,18 @@ fn resolve_redirect(
 
     // Use url::Url::join() for RFC 3986 compliant relative reference resolution
     let base_url =
-        url::Url::parse(&current_uri.to_string()).context(error::ParseRedirectUrlSnafu {
+        url::Url::parse(&current_uri.to_string()).context(curl_error::ParseRedirectUrlSnafu {
             url: current_uri.to_string(),
         })?;
     let resolved = base_url
         .join(location_str)
-        .context(error::ParseRedirectUrlSnafu {
+        .context(curl_error::ParseRedirectUrlSnafu {
             url: location_str.to_string(),
         })?;
     let new_uri: Uri = resolved
         .as_str()
         .parse()
-        .context(error::InvalidRedirectLocationSnafu)?;
+        .context(curl_error::InvalidRedirectLocationSnafu)?;
 
     // 301/302/303 → switch to GET; 307/308 → keep method
     let new_method = match status {
@@ -680,7 +358,7 @@ async fn stream_response_body(
         tracing::debug!("dumping output to {}", output_path.display());
         let mut file = fs::File::create(output_path)
             .await
-            .context(error::CreateOutputFileSnafu)?;
+            .context(curl_error::CreateOutputFileSnafu)?;
 
         let n = if decompress {
             let body_reader = pin!(response_stream.as_reader());
@@ -689,9 +367,9 @@ async fn stream_response_body(
             let mut body_reader = pin!(response_stream.as_reader());
             copy_all(&mut body_reader, &mut file)
                 .await
-                .context(error::ReadResponseSnafu)?
+                .context(curl_error::ReadResponseSnafu)?
         };
-        file.flush().await.context(error::FlushOutputSnafu)?;
+        file.flush().await.context(curl_error::FlushOutputSnafu)?;
         Ok(n)
     } else {
         tracing::debug!("dumping output to stdout");
@@ -704,9 +382,9 @@ async fn stream_response_body(
             let mut body_reader = pin!(response_stream.as_reader());
             copy_all(&mut body_reader, &mut stdout)
                 .await
-                .context(error::ReadResponseSnafu)?
+                .context(curl_error::ReadResponseSnafu)?
         };
-        stdout.flush().await.context(error::FlushOutputSnafu)?;
+        stdout.flush().await.context(curl_error::FlushOutputSnafu)?;
         Ok(n)
     }
 }
@@ -755,7 +433,7 @@ async fn process_final_response(
         io::stdout()
             .flush()
             .await
-            .context(error::FlushOutputSnafu)?;
+            .context(curl_error::FlushOutputSnafu)?;
     }
 
     Ok(())
@@ -776,17 +454,17 @@ async fn connect_and_open_streams(
                     .clone(),
             )
             .await
-            .context(error::ConnectSnafu)
+            .context(curl_error::ConnectSnafu)
     };
     let connection = match tokio::time::timeout(connect_timeout, connect_fut).await {
         Ok(result) => result?,
-        Err(_) => return error::TimedoutSnafu.fail(),
+        Err(_) => return curl_error::TimedoutSnafu.fail(),
     };
-    timing.connected = Some(Instant::now());
+    timing.mark_connected();
     connection
         .initial_message_stream()
         .await
-        .context(error::InitialMessageStreamSnafu)
+        .context(curl_error::InitialMessageStreamSnafu)
 }
 
 /// Check whether a response is a redirect; if so, drain the response body and
@@ -804,7 +482,7 @@ async fn check_redirect(
         return Ok(None);
     }
     if redirect_count >= options.max_redirs {
-        return error::TooManyRedirectsSnafu.fail();
+        return curl_error::TooManyRedirectsSnafu.fail();
     }
     let result = resolve_redirect(status, headers, current_uri, current_method)?;
     if result.is_some() {
@@ -834,9 +512,9 @@ async fn receive_response_head(
     let response = response_stream
         .read_hyper_response_parts()
         .await
-        .context(error::ReceiveResponseSnafu)?;
+        .context(curl_error::ReceiveResponseSnafu)?;
 
-    timing.first_byte = Some(Instant::now());
+    timing.mark_first_byte();
 
     if verbose {
         print_verbose_response(&response);
@@ -923,6 +601,7 @@ mod tests {
 
     use clap::Parser;
 
+    
     use super::*;
 
     #[test]
