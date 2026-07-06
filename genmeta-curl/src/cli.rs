@@ -40,6 +40,10 @@ pub struct Options {
     #[arg(short = 'L', long)]
     pub(crate) location: bool,
 
+    /// Fail on HTTP response status 400 or greater
+    #[arg(short = 'f', long)]
+    pub(crate) fail: bool,
+
     /// Maximum number of redirects to follow
     #[arg(long, default_value_t = MAX_REDIRS_DEFAULT)]
     pub(crate) max_redirs: u32,

@@ -82,6 +82,9 @@ pub enum Error {
     #[snafu(display("failed to receive response"))]
     ReceiveResponse { source: MessageStreamError },
 
+    #[snafu(display("server returned HTTP status {status}"))]
+    HttpErrorStatus { status: http::StatusCode },
+
     #[snafu(display("failed to create output file"))]
     CreateOutputFile { source: io::Error },
 

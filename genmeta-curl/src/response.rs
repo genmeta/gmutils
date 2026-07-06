@@ -28,6 +28,13 @@ pub(crate) struct ResponseContext<'a, W> {
     pub(crate) progress_mode: ProgressMode,
 }
 
+pub(crate) fn fail_on_http_error(options: &Options, status: http::StatusCode) -> Result<(), Error> {
+    if options.fail && status.as_u16() >= 400 {
+        return error::HttpErrorStatusSnafu { status }.fail();
+    }
+    Ok(())
+}
+
 async fn copy_decoded<R, O, W>(
     reader: &mut R,
     writer: &mut O,
@@ -281,10 +288,13 @@ mod tests {
         sync::{Arc, Mutex},
     };
 
+    use clap::Parser;
     use tokio::io::BufReader;
 
-    use super::decompress_copy;
+    use super::{decompress_copy, fail_on_http_error};
     use crate::{
+        cli::Options,
+        error::Error,
         progress::ProgressMode,
         verbose::{CurlVerbose, LineWriter},
     };
@@ -319,5 +329,22 @@ mod tests {
         assert_eq!(n, 5);
         assert_eq!(output, b"hello");
         assert_eq!(writer.lines(), vec!["{ [5 bytes data]"]);
+    }
+
+    #[test]
+    fn fail_option_rejects_http_error_status() {
+        let options =
+            Options::try_parse_from(["genmeta-curl", "--fail", "https://example.com/"]).unwrap();
+        let error = fail_on_http_error(&options, http::StatusCode::NOT_FOUND).unwrap_err();
+
+        assert!(matches!(error, Error::HttpErrorStatus { .. }));
+    }
+
+    #[test]
+    fn fail_option_accepts_success_status() {
+        let options =
+            Options::try_parse_from(["genmeta-curl", "--fail", "https://example.com/"]).unwrap();
+
+        fail_on_http_error(&options, http::StatusCode::OK).unwrap();
     }
 }

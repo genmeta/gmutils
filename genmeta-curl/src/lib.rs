@@ -104,6 +104,8 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             }
         }
 
+        response::fail_on_http_error(&options, status)?;
+
         response::process_final_response(
             response_stream,
             response::ResponseContext {
@@ -159,6 +161,17 @@ mod tests {
             Options::try_parse_from(["genmeta-curl", "--global", "https://example.com/"]).unwrap();
 
         assert_eq!(options.home_scope(), dhttp::home::HomeScope::Global);
+    }
+
+    #[test]
+    fn options_accept_curl_fail_silent_show_error_location_cluster() {
+        let options =
+            Options::try_parse_from(["genmeta-curl", "-fsSL", "https://example.com/"]).unwrap();
+
+        assert!(options.fail);
+        assert!(options.silent);
+        assert!(options.show_error);
+        assert!(options.location);
     }
 
     #[test]
