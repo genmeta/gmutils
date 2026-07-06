@@ -166,6 +166,41 @@ impl<W: LineWriter> CurlVerbose<W> {
             Ok(())
         }
     }
+    pub(crate) fn redirect_to(&self, uri: &http::Uri) -> io::Result<()> {
+        if self.enabled {
+            self.writer
+                .write_line(&format!("* Issue another request to this URL: '{uri}'"))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn switch_to_get(&self) -> io::Result<()> {
+        if self.enabled {
+            self.writer.write_line("* Switch to GET")
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn cannot_rewind_upload(&self) -> io::Result<()> {
+        if self.enabled {
+            self.writer.write_line(
+                "* Cannot rewind upload file for redirect; sending redirected request without body",
+            )
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn upload_data_marker(&self, bytes: u64) -> io::Result<()> {
+        if self.enabled {
+            self.writer.write_line(&format!("}} [{bytes} bytes data]"))
+        } else {
+            Ok(())
+        }
+    }
+
 }
 
 fn title_header_name(name: &str) -> String {
@@ -251,6 +286,23 @@ mod tests {
         assert_eq!(lines[7], "* [HTTP/3] [0] [accept: */*]");
         assert_eq!(lines[8], "> GET /a?b=1 HTTP/3");
         assert_eq!(lines[9], "> Host: example.dhttp.net");
+    }
+
+    #[test]
+    fn redirect_verbose_lines_match_curl_shape() {
+        let writer = Capture::default();
+        let verbose = CurlVerbose::enabled(writer.clone());
+        let uri: Uri = "https://example.dhttp.net/next".parse().unwrap();
+
+        verbose.redirect_to(&uri).unwrap();
+        verbose.switch_to_get().unwrap();
+
+        let lines = writer.lines();
+        assert_eq!(
+            lines[0],
+            "* Issue another request to this URL: 'https://example.dhttp.net/next'"
+        );
+        assert_eq!(lines[1], "* Switch to GET");
     }
 
     #[test]

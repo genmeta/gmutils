@@ -67,7 +67,8 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             .request(stream_id, &plan)
             .context(curl_error::WriteVerboseSnafu)?;
 
-        let _bytes_uploaded = request::send_request_body(&plan, &mut request_stream).await?;
+        let _bytes_uploaded =
+            request::send_request_body(&plan, &mut request_stream, &verbose, progress_mode).await?;
         verbose
             .request_sent()
             .context(curl_error::WriteVerboseSnafu)?;
@@ -90,6 +91,19 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             {
                 let mut body_reader = pin!(response_stream.as_reader());
                 io::copy(&mut body_reader, &mut io::sink()).await.ok();
+                verbose
+                    .redirect_to(&target.uri)
+                    .context(curl_error::WriteVerboseSnafu)?;
+                if target.switched_to_get {
+                    verbose
+                        .switch_to_get()
+                        .context(curl_error::WriteVerboseSnafu)?;
+                }
+                if matches!(plan.body, request::RequestBody::UploadFile(_)) && !target.switched_to_get {
+                    verbose
+                        .cannot_rewind_upload()
+                        .context(curl_error::WriteVerboseSnafu)?;
+                }
                 plan = plan.for_redirect(target);
                 redirect_count += 1;
                 continue;

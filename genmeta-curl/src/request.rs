@@ -11,6 +11,8 @@ use tokio::{
 use crate::{
     cli::{ACCEPT_ENCODING, Options},
     error::{self, Error},
+    progress::{self, ProgressMode},
+    verbose::{CurlVerbose, LineWriter},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,7 +96,7 @@ impl RequestPlan {
     }
 
     pub(crate) fn effective_method(request: Option<Method>, body: &RequestBody) -> Method {
-        request.unwrap_or_else(|| match body {
+        request.unwrap_or(match body {
             RequestBody::Empty => Method::GET,
             RequestBody::Data(_) => Method::POST,
             RequestBody::UploadFile(_) => Method::PUT,
@@ -109,7 +111,7 @@ impl RequestPlan {
 
 
     pub(crate) fn for_redirect(&self, target: crate::redirect::RedirectTarget) -> Self {
-        let body = if target.switched_to_get {
+        let body = if target.switched_to_get || matches!(self.body, RequestBody::UploadFile(_)) {
             RequestBody::Empty
         } else {
             self.body.clone()
@@ -131,9 +133,11 @@ impl RequestPlan {
     }
 }
 
-pub(crate) async fn send_request_body(
+pub(crate) async fn send_request_body<W: LineWriter>(
     plan: &RequestPlan,
     request_stream: &mut MessageWriter,
+    verbose: &CurlVerbose<W>,
+    progress_mode: ProgressMode,
 ) -> Result<u64, Error> {
     match &plan.body {
         RequestBody::Empty => {
@@ -152,6 +156,9 @@ pub(crate) async fn send_request_body(
             Ok(0)
         }
         RequestBody::Data(data) => {
+            verbose
+                .upload_data_marker(data.len() as u64)
+                .context(error::WriteVerboseSnafu)?;
             let request = plan
                 .request_builder()
                 .body(data.clone())
@@ -164,9 +171,14 @@ pub(crate) async fn send_request_body(
                 .close()
                 .await
                 .context(error::CloseRequestStreamSnafu)?;
+            verbose
+                .upload_complete(data.len() as u64)
+                .context(error::WriteVerboseSnafu)?;
             Ok(data.len() as u64)
         }
         RequestBody::UploadFile(path) => {
+            let len = fs::metadata(path).await.ok().map(|metadata| metadata.len());
+            let progress = progress::progress_bar(progress_mode, len, "Uploading");
             let n = {
                 let mut stream_writer = pin!(request_stream.as_writer());
                 let mut file = fs::File::open(path)
@@ -175,16 +187,28 @@ pub(crate) async fn send_request_body(
                 let n = io::copy(&mut file, &mut stream_writer)
                     .await
                     .context(error::UploadFileSnafu { path: path.clone() })?;
+                if let Some(pb) = progress.as_ref() {
+                    pb.inc(n);
+                }
                 stream_writer
                     .flush()
                     .await
                     .context(error::UploadFileSnafu { path: path.clone() })?;
                 n
             };
+            if let Some(pb) = progress {
+                pb.finish_and_clear();
+            }
+            verbose
+                .upload_data_marker(n)
+                .context(error::WriteVerboseSnafu)?;
             request_stream
                 .close()
                 .await
                 .context(error::CloseRequestStreamSnafu)?;
+            verbose
+                .upload_complete(n)
+                .context(error::WriteVerboseSnafu)?;
             Ok(n)
         }
     }
