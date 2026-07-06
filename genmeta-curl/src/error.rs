@@ -97,6 +97,9 @@ pub enum Error {
     #[snafu(display("redirect location is missing or invalid"))]
     InvalidRedirectLocation { source: http::uri::InvalidUri },
 
+    #[snafu(display("redirect location header is not valid text"))]
+    InvalidRedirectLocationHeader { source: http::header::ToStrError },
+
     #[snafu(display("failed to parse redirect URL `{url}`"))]
     ParseRedirectUrl {
         url: String,

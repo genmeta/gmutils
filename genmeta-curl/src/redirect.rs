@@ -19,7 +19,9 @@ pub(crate) fn resolve_redirect(
     let Some(location) = headers.get(LOCATION) else {
         return Ok(None);
     };
-    let location_str = location.to_str().unwrap_or("");
+    let location_str = location
+        .to_str()
+        .context(error::InvalidRedirectLocationHeaderSnafu)?;
     let base_url =
         url::Url::parse(&current_uri.to_string()).context(error::ParseRedirectUrlSnafu {
             url: current_uri.to_string(),
@@ -81,5 +83,19 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(redirect.method, Method::PUT);
+    }
+
+    #[test]
+    fn invalid_location_header_is_an_error() {
+        let mut headers = HeaderMap::new();
+        headers.insert(LOCATION, http::HeaderValue::from_bytes(b"\xff").unwrap());
+        let current: Uri = "https://example.dhttp.net/start".parse().unwrap();
+        let error =
+            resolve_redirect(StatusCode::FOUND, &headers, &current, &Method::GET).unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::error::Error::InvalidRedirectLocationHeader { .. }
+        ));
     }
 }
