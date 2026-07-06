@@ -31,10 +31,22 @@ pub(crate) fn resolve_redirect(
         .context(error::ParseRedirectUrlSnafu {
             url: location_str.to_string(),
         })?;
+    snafu::ensure!(
+        matches!(resolved.scheme(), "http" | "https"),
+        error::UnsupportedRedirectSchemeSnafu {
+            scheme: resolved.scheme().to_string(),
+        }
+    );
     let uri: Uri = resolved
         .as_str()
         .parse()
         .context(error::InvalidRedirectLocationSnafu)?;
+    snafu::ensure!(
+        uri.authority().is_some(),
+        error::InvalidRedirectAuthoritySnafu {
+            url: resolved.to_string(),
+        }
+    );
     let switched_to_get = matches!(
         status,
         StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND | StatusCode::SEE_OTHER
@@ -96,6 +108,20 @@ mod tests {
         assert!(matches!(
             error,
             crate::error::Error::InvalidRedirectLocationHeader { .. }
+        ));
+    }
+
+    #[test]
+    fn unsupported_redirect_scheme_is_an_error() {
+        let mut headers = HeaderMap::new();
+        headers.insert(LOCATION, "mailto:admin@example.dhttp.net".parse().unwrap());
+        let current: Uri = "https://example.dhttp.net/start".parse().unwrap();
+        let error =
+            resolve_redirect(StatusCode::FOUND, &headers, &current, &Method::GET).unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::error::Error::UnsupportedRedirectScheme { .. }
         ));
     }
 }

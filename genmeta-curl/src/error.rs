@@ -97,6 +97,12 @@ pub enum Error {
     #[snafu(display("redirect location is missing or invalid"))]
     InvalidRedirectLocation { source: http::uri::InvalidUri },
 
+    #[snafu(display("redirect location `{url}` does not include an authority"))]
+    InvalidRedirectAuthority { url: String },
+
+    #[snafu(display("redirect location uses unsupported scheme `{scheme}`"))]
+    UnsupportedRedirectScheme { scheme: String },
+
     #[snafu(display("redirect location header is not valid text"))]
     InvalidRedirectLocationHeader { source: http::header::ToStrError },
 
