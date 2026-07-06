@@ -16,6 +16,7 @@ bytes = { workspace = true }
 clap = { workspace = true }
 dhttp = { workspace = true }
 http = { workspace = true }
+indicatif = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

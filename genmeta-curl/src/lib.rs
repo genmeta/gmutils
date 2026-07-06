@@ -5,11 +5,11 @@ use dhttp::h3x::{dhttp::message::MessageReader, quic::GetStreamIdExt};
 use http::{Method, StatusCode, Uri};
 use snafu::ResultExt;
 use tokio::{fs, io::{self, AsyncRead, AsyncWrite, AsyncWriteExt}};
-use tracing_subscriber::prelude::*;
 
 mod cli;
 mod client;
 mod error;
+mod progress;
 mod redirect;
 mod request;
 mod timing;
@@ -21,6 +21,7 @@ pub use curl_error::Error;
 
 use error as curl_error;
 use timing::Timing;
+use progress::{ProgressMode, init_console};
 use request::RequestPlan;
 use verbose::{CurlVerbose, StreamId};
 use write_out::{WriteOutContext, expand_write_out};
@@ -71,39 +72,6 @@ where
                 .context(curl_error::ReadResponseSnafu)
         }
     }
-}
-
-/// Initialize tracing subscriber based on CLI verbosity flags.
-fn init_tracing(options: &Options) -> tracing_appender::non_blocking::WorkerGuard {
-    // -s:   suppress all tracing output.
-    // -s -S: show errors only (INFO level) but not progress.
-    // We approximate -s -S by keeping INFO but note that progress is not
-    // separately implemented — tracing output itself is the only stderr content.
-    let (stderr, guard) = tracing_appender::non_blocking(std::io::stderr());
-    let level = if options.silent && !options.show_error {
-        tracing_subscriber::filter::LevelFilter::OFF
-    } else {
-        tracing_subscriber::filter::LevelFilter::INFO
-    };
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_ansi(std::io::stderr().is_terminal())
-                .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
-                .with_writer(stderr),
-        )
-        .with(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(level.into())
-                .from_env_lossy()
-                .add_directive(
-                    "netlink_packet_route=error"
-                        .parse()
-                        .expect("BUG: static tracing directive is valid"),
-                ),
-        )
-        .init();
-    guard
 }
 
 /// Stream the response body to a file or stdout, optionally decompressing.
@@ -214,7 +182,12 @@ async fn receive_response_head(
 }
 
 pub async fn run(mut options: Options) -> Result<(), Error> {
-    let _guard = init_tracing(&options);
+    let _guard = init_console(&options);
+    let _progress_mode = ProgressMode::from_flags(
+        options.silent,
+        options.verbose,
+        std::io::stderr().is_terminal(),
+    );
     let session = client::setup_client(&mut options).await?;
     let verbose = CurlVerbose::stderr(options.verbose);
 

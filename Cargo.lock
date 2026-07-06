@@ -1634,6 +1634,7 @@ dependencies = [
  "clap",
  "dhttp",
  "http",
+ "indicatif",
  "snafu 0.9.1",
  "tokio",
  "tracing",
