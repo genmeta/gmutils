@@ -200,7 +200,6 @@ impl<W: LineWriter> CurlVerbose<W> {
             Ok(())
         }
     }
-
 }
 
 fn title_header_name(name: &str) -> String {
@@ -274,15 +273,9 @@ mod tests {
         );
         assert_eq!(lines[2], "* [HTTP/3] [0] [:method: GET]");
         assert_eq!(lines[3], "* [HTTP/3] [0] [:scheme: https]");
-        assert_eq!(
-            lines[4],
-            "* [HTTP/3] [0] [:authority: example.dhttp.net]"
-        );
+        assert_eq!(lines[4], "* [HTTP/3] [0] [:authority: example.dhttp.net]");
         assert_eq!(lines[5], "* [HTTP/3] [0] [:path: /a?b=1]");
-        assert_eq!(
-            lines[6],
-            "* [HTTP/3] [0] [user-agent: genmeta-curl/test]"
-        );
+        assert_eq!(lines[6], "* [HTTP/3] [0] [user-agent: genmeta-curl/test]");
         assert_eq!(lines[7], "* [HTTP/3] [0] [accept: */*]");
         assert_eq!(lines[8], "> GET /a?b=1 HTTP/3");
         assert_eq!(lines[9], "> Host: example.dhttp.net");
@@ -310,7 +303,10 @@ mod tests {
         let writer = Capture::default();
         let verbose = CurlVerbose::enabled(writer.clone());
         let mut headers = HeaderMap::new();
-        headers.insert(http::header::CONTENT_TYPE, HeaderValue::from_static("text/plain"));
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            HeaderValue::from_static("text/plain"),
+        );
 
         verbose.response(StatusCode::OK, &headers).unwrap();
 

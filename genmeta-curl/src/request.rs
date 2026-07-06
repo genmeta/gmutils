@@ -109,7 +109,6 @@ impl RequestPlan {
             .unwrap_or_else(|| "/".to_string())
     }
 
-
     pub(crate) fn for_redirect(&self, target: crate::redirect::RedirectTarget) -> Self {
         let body = if target.switched_to_get || matches!(self.body, RequestBody::UploadFile(_)) {
             RequestBody::Empty
@@ -261,7 +260,10 @@ mod tests {
     #[test]
     fn explicit_method_overrides_body_default() {
         assert_eq!(
-            RequestPlan::effective_method(Some(Method::PATCH), &RequestBody::Data("abc".to_string())),
+            RequestPlan::effective_method(
+                Some(Method::PATCH),
+                &RequestBody::Data("abc".to_string())
+            ),
             Method::PATCH
         );
     }

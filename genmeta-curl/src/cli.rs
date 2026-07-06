@@ -1,9 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use dhttp::{
-    ddns::resolvers::DnsScheme, dquic::binds::BindPattern, home, name::DhttpName as Name,
-};
+use dhttp::{ddns::resolvers::DnsScheme, dquic::binds::BindPattern, home, name::DhttpName as Name};
 use http::{Method, Uri};
 use snafu::OptionExt;
 

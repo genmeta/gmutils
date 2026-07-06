@@ -29,8 +29,7 @@ pub(crate) struct ConsoleGuard {
 pub(crate) fn init_console(options: &Options) -> ConsoleGuard {
     let indicatif_layer = IndicatifLayer::new();
     let (stderr, guard) = tracing_appender::non_blocking(indicatif_layer.get_stderr_writer());
-    let level = if options.silent && !options.show_error && std::env::var_os("RUST_LOG").is_none()
-    {
+    let level = if options.silent && !options.show_error && std::env::var_os("RUST_LOG").is_none() {
         tracing_subscriber::filter::LevelFilter::OFF
     } else {
         tracing_subscriber::filter::LevelFilter::INFO
@@ -75,8 +74,7 @@ pub(crate) fn progress_bar(
         ProgressStyle::with_template("{msg} {bytes}/{total_bytes} [{bar:40.cyan/blue}] {percent}%")
             .expect("progress template is valid")
     } else {
-        ProgressStyle::with_template("{spinner} {msg} {bytes}")
-            .expect("spinner template is valid")
+        ProgressStyle::with_template("{spinner} {msg} {bytes}").expect("spinner template is valid")
     };
     pb.set_style(style);
     pb.set_message(message);

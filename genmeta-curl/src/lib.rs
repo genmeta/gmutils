@@ -18,11 +18,10 @@ mod write_out;
 
 pub use cli::Options;
 pub use curl_error::Error;
-
 use error as curl_error;
-use timing::Timing;
 use progress::{ProgressMode, init_console};
 use request::RequestPlan;
+use timing::Timing;
 use verbose::{CurlVerbose, StreamId};
 
 /// Receive the response head and record first-byte timing.
@@ -99,7 +98,9 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
                         .switch_to_get()
                         .context(curl_error::WriteVerboseSnafu)?;
                 }
-                if matches!(plan.body, request::RequestBody::UploadFile(_)) && !target.switched_to_get {
+                if matches!(plan.body, request::RequestBody::UploadFile(_))
+                    && !target.switched_to_get
+                {
                     verbose
                         .cannot_rewind_upload()
                         .context(curl_error::WriteVerboseSnafu)?;
@@ -138,7 +139,6 @@ mod tests {
 
     use clap::Parser;
 
-    
     use super::*;
 
     #[test]

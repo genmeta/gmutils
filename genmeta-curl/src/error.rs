@@ -4,13 +4,13 @@ use dhttp::{
     h3x::{
         dhttp::message::{InitialMessageStreamError, MessageStreamError},
         hyper::SendMessageError,
+        quic,
     },
     home,
     name::DhttpName as Name,
 };
 use snafu::Snafu;
 use tokio::io;
-use dhttp::h3x::quic;
 
 #[derive(Debug, Snafu)]
 #[snafu(module, visibility(pub(crate)))]

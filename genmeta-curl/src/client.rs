@@ -9,7 +9,11 @@ use dhttp::{
 use http::Uri;
 use snafu::{IntoError, ResultExt, ensure};
 
-use crate::{cli::Options, error::{self, Error}, timing::Timing};
+use crate::{
+    cli::Options,
+    error::{self, Error},
+    timing::Timing,
+};
 
 #[allow(dead_code)]
 pub(crate) struct ClientSession {
