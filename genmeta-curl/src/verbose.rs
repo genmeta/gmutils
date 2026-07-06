@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::{
     fmt,
     io::{self, Write},
@@ -9,10 +7,17 @@ use http::{HeaderMap, StatusCode};
 
 use crate::request::RequestPlan;
 
+impl From<dhttp::h3x::varint::VarInt> for StreamId {
+    fn from(value: dhttp::h3x::varint::VarInt) -> Self {
+        Self(value.into_inner())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct StreamId(u64);
 
 impl StreamId {
+    #[allow(dead_code)]
     pub(crate) fn new(value: u64) -> Self {
         Self(value)
     }
@@ -58,6 +63,7 @@ impl CurlVerbose<StderrLineWriter> {
 }
 
 impl<W: LineWriter> CurlVerbose<W> {
+    #[allow(dead_code)]
     pub(crate) fn enabled(writer: W) -> Self {
         Self {
             enabled: true,

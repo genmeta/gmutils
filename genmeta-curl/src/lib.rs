@@ -1,7 +1,7 @@
 use std::{io::IsTerminal, path::PathBuf, pin::pin};
 
 use async_compression::tokio::bufread::{DeflateDecoder, GzipDecoder, ZstdDecoder};
-use dhttp::h3x::dhttp::message::MessageReader;
+use dhttp::h3x::{dhttp::message::MessageReader, quic::GetStreamIdExt};
 use http::{Method, StatusCode, Uri};
 use snafu::ResultExt;
 use tokio::{fs, io::{self, AsyncRead, AsyncWrite, AsyncWriteExt}};
@@ -22,6 +22,7 @@ pub use curl_error::Error;
 use error as curl_error;
 use timing::Timing;
 use request::RequestPlan;
+use verbose::{CurlVerbose, StreamId};
 use write_out::{WriteOutContext, expand_write_out};
 
 /// Copy `reader` into `writer`, returning the number of bytes written.
@@ -197,21 +198,10 @@ async fn process_final_response(
     Ok(())
 }
 
-/// Print verbose response details to stderr.
-fn print_verbose_response(response: &http::response::Parts) {
-    let formatted = format!("< received response: {response:#?}")
-        .lines()
-        .collect::<Vec<_>>()
-        .join("\n< ");
-    eprintln!("{formatted}");
-}
-
-/// Receive the response head, record first-byte timing, and optionally print
-/// verbose details.
+/// Receive the response head and record first-byte timing.
 async fn receive_response_head(
     response_stream: &mut MessageReader,
     timing: &mut Timing,
-    verbose: bool,
 ) -> Result<http::response::Parts, Error> {
     let response = response_stream
         .read_hyper_response_parts()
@@ -220,16 +210,13 @@ async fn receive_response_head(
 
     timing.mark_first_byte();
 
-    if verbose {
-        print_verbose_response(&response);
-    }
-
     Ok(response)
 }
 
 pub async fn run(mut options: Options) -> Result<(), Error> {
     let _guard = init_tracing(&options);
     let session = client::setup_client(&mut options).await?;
+    let verbose = CurlVerbose::stderr(options.verbose);
 
     let mut plan = RequestPlan::initial(&options);
     let mut redirect_count: u32 = 0;
@@ -239,11 +226,24 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
 
         let (mut response_stream, mut request_stream) =
             client::connect_and_open_streams(&session, &plan.uri, &mut timing).await?;
+        let stream_id = request_stream
+            .stream_id()
+            .await
+            .context(curl_error::GetStreamIdSnafu)?;
+        let stream_id = StreamId::from(stream_id);
+        verbose
+            .request(stream_id, &plan)
+            .context(curl_error::WriteVerboseSnafu)?;
 
         let _bytes_uploaded = request::send_request_body(&plan, &mut request_stream).await?;
+        verbose
+            .request_sent()
+            .context(curl_error::WriteVerboseSnafu)?;
 
-        let response =
-            receive_response_head(&mut response_stream, &mut timing, options.verbose).await?;
+        let response = receive_response_head(&mut response_stream, &mut timing).await?;
+        verbose
+            .response(response.status, &response.headers)
+            .context(curl_error::WriteVerboseSnafu)?;
 
         let status = response.status;
         let response_headers = response.headers.clone();

@@ -10,6 +10,7 @@ use dhttp::{
 };
 use snafu::Snafu;
 use tokio::io;
+use dhttp::h3x::quic;
 
 #[derive(Debug, Snafu)]
 #[snafu(module, visibility(pub(crate)))]
@@ -57,6 +58,12 @@ pub enum Error {
 
     #[snafu(display("failed to build HTTP request"))]
     BuildRequest { source: http::Error },
+
+    #[snafu(display("failed to get HTTP/3 stream id"))]
+    GetStreamId { source: quic::StreamError },
+
+    #[snafu(display("failed to write verbose output"))]
+    WriteVerbose { source: io::Error },
 
     #[snafu(display("failed to send HTTP request"))]
     SendRequest {

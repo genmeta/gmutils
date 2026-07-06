@@ -101,7 +101,6 @@ impl RequestPlan {
         })
     }
 
-    #[allow(dead_code)]
     pub(crate) fn request_target(uri: &Uri) -> String {
         uri.path_and_query()
             .map(|pq| pq.as_str().to_string())
