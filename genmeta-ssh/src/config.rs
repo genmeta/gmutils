@@ -1,6 +1,7 @@
 use std::{collections::BTreeSet, str::FromStr, time::Duration};
 
 use dhttp::{
+    certificate::CertificateSequence,
     ddns::resolvers::DnsScheme,
     dquic::binds::BindPattern,
     home::{self, DhttpHome, identity::IdentityProfile},
@@ -217,6 +218,27 @@ fn parse_username_from_uri(uri: &Uri) -> Option<String> {
         })
 }
 
+pub(crate) fn authority_sequence(authority: &Authority) -> Option<CertificateSequence> {
+    authority
+        .port()
+        .and_then(|port| port.as_str().parse::<u64>().ok())
+        .and_then(|value| CertificateSequence::try_from(value).ok())
+}
+
+pub(crate) fn authority_with_sequence(
+    authority: &Authority,
+    sequence: CertificateSequence,
+) -> Result<Authority, Error> {
+    let host = authority.host();
+    let peer_name = Name::from_str(host).context(config_error::InvalidPeerNameSnafu {
+        id: host.to_string(),
+    })?;
+    let authority_text = format!("{}:{}", peer_name.as_full(), sequence.get());
+    Authority::from_str(&authority_text).context(config_error::InvalidAuthoritySnafu {
+        authority: authority_text,
+    })
+}
+
 fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {
     let mut uri_parts = uri.into_parts();
     uri_parts.scheme = match uri_parts.scheme {
@@ -260,9 +282,13 @@ fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {
                 Name::from_str(authority.host()).context(config_error::InvalidPeerNameSnafu {
                     id: authority.host().to_string(),
                 })?;
-            let authority = Authority::from_str(peer_name.as_full()).context(
+            let authority_text = match authority.port() {
+                Some(port) => format!("{}:{}", peer_name.as_full(), port.as_str()),
+                None => peer_name.as_full().to_string(),
+            };
+            let authority = Authority::from_str(&authority_text).context(
                 config_error::InvalidAuthoritySnafu {
-                    authority: peer_name.as_full().to_string(),
+                    authority: authority_text,
                 },
             )?;
             Some(authority)
@@ -271,4 +297,46 @@ fn complete_uri(uri: Uri, username: &str) -> Result<Uri, Error> {
     };
 
     Uri::from_parts(uri_parts).context(config_error::ConstructUriSnafu)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn complete_uri_preserves_primary_sequence_suffix() {
+        let uri: Uri = "alice.device:1".parse().expect("uri parses");
+        let completed = complete_uri(uri, "yiyue").expect("uri completes");
+
+        assert_eq!(
+            completed.authority().unwrap().as_str(),
+            "alice.device.dhttp.net:1"
+        );
+        assert_eq!(completed.path(), "/ssh/yiyue");
+    }
+
+    #[test]
+    fn authority_sequence_reads_numeric_suffix() {
+        let authority: Authority = "alice.device.dhttp.net:7"
+            .parse()
+            .expect("authority parses");
+
+        assert_eq!(authority_sequence(&authority).unwrap().get(), 7);
+    }
+
+    #[test]
+    fn authority_sequence_is_absent_without_suffix() {
+        let authority: Authority = "alice.device.dhttp.net".parse().expect("authority parses");
+
+        assert!(authority_sequence(&authority).is_none());
+    }
+
+    #[test]
+    fn authority_with_sequence_appends_sequence() {
+        let authority: Authority = "alice.device.dhttp.net".parse().expect("authority parses");
+        let rewritten = authority_with_sequence(&authority, CertificateSequence::from(2u8))
+            .expect("authority rewrites");
+
+        assert_eq!(rewritten.as_str(), "alice.device.dhttp.net:2");
+    }
 }

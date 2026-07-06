@@ -16,7 +16,7 @@ genmeta-access = { workspace = true }
 genmeta-curl = { workspace = true }
 genmeta-discover = { workspace = true }
 genmeta-doctor = { workspace = true }
-genmeta-identity = { workspace = true }
+genmeta-identity = { workspace = true, features = ["cli"] }
 genmeta-nslookup = { workspace = true }
 genmeta-ssh = { workspace = true }
 genmeta-proxy = { workspace = true }

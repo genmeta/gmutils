@@ -10,6 +10,7 @@ pub use cli::{Cli, Error, Options, run};
 #[cfg(feature = "cli")]
 pub mod auth;
 pub mod cert_server;
+#[cfg(feature = "cli")]
 pub mod checkout;
 pub mod local_identity;
 

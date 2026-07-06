@@ -1,0 +1,356 @@
+use std::{collections::BTreeMap, fmt, io::IsTerminal};
+
+use dhttp::{
+    certificate::{CertificateChainKind, CertificateSequence},
+    ddns::resolvers::endpoint_candidates::EndpointCandidates,
+};
+use snafu::prelude::*;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SshPrimaryCandidate {
+    pub(crate) sequence: CertificateSequence,
+    pub(crate) online: bool,
+    pub(crate) endpoint_count: usize,
+    pub(crate) device_name: Option<String>,
+    pub(crate) cert_status: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CertPrimaryMetadata {
+    pub(crate) sequence: CertificateSequence,
+    pub(crate) device_name: Option<String>,
+    pub(crate) status: Option<String>,
+}
+
+pub(crate) fn merge_candidates(
+    ddns: EndpointCandidates,
+    certs: impl IntoIterator<Item = CertPrimaryMetadata>,
+) -> Vec<SshPrimaryCandidate> {
+    let mut rows = BTreeMap::<u32, SshPrimaryCandidate>::new();
+
+    for group in ddns.groups {
+        if group.chain.kind() != CertificateChainKind::Primary {
+            continue;
+        }
+        rows.insert(
+            group.chain.sequence().get(),
+            SshPrimaryCandidate {
+                sequence: group.chain.sequence(),
+                online: true,
+                endpoint_count: group.endpoints.len(),
+                device_name: None,
+                cert_status: None,
+            },
+        );
+    }
+
+    for cert in certs {
+        rows.entry(cert.sequence.get())
+            .and_modify(|row| {
+                if row.device_name.is_none() {
+                    row.device_name.clone_from(&cert.device_name);
+                }
+                if row.cert_status.is_none() {
+                    row.cert_status.clone_from(&cert.status);
+                }
+            })
+            .or_insert_with(|| SshPrimaryCandidate {
+                sequence: cert.sequence,
+                online: false,
+                endpoint_count: 0,
+                device_name: cert.device_name,
+                cert_status: cert.status,
+            });
+    }
+
+    rows.into_values().collect()
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CandidateChoice {
+    pub(crate) candidate: SshPrimaryCandidate,
+    pub(crate) ansi: bool,
+}
+
+impl fmt::Display for CandidateChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let status = if self.candidate.online {
+            self.candidate.cert_status.as_deref().unwrap_or("online")
+        } else {
+            "offline"
+        };
+        let device = self
+            .candidate
+            .device_name
+            .as_deref()
+            .unwrap_or("unknown device");
+        let line = format!(
+            "primary:{}  {device}  {status}",
+            self.candidate.sequence.get()
+        );
+        if self.ansi && !self.candidate.online {
+            use crossterm::style::Stylize;
+            write!(f, "{}", line.dim())
+        } else {
+            f.write_str(&line)
+        }
+    }
+}
+
+#[derive(Debug, Snafu)]
+#[snafu(module(sequence_error))]
+pub enum Error {
+    #[snafu(display(
+        "No primary sequences were found for {target}.\n\nThe device may not have published DNS endpoints yet, and no certificate metadata was available"
+    ))]
+    NoCandidates { target: String },
+
+    #[snafu(display(
+        "Cannot choose a primary sequence without interactive input.\n\nAvailable primary sequences:\n{available}\nRun again with a sequence, for example:\n  genmeta ssh {example}"
+    ))]
+    NonInteractive {
+        available: CandidateListDisplay,
+        example: String,
+    },
+
+    #[snafu(display("failed to prompt for primary sequence"))]
+    Prompt { source: inquire::InquireError },
+}
+
+#[derive(Debug, Clone)]
+pub struct CandidateListDisplay(Vec<SshPrimaryCandidate>);
+
+impl fmt::Display for CandidateListDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for candidate in &self.0 {
+            let status = if candidate.online {
+                "online"
+            } else {
+                "offline"
+            };
+            writeln!(f, "  primary:{}  {status}", candidate.sequence.get())?;
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn choose_non_interactive(
+    target: &str,
+    candidates: &[SshPrimaryCandidate],
+) -> Result<CertificateSequence, Error> {
+    let first = candidates.first().ok_or_else(|| Error::NoCandidates {
+        target: target.to_string(),
+    })?;
+    Err(Error::NonInteractive {
+        available: CandidateListDisplay(candidates.to_vec()),
+        example: format!("{target}:{}", first.sequence.get()),
+    })
+}
+
+pub(crate) fn terminal_is_interactive() -> bool {
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
+pub(crate) fn prompt_for_sequence(
+    candidates: &[SshPrimaryCandidate],
+    ansi: bool,
+) -> Result<CertificateSequence, Error> {
+    let choices: Vec<_> = candidates
+        .iter()
+        .cloned()
+        .map(|candidate| CandidateChoice { candidate, ansi })
+        .collect();
+    let choice = inquire::Select::new("Select a primary sequence to connect:", choices)
+        .prompt()
+        .context(sequence_error::PromptSnafu)?;
+    Ok(choice.candidate.sequence)
+}
+
+pub(crate) fn cert_metadata_from_parts(
+    kind: &str,
+    sequence: u32,
+    device_name: Option<&str>,
+    status: &str,
+) -> Option<CertPrimaryMetadata> {
+    if kind != "primary" {
+        return None;
+    }
+    Some(CertPrimaryMetadata {
+        sequence: CertificateSequence::try_from(sequence).ok()?,
+        device_name: device_name.map(str::to_owned),
+        status: Some(status.to_owned()),
+    })
+}
+
+pub(crate) async fn fetch_cert_metadata(
+    target_domain: &str,
+    local_identity: Option<&dhttp::home::identity::IdentityProfile>,
+) -> Vec<CertPrimaryMetadata> {
+    let Some(identity) = local_identity else {
+        tracing::warn!(
+            target = target_domain,
+            "primary sequence device metadata unavailable without a local target identity"
+        );
+        return Vec::new();
+    };
+    if identity.name().as_full() != target_domain {
+        tracing::warn!(
+            target = target_domain,
+            local_identity = %identity.name(),
+            "primary sequence device metadata requires the same local identity"
+        );
+        return Vec::new();
+    }
+
+    let cert_server = match genmeta_identity::cert_server::CertServer::new(
+        genmeta_identity::CERT_SERVER_BASE_URL,
+    ) {
+        Ok(client) => client,
+        Err(error) => {
+            tracing::warn!(error = %snafu::Report::from_error(&error), "failed to create certserver client for primary sequence metadata");
+            return Vec::new();
+        }
+    };
+
+    let page = match cert_server
+        .list_certs_with_identity(
+            identity.name().as_full(),
+            target_domain,
+            Some("primary"),
+            None,
+        )
+        .await
+    {
+        Ok(page) => page,
+        Err(error) => {
+            tracing::warn!(error = %snafu::Report::from_error(&error), "failed to fetch primary sequence metadata from certserver");
+            return Vec::new();
+        }
+    };
+
+    page.list
+        .iter()
+        .filter_map(|item| {
+            cert_metadata_from_parts(
+                &item.kind,
+                item.sequence,
+                item.device_name.as_deref(),
+                &item.status,
+            )
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use dhttp::{
+        certificate::{CertificateChainKey, CertificateChainKind, CertificateSequence},
+        ddns::resolvers::endpoint_candidates::{EndpointCandidateGroup, EndpointCandidates},
+        dquic::qresolve::Source,
+    };
+
+    use super::*;
+
+    fn group(sequence: u8, endpoints: usize) -> EndpointCandidateGroup {
+        EndpointCandidateGroup {
+            chain: CertificateChainKey::new(
+                CertificateSequence::from(sequence),
+                CertificateChainKind::Primary,
+            ),
+            endpoints: vec![
+                dhttp::dquic::qbase::net::addr::EndpointAddr::direct(
+                    "192.0.2.10:4433".parse().unwrap(),
+                );
+                endpoints
+            ],
+            sources: vec![Source::Dht],
+        }
+    }
+
+    #[test]
+    fn merge_enriches_online_candidate_and_adds_offline_candidate() {
+        let candidates = merge_candidates(
+            EndpointCandidates {
+                groups: vec![group(0, 2)],
+            },
+            [
+                CertPrimaryMetadata {
+                    sequence: CertificateSequence::from(0u8),
+                    device_name: Some("MacBook Pro".to_string()),
+                    status: Some("active".to_string()),
+                },
+                CertPrimaryMetadata {
+                    sequence: CertificateSequence::from(1u8),
+                    device_name: Some("ThinkPad".to_string()),
+                    status: Some("active".to_string()),
+                },
+            ],
+        );
+
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates[0].online);
+        assert_eq!(candidates[0].endpoint_count, 2);
+        assert_eq!(candidates[0].device_name.as_deref(), Some("MacBook Pro"));
+        assert!(!candidates[1].online);
+        assert_eq!(candidates[1].device_name.as_deref(), Some("ThinkPad"));
+    }
+
+    #[test]
+    fn offline_display_is_dimmed_when_ansi_enabled() {
+        let choice = CandidateChoice {
+            ansi: true,
+            candidate: SshPrimaryCandidate {
+                sequence: CertificateSequence::from(1u8),
+                online: false,
+                endpoint_count: 0,
+                device_name: Some("ThinkPad".to_string()),
+                cert_status: Some("active".to_string()),
+            },
+        };
+
+        let rendered = choice.to_string();
+        assert!(rendered.contains("primary:1"));
+        assert!(rendered.contains("\u{1b}"));
+        assert!(rendered.contains("offline"));
+    }
+
+    #[test]
+    fn non_interactive_requires_explicit_sequence_even_for_one_candidate() {
+        let candidates = vec![SshPrimaryCandidate {
+            sequence: CertificateSequence::from(0u8),
+            online: true,
+            endpoint_count: 1,
+            device_name: Some("MacBook Pro".to_string()),
+            cert_status: Some("active".to_string()),
+        }];
+
+        let error = choose_non_interactive("alice.device", &candidates).unwrap_err();
+        let rendered = error.to_string();
+
+        assert!(rendered.contains("Cannot choose a primary sequence without interactive input"));
+        assert!(rendered.contains("primary:0"));
+        assert!(rendered.contains("genmeta ssh alice.device:0"));
+    }
+
+    #[test]
+    fn empty_candidates_reports_no_primary_sequences() {
+        let error = choose_non_interactive("alice.device", &[]).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("No primary sequences were found for alice.device")
+        );
+    }
+
+    #[test]
+    fn cert_list_item_primary_metadata_ignores_secondary() {
+        let primary = cert_metadata_from_parts("primary", 2, Some("Laptop"), "active")
+            .expect("primary metadata");
+        let secondary = cert_metadata_from_parts("secondary", 2, Some("Backup"), "active");
+
+        assert_eq!(primary.sequence.get(), 2);
+        assert_eq!(primary.device_name.as_deref(), Some("Laptop"));
+        assert!(secondary.is_none());
+    }
+}

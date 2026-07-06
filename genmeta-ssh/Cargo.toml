@@ -15,7 +15,9 @@ clap = { workspace = true }
 crossterm = { workspace = true }
 dirs = { workspace = true }
 futures = { workspace = true }
+genmeta-identity = { workspace = true, default-features = false }
 dhttp = { workspace = true }
+inquire = { workspace = true }
 dshell = { workspace = true, features = ["cli", "client", "config"] }
 http = { workspace = true }
 h3x = { workspace = true, features = ["webtransport"] }

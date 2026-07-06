@@ -7,6 +7,7 @@ use std::{
 mod config;
 mod connect;
 pub mod forward;
+mod sequence;
 pub mod ssh_config;
 
 use clap::Parser;
