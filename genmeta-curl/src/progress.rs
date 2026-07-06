@@ -1,7 +1,8 @@
 use std::io::IsTerminal;
 
-use indicatif::{ProgressBar, ProgressStyle};
-use tracing_indicatif::IndicatifLayer;
+use indicatif::ProgressStyle;
+use tracing::Span;
+use tracing_indicatif::{IndicatifLayer, span_ext::IndicatifSpanExt};
 use tracing_subscriber::{prelude::*, util::SubscriberInitExt};
 
 use crate::cli::Options;
@@ -58,27 +59,48 @@ pub(crate) fn init_console(options: &Options) -> ConsoleGuard {
     }
 }
 
-#[allow(dead_code)]
+pub(crate) struct TransferProgress {
+    span: Span,
+    has_length: bool,
+}
+
+impl TransferProgress {
+    pub(crate) fn inc(&self, delta: u64) {
+        if self.has_length {
+            self.span.pb_inc(delta);
+        } else {
+            self.span.pb_tick();
+        }
+    }
+
+    pub(crate) fn finish(self) {}
+}
+
 pub(crate) fn progress_bar(
     mode: ProgressMode,
     len: Option<u64>,
     message: &'static str,
-) -> Option<ProgressBar> {
+) -> Option<TransferProgress> {
     if mode == ProgressMode::Disabled {
         return None;
     }
-    let pb = len
-        .map(ProgressBar::new)
-        .unwrap_or_else(ProgressBar::new_spinner);
     let style = if len.is_some() {
         ProgressStyle::with_template("{msg} {bytes}/{total_bytes} [{bar:40.cyan/blue}] {percent}%")
             .expect("progress template is valid")
     } else {
-        ProgressStyle::with_template("{spinner} {msg} {bytes}").expect("spinner template is valid")
+        ProgressStyle::with_template("{spinner} {msg}").expect("spinner template is valid")
     };
-    pb.set_style(style);
-    pb.set_message(message);
-    Some(pb)
+    let span = tracing::info_span!("transfer_progress");
+    span.pb_set_style(&style);
+    span.pb_set_message(message);
+    if let Some(len) = len {
+        span.pb_set_length(len);
+    }
+    span.pb_start();
+    Some(TransferProgress {
+        span,
+        has_length: len.is_some(),
+    })
 }
 
 #[cfg(test)]

@@ -110,7 +110,7 @@ impl RequestPlan {
     }
 
     pub(crate) fn for_redirect(&self, target: crate::redirect::RedirectTarget) -> Self {
-        let body = if target.switched_to_get || matches!(self.body, RequestBody::UploadFile(_)) {
+        let body = if target.switched_to_get {
             RequestBody::Empty
         } else {
             self.body.clone()
@@ -196,7 +196,7 @@ pub(crate) async fn send_request_body<W: LineWriter>(
                 n
             };
             if let Some(pb) = progress {
-                pb.finish_and_clear();
+                pb.finish();
             }
             verbose
                 .upload_data_marker(n)
@@ -220,6 +220,7 @@ mod tests {
     use http::{Method, Uri};
 
     use super::{RequestBody, RequestPlan};
+    use crate::redirect::RedirectTarget;
 
     #[test]
     fn request_target_defaults_to_root() {
@@ -266,5 +267,42 @@ mod tests {
             ),
             Method::PATCH
         );
+    }
+
+    #[test]
+    fn redirect_to_get_drops_request_body() {
+        let plan = RequestPlan {
+            uri: "https://example.dhttp.net/start".parse().unwrap(),
+            method: Method::POST,
+            headers: Default::default(),
+            body: RequestBody::Data("abc".to_string()),
+        };
+        let redirected = plan.for_redirect(RedirectTarget {
+            uri: "https://example.dhttp.net/next".parse().unwrap(),
+            method: Method::GET,
+            switched_to_get: true,
+        });
+
+        assert_eq!(redirected.method, Method::GET);
+        assert_eq!(redirected.body, RequestBody::Empty);
+    }
+
+    #[test]
+    fn redirect_that_keeps_method_keeps_upload_file_body() {
+        let path = PathBuf::from("payload.bin");
+        let plan = RequestPlan {
+            uri: "https://example.dhttp.net/start".parse().unwrap(),
+            method: Method::PUT,
+            headers: Default::default(),
+            body: RequestBody::UploadFile(path.clone()),
+        };
+        let redirected = plan.for_redirect(RedirectTarget {
+            uri: "https://example.dhttp.net/next".parse().unwrap(),
+            method: Method::PUT,
+            switched_to_get: false,
+        });
+
+        assert_eq!(redirected.method, Method::PUT);
+        assert_eq!(redirected.body, RequestBody::UploadFile(path));
     }
 }

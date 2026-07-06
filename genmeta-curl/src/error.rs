@@ -113,4 +113,14 @@ pub enum ParseHeaderError {
     MissingKey { input: String },
     #[snafu(display("missing header value in `{input}`"))]
     MissingValue { input: String },
+    #[snafu(display("invalid header key in `{input}`"))]
+    InvalidName {
+        input: String,
+        source: http::header::InvalidHeaderName,
+    },
+    #[snafu(display("invalid header value in `{input}`"))]
+    InvalidValue {
+        input: String,
+        source: http::header::InvalidHeaderValue,
+    },
 }

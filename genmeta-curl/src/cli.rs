@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use dhttp::{ddns::resolvers::DnsScheme, dquic::binds::BindPattern, home, name::DhttpName as Name};
-use http::{Method, Uri};
-use snafu::OptionExt;
+use http::{HeaderName, HeaderValue, Method, Uri};
+use snafu::{OptionExt, ResultExt};
 
 use crate::error::{ParseHeaderError, parse_header_error};
 
@@ -133,5 +133,8 @@ fn parse_header(s: &str) -> Result<(String, String), ParseHeaderError> {
         .context(parse_header_error::MissingValueSnafu { input: s })?
         .trim()
         .to_string();
+    HeaderName::from_bytes(key.as_bytes())
+        .context(parse_header_error::InvalidNameSnafu { input: s })?;
+    HeaderValue::from_str(&value).context(parse_header_error::InvalidValueSnafu { input: s })?;
     Ok((key, value))
 }

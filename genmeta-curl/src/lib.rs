@@ -98,13 +98,6 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
                         .switch_to_get()
                         .context(curl_error::WriteVerboseSnafu)?;
                 }
-                if matches!(plan.body, request::RequestBody::UploadFile(_))
-                    && !target.switched_to_get
-                {
-                    verbose
-                        .cannot_rewind_upload()
-                        .context(curl_error::WriteVerboseSnafu)?;
-                }
                 plan = plan.for_redirect(target);
                 redirect_count += 1;
                 continue;
@@ -166,5 +159,13 @@ mod tests {
             Options::try_parse_from(["genmeta-curl", "--global", "https://example.com/"]).unwrap();
 
         assert_eq!(options.home_scope(), dhttp::home::HomeScope::Global);
+    }
+
+    #[test]
+    fn invalid_custom_header_is_rejected_by_cli_parser() {
+        let result =
+            Options::try_parse_from(["genmeta-curl", "-H", ": value", "https://example.com/"]);
+
+        assert!(result.is_err());
     }
 }

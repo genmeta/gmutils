@@ -112,7 +112,7 @@ where
     }
 
     if let Some(pb) = progress {
-        pb.finish_and_clear();
+        pb.finish();
     }
     Ok(total)
 }

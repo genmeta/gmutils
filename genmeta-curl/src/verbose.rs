@@ -183,16 +183,6 @@ impl<W: LineWriter> CurlVerbose<W> {
         }
     }
 
-    pub(crate) fn cannot_rewind_upload(&self) -> io::Result<()> {
-        if self.enabled {
-            self.writer.write_line(
-                "* Cannot rewind upload file for redirect; sending redirected request without body",
-            )
-        } else {
-            Ok(())
-        }
-    }
-
     pub(crate) fn upload_data_marker(&self, bytes: u64) -> io::Result<()> {
         if self.enabled {
             self.writer.write_line(&format!("}} [{bytes} bytes data]"))
