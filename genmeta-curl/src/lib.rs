@@ -1,21 +1,16 @@
-use std::{io::IsTerminal, path::PathBuf, pin::pin, sync::Arc, time::Duration};
+use std::{io::IsTerminal, path::PathBuf, pin::pin};
 
 use async_compression::tokio::bufread::{DeflateDecoder, GzipDecoder, ZstdDecoder};
-use dhttp::{
-    endpoint::Endpoint,
-    h3x::{
-        dhttp::message::{MessageReader, MessageWriter},
-    },
-    home::{DhttpHome, identity::IdentityProfile},
-    message::IntoUri,
-};
+use dhttp::h3x::dhttp::message::MessageReader;
 use http::{Method, StatusCode, Uri};
-use snafu::{IntoError, ResultExt, ensure};
+use snafu::ResultExt;
 use tokio::{fs, io::{self, AsyncRead, AsyncWrite, AsyncWriteExt}};
 use tracing_subscriber::prelude::*;
 
 mod cli;
+mod client;
 mod error;
+mod redirect;
 mod request;
 mod timing;
 mod write_out;
@@ -107,160 +102,6 @@ fn init_tracing(options: &Options) -> tracing_appender::non_blocking::WorkerGuar
         )
         .init();
     guard
-}
-
-async fn load_identity_profile(options: &Options) -> Result<Option<IdentityProfile>, Error> {
-    if options.anonymous {
-        return Ok(None);
-    }
-
-    let home = match DhttpHome::load(options.home_scope()) {
-        Ok(home) => home,
-        Err(source) if options.id.is_none() => {
-            tracing::warn!(
-                error = %snafu::Report::from_error(&source),
-                "failed to load dhttp home, using anonymous endpoint"
-            );
-            return Ok(None);
-        }
-        Err(source) => return Err(curl_error::LoadDhttpHomeSnafu.into_error(source)),
-    };
-
-    if let Some(name) = &options.id {
-        tracing::debug!(%name, "trying to load command line identity");
-        return home
-            .resolve_identity_profile(name.clone())
-            .await
-            .context(curl_error::LoadExplicitIdentitySnafu { name: name.clone() })
-            .map(Some);
-    }
-
-    match home.resolve_default_identity_profile().await {
-        Ok(identity) => {
-            tracing::debug!(name = %identity.name(), "using default identity");
-            Ok(Some(identity))
-        }
-        Err(source) => {
-            tracing::debug!(
-                error = %snafu::Report::from_error(&source),
-                "failed to load default identity, using anonymous endpoint"
-            );
-            Ok(None)
-        }
-    }
-}
-
-fn normalize_cli_uri(
-    uri: Uri,
-    self_name: Option<&dhttp::name::DhttpName<'_>>,
-) -> Result<Uri, Error> {
-    let uri = uri.into_uri(self_name).context(curl_error::NormalizeUriSnafu)?;
-
-    let mut parts = uri.into_parts();
-    if parts.scheme.is_none() && parts.authority.is_some() && parts.path_and_query.is_none() {
-        parts.scheme = Some(http::uri::Scheme::HTTPS);
-        parts.path_and_query = Some(http::uri::PathAndQuery::from_static("/"));
-    }
-
-    Uri::from_parts(parts).context(curl_error::ConstructRequestUriSnafu)
-}
-
-/// Load identity, expand the URI, and construct the DHTTP endpoint.
-async fn setup_client(
-    options: &mut Options,
-) -> Result<(Arc<Endpoint>, Option<IdentityProfile>, Duration), Error> {
-    let identity_profile = load_identity_profile(options).await?;
-
-    // Normalize DHTTP shorthand in URI using loaded identity (--id > default identity).
-    options.uri = normalize_cli_uri(
-        options.uri.clone(),
-        identity_profile.as_ref().map(|id| id.name()),
-    )?;
-    ensure!(
-        options.uri.authority().is_some(),
-        curl_error::MissingAuthoritySnafu
-    );
-
-    // TODO(-4/-6): the previous address-family filter here (applied post-
-    // expansion on `BindUri`s) was a no-op in practice — it restricted the
-    // watcher's "initial known set" but not the actual bindings, and it
-    // silently rejected all `iface://` URIs because the predicate only
-    // considered `inet://` addresses. Reintroduce this feature at the
-    // `Bind` pattern level (e.g. drop binds whose explicit family tag
-    // mismatches the requested `-4`/`-6`) rather than post-expansion when
-    // it's needed again.
-    let identity = match &identity_profile {
-        Some(profile) => Some(Arc::new(
-            profile
-                .load_identity()
-                .await
-                .context(curl_error::LoadIdentitySslSnafu)?,
-        )),
-        None => None,
-    };
-
-    let mut builder = Endpoint::builder()
-        .bind(Arc::new(options.binds.clone()))
-        .maybe_identity(identity);
-    for scheme in options.dns.iter().copied() {
-        builder = builder.dns(scheme);
-    }
-    let endpoint = Arc::new(builder.build().await.context(curl_error::BuildEndpointSnafu)?);
-
-    let connect_timeout = connect_timeout_from_secs(options.connect_timeout);
-
-    Ok((endpoint, identity_profile, connect_timeout))
-}
-
-fn connect_timeout_from_secs(seconds: u64) -> Duration {
-    if seconds == 0 {
-        Duration::MAX
-    } else {
-        Duration::from_secs(seconds)
-    }
-}
-
-/// Check whether a response is a redirect and resolve the new target.
-///
-/// Returns `Some((new_uri, new_method))` when the caller should follow the
-/// redirect, or `None` when the response is final.
-fn resolve_redirect(
-    status: StatusCode,
-    headers: &http::HeaderMap,
-    current_uri: &Uri,
-    current_method: &Method,
-) -> Result<Option<(Uri, Method)>, Error> {
-    let location = match headers.get(http::header::LOCATION) {
-        Some(loc) => loc,
-        None => return Ok(None),
-    };
-
-    let location_str = location.to_str().unwrap_or("");
-
-    // Use url::Url::join() for RFC 3986 compliant relative reference resolution
-    let base_url =
-        url::Url::parse(&current_uri.to_string()).context(curl_error::ParseRedirectUrlSnafu {
-            url: current_uri.to_string(),
-        })?;
-    let resolved = base_url
-        .join(location_str)
-        .context(curl_error::ParseRedirectUrlSnafu {
-            url: location_str.to_string(),
-        })?;
-    let new_uri: Uri = resolved
-        .as_str()
-        .parse()
-        .context(curl_error::InvalidRedirectLocationSnafu)?;
-
-    // 301/302/303 → switch to GET; 307/308 → keep method
-    let new_method = match status {
-        StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND | StatusCode::SEE_OTHER => Method::GET,
-        _ => current_method.clone(),
-    };
-
-    tracing::debug!(location = location_str, "following redirect");
-
-    Ok(Some((new_uri, new_method)))
 }
 
 /// Stream the response body to a file or stdout, optionally decompressing.
@@ -355,60 +196,6 @@ async fn process_final_response(
     Ok(())
 }
 
-/// Connect to the server (with timeout) and open the initial message streams.
-async fn connect_and_open_streams(
-    client: &Endpoint,
-    uri: &Uri,
-    connect_timeout: Duration,
-    timing: &mut Timing,
-) -> Result<(MessageReader, MessageWriter), Error> {
-    let connect_fut = async {
-        client
-            .connect(
-                uri.authority()
-                    .expect("BUG: URI authority already validated")
-                    .clone(),
-            )
-            .await
-            .context(curl_error::ConnectSnafu)
-    };
-    let connection = match tokio::time::timeout(connect_timeout, connect_fut).await {
-        Ok(result) => result?,
-        Err(_) => return curl_error::TimedoutSnafu.fail(),
-    };
-    timing.mark_connected();
-    connection
-        .initial_message_stream()
-        .await
-        .context(curl_error::InitialMessageStreamSnafu)
-}
-
-/// Check whether a response is a redirect; if so, drain the response body and
-/// return the new target URI and method.
-async fn check_redirect(
-    options: &Options,
-    status: StatusCode,
-    headers: &http::HeaderMap,
-    current_uri: &Uri,
-    current_method: &Method,
-    redirect_count: u32,
-    response_stream: &mut MessageReader,
-) -> Result<Option<(Uri, Method)>, Error> {
-    if !options.location || !status.is_redirection() || status == StatusCode::NOT_MODIFIED {
-        return Ok(None);
-    }
-    if redirect_count >= options.max_redirs {
-        return curl_error::TooManyRedirectsSnafu.fail();
-    }
-    let result = resolve_redirect(status, headers, current_uri, current_method)?;
-    if result.is_some() {
-        // Drain response body so the QUIC stream is cleanly closed
-        let mut body_reader = pin!(response_stream.as_reader());
-        io::copy(&mut body_reader, &mut io::sink()).await.ok();
-    }
-    Ok(result)
-}
-
 /// Print verbose response details to stderr.
 fn print_verbose_response(response: &http::response::Parts) {
     let formatted = format!("< received response: {response:#?}")
@@ -441,7 +228,7 @@ async fn receive_response_head(
 
 pub async fn run(mut options: Options) -> Result<(), Error> {
     let _guard = init_tracing(&options);
-    let (client, _id, connect_timeout) = setup_client(&mut options).await?;
+    let session = client::setup_client(&mut options).await?;
 
     let mut plan = RequestPlan::initial(&options);
     let mut redirect_count: u32 = 0;
@@ -450,7 +237,7 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         let mut timing = Timing::new();
 
         let (mut response_stream, mut request_stream) =
-            connect_and_open_streams(&client, &plan.uri, connect_timeout, &mut timing).await?;
+            client::connect_and_open_streams(&session, &plan.uri, &mut timing).await?;
 
         let _bytes_uploaded = request::send_request_body(&plan, &mut request_stream).await?;
 
@@ -461,21 +248,19 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         let response_headers = response.headers.clone();
         let http_version = response.version;
 
-        if let Some((new_uri, new_method)) = check_redirect(
-            &options,
-            status,
-            &response.headers,
-            &plan.uri,
-            &plan.method,
-            redirect_count,
-            &mut response_stream,
-        )
-        .await?
-        {
-            plan.uri = new_uri;
-            plan.method = new_method;
-            redirect_count += 1;
-            continue;
+        if options.location && status.is_redirection() && status != StatusCode::NOT_MODIFIED {
+            if redirect_count >= options.max_redirs {
+                return curl_error::TooManyRedirectsSnafu.fail();
+            }
+            if let Some(target) =
+                redirect::resolve_redirect(status, &response.headers, &plan.uri, &plan.method)?
+            {
+                let mut body_reader = pin!(response_stream.as_reader());
+                io::copy(&mut body_reader, &mut io::sink()).await.ok();
+                plan = plan.for_redirect(target);
+                redirect_count += 1;
+                continue;
+            }
         }
 
         process_final_response(
@@ -507,19 +292,19 @@ mod tests {
 
     #[test]
     fn connect_timeout_zero_disables_timeout() {
-        assert_eq!(connect_timeout_from_secs(0), Duration::MAX);
+        assert_eq!(client::connect_timeout_from_secs(0), Duration::MAX);
     }
 
     #[test]
     fn connect_timeout_uses_seconds() {
-        assert_eq!(connect_timeout_from_secs(5), Duration::from_secs(5));
+        assert_eq!(client::connect_timeout_from_secs(5), Duration::from_secs(5));
     }
 
     #[test]
     fn normalize_cli_uri_expands_bare_authority_to_https_root() {
         let uri = "reimu.pilot~".parse::<http::Uri>().unwrap();
 
-        let normalized = normalize_cli_uri(uri, None).unwrap();
+        let normalized = client::normalize_cli_uri(uri, None).unwrap();
 
         assert_eq!(normalized.to_string(), "https://reimu.pilot.dhttp.net/");
     }

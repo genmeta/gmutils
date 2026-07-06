@@ -108,6 +108,21 @@ impl RequestPlan {
             .unwrap_or_else(|| "/".to_string())
     }
 
+
+    pub(crate) fn for_redirect(&self, target: crate::redirect::RedirectTarget) -> Self {
+        let body = if target.switched_to_get {
+            RequestBody::Empty
+        } else {
+            self.body.clone()
+        };
+        Self {
+            uri: target.uri,
+            method: target.method,
+            headers: self.headers.clone(),
+            body,
+        }
+    }
+
     pub(crate) fn request_builder(&self) -> http::request::Builder {
         let builder = Request::builder()
             .uri(self.uri.clone())
