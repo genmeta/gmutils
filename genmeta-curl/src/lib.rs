@@ -1,10 +1,9 @@
-use std::{io::IsTerminal, path::PathBuf, pin::pin};
+use std::{io::IsTerminal, pin::pin};
 
-use async_compression::tokio::bufread::{DeflateDecoder, GzipDecoder, ZstdDecoder};
 use dhttp::h3x::{dhttp::message::MessageReader, quic::GetStreamIdExt};
-use http::{Method, StatusCode, Uri};
+use http::StatusCode;
 use snafu::ResultExt;
-use tokio::{fs, io::{self, AsyncRead, AsyncWrite, AsyncWriteExt}};
+use tokio::io;
 
 mod cli;
 mod client;
@@ -12,6 +11,7 @@ mod error;
 mod progress;
 mod redirect;
 mod request;
+mod response;
 mod timing;
 mod verbose;
 mod write_out;
@@ -24,147 +24,6 @@ use timing::Timing;
 use progress::{ProgressMode, init_console};
 use request::RequestPlan;
 use verbose::{CurlVerbose, StreamId};
-use write_out::{WriteOutContext, expand_write_out};
-
-/// Copy `reader` into `writer`, returning the number of bytes written.
-async fn copy_all<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
-    reader: &mut R,
-    writer: &mut W,
-) -> io::Result<u64> {
-    io::copy(reader, writer).await
-}
-
-/// Copy `reader` into `writer`, decompressing based on Content-Encoding.
-/// Falls back to pass-through for unknown or identity encoding.
-async fn decompress_copy<R, W>(
-    reader: R,
-    writer: &mut W,
-    content_encoding: &str,
-) -> Result<u64, Error>
-where
-    R: tokio::io::AsyncBufRead + Unpin,
-    W: AsyncWrite + Unpin,
-{
-    match content_encoding {
-        "gzip" | "x-gzip" => {
-            let mut dec = GzipDecoder::new(reader);
-            copy_all(&mut dec, writer)
-                .await
-                .context(curl_error::ReadResponseSnafu)
-        }
-        "deflate" => {
-            let mut dec = DeflateDecoder::new(reader);
-            copy_all(&mut dec, writer)
-                .await
-                .context(curl_error::ReadResponseSnafu)
-        }
-        "zstd" => {
-            let mut dec = ZstdDecoder::new(reader);
-            copy_all(&mut dec, writer)
-                .await
-                .context(curl_error::ReadResponseSnafu)
-        }
-        _ => {
-            // identity or unknown encoding — pass through
-            let mut r = reader;
-            copy_all(&mut r, writer)
-                .await
-                .context(curl_error::ReadResponseSnafu)
-        }
-    }
-}
-
-/// Stream the response body to a file or stdout, optionally decompressing.
-async fn stream_response_body(
-    mut response_stream: MessageReader,
-    decompress: bool,
-    content_encoding: &str,
-    output: Option<&PathBuf>,
-) -> Result<u64, Error> {
-    if let Some(output_path) = output {
-        tracing::debug!("dumping output to {}", output_path.display());
-        let mut file = fs::File::create(output_path)
-            .await
-            .context(curl_error::CreateOutputFileSnafu)?;
-
-        let n = if decompress {
-            let body_reader = pin!(response_stream.as_reader());
-            decompress_copy(body_reader, &mut file, content_encoding).await?
-        } else {
-            let mut body_reader = pin!(response_stream.as_reader());
-            copy_all(&mut body_reader, &mut file)
-                .await
-                .context(curl_error::ReadResponseSnafu)?
-        };
-        file.flush().await.context(curl_error::FlushOutputSnafu)?;
-        Ok(n)
-    } else {
-        tracing::debug!("dumping output to stdout");
-        let mut stdout = io::stdout();
-
-        let n = if decompress {
-            let body_reader = pin!(response_stream.as_reader());
-            decompress_copy(body_reader, &mut stdout, content_encoding).await?
-        } else {
-            let mut body_reader = pin!(response_stream.as_reader());
-            copy_all(&mut body_reader, &mut stdout)
-                .await
-                .context(curl_error::ReadResponseSnafu)?
-        };
-        stdout.flush().await.context(curl_error::FlushOutputSnafu)?;
-        Ok(n)
-    }
-}
-
-/// Process the final response: stream body and optionally print `--write-out`.
-#[allow(clippy::too_many_arguments)]
-async fn process_final_response(
-    response_stream: MessageReader,
-    response_headers: &http::HeaderMap,
-    options: &Options,
-    status: StatusCode,
-    http_version: http::Version,
-    current_uri: &Uri,
-    current_method: &Method,
-    timing: &Timing,
-) -> Result<(), Error> {
-    let content_encoding = response_headers
-        .get(http::header::CONTENT_ENCODING)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_lowercase();
-
-    let decompress = options.compressed && !options.raw;
-
-    let size_download = stream_response_body(
-        response_stream,
-        decompress,
-        &content_encoding,
-        options.output.as_ref(),
-    )
-    .await?;
-
-    // --write-out: print format string after body, to stdout, no trailing newline
-    if let Some(ref fmt) = options.write_out {
-        let ctx = WriteOutContext {
-            status: status.as_u16(),
-            uri: current_uri,
-            method: current_method,
-            http_version,
-            timing,
-            size_download,
-            response_headers,
-        };
-        let expanded = expand_write_out(fmt, &ctx);
-        print!("{expanded}");
-        io::stdout()
-            .flush()
-            .await
-            .context(curl_error::FlushOutputSnafu)?;
-    }
-
-    Ok(())
-}
 
 /// Receive the response head and record first-byte timing.
 async fn receive_response_head(
@@ -183,7 +42,7 @@ async fn receive_response_head(
 
 pub async fn run(mut options: Options) -> Result<(), Error> {
     let _guard = init_console(&options);
-    let _progress_mode = ProgressMode::from_flags(
+    let progress_mode = ProgressMode::from_flags(
         options.silent,
         options.verbose,
         std::io::stderr().is_terminal(),
@@ -237,15 +96,19 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             }
         }
 
-        process_final_response(
+        response::process_final_response(
             response_stream,
-            &response_headers,
-            &options,
-            status,
-            http_version,
-            &plan.uri,
-            &plan.method,
-            &timing,
+            response::ResponseContext {
+                options: &options,
+                status,
+                http_version,
+                current_uri: &plan.uri,
+                current_method: &plan.method,
+                timing: &timing,
+                response_headers: &response_headers,
+                verbose: &verbose,
+                progress_mode,
+            },
         )
         .await?;
 
