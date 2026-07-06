@@ -528,7 +528,7 @@ impl Options {
                 flow::run_create(cmd, dhttp_home, home_scope, cert_server).await
             }
             Options::Apply(cmd) => flow::run_apply(cmd, dhttp_home, home_scope, cert_server).await,
-            Options::Renew(cmd) => flow::run_renew(cmd, dhttp_home, cert_server).await,
+            Options::Renew(cmd) => flow::run_renew(cmd, dhttp_home, home_scope, cert_server).await,
             Options::Default(cmd) => {
                 flow::run_default(cmd, dhttp_home, home_scope, cert_server).await
             }

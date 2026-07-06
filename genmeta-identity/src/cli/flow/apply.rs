@@ -1035,7 +1035,8 @@ async fn run_interactive_with_policy(
         let kind = state
             .kind
             .whatever_context::<_, Error>("interactive apply kind is unavailable")?;
-        let device_name = super::device::resolve_device_name(command.device_name.as_deref());
+        let device_name =
+            super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
         let detail = match approval_plan {
             ApplyApprovalPlan::Email => {
                 let email = state
@@ -1262,7 +1263,8 @@ pub(crate) async fn run_with_policy(
     let domain = resolve_target(command).await?;
     let target = IdentityTarget::parse(domain.as_partial())?;
     let kind = resolve_kind(command).await?;
-    let device_name = super::device::resolve_device_name(command.device_name.as_deref());
+    let device_name =
+        super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
     let identity_auth_domain = resolve_identity_auth_domain(dhttp_home, &target).await?;
     let approval_plan = resolve_approval_plan(
         target.short_name(),

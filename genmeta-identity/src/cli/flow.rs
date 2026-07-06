@@ -43,9 +43,10 @@ pub(crate) async fn run_apply(
 pub(crate) async fn run_renew(
     command: &Renew,
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
 ) -> Result<(), Error> {
-    renew::run(command, dhttp_home, cert_server).await
+    renew::run(command, dhttp_home, home_scope, cert_server).await
 }
 
 pub(crate) async fn run_default(

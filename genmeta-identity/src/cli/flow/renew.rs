@@ -1,6 +1,6 @@
 use std::io::IsTerminal;
 
-use dhttp::home::DhttpHome;
+use dhttp::home::{DhttpHome, HomeScope};
 use snafu::{OptionExt, whatever};
 use tracing::{Instrument, info_span};
 
@@ -363,6 +363,7 @@ async fn prompt_renew_approval_menu_action() -> Result<RenewApprovalMenuAction, 
 async fn run_interactive(
     command: &Renew,
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
 ) -> Result<(), Error> {
     let initial_target = if command.use_default {
@@ -563,7 +564,8 @@ async fn run_interactive(
             .whatever_context::<_, Error>("local identity does not expose a certificate chain")?;
         let kind = chain_key.kind().as_str();
         let sequence = chain_key.sequence().get();
-        let device_name = super::device::resolve_device_name(command.device_name.as_deref());
+        let device_name =
+            super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
         let (key_pem, csr_pem) = cli::generate_private_key_and_csr(&domain)?;
 
         let detail = match approval_plan {
@@ -659,18 +661,19 @@ pub(crate) async fn run_helper_for_verification(
         verify_code: None,
         auth: None,
     };
-    run(&command, dhttp_home, cert_server).await?;
+    run(&command, dhttp_home, HomeScope::User, cert_server).await?;
     Ok(true)
 }
 
 pub(crate) async fn run(
     command: &Renew,
     dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
     cert_server: &CertServer,
 ) -> Result<(), Error> {
     let is_interactive = std::io::stdin().is_terminal();
     if is_interactive && !command.send_code {
-        return run_interactive(command, dhttp_home, cert_server).await;
+        return run_interactive(command, dhttp_home, home_scope, cert_server).await;
     }
     let domain = resolve_target(command, dhttp_home).await?;
     ensure_saved_renew_target(dhttp_home, domain.borrow()).await?;
@@ -682,7 +685,8 @@ pub(crate) async fn run(
         .whatever_context::<_, Error>("local identity does not expose a certificate chain")?;
     let kind = chain_key.kind().as_str();
     let sequence = chain_key.sequence().get();
-    let device_name = super::device::resolve_device_name(command.device_name.as_deref());
+    let device_name =
+        super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
 
     if command.send_code {
         if !matches!(command.auth, Some(AuthMethod::Email)) {
@@ -759,7 +763,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use dhttp::home::DhttpHome;
+    use dhttp::home::{DhttpHome, HomeScope};
 
     use super::{
         InteractiveRenewState, RenewApprovalMenuAction, RenewApprovalPlan, RenewEmailAction,
@@ -901,7 +905,7 @@ Apply alice.ma here first, then return to renew."
             auth: None,
         };
 
-        let error = super::run(&command, &dhttp_home, &dummy_cert_server())
+        let error = super::run(&command, &dhttp_home, HomeScope::User, &dummy_cert_server())
             .await
             .unwrap_err();
         let rendered = error.to_string();

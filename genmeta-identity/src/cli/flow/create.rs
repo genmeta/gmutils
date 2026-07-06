@@ -1469,7 +1469,10 @@ async fn run_interactive(
                         target.full_name(),
                         kind.as_str(),
                         None,
-                        &super::device::resolve_device_name(command.device_name.as_deref()),
+                        &super::device::resolve_device_name(
+                            command.device_name.as_deref(),
+                            home_scope,
+                        ),
                         &csr_pem,
                     ),
                 )
@@ -1542,7 +1545,10 @@ async fn run_interactive(
                                 target.full_name(),
                                 kind.as_str(),
                                 None,
-                                &super::device::resolve_device_name(command.device_name.as_deref()),
+                                &super::device::resolve_device_name(
+                                    command.device_name.as_deref(),
+                                    home_scope,
+                                ),
                                 &csr_pem,
                             ),
                         )
@@ -1601,7 +1607,10 @@ async fn run_interactive(
                                 target.full_name(),
                                 kind.as_str(),
                                 None,
-                                &super::device::resolve_device_name(command.device_name.as_deref()),
+                                &super::device::resolve_device_name(
+                                    command.device_name.as_deref(),
+                                    home_scope,
+                                ),
                                 &csr_pem,
                             ),
                         )
@@ -1661,7 +1670,8 @@ pub(crate) async fn run_with_policy(
         is_interactive,
     )
     .await?;
-    let device_name = super::device::resolve_device_name(command.device_name.as_deref());
+    let device_name =
+        super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
 
     if command.send_code {
         if !matches!(command.auth, Some(AuthMethod::Email)) {
