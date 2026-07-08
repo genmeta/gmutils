@@ -1014,9 +1014,7 @@ dependencies = [
 
 [[package]]
 name = "dhttp"
-version = "0.5.0-beta.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "130736aecbf6a0d3b1bef793c363ed3194b5a528e97945daae7356330971376a"
+version = "0.5.0-beta.3"
 dependencies = [
  "bon",
  "bytes",
@@ -1037,9 +1035,7 @@ dependencies = [
 
 [[package]]
 name = "dhttp-access"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5dee91d9ec4bf5f8fbd49a2761b1c5454aa9b088f6c53fc278f7b7934de9f38"
+version = "0.4.0-beta.1"
 dependencies = [
  "chrono",
  "clap",
@@ -1049,6 +1045,7 @@ dependencies = [
  "globset",
  "peg",
  "regex",
+ "regex-automata",
  "sea-orm",
  "sea-orm-migration",
  "serde",
@@ -1060,9 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "dhttp-home"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81393cfab5863c0f1b7994c5da57c0a1e941cb62886e558c4832cfea37d1ea68"
+version = "0.4.0-beta.1"
 dependencies = [
  "dhttp-identity",
  "dirs",
@@ -1077,9 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "dhttp-identity"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9006fe9bffd56d64fbe4260182039f104a84d612acdd30ec19a16583bb4ff671"
+version = "0.3.0-beta.1"
 dependencies = [
  "bytes",
  "futures",
@@ -1187,9 +1180,9 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "dquic"
-version = "0.7.0-beta.1"
+version = "0.7.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27db50b1f583081a6adf247411270f18cb9b1b879aaa4518a6853b6186dceb66"
+checksum = "c2945f40d972d12cf06777eddf20b7104378d5a614dcca56800286cff370f489"
 dependencies = [
  "arc-swap",
  "dashmap",
@@ -1205,9 +1198,9 @@ dependencies = [
 
 [[package]]
 name = "dshell"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d263c40ce195343c9d35e8f95f6c9cb810eb2389384d81080ee1e980317bf4a"
+checksum = "024bc3e3dbed799db8ab771e51851a741de22c1caba2c82f98ef557a5be34d5a"
 dependencies = [
  "base64",
  "bytes",
@@ -1233,9 +1226,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "dyns"
-version = "0.6.0-beta.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "237928fa7d6f2039d191b8e4cf9cfdcc54b5c73bead404f5d1ad7be9cfda880d"
+version = "0.6.0-beta.3"
 dependencies = [
  "base64",
  "bitfield-struct",
@@ -1593,7 +1584,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta"
-version = "0.8.0-beta.1"
+version = "0.8.0-beta.3"
 dependencies = [
  "clap",
  "genmeta-access",
@@ -1612,11 +1603,10 @@ dependencies = [
 
 [[package]]
 name = "genmeta-access"
-version = "0.4.0-beta.1"
+version = "0.4.0-beta.2"
 dependencies = [
  "clap",
  "dhttp",
- "dhttp-access",
  "sea-orm",
  "snafu 0.9.1",
  "tokio",
@@ -1627,7 +1617,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-curl"
-version = "0.7.0-beta.1"
+version = "0.7.0-beta.3"
 dependencies = [
  "async-compression",
  "bytes",
@@ -1646,7 +1636,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-discover"
-version = "0.4.0-beta.1"
+version = "0.4.0-beta.2"
 dependencies = [
  "clap",
  "dhttp",
@@ -1660,7 +1650,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-doctor"
-version = "0.4.0-beta.1"
+version = "0.4.0-beta.2"
 dependencies = [
  "clap",
  "genmeta-nat",
@@ -1671,7 +1661,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-identity"
-version = "0.4.0-beta.1"
+version = "0.4.0-beta.3"
 dependencies = [
  "base64",
  "bytes",
@@ -1704,7 +1694,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nat"
-version = "0.5.0-beta.1"
+version = "0.5.0-beta.2"
 dependencies = [
  "clap",
  "dhttp",
@@ -1718,7 +1708,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nslookup"
-version = "0.5.0-beta.1"
+version = "0.5.0-beta.2"
 dependencies = [
  "clap",
  "dhttp",
@@ -1732,7 +1722,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-proxy"
-version = "0.4.0-beta.1"
+version = "0.4.0-beta.2"
 dependencies = [
  "bytes",
  "clap",
@@ -1752,7 +1742,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-ssh"
-version = "0.7.0-beta.1"
+version = "0.7.0-beta.3"
 dependencies = [
  "clap",
  "crossterm",
@@ -1860,9 +1850,7 @@ dependencies = [
 
 [[package]]
 name = "h3x"
-version = "0.6.0-beta.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "565dfd1823c49dc65add72599afe197578e56dae9861790b4d1a0d8987130d79"
+version = "0.6.0-beta.3"
 dependencies = [
  "arc-swap",
  "async-channel",
@@ -3415,9 +3403,9 @@ dependencies = [
 
 [[package]]
 name = "qtraversal"
-version = "0.7.0-beta.1"
+version = "0.7.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbe3e0de35ae950fa5fbe33799cdf10c80b6bce39afddd89b52f52720435fe3f"
+checksum = "16fc8219fe16d92319e4ccd1c41ea87661a27abfacc4d40e77273b55fa384cf9"
 dependencies = [
  "bon",
  "bytes",
@@ -4516,7 +4504,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
@@ -4528,7 +4516,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f103c50866b8743da9429b8a581d81a27c2d3a9c4ac7df8f8571c1dd7896eda"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
@@ -5639,7 +5627,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

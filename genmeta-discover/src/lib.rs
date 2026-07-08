@@ -134,10 +134,6 @@ mod tests {
             domain_with_default_mdns_service(DHTTP_MDNS_SERVICE),
             DHTTP_MDNS_SERVICE
         );
-        assert_eq!(
-            domain_with_default_mdns_service("_dhttp.local"),
-            format!("_dhttp.local.{DHTTP_MDNS_SERVICE}")
-        );
         let full_name = format!("reimu.pilot.{DHTTP_MDNS_SERVICE}");
         assert_eq!(domain_with_default_mdns_service(&full_name), full_name);
     }

@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0-beta.3] - 2026-07-09
+
+### Added
+
+- `genmeta access` supports explicit DHTTP identity shorthand in access-rule
+  patterns through the `dhttp` access facade.
+
+### Changed
+
+- Access-control integration now consumes access APIs and access feature
+  activation through the `dhttp` facade instead of a direct `dhttp-access`
+  dependency.
+- CLI progress integration remains opt-in so ordinary non-progress output is
+  stable.
+
+### Fixed
+
+- Release workflows upload package assets from publish reports instead of broad
+  local artifact globs.
+
+### Dependencies
+
+- Release manifests now target `dhttp` v0.5.0-beta.3, `dhttp-access`
+  v0.4.0-beta.1 through the `dhttp` facade, `dhttp-home`
+  v0.4.0-beta.1, `dhttp-identity` v0.3.0-beta.1, `dyns`
+  v0.6.0-beta.3, `h3x` v0.6.0-beta.3, `dquic`
+  v0.7.0-beta.2, `dshell` v0.6.0-beta.2, and `rankey` v0.2.1.
+
+### Components
+
+- `genmeta` v0.8.0-beta.3
+- `genmeta-curl` v0.7.0-beta.3
+- `genmeta-ssh` v0.7.0-beta.3
+- `genmeta-access` v0.4.0-beta.2
+- `genmeta-identity` v0.4.0-beta.3
+- `genmeta-proxy` v0.4.0-beta.2
+- `genmeta-discover` v0.4.0-beta.2
+- `genmeta-doctor` v0.4.0-beta.2
+- `genmeta-nat` v0.5.0-beta.2
+- `genmeta-nslookup` v0.5.0-beta.2
+
 ## [0.8.0-beta.2] - 2026-07-06
 
 ### Added
