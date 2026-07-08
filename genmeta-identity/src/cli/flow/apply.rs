@@ -2,7 +2,7 @@ use std::io::IsTerminal;
 
 use dhttp::home::{DhttpHome, HomeScope};
 use snafu::{FromString, OptionExt, whatever};
-use tracing::{Instrument, info_span};
+use tracing::Instrument;
 
 use super::{
     approval,
@@ -1114,7 +1114,7 @@ async fn run_interactive_with_policy(
                             key_pem.as_bytes(),
                             detail.cert_pem.as_bytes(),
                         )
-                        .instrument(info_span!("save_identity"))
+                        .instrument(super::progress::save_identity_span())
                         .await?;
                         let welcome = super::welcome::maybe_create_welcome_service(
                             dhttp_home,
@@ -1195,7 +1195,7 @@ async fn run_interactive_with_policy(
             key_pem.as_bytes(),
             detail.cert_pem.as_bytes(),
         )
-        .instrument(info_span!("save_identity"))
+        .instrument(super::progress::save_identity_span())
         .await?;
         let welcome = super::welcome::maybe_create_welcome_service(
             dhttp_home,
@@ -1371,7 +1371,7 @@ pub(crate) async fn run_with_policy(
         key_pem.as_bytes(),
         detail.cert_pem.as_bytes(),
     )
-    .instrument(info_span!("save_identity"))
+    .instrument(super::progress::save_identity_span())
     .await?;
     let welcome = super::welcome::maybe_create_welcome_service(
         dhttp_home,

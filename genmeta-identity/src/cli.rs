@@ -24,10 +24,13 @@ use indicatif::ProgressStyle;
 use rankey::EncodePem;
 use snafu::{ResultExt, Snafu, Whatever, whatever};
 use tokio::io;
-use tracing_indicatif::{IndicatifLayer, span_ext::IndicatifSpanExt};
+use tracing_indicatif::{
+    IndicatifLayer,
+    filter::{IndicatifFilter, hide_indicatif_span_fields},
+    span_ext::IndicatifSpanExt,
+};
 use tracing_subscriber::{
-    EnvFilter, filter::LevelFilter, prelude::__tracing_subscriber_SubscriberExt,
-    util::SubscriberInitExt,
+    EnvFilter, filter::LevelFilter, fmt::format::DefaultFields, prelude::*, util::SubscriberInitExt,
 };
 
 use crate::{
@@ -191,7 +194,7 @@ async fn load_current_settings(dhttp_home: &DhttpHome) -> Result<Option<DhttpSet
     }
 }
 
-#[tracing::instrument()]
+#[tracing::instrument(fields(indicatif.pb_show = tracing::field::Empty))]
 async fn save_settings(default_config: &DhttpSettingsFile) -> Result<(), Error> {
     if let Some(parent) = default_config.path().parent() {
         tokio::fs::create_dir_all(parent)
@@ -543,10 +546,12 @@ impl Options {
 }
 
 fn init_tracing() {
-    let indicatif_layer = IndicatifLayer::new().with_progress_style(
-        ProgressStyle::with_template("{span_child_prefix}{spinner} {msg}")
-            .expect("BUG: static progress bar template is valid"),
-    );
+    let indicatif_layer = IndicatifLayer::new()
+        .with_span_field_formatter(hide_indicatif_span_fields(DefaultFields::new()))
+        .with_progress_style(
+            ProgressStyle::with_template("{span_child_prefix}{spinner} {msg}")
+                .expect("BUG: static progress bar template is valid"),
+        );
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
@@ -554,7 +559,7 @@ fn init_tracing() {
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
                 .with_writer(indicatif_layer.get_stderr_writer()),
         )
-        .with(indicatif_layer)
+        .with(indicatif_layer.with_filter(IndicatifFilter::new(false)))
         .with(
             EnvFilter::builder()
                 .with_default_directive(LevelFilter::INFO.into())

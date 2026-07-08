@@ -1,9 +1,14 @@
-use std::{path::PathBuf, pin::pin};
+use std::{
+    io::Write,
+    path::PathBuf,
+    pin::{Pin, pin},
+    task::{Context, Poll},
+};
 
 use async_compression::tokio::bufread::{DeflateDecoder, GzipDecoder, ZstdDecoder};
 use dhttp::h3x::dhttp::message::MessageReader;
 use snafu::ResultExt;
-use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
     cli::Options,
@@ -15,6 +20,48 @@ use crate::{
 };
 
 const DOWNLOAD_BUFFER_SIZE: usize = 16 * 1024;
+
+enum StdoutOutput {
+    Indicatif(tracing_indicatif::IndicatifWriter<tracing_indicatif::writer::Stdout>),
+    Plain(std::io::Stdout),
+}
+
+impl StdoutOutput {
+    #[cfg(test)]
+    fn is_indicatif(&self) -> bool {
+        matches!(self, Self::Indicatif(_))
+    }
+}
+
+impl AsyncWrite for StdoutOutput {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match &mut *self {
+            Self::Indicatif(writer) => Poll::Ready(writer.write(buf)),
+            Self::Plain(stdout) => Poll::Ready(stdout.write(buf)),
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match &mut *self {
+            Self::Indicatif(writer) => Poll::Ready(writer.flush()),
+            Self::Plain(stdout) => Poll::Ready(stdout.flush()),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.poll_flush(cx)
+    }
+}
+
+fn stdout_output_for_response_body() -> StdoutOutput {
+    tracing_indicatif::writer::get_indicatif_stdout_writer()
+        .map(StdoutOutput::Indicatif)
+        .unwrap_or_else(|| StdoutOutput::Plain(std::io::stdout()))
+}
 
 pub(crate) struct ResponseContext<'a, W> {
     pub(crate) options: &'a Options,
@@ -201,7 +248,7 @@ where
         Ok(n)
     } else {
         tracing::debug!("dumping output to stdout");
-        let mut stdout = io::stdout();
+        let mut stdout = stdout_output_for_response_body();
 
         let n = if decompress {
             let body_reader = pin!(response_stream.as_reader());
@@ -264,7 +311,7 @@ where
             response_headers: ctx.response_headers,
         };
         let expanded = expand_write_out(fmt, &write_out_ctx);
-        let mut stdout = io::stdout();
+        let mut stdout = stdout_output_for_response_body();
         stdout
             .write_all(expanded.as_bytes())
             .await
@@ -290,8 +337,9 @@ mod tests {
 
     use clap::Parser;
     use tokio::io::BufReader;
+    use tracing_subscriber::layer::SubscriberExt;
 
-    use super::{decompress_copy, fail_on_http_error};
+    use super::{decompress_copy, fail_on_http_error, stdout_output_for_response_body};
     use crate::{
         cli::Options,
         error::Error,
@@ -346,5 +394,15 @@ mod tests {
             Options::try_parse_from(["genmeta-curl", "--fail", "https://example.com/"]).unwrap();
 
         fail_on_http_error(&options, http::StatusCode::OK).unwrap();
+    }
+
+    #[test]
+    fn response_body_stdout_uses_indicatif_writer_when_available() {
+        let indicatif_layer = tracing_indicatif::IndicatifLayer::new();
+        let subscriber = tracing_subscriber::registry().with(indicatif_layer);
+
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(stdout_output_for_response_body().is_indicatif());
+        });
     }
 }

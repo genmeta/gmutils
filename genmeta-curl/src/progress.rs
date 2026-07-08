@@ -2,8 +2,12 @@ use std::io::IsTerminal;
 
 use indicatif::ProgressStyle;
 use tracing::Span;
-use tracing_indicatif::{IndicatifLayer, span_ext::IndicatifSpanExt};
-use tracing_subscriber::{prelude::*, util::SubscriberInitExt};
+use tracing_indicatif::{
+    IndicatifLayer,
+    filter::{IndicatifFilter, hide_indicatif_span_fields},
+    span_ext::IndicatifSpanExt,
+};
+use tracing_subscriber::{fmt::format::DefaultFields, prelude::*, util::SubscriberInitExt};
 
 use crate::cli::Options;
 
@@ -28,7 +32,8 @@ pub(crate) struct ConsoleGuard {
 }
 
 pub(crate) fn init_console(options: &Options) -> ConsoleGuard {
-    let indicatif_layer = IndicatifLayer::new();
+    let indicatif_layer = IndicatifLayer::new()
+        .with_span_field_formatter(hide_indicatif_span_fields(DefaultFields::new()));
     let (stderr, guard) = tracing_appender::non_blocking(indicatif_layer.get_stderr_writer());
     let level = if options.silent && !options.show_error && std::env::var_os("RUST_LOG").is_none() {
         tracing_subscriber::filter::LevelFilter::OFF
@@ -52,7 +57,7 @@ pub(crate) fn init_console(options: &Options) -> ConsoleGuard {
                         .expect("static tracing directive is valid"),
                 ),
         )
-        .with(indicatif_layer)
+        .with(indicatif_layer.with_filter(IndicatifFilter::new(false)))
         .init();
     ConsoleGuard {
         _appender_guard: guard,
@@ -90,7 +95,10 @@ pub(crate) fn progress_bar(
     } else {
         ProgressStyle::with_template("{spinner} {msg}").expect("spinner template is valid")
     };
-    let span = tracing::info_span!("transfer_progress");
+    let span = tracing::info_span!(
+        "transfer_progress",
+        indicatif.pb_show = tracing::field::Empty
+    );
     span.pb_set_style(&style);
     span.pb_set_message(message);
     if let Some(len) = len {
@@ -105,7 +113,16 @@ pub(crate) fn progress_bar(
 
 #[cfg(test)]
 mod tests {
-    use super::ProgressMode;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use tracing::Subscriber;
+    use tracing_indicatif::filter::IndicatifFilter;
+    use tracing_subscriber::{Layer, layer::SubscriberExt, registry::LookupSpan};
+
+    use super::{ProgressMode, progress_bar};
 
     #[test]
     fn silent_disables_progress() {
@@ -137,5 +154,39 @@ mod tests {
             ProgressMode::from_flags(true, true, true),
             ProgressMode::Disabled
         );
+    }
+
+    #[derive(Clone, Default)]
+    struct CountLayer(Arc<AtomicUsize>);
+
+    impl<S> Layer<S> for CountLayer
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+    {
+        fn on_new_span(
+            &self,
+            _attrs: &tracing::span::Attributes<'_>,
+            _id: &tracing::span::Id,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn indicatif_filter_only_enables_marked_progress_spans() {
+        let layer = CountLayer::default();
+        let seen = layer.0.clone();
+        let subscriber =
+            tracing_subscriber::registry().with(layer.with_filter(IndicatifFilter::new(false)));
+
+        tracing::subscriber::with_default(subscriber, || {
+            let _ordinary = tracing::info_span!("ordinary_background_span");
+            assert_eq!(seen.load(Ordering::SeqCst), 0);
+
+            let _progress =
+                progress_bar(ProgressMode::Enabled, None, "Downloading").expect("progress enabled");
+            assert_eq!(seen.load(Ordering::SeqCst), 1);
+        });
     }
 }

@@ -2,7 +2,7 @@ use std::io::IsTerminal;
 
 use dhttp::home::{DhttpHome, HomeScope};
 use snafu::{OptionExt, whatever};
-use tracing::{Instrument, info_span};
+use tracing::Instrument;
 
 use super::{
     approval,
@@ -634,7 +634,7 @@ async fn run_interactive(
             key_pem.as_bytes(),
             detail.cert_pem.as_bytes(),
         )
-        .instrument(info_span!("save_identity"))
+        .instrument(super::progress::save_identity_span())
         .await?;
         return crate::cli::flow::epilogue::run_local_epilogue(
             dhttp_home,

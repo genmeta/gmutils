@@ -2,7 +2,7 @@ use std::io::IsTerminal;
 
 use dhttp::home::{DhttpHome, HomeScope};
 use snafu::{FromString, OptionExt, whatever};
-use tracing::{Instrument, info_span};
+use tracing::Instrument;
 
 use super::{
     approval,
@@ -1483,7 +1483,7 @@ async fn run_interactive(
                     key_pem.as_bytes(),
                     cert.cert_pem.as_bytes(),
                 )
-                .instrument(info_span!("save_identity"))
+                .instrument(super::progress::save_identity_span())
                 .await?;
             }
             IdentityLevel::SubIdentity => {
@@ -1559,7 +1559,7 @@ async fn run_interactive(
                             key_pem.as_bytes(),
                             cert.cert_pem.as_bytes(),
                         )
-                        .instrument(info_span!("save_identity"))
+                        .instrument(super::progress::save_identity_span())
                         .await?;
                     }
                     AuthMethod::Identity => {
@@ -1621,7 +1621,7 @@ async fn run_interactive(
                             key_pem.as_bytes(),
                             cert.cert_pem.as_bytes(),
                         )
-                        .instrument(info_span!("save_identity"))
+                        .instrument(super::progress::save_identity_span())
                         .await?;
                     }
                 }
@@ -1773,7 +1773,7 @@ pub(crate) async fn run_with_policy(
                 key_pem.as_bytes(),
                 cert.cert_pem.as_bytes(),
             )
-            .instrument(info_span!("save_identity"))
+            .instrument(super::progress::save_identity_span())
             .await?;
         }
         IdentityLevel::SubIdentity => {
@@ -1823,7 +1823,7 @@ pub(crate) async fn run_with_policy(
                         key_pem.as_bytes(),
                         cert.cert_pem.as_bytes(),
                     )
-                    .instrument(info_span!("save_identity"))
+                    .instrument(super::progress::save_identity_span())
                     .await?;
                 }
                 AuthMethod::Identity => {
@@ -1857,7 +1857,7 @@ pub(crate) async fn run_with_policy(
                         key_pem.as_bytes(),
                         cert.cert_pem.as_bytes(),
                     )
-                    .instrument(info_span!("save_identity"))
+                    .instrument(super::progress::save_identity_span())
                     .await?;
                 }
             }
