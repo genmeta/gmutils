@@ -179,11 +179,56 @@ async fn inline_expr_preserves_quoted_and_hyphen_prefixed_values() {
         &["/quoted", "allow", "*?", "with", "method", "\"not\""],
     )
     .await;
-    run_cli_args(&home, &["/quoted", "deny", "--bot"]).await;
+    run_cli_args(&home, &["/quoted", "deny", "*?", "with", "method", "--bot"]).await;
 
     let listed = run_cli_args(&home, &["/quoted", "list"]).await;
     assert!(listed.contains(r#"allow *? with method "not""#));
-    assert!(listed.contains("deny --bot"));
+    assert!(listed.contains("deny *? with method --bot"));
+}
+
+#[tokio::test]
+async fn inline_access_name_shorthand_is_stored_as_full_name() {
+    let test_home = TestHome::new("name-shorthand");
+    let home = test_home.home();
+    set_default_identity(&home, "alice.pilot").await.unwrap();
+
+    run_cli(&home, "/api allow bob.pilot~").await;
+
+    let listed = run_cli(&home, "/api list").await;
+    assert!(listed.contains("bob.pilot.dhttp.net"), "listed rules: {listed}");
+    assert!(
+        !listed.contains("bob.pilot~"),
+        "listed rules should be canonical: {listed}"
+    );
+}
+
+#[tokio::test]
+async fn inline_access_plain_name_is_not_dhttp_expanded() {
+    let test_home = TestHome::new("plain-name");
+    let home = test_home.home();
+    set_default_identity(&home, "alice.pilot").await.unwrap();
+
+    run_cli(&home, "/api allow bob.pilot").await;
+
+    let listed = run_cli(&home, "/api list").await;
+    assert!(listed.contains("bob.pilot"), "listed rules: {listed}");
+    assert!(
+        !listed.contains("bob.pilot.dhttp.net"),
+        "plain name must not expand: {listed}"
+    );
+}
+
+#[tokio::test]
+async fn inline_access_rejects_unreachable_name_pattern() {
+    let test_home = TestHome::new("smart-quote-pattern");
+    let home = test_home.home();
+    set_default_identity(&home, "alice.pilot").await.unwrap();
+
+    let error = try_run_cli(&home, "/api allow “*?”").await.unwrap_err();
+    let rendered = Report::from_error(error).to_string();
+
+    assert!(rendered.contains("client name"), "error: {rendered}");
+    assert!(rendered.contains("cannot match"), "error: {rendered}");
 }
 
 #[tokio::test]
@@ -192,7 +237,7 @@ async fn inline_path_preserves_shell_quoted_pattern_with_spaces() {
     let home = test_home.home();
     set_default_identity(&home, "alice.pilot").await.unwrap();
 
-    let pattern = "~ ^/api v[0-9]+$";
+    let pattern = "~ ^/api/v[0-9]+$";
     run_cli_args(&home, &[pattern, "allow", r#"*? with method "not""#]).await;
 
     let listed = run_cli_args(&home, &[pattern, "list"]).await;
@@ -244,7 +289,7 @@ fn help_output_shows_inline_usage() {
     let help = String::from_utf8(help).unwrap();
 
     assert!(help.contains("genmeta access [OPTIONS] <path> <operation>"));
-    assert!(help.contains("genmeta access \"/\" allow luffy.pilot"));
+    assert!(help.contains("genmeta access \"/\" allow luffy.pilot~"));
 }
 
 #[test]

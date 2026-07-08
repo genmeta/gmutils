@@ -44,7 +44,7 @@ where
     version,
     about,
     override_usage = "genmeta access [OPTIONS] <path> <operation> ...\n       genmeta access [OPTIONS] list [--wide]\n       genmeta access [OPTIONS] remove <path>...",
-    after_help = "Examples:\n  genmeta access \"/\" allow luffy.pilot\n  genmeta access \"/\" list\n  genmeta access list --wide\n  genmeta access --identity reimu.pilot \"/\" deny \"*?\""
+    after_help = "Examples:\n  genmeta access \"/\" allow luffy.pilot~\n  genmeta access \"/\" allow alice.gensokyo.net\n  genmeta access \"/\" list\n  genmeta access list --wide\n  genmeta access --identity reimu.pilot \"/\" deny \"*?\""
 )]
 pub struct Options {
     #[arg(
