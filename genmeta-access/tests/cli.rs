@@ -195,7 +195,10 @@ async fn inline_access_name_shorthand_is_stored_as_full_name() {
     run_cli(&home, "/api allow bob.pilot~").await;
 
     let listed = run_cli(&home, "/api list").await;
-    assert!(listed.contains("bob.pilot.dhttp.net"), "listed rules: {listed}");
+    assert!(
+        listed.contains("bob.pilot.dhttp.net"),
+        "listed rules: {listed}"
+    );
     assert!(
         !listed.contains("bob.pilot~"),
         "listed rules should be canonical: {listed}"
