@@ -12,8 +12,11 @@ categories = ["command-line-utilities", "config"]
 
 [dependencies]
 clap = { workspace = true }
-dhttp = { workspace = true }
-dhttp-access = { workspace = true, features = ["cli", "orm", "migration"] }
+dhttp = { workspace = true, features = [
+    "access-cli",
+    "access-orm",
+    "access-migration",
+] }
 sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
 snafu = { workspace = true }
 tokio = { workspace = true }

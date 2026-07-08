@@ -8,6 +8,29 @@ use dhttp::{
 use genmeta_access::{Options, run_for_home};
 use snafu::Report;
 
+#[test]
+fn manifest_uses_dhttp_facade_for_access_api() {
+    let package_manifest = include_str!("../Cargo.toml");
+    let workspace_manifest = include_str!("../../Cargo.toml");
+
+    assert!(
+        package_manifest
+            .lines()
+            .any(|line| line.trim_start().starts_with("dhttp = { workspace = true")),
+        "genmeta-access should depend on the dhttp facade"
+    );
+    assert!(
+        !package_manifest.contains("dhttp-access"),
+        "genmeta-access must not directly depend on dhttp-access"
+    );
+    assert!(
+        !workspace_manifest
+            .lines()
+            .any(|line| line.trim_start().starts_with("dhttp-access =")),
+        "gmutils workspace must not expose dhttp-access as a direct dependency"
+    );
+}
+
 struct TestHome {
     path: PathBuf,
 }
