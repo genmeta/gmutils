@@ -96,7 +96,7 @@ async-compression = { version = "0.4", features = [
 ] }
 
 # workspace
-dhttp-access = "0.3.0"
+dhttp-access = "0.4.0-beta.1"
 genmeta-access = { path = "genmeta-access", version = "0.4.0-beta.1" }
 dhttp = "0.5.0-beta.2"
 genmeta-curl = { path = "genmeta-curl", version = "0.7.0-beta.2" }
