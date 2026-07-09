@@ -234,7 +234,10 @@ jobs:
           set -euo pipefail
           report=target/publish-reports/deb.toml
           test -f "$report"
-          mapfile -t assets < <(python3 - "$report" <<'PY'
+          assets=()
+          while IFS= read -r asset; do
+            assets+=("$asset")
+          done < <(python3 - "$report" <<'PY'
           import sys
           import tomllib
 
@@ -392,7 +395,10 @@ jobs:
           set -euo pipefail
           report=target/publish-reports/rpm.toml
           test -f "$report"
-          mapfile -t assets < <(python3 - "$report" <<'PY'
+          assets=()
+          while IFS= read -r asset; do
+            assets+=("$asset")
+          done < <(python3 - "$report" <<'PY'
           import sys
           import tomllib
 
@@ -619,7 +625,10 @@ jobs:
           set -euo pipefail
           report=target/publish-reports/scoop.toml
           test -f "$report"
-          mapfile -t assets < <(python3 - "$report" <<'PY'
+          assets=()
+          while IFS= read -r asset; do
+            assets+=("$asset")
+          done < <(python3 - "$report" <<'PY'
           import sys
           import tomllib
 
@@ -832,7 +841,10 @@ jobs:
           set -euo pipefail
           report=target/publish-reports/brew.toml
           test -f "$report"
-          mapfile -t assets < <(python3 - "$report" <<'PY'
+          assets=()
+          while IFS= read -r asset; do
+            assets+=("$asset")
+          done < <(python3 - "$report" <<'PY'
           import sys
           import tomllib
 
