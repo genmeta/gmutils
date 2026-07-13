@@ -4,7 +4,7 @@ use dhttp::home::{DhttpHome, HomeScope};
 use snafu::{OptionExt, whatever};
 use tracing::Instrument;
 
-use super::{approval, local};
+use super::local;
 use crate::{
     auth::AuthMethod,
     cert_server::CertServer,
@@ -14,7 +14,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RenewApprovalPlan {
     Email,
-    Identity,
+    Identity { auth_domain: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,25 +75,6 @@ fn renew_verify_code_actions() -> Vec<RenewVerifyCodeAction> {
     ]
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum RenewApprovalMenuAction {
-    ChangeIdentitySelection,
-}
-
-impl RenewApprovalMenuAction {
-    fn label(&self) -> String {
-        match self {
-            Self::ChangeIdentitySelection => {
-                "Change identity (go back to identity selection)".to_string()
-            }
-        }
-    }
-}
-
-fn renew_approval_menu_actions() -> Vec<RenewApprovalMenuAction> {
-    vec![RenewApprovalMenuAction::ChangeIdentitySelection]
-}
-
 #[derive(Debug, Clone)]
 struct InteractiveRenewState {
     target: Option<dhttp::name::DhttpName<'static>>,
@@ -149,6 +130,10 @@ fn apply_verification_recovery(
             crate::cli::flow::transcript::print_line(message);
             true
         }
+        crate::cli::flow::recovery::VerificationRecovery::OfferResend { message } => {
+            crate::cli::flow::transcript::print_line(message);
+            true
+        }
         crate::cli::flow::recovery::VerificationRecovery::BackToEmail { message } => {
             crate::cli::flow::transcript::print_line(message);
             state.revisit_email();
@@ -156,6 +141,32 @@ fn apply_verification_recovery(
         }
         crate::cli::flow::recovery::VerificationRecovery::Abort => false,
     }
+}
+
+async fn offer_expired_code_resend(
+    state: &mut InteractiveRenewState,
+    cert_server: &CertServer,
+    email: &str,
+    message: &str,
+) -> Result<(), Error> {
+    crate::cli::flow::transcript::print_line(message);
+    let resend = crate::cli::prompt::sync(|| {
+        inquire::Confirm::new("Send a new verification code?")
+            .with_default(true)
+            .prompt()
+    })
+    .await
+    .require_interactive("interactive input")?;
+    if resend {
+        super::progress::run_with_spinner(
+            "Sending verification code...",
+            cert_server.send_email_verification(email),
+        )
+        .await?;
+        state.verification_code_sent_to = Some(email.to_string());
+    }
+    state.verify_code = None;
+    Ok(())
 }
 
 fn renew_not_saved_root_message(short_name: &str) -> String {
@@ -178,77 +189,26 @@ async fn ensure_saved_renew_target(
     whatever!("{}", renew_not_saved_root_message(name.as_partial()));
 }
 
-fn build_renew_approval_options(target: &str) -> Vec<approval::ApprovalMenuOption> {
-    approval::build_approval_options(approval::ApprovalMenuSpec {
-        email_label: "Verify with email".to_string(),
-        direct_local: vec![approval::ApprovalDirectLocal::new(target, target)],
-        helpers: Vec::new(),
-    })
-}
-
-fn renew_verification_options(target: &str) -> Vec<(String, RenewApprovalPlan)> {
-    build_renew_approval_options(target)
-        .into_iter()
-        .filter_map(|option| match option {
-            approval::ApprovalMenuOption::Email { label } => {
-                Some((label, RenewApprovalPlan::Email))
-            }
-            approval::ApprovalMenuOption::DirectLocal(local) => Some((
-                format!("Verify with {} on local device", local.short_name),
-                RenewApprovalPlan::Identity,
-            )),
-            approval::ApprovalMenuOption::Helper(_) => None,
-        })
-        .collect()
-}
-
-fn approval_plan_from_selection(
-    options: &[(String, RenewApprovalPlan)],
-    selected: &str,
-) -> Result<RenewApprovalPlan, Error> {
-    options
-        .iter()
-        .find_map(|(label, plan)| (label == selected).then_some(plan.clone()))
-        .whatever_context::<_, Error>("selected approval path is unavailable")
-}
-
 fn resolve_non_interactive_approval_plan(
     target: &str,
     requested_auth: Option<AuthMethod>,
+    ready_identity: Option<&str>,
 ) -> Result<RenewApprovalPlan, Error> {
     match requested_auth {
         Some(AuthMethod::Email) => Ok(RenewApprovalPlan::Email),
-        Some(AuthMethod::Identity) => Ok(RenewApprovalPlan::Identity),
-        None => whatever!(
-            "renewing {} non-interactively requires choosing an approval path; rerun with --auth email or --auth identity",
-            target
-        ),
-    }
-}
-
-async fn resolve_approval_plan(
-    target: &str,
-    requested_auth: Option<AuthMethod>,
-    is_interactive: bool,
-) -> Result<RenewApprovalPlan, Error> {
-    if !is_interactive {
-        return resolve_non_interactive_approval_plan(target, requested_auth);
-    }
-
-    match requested_auth {
-        Some(auth) => resolve_non_interactive_approval_plan(target, Some(auth)),
-        None => {
-            let options = renew_verification_options(target);
-            let labels = options
-                .iter()
-                .map(|(label, _)| label.clone())
-                .collect::<Vec<_>>();
-            let message = format!("Choose how to verify renewing {target}:");
-            let selected = crate::cli::prompt::prompt_select_string(&message, labels)
-                .await
-                .require_interactive("--auth")?;
-            approval_plan_from_selection(&options, &selected)
-        }
+        Some(AuthMethod::Identity) => ready_identity
+            .map(|auth_domain| RenewApprovalPlan::Identity {
+                auth_domain: auth_domain.to_string(),
+            })
+            .whatever_context::<_, Error>(format!(
+                "renewing {target} cannot use local identity verification because neither it nor its parent has a ready local certificate; use --auth email"
+            )),
+        None => Ok(match ready_identity {
+            Some(auth_domain) => RenewApprovalPlan::Identity {
+                auth_domain: auth_domain.to_string(),
+            },
+            None => RenewApprovalPlan::Email,
+        }),
     }
 }
 
@@ -303,22 +263,6 @@ async fn prompt_renew_verify_code_action() -> Result<RenewVerifyCodeAction, Erro
         .whatever_context::<_, Error>("selected renew action is unavailable")
 }
 
-async fn prompt_renew_approval_menu_action() -> Result<RenewApprovalMenuAction, Error> {
-    let actions = renew_approval_menu_actions();
-    let labels = actions
-        .iter()
-        .map(RenewApprovalMenuAction::label)
-        .collect::<Vec<_>>();
-    let selected = crate::cli::prompt::prompt_select_string("More options:", labels.clone())
-        .await
-        .require_interactive("interactive input")?;
-    actions
-        .into_iter()
-        .zip(labels)
-        .find_map(|(action, label)| (label == selected).then_some(action))
-        .whatever_context::<_, Error>("selected renew approval action is unavailable")
-}
-
 async fn run_interactive(
     command: &Renew,
     dhttp_home: &DhttpHome,
@@ -339,33 +283,16 @@ async fn run_interactive(
         ensure_saved_renew_target(dhttp_home, domain.borrow()).await?;
 
         if state.approval_plan.is_none() {
-            if let Some(auth) = command.auth {
-                state.approval_plan = Some(resolve_non_interactive_approval_plan(
-                    domain.as_partial(),
-                    Some(auth),
-                )?);
-                continue;
+            let target = crate::cli::flow::target::IdentityTarget::parse(domain.as_partial())?;
+            let auth_plan = super::auth_plan::load_apply_auth_plan(dhttp_home, &target).await?;
+            for warning in &auth_plan.warnings {
+                crate::cli::flow::transcript::print_err_block(warning);
             }
-
-            let options = renew_verification_options(domain.as_partial());
-            let mut labels = options
-                .iter()
-                .map(|(label, _)| label.clone())
-                .collect::<Vec<_>>();
-            labels.push(crate::cli::prompt::MORE_OPTIONS_LABEL.to_string());
-            let message = format!("Choose how to verify renewing {}:", domain.as_partial());
-            let selected = crate::cli::prompt::prompt_select_string(&message, labels)
-                .await
-                .require_interactive("--auth")?;
-            if selected == crate::cli::prompt::MORE_OPTIONS_LABEL {
-                match prompt_renew_approval_menu_action().await? {
-                    RenewApprovalMenuAction::ChangeIdentitySelection => {
-                        state.revisit_target_selection();
-                    }
-                }
-            } else {
-                state.approval_plan = Some(approval_plan_from_selection(&options, &selected)?);
-            }
+            state.approval_plan = Some(resolve_non_interactive_approval_plan(
+                domain.as_partial(),
+                command.auth,
+                auth_plan.first_identity_full_name(),
+            )?);
             continue;
         }
 
@@ -499,6 +426,14 @@ async fn run_interactive(
                     Err(error) => {
                         let recovery =
                             crate::cli::flow::recovery::classify_verify_submit_error(&error);
+                        if let crate::cli::flow::recovery::VerificationRecovery::OfferResend {
+                            message,
+                        } = &recovery
+                        {
+                            offer_expired_code_resend(&mut state, cert_server, &email, message)
+                                .await?;
+                            continue;
+                        }
                         if matches!(
                             recovery,
                             crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep { .. }
@@ -524,11 +459,11 @@ async fn run_interactive(
                 )
                 .await?
             }
-            RenewApprovalPlan::Identity => {
+            RenewApprovalPlan::Identity { auth_domain } => {
                 super::progress::run_with_spinner(
                     "Renewing identity...",
                     cert_server.renew_cert_with_identity(
-                        domain.as_full(),
+                        &auth_domain,
                         domain.as_full(),
                         kind,
                         sequence,
@@ -548,32 +483,8 @@ async fn run_interactive(
         )
         .instrument(super::progress::save_identity_span())
         .await?;
-        return crate::cli::flow::epilogue::run_local_epilogue(
-            dhttp_home,
-            domain.borrow(),
-            crate::cli::flow::output::SavedIdentityAction::Renewed,
-            None,
-        )
-        .await;
+        return Ok(());
     }
-}
-
-pub(crate) async fn run_helper_for_verification(
-    dhttp_home: &DhttpHome,
-    cert_server: &CertServer,
-    short_name: &str,
-    _return_to: &str,
-) -> Result<bool, Error> {
-    let command = Renew {
-        name: Some(short_name.to_string()),
-        device_name: None,
-        email: None,
-        send_code: false,
-        verify_code: None,
-        auth: None,
-    };
-    run(&command, dhttp_home, HomeScope::User, cert_server).await?;
-    Ok(true)
 }
 
 pub(crate) async fn run(
@@ -588,8 +499,16 @@ pub(crate) async fn run(
     }
     let domain = resolve_target(command, dhttp_home).await?;
     ensure_saved_renew_target(dhttp_home, domain.borrow()).await?;
-    let approval_plan =
-        resolve_approval_plan(domain.as_partial(), command.auth, is_interactive).await?;
+    let target = crate::cli::flow::target::IdentityTarget::parse(domain.as_partial())?;
+    let auth_plan = super::auth_plan::load_apply_auth_plan(dhttp_home, &target).await?;
+    for warning in &auth_plan.warnings {
+        crate::cli::flow::transcript::print_err_block(warning);
+    }
+    let approval_plan = resolve_non_interactive_approval_plan(
+        domain.as_partial(),
+        command.auth,
+        auth_plan.first_identity_full_name(),
+    )?;
     let identity_profile = dhttp_home.resolve_identity_profile(domain.borrow()).await?;
     let local_identity = identity_profile.load_identity().await?;
     let chain_key = cli::certificate_chain_key_from_identity(&local_identity)?
@@ -635,11 +554,11 @@ pub(crate) async fn run(
             )
             .await?
         }
-        RenewApprovalPlan::Identity => {
+        RenewApprovalPlan::Identity { auth_domain } => {
             super::progress::run_with_spinner(
                 "Renewing identity...",
                 cert_server.renew_cert_with_identity(
-                    domain.as_full(),
+                    &auth_domain,
                     domain.as_full(),
                     kind,
                     sequence,
@@ -658,13 +577,7 @@ pub(crate) async fn run(
         detail.cert_pem.as_bytes(),
     )
     .await?;
-    crate::cli::flow::epilogue::run_local_epilogue(
-        dhttp_home,
-        domain.borrow(),
-        crate::cli::flow::output::SavedIdentityAction::Renewed,
-        None,
-    )
-    .await
+    Ok(())
 }
 
 #[cfg(test)]
@@ -677,10 +590,8 @@ mod tests {
     use dhttp::home::{DhttpHome, HomeScope};
 
     use super::{
-        InteractiveRenewState, RenewApprovalMenuAction, RenewApprovalPlan, RenewEmailAction,
-        RenewVerifyCodeAction, approval_plan_from_selection, build_renew_approval_options,
-        renew_approval_menu_actions, renew_email_actions, renew_not_saved_root_message,
-        renew_verification_options, renew_verify_code_actions,
+        InteractiveRenewState, RenewApprovalPlan, RenewEmailAction, RenewVerifyCodeAction,
+        renew_email_actions, renew_not_saved_root_message, renew_verify_code_actions,
         resolve_non_interactive_approval_plan,
     };
     use crate::{auth::AuthMethod, cli::Renew};
@@ -753,36 +664,40 @@ mod tests {
     }
 
     #[test]
-    fn renew_requires_explicit_auth_non_interactively() {
-        let error = resolve_non_interactive_approval_plan("alice.smith", None).unwrap_err();
-        let rendered = error.to_string();
-        assert!(rendered.contains("--auth email"), "{rendered}");
-        assert!(rendered.contains("--auth identity"), "{rendered}");
+    fn renew_prefers_ready_identity_non_interactively() {
+        assert_eq!(
+            resolve_non_interactive_approval_plan(
+                "alice.smith",
+                None,
+                Some("alice.smith.dhttp.net")
+            )
+            .unwrap(),
+            RenewApprovalPlan::Identity {
+                auth_domain: "alice.smith.dhttp.net".to_string()
+            }
+        );
     }
 
     #[test]
     fn renew_identity_auth_is_allowed() {
         assert_eq!(
-            resolve_non_interactive_approval_plan("alice.smith", Some(AuthMethod::Identity))
-                .unwrap(),
-            RenewApprovalPlan::Identity,
+            resolve_non_interactive_approval_plan(
+                "alice.smith",
+                Some(AuthMethod::Identity),
+                Some("alice.smith.dhttp.net")
+            )
+            .unwrap(),
+            RenewApprovalPlan::Identity {
+                auth_domain: "alice.smith.dhttp.net".to_string()
+            },
         );
     }
 
     #[test]
     fn renew_email_auth_is_allowed() {
         assert_eq!(
-            resolve_non_interactive_approval_plan("alice.smith", Some(AuthMethod::Email)).unwrap(),
-            RenewApprovalPlan::Email,
-        );
-    }
-
-    #[test]
-    fn interactive_renew_selection_can_choose_email() {
-        let options = renew_verification_options("alice.smith");
-
-        assert_eq!(
-            approval_plan_from_selection(&options, "Verify with email").unwrap(),
+            resolve_non_interactive_approval_plan("alice.smith", Some(AuthMethod::Email), None)
+                .unwrap(),
             RenewApprovalPlan::Email,
         );
     }
@@ -821,33 +736,6 @@ Apply alice.ma here first, then return to renew."
         assert!(
             rendered.contains("Apply alice.smith here first"),
             "{rendered}"
-        );
-    }
-
-    #[test]
-    fn renew_verification_options_place_local_before_email() {
-        let options = build_renew_approval_options("alice.ma");
-
-        assert_eq!(
-            options
-                .iter()
-                .map(crate::cli::flow::approval::ApprovalMenuOption::label)
-                .collect::<Vec<_>>(),
-            vec![
-                "Verify with alice.ma on local device".to_string(),
-                "Verify with email".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn interactive_renew_selection_can_choose_local_identity() {
-        let options = renew_verification_options("alice.smith");
-
-        assert_eq!(
-            approval_plan_from_selection(&options, "Verify with alice.smith on local device",)
-                .unwrap(),
-            RenewApprovalPlan::Identity,
         );
     }
 
@@ -894,21 +782,6 @@ Apply alice.ma here first, then return to renew."
                 RenewVerifyCodeAction::SwitchVerificationMethod,
                 RenewVerifyCodeAction::ChangeIdentitySelection,
             ]
-        );
-    }
-
-    #[test]
-    fn renew_approval_menu_actions_include_explicit_return_points() {
-        assert_eq!(
-            renew_approval_menu_actions()
-                .into_iter()
-                .map(|action| action.label())
-                .collect::<Vec<_>>(),
-            vec!["Change identity (go back to identity selection)".to_string(),]
-        );
-        assert_eq!(
-            renew_approval_menu_actions(),
-            vec![RenewApprovalMenuAction::ChangeIdentitySelection,]
         );
     }
 }

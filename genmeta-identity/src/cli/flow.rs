@@ -1,5 +1,5 @@
 pub(crate) mod apply;
-pub(crate) mod approval;
+pub(crate) mod auth_plan;
 pub(crate) mod default_identity;
 pub(crate) mod device;
 pub(crate) mod email;

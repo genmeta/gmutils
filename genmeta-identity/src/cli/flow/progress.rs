@@ -19,6 +19,23 @@ where
     result
 }
 
+pub(crate) fn run_with_retained_progress<T, E>(
+    message: &str,
+    finish_message: &str,
+    operation: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    let span = info_span!("cli_progress", indicatif.pb_show = tracing::field::Empty);
+    span.pb_set_message(message);
+    span.pb_set_finish_message(finish_message);
+    span.pb_start();
+    let result = {
+        let _entered = span.enter();
+        operation()
+    };
+    drop(span);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{
@@ -30,7 +47,7 @@ mod tests {
     use tracing_indicatif::filter::IndicatifFilter;
     use tracing_subscriber::{Layer, layer::SubscriberExt, registry::LookupSpan};
 
-    use super::run_with_spinner;
+    use super::{run_with_retained_progress, run_with_spinner};
 
     #[tokio::test]
     async fn run_with_spinner_returns_inner_result() {
@@ -38,6 +55,18 @@ mod tests {
             Ok::<_, std::io::Error>("ok")
         })
         .await
+        .unwrap();
+
+        assert_eq!(value, "ok");
+    }
+
+    #[test]
+    fn retained_progress_returns_inner_result() {
+        let value = run_with_retained_progress(
+            "Generating secp384r1 ECC key pair locally...",
+            "Generated secp384r1 ECC key pair locally.",
+            || Ok::<_, std::io::Error>("ok"),
+        )
         .unwrap();
 
         assert_eq!(value, "ok");

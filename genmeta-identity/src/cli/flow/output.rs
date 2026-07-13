@@ -1,12 +1,10 @@
 use crossterm::style::Stylize;
 
-use super::{
-    local::{
-        InteractiveInventoryChoice, LocalIdentityStatus, LocalIdentitySummary, LocalInventory,
-        LocalInventoryRoot,
-    },
-    target::IdentityLevel,
-};
+#[cfg(test)]
+use super::local::InteractiveInventoryChoice;
+use super::local::{LocalIdentityStatus, LocalIdentitySummary, LocalInventory, LocalInventoryRoot};
+#[cfg(test)]
+use super::target::IdentityLevel;
 
 pub(crate) fn render_inventory(inventory: &LocalInventory, ansi: bool) -> String {
     let mut lines = Vec::new();
@@ -63,17 +61,17 @@ pub(crate) enum DefaultIdentityBlock {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SavedIdentityAction {
+    #[cfg(test)]
     Created,
     Applied,
-    Renewed,
 }
 
 impl SavedIdentityAction {
     fn verb(self) -> &'static str {
         match self {
+            #[cfg(test)]
             Self::Created => "Created",
             Self::Applied => "Applied",
-            Self::Renewed => "Renewed",
         }
     }
 }
@@ -146,6 +144,7 @@ pub(crate) fn format_current_default_suffix(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn render_choice_label(choice: &InteractiveInventoryChoice, ansi: bool) -> String {
     match choice {
         InteractiveInventoryChoice::Saved(summary) => {
@@ -217,6 +216,7 @@ pub(crate) fn format_info(summary: &LocalIdentitySummary, ansi: bool) -> String 
     lines.join("\n")
 }
 
+#[cfg(test)]
 pub(crate) fn format_default_summary(summary: &LocalIdentitySummary, ansi: bool) -> String {
     format_info(summary, ansi)
 }
@@ -254,19 +254,31 @@ fn format_natural_date(timestamp: i64) -> String {
 }
 
 fn detail_lines(summary: &LocalIdentitySummary) -> Vec<String> {
-    let mut lines = Vec::new();
-    match (&summary.status, summary.certificate_chain.as_deref()) {
-        (LocalIdentityStatus::Ready { .. }, Some(chain))
-        | (LocalIdentityStatus::Expired { .. }, Some(chain)) => {
-            lines.push(format!("  uses certificate chain {chain}"));
+    let mut lines = vec![format!("  status: {}", summary.status.label())];
+    if let Some(chain) = summary.certificate_chain.as_deref() {
+        if let Some((usage, sequence)) = chain.split_once(':') {
+            lines.push(format!("  usage: {usage}"));
+            lines.push(format!("  sequence: {sequence}"));
         }
-        (LocalIdentityStatus::Incomplete { detail }, _)
-        | (LocalIdentityStatus::Invalid { detail }, _) => {
-            lines.push(format!("  {detail}"));
-        }
-        _ => {}
+        lines.push(format!("  chain: {chain}"));
     }
     lines.push(format!("  dir: {}", summary.saved_at.display()));
+    if let (Some(valid_from), Some(expires_at)) = (summary.valid_from, summary.status.expires_at())
+    {
+        lines.push(format!(
+            "  validity: {} - {}",
+            format_natural_date(valid_from),
+            format_natural_date(expires_at)
+        ));
+    }
+    if let Some(issuer) = summary.issuer.as_deref() {
+        lines.push(format!("  issuer: {issuer}"));
+    }
+    if let LocalIdentityStatus::Incomplete { detail } | LocalIdentityStatus::Invalid { detail } =
+        &summary.status
+    {
+        lines.push(format!("  reason: {detail}"));
+    }
     lines
 }
 
@@ -298,6 +310,8 @@ mod tests {
         LocalIdentitySummary {
             target: IdentityTarget::parse(name).unwrap(),
             certificate_chain: chain.map(ToOwned::to_owned),
+            valid_from: Some(1_700_000_000),
+            issuer: Some("CN=Genmeta Test CA".to_string()),
             status,
             saved_at: PathBuf::from(format!("/tmp/{name}")),
             is_default,
@@ -315,10 +329,15 @@ mod tests {
             Some("secondary:2"),
         );
 
-        let expected = "phone.alice.smith (default)\n  uses certificate chain secondary:2\n  dir: /tmp/phone.alice.smith";
-
-        assert_eq!(format_info(&profile, false), expected);
-        assert_eq!(format_default_summary(&profile, false), expected);
+        let rendered = format_info(&profile, false);
+        assert!(rendered.contains("  status: ready"));
+        assert!(rendered.contains("  usage: secondary"));
+        assert!(rendered.contains("  sequence: 2"));
+        assert!(rendered.contains("  chain: secondary:2"));
+        assert!(rendered.contains("  dir: /tmp/phone.alice.smith"));
+        assert!(rendered.contains("  validity: 14 Nov 2023 - 10 Nov 2026"));
+        assert!(rendered.contains("  issuer: CN=Genmeta Test CA"));
+        assert_eq!(format_default_summary(&profile, false), rendered);
     }
 
     #[test]
@@ -381,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn formats_invalid_identity_without_field_labels() {
+    fn formats_invalid_identity_with_reason_detail() {
         let profile = summary(
             "alice.smith",
             false,
@@ -391,9 +410,10 @@ mod tests {
             None,
         );
 
-        let expected = "alice.smith [invalid]\n  certificate chain metadata is invalid\n  dir: /tmp/alice.smith";
-
-        assert_eq!(format_info(&profile, false), expected);
+        let rendered = format_info(&profile, false);
+        assert!(rendered.contains("  status: invalid"));
+        assert!(rendered.contains("  dir: /tmp/alice.smith"));
+        assert!(rendered.contains("  reason: certificate chain metadata is invalid"));
     }
 
     #[test]
@@ -494,9 +514,13 @@ tablet.reimu.scarlet [expired]";
             Some("primary:0"),
         )]);
 
+        let summary = &match &inventory.groups[0].root {
+            crate::cli::flow::local::LocalInventoryRoot::Saved(summary) => summary,
+            crate::cli::flow::local::LocalInventoryRoot::Organization { .. } => unreachable!(),
+        };
         assert_eq!(
             render_verbose_inventory(&inventory, false),
-            "alice.smith (default)\n  uses certificate chain primary:0\n  dir: /tmp/alice.smith",
+            format_info(summary, false)
         );
     }
 

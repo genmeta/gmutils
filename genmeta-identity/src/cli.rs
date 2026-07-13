@@ -127,10 +127,15 @@ fn certificate_chain_key_from_identity(
 fn generate_private_key_and_csr(
     name: &Name<'_>,
 ) -> Result<(impl Deref<Target = String> + use<>, String), Error> {
-    tracing::Span::current().pb_set_message(&format!("Generating private key for {name}..."));
-    let key_pem = rankey::generate_secp384r1_key()
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-        .context(GenerateKeySnafu)?;
+    let key_pem = flow::progress::run_with_retained_progress(
+        "Generating secp384r1 ECC key pair locally...",
+        "Generated secp384r1 ECC key pair locally.",
+        || {
+            rankey::generate_secp384r1_key()
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                .context(GenerateKeySnafu)
+        },
+    )?;
     tracing::Span::current().pb_set_message(&format!(
         "Generating Certificate Signing Request (CSR) for {name}..."
     ));

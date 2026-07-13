@@ -5,9 +5,7 @@ use snafu::{FromString, OptionExt, whatever};
 use tracing::Instrument;
 
 use super::{
-    approval,
     kind::IdentityKind,
-    local::{self, LocalIdentityStatus, LocalIdentitySummary},
     target::{IdentityLevel, IdentityTarget},
 };
 use crate::{
@@ -19,13 +17,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ApplyApprovalPlan {
     Email,
-    DirectIdentity {
-        auth_domain: String,
-    },
-    HelperIdentity {
-        auth_domain: String,
-        action: approval::ApprovalHelperAction,
-    },
+    DirectIdentity { auth_domain: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,40 +59,6 @@ fn apply_email_actions(return_to: Option<&str>) -> Vec<ApplyEmailAction> {
     actions
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ApplyApprovalMenuAction {
-    ChangeCertificateKind,
-    ChangeIdentitySelection,
-    ReturnToCaller { label: String },
-}
-
-impl ApplyApprovalMenuAction {
-    fn label(&self) -> String {
-        match self {
-            Self::ChangeCertificateKind => {
-                "Change certificate kind (go back to identity kind)".to_string()
-            }
-            Self::ChangeIdentitySelection => {
-                "Change identity (go back to identity selection)".to_string()
-            }
-            Self::ReturnToCaller { label } => format!("Return to {label}"),
-        }
-    }
-}
-
-fn apply_approval_menu_actions(return_to: Option<&str>) -> Vec<ApplyApprovalMenuAction> {
-    let mut actions = vec![
-        ApplyApprovalMenuAction::ChangeCertificateKind,
-        ApplyApprovalMenuAction::ChangeIdentitySelection,
-    ];
-    if let Some(label) = return_to {
-        actions.push(ApplyApprovalMenuAction::ReturnToCaller {
-            label: label.to_string(),
-        });
-    }
-    actions
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ApplyRunOutcome {
     Applied,
@@ -110,114 +68,46 @@ pub(crate) enum ApplyRunOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ApplyPostSavePolicy {
     ManageDefaultSuggestion,
-    SkipDefaultSuggestion,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ApplyVerifyCodeAction {
     ResendVerificationCode,
     ChangeEmail,
-    SwitchVerificationMethod,
-    ChangeCertificateKind,
-    ChangeIdentitySelection,
-    ReturnToCaller { label: String },
+    Cancel,
 }
 
 impl ApplyVerifyCodeAction {
     fn label(&self) -> String {
         match self {
             Self::ResendVerificationCode => "Resend verification code".to_string(),
-            Self::ChangeEmail => "Send code to another email (go back to email)".to_string(),
-            Self::SwitchVerificationMethod => {
-                "Switch verification method (go back to verification method selection)".to_string()
-            }
-            Self::ChangeCertificateKind => {
-                "Change certificate kind (go back to identity kind)".to_string()
-            }
-            Self::ChangeIdentitySelection => {
-                "Change identity (go back to identity selection)".to_string()
-            }
-            Self::ReturnToCaller { label } => format!("Return to {label}"),
+            Self::ChangeEmail => "Change email".to_string(),
+            Self::Cancel => "Cancel".to_string(),
         }
     }
 }
 
-fn apply_verify_code_actions(return_to: Option<&str>) -> Vec<ApplyVerifyCodeAction> {
-    let mut actions = vec![
+fn apply_verify_code_actions(_return_to: Option<&str>) -> Vec<ApplyVerifyCodeAction> {
+    vec![
         ApplyVerifyCodeAction::ResendVerificationCode,
         ApplyVerifyCodeAction::ChangeEmail,
-        ApplyVerifyCodeAction::SwitchVerificationMethod,
-        ApplyVerifyCodeAction::ChangeCertificateKind,
-        ApplyVerifyCodeAction::ChangeIdentitySelection,
-    ];
-    if let Some(label) = return_to {
-        actions.push(ApplyVerifyCodeAction::ReturnToCaller {
-            label: label.to_string(),
-        });
-    }
-    actions
-}
-
-fn build_apply_approval_options(
-    candidate: Option<approval::LocalApprovalCandidate>,
-) -> Vec<approval::ApprovalMenuOption> {
-    approval::build_options_for_candidate("Verify with email", candidate)
+        ApplyVerifyCodeAction::Cancel,
+    ]
 }
 
 fn apply_verification_options(auth_domain: &str) -> Vec<(String, ApplyApprovalPlan)> {
     let short_name = IdentityTarget::parse(auth_domain)
         .map(|target| target.short_name().to_string())
         .unwrap_or_else(|_| auth_domain.to_string());
-    build_apply_approval_options(Some(approval::LocalApprovalCandidate::ready(
-        short_name,
-        auth_domain,
-    )))
-    .into_iter()
-    .filter_map(|option| match option {
-        approval::ApprovalMenuOption::Email { label } => Some((label, ApplyApprovalPlan::Email)),
-        approval::ApprovalMenuOption::DirectLocal(local) => Some((
-            format!("Verify with {} on local device", local.short_name),
+    vec![
+        (
+            format!("Verify with {short_name} on local device"),
             ApplyApprovalPlan::DirectIdentity {
-                auth_domain: local.auth_domain,
+                auth_domain: auth_domain.to_string(),
             },
-        )),
-        approval::ApprovalMenuOption::Helper(_) => None,
-    })
-    .collect()
-}
-
-fn apply_candidate_from_summary(
-    summary: &LocalIdentitySummary,
-) -> approval::LocalApprovalCandidate {
-    let short_name = summary.target.short_name().to_string();
-    let auth_domain = summary.target.full_name();
-    match &summary.status {
-        LocalIdentityStatus::Ready { .. } => {
-            approval::LocalApprovalCandidate::ready(short_name, auth_domain)
-        }
-        LocalIdentityStatus::Expired { .. } => {
-            approval::LocalApprovalCandidate::expired(short_name, auth_domain, true, true)
-        }
-        LocalIdentityStatus::Incomplete { detail } => {
-            approval::LocalApprovalCandidate::incomplete(short_name, auth_domain, detail.clone())
-        }
-        LocalIdentityStatus::Invalid { detail } => {
-            approval::LocalApprovalCandidate::invalid(short_name, auth_domain, detail.clone())
-        }
-    }
-}
-
-fn apply_plan_from_option(option: &approval::ApprovalMenuOption) -> ApplyApprovalPlan {
-    match option {
-        approval::ApprovalMenuOption::Email { .. } => ApplyApprovalPlan::Email,
-        approval::ApprovalMenuOption::DirectLocal(local) => ApplyApprovalPlan::DirectIdentity {
-            auth_domain: local.auth_domain.clone(),
-        },
-        approval::ApprovalMenuOption::Helper(helper) => ApplyApprovalPlan::HelperIdentity {
-            auth_domain: helper.auth_domain.clone(),
-            action: helper.action.clone(),
-        },
-    }
+        ),
+        ("Verify with email".to_string(), ApplyApprovalPlan::Email),
+    ]
 }
 
 #[derive(Debug, Clone)]
@@ -297,6 +187,10 @@ fn apply_verification_recovery(
             crate::cli::flow::transcript::print_line(message);
             true
         }
+        crate::cli::flow::recovery::VerificationRecovery::OfferResend { message } => {
+            crate::cli::flow::transcript::print_line(message);
+            true
+        }
         crate::cli::flow::recovery::VerificationRecovery::BackToEmail { message } => {
             crate::cli::flow::transcript::print_line(message);
             state.revisit_email();
@@ -304,6 +198,32 @@ fn apply_verification_recovery(
         }
         crate::cli::flow::recovery::VerificationRecovery::Abort => false,
     }
+}
+
+async fn offer_expired_code_resend(
+    state: &mut InteractiveApplyState,
+    cert_server: &CertServer,
+    email: &str,
+    message: &str,
+) -> Result<(), Error> {
+    crate::cli::flow::transcript::print_line(message);
+    let resend = crate::cli::prompt::sync(|| {
+        inquire::Confirm::new("Send a new verification code?")
+            .with_default(true)
+            .prompt()
+    })
+    .await
+    .require_interactive("interactive input")?;
+    if resend {
+        super::progress::run_with_spinner(
+            "Sending verification code...",
+            cert_server.send_email_verification(email),
+        )
+        .await?;
+        state.verification_code_sent_to = Some(email.to_string());
+    }
+    state.verify_code = None;
+    Ok(())
 }
 
 fn is_domain_not_found(error: &crate::cert_server::Error) -> bool {
@@ -400,11 +320,10 @@ fn resolve_non_interactive_approval_plan(
             })
         }
         None => {
-            if identity_auth_domain.is_some() {
-                whatever!(
-                    "applying {} non-interactively requires choosing an approval path; rerun with --auth email or --auth identity",
-                    target
-                );
+            if let Some(auth_domain) = identity_auth_domain {
+                return Ok(ApplyApprovalPlan::DirectIdentity {
+                    auth_domain: auth_domain.to_string(),
+                });
             }
             Ok(ApplyApprovalPlan::Email)
         }
@@ -444,7 +363,7 @@ async fn resolve_approval_plan(
 }
 
 fn apply_identity_name_opening() -> &'static str {
-    "Apply an identity here.\n\nThis will create a new certificate chain for the selected identity and save it here.\nIf the identity does not exist yet, this flow can register it first and then continue.\n\nUse a dotted name:\n  <given_name>.<surname>\n\nFor example:\n  alice.smith\n\nTo apply a sub-identity, add one more name before it:\n  phone.alice.smith"
+    "Name format:\n  [handle.]your.name"
 }
 
 fn explicit_target_from_command(
@@ -490,128 +409,6 @@ async fn resolve_email(command: &Apply) -> Result<String, Error> {
     }
 }
 
-async fn resolve_identity_auth_domain(
-    dhttp_home: &DhttpHome,
-    target: &IdentityTarget,
-) -> Result<Option<dhttp::name::DhttpName<'static>>, Error> {
-    if dhttp_home
-        .identity_profile_exists_exactly(target.dhttp_name())
-        .await
-    {
-        let summary = local::load_summary(dhttp_home, target.dhttp_name(), None).await?;
-        if matches!(summary.status, LocalIdentityStatus::Ready { .. }) {
-            return Ok(Some(target.dhttp_name().into_owned()));
-        }
-    }
-
-    if target.level() == IdentityLevel::SubIdentity
-        && let Some(parent) = target.parent()
-        && dhttp_home
-            .identity_profile_exists_exactly(parent.clone())
-            .await
-    {
-        let summary = local::load_summary(dhttp_home, parent.clone(), None).await?;
-        if matches!(summary.status, LocalIdentityStatus::Ready { .. }) {
-            return Ok(Some(parent.into_owned()));
-        }
-    }
-
-    Ok(None)
-}
-
-async fn resolve_apply_candidate(
-    dhttp_home: &DhttpHome,
-    target: &IdentityTarget,
-) -> Result<Option<approval::LocalApprovalCandidate>, Error> {
-    let target_candidate = if dhttp_home
-        .identity_profile_exists_exactly(target.dhttp_name())
-        .await
-    {
-        let summary = local::load_summary(dhttp_home, target.dhttp_name(), None).await?;
-        Some(apply_candidate_from_summary(&summary))
-    } else {
-        None
-    };
-
-    let parent_candidate = if target.level() == IdentityLevel::SubIdentity {
-        if let Some(parent) = target.parent() {
-            if dhttp_home
-                .identity_profile_exists_exactly(parent.clone())
-                .await
-            {
-                let summary = local::load_summary(dhttp_home, parent.clone(), None).await?;
-                Some(apply_candidate_from_summary(&summary))
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    if matches!(
-        target_candidate,
-        Some(approval::LocalApprovalCandidate::Ready { .. })
-    ) {
-        return Ok(target_candidate);
-    }
-    if matches!(
-        parent_candidate,
-        Some(approval::LocalApprovalCandidate::Ready { .. })
-    ) {
-        return Ok(parent_candidate);
-    }
-
-    Ok(target_candidate.or(parent_candidate))
-}
-
-async fn run_helper_apply_action(
-    dhttp_home: &DhttpHome,
-    home_scope: HomeScope,
-    cert_server: &CertServer,
-    auth_domain: &str,
-    action: approval::ApprovalHelperAction,
-    return_to: Option<&str>,
-) -> Result<bool, Error> {
-    match action {
-        approval::ApprovalHelperAction::Apply | approval::ApprovalHelperAction::Reapply => {
-            let command = Apply {
-                name: Some(auth_domain.to_string()),
-                kind: None,
-                replace_local: matches!(action, approval::ApprovalHelperAction::Reapply),
-                device_name: None,
-                email: None,
-                send_code: false,
-                verify_code: None,
-                auth: None,
-            };
-            match Box::pin(run_interactive(
-                &command,
-                dhttp_home,
-                home_scope,
-                cert_server,
-                return_to,
-            ))
-            .await?
-            {
-                ApplyRunOutcome::Applied => Ok(true),
-                ApplyRunOutcome::ReturnedToCaller => Ok(false),
-            }
-        }
-        approval::ApprovalHelperAction::Renew => {
-            super::renew::run_helper_for_verification(
-                dhttp_home,
-                cert_server,
-                auth_domain,
-                return_to.unwrap_or("apply"),
-            )
-            .await
-        }
-    }
-}
-
 async fn prompt_apply_verify_code_action(
     return_to: Option<&str>,
 ) -> Result<ApplyVerifyCodeAction, Error> {
@@ -646,24 +443,6 @@ async fn prompt_apply_email_action(return_to: Option<&str>) -> Result<ApplyEmail
         .whatever_context::<_, Error>("selected apply email action is unavailable")
 }
 
-async fn prompt_apply_approval_menu_action(
-    return_to: Option<&str>,
-) -> Result<ApplyApprovalMenuAction, Error> {
-    let actions = apply_approval_menu_actions(return_to);
-    let labels = actions
-        .iter()
-        .map(ApplyApprovalMenuAction::label)
-        .collect::<Vec<_>>();
-    let selected = crate::cli::prompt::prompt_select_string("More options:", labels.clone())
-        .await
-        .require_interactive("interactive input")?;
-    actions
-        .into_iter()
-        .zip(labels)
-        .find_map(|(action, label)| (label == selected).then_some(action))
-        .whatever_context::<_, Error>("selected apply approval action is unavailable")
-}
-
 async fn run_post_save_epilogue(
     post_save: ApplyPostSavePolicy,
     dhttp_home: &DhttpHome,
@@ -672,28 +451,16 @@ async fn run_post_save_epilogue(
     interactive: bool,
     welcome: Option<&super::welcome::WelcomeServiceCreated>,
 ) -> Result<(), Error> {
-    match post_save {
-        ApplyPostSavePolicy::ManageDefaultSuggestion => {
-            crate::cli::flow::epilogue::run_lifecycle_epilogue(
-                dhttp_home,
-                domain,
-                default_identity_when_command_started,
-                interactive,
-                super::output::SavedIdentityAction::Applied,
-                welcome,
-            )
-            .await
-        }
-        ApplyPostSavePolicy::SkipDefaultSuggestion => {
-            crate::cli::flow::epilogue::run_local_epilogue(
-                dhttp_home,
-                domain,
-                super::output::SavedIdentityAction::Applied,
-                welcome,
-            )
-            .await
-        }
-    }
+    let ApplyPostSavePolicy::ManageDefaultSuggestion = post_save;
+    crate::cli::flow::epilogue::run_lifecycle_epilogue(
+        dhttp_home,
+        domain,
+        default_identity_when_command_started,
+        interactive,
+        super::output::SavedIdentityAction::Applied,
+        welcome,
+    )
+    .await
 }
 
 fn register_during_apply_message(target: &IdentityTarget) -> String {
@@ -849,50 +616,16 @@ async fn run_interactive_with_policy(
             .clone()
             .whatever_context::<_, Error>("interactive apply target is unavailable")?;
         let target = IdentityTarget::parse(domain.as_partial())?;
-        let identity_auth_domain = resolve_identity_auth_domain(dhttp_home, &target).await?;
-        let approval_candidate = resolve_apply_candidate(dhttp_home, &target).await?;
-
         if state.approval_plan.is_none() {
-            if let Some(auth) = command.auth {
-                state.approval_plan = Some(resolve_non_interactive_approval_plan(
-                    target.short_name(),
-                    Some(auth),
-                    identity_auth_domain.as_ref().map(|name| name.as_full()),
-                )?);
-                continue;
+            let auth_plan = super::auth_plan::load_apply_auth_plan(dhttp_home, &target).await?;
+            for warning in &auth_plan.warnings {
+                crate::cli::flow::transcript::print_err_block(warning);
             }
-
-            if let Some(candidate) = approval_candidate.clone() {
-                let options = build_apply_approval_options(Some(candidate));
-                let mut labels = options
-                    .iter()
-                    .map(approval::ApprovalMenuOption::label)
-                    .collect::<Vec<_>>();
-                labels.push(crate::cli::prompt::MORE_OPTIONS_LABEL.to_string());
-                let message = format!("Choose how to verify applying {}:", target.short_name());
-                let selected = crate::cli::prompt::prompt_select_string(&message, labels)
-                    .await
-                    .require_interactive("--auth")?;
-                if selected == crate::cli::prompt::MORE_OPTIONS_LABEL {
-                    match prompt_apply_approval_menu_action(return_to).await? {
-                        ApplyApprovalMenuAction::ChangeCertificateKind => state.revisit_kind(),
-                        ApplyApprovalMenuAction::ChangeIdentitySelection => {
-                            state.revisit_target_selection();
-                        }
-                        ApplyApprovalMenuAction::ReturnToCaller { .. } => {
-                            return Ok(ApplyRunOutcome::ReturnedToCaller);
-                        }
-                    }
-                } else {
-                    let option = options
-                        .iter()
-                        .find(|option| option.label() == selected)
-                        .whatever_context::<_, Error>("selected approval path is unavailable")?;
-                    state.approval_plan = Some(apply_plan_from_option(option));
-                }
-            } else {
-                state.approval_plan = Some(ApplyApprovalPlan::Email);
-            }
+            state.approval_plan = Some(resolve_non_interactive_approval_plan(
+                target.short_name(),
+                command.auth,
+                auth_plan.first_identity_full_name(),
+            )?);
             continue;
         }
 
@@ -900,29 +633,6 @@ async fn run_interactive_with_policy(
             .approval_plan
             .clone()
             .whatever_context::<_, Error>("interactive apply approval plan is unavailable")?;
-        if let ApplyApprovalPlan::HelperIdentity {
-            auth_domain,
-            action,
-        } = approval_plan.clone()
-        {
-            if !run_helper_apply_action(
-                dhttp_home,
-                home_scope,
-                cert_server,
-                &auth_domain,
-                action,
-                return_to,
-            )
-            .await?
-            {
-                state.approval_plan = None;
-                state.revisit_verification_method();
-                continue;
-            }
-            state.approval_plan = Some(ApplyApprovalPlan::DirectIdentity { auth_domain });
-            continue;
-        }
-
         if matches!(approval_plan, ApplyApprovalPlan::Email)
             && (state.email.is_none() || state.email_prompt_required)
         {
@@ -1012,14 +722,7 @@ async fn run_interactive_with_policy(
                             }
                         }
                         ApplyVerifyCodeAction::ChangeEmail => state.revisit_email(),
-                        ApplyVerifyCodeAction::SwitchVerificationMethod => {
-                            state.revisit_verification_method();
-                        }
-                        ApplyVerifyCodeAction::ChangeCertificateKind => state.revisit_kind(),
-                        ApplyVerifyCodeAction::ChangeIdentitySelection => {
-                            state.revisit_target_selection();
-                        }
-                        ApplyVerifyCodeAction::ReturnToCaller { .. } => {
+                        ApplyVerifyCodeAction::Cancel => {
                             return Ok(ApplyRunOutcome::ReturnedToCaller);
                         }
                     }
@@ -1056,6 +759,14 @@ async fn run_interactive_with_policy(
                     Err(error) => {
                         let recovery =
                             crate::cli::flow::recovery::classify_verify_submit_error(&error);
+                        if let crate::cli::flow::recovery::VerificationRecovery::OfferResend {
+                            message,
+                        } = &recovery
+                        {
+                            offer_expired_code_resend(&mut state, cert_server, &email, message)
+                                .await?;
+                            continue;
+                        }
                         if matches!(
                             recovery,
                             crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep { .. }
@@ -1184,9 +895,6 @@ async fn run_interactive_with_policy(
                 )
                 .await?
             }
-            ApplyApprovalPlan::HelperIdentity { .. } => {
-                unreachable!("helper approval plan should be resolved before issuing certificate")
-            }
         };
 
         cli::save_identity(
@@ -1214,24 +922,6 @@ async fn run_interactive_with_policy(
         .await?;
         return Ok(ApplyRunOutcome::Applied);
     }
-}
-
-pub(crate) async fn run_interactive(
-    command: &Apply,
-    dhttp_home: &DhttpHome,
-    home_scope: HomeScope,
-    cert_server: &CertServer,
-    return_to: Option<&str>,
-) -> Result<ApplyRunOutcome, Error> {
-    run_interactive_with_policy(
-        command,
-        dhttp_home,
-        home_scope,
-        cert_server,
-        return_to,
-        ApplyPostSavePolicy::ManageDefaultSuggestion,
-    )
-    .await
 }
 
 pub(crate) async fn run_with_policy(
@@ -1265,11 +955,14 @@ pub(crate) async fn run_with_policy(
     let kind = resolve_kind(command).await?;
     let device_name =
         super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
-    let identity_auth_domain = resolve_identity_auth_domain(dhttp_home, &target).await?;
+    let auth_plan = super::auth_plan::load_apply_auth_plan(dhttp_home, &target).await?;
+    for warning in &auth_plan.warnings {
+        crate::cli::flow::transcript::print_err_block(warning);
+    }
     let approval_plan = resolve_approval_plan(
         target.short_name(),
         command.auth,
-        identity_auth_domain.as_ref().map(|name| name.as_full()),
+        auth_plan.first_identity_full_name(),
         is_interactive,
     )
     .await?;
@@ -1360,9 +1053,6 @@ pub(crate) async fn run_with_policy(
                 Err(error) => return Err(Error::from(error)),
             }
         }
-        ApplyApprovalPlan::HelperIdentity { .. } => {
-            unreachable!("helper approval plan should be resolved before issuing certificate")
-        }
     };
 
     cli::save_identity(
@@ -1409,23 +1099,16 @@ pub(crate) async fn run(
 #[cfg(test)]
 mod tests {
     use super::{
-        ApplyApprovalMenuAction, ApplyApprovalPlan, ApplyEmailAction, ApplyVerifyCodeAction,
-        InteractiveApplyState, apply_approval_menu_actions, apply_email_actions,
-        apply_identity_name_opening, apply_verification_options, apply_verify_code_actions,
-        approval_plan_from_selection, build_apply_approval_options,
-        classify_apply_email_issue_error, explicit_target_from_command,
-        register_during_apply_message, resolve_non_interactive_approval_plan,
-        rewrite_apply_email_issue_error, rewrite_apply_registration_error,
+        ApplyApprovalPlan, ApplyEmailAction, ApplyVerifyCodeAction, InteractiveApplyState,
+        apply_email_actions, apply_identity_name_opening, apply_verification_options,
+        apply_verify_code_actions, approval_plan_from_selection, classify_apply_email_issue_error,
+        explicit_target_from_command, register_during_apply_message,
+        resolve_non_interactive_approval_plan, rewrite_apply_email_issue_error,
+        rewrite_apply_registration_error,
     };
     use crate::{
         auth::AuthMethod,
-        cli::{
-            Apply,
-            flow::{
-                approval::{ApprovalMenuOption, LocalApprovalCandidate},
-                target::IdentityTarget,
-            },
-        },
+        cli::{Apply, flow::target::IdentityTarget},
     };
 
     #[test]
@@ -1544,12 +1227,14 @@ mod tests {
     }
 
     #[test]
-    fn root_apply_with_local_auth_requires_explicit_auth_non_interactively() {
-        let error = resolve_non_interactive_approval_plan("alice.smith", None, Some("alice.smith"))
-            .unwrap_err();
-        let rendered = error.to_string();
-        assert!(rendered.contains("--auth email"), "{rendered}");
-        assert!(rendered.contains("--auth identity"), "{rendered}");
+    fn root_apply_prefers_ready_local_auth_non_interactively() {
+        assert_eq!(
+            resolve_non_interactive_approval_plan("alice.smith", None, Some("alice.smith"))
+                .unwrap(),
+            ApplyApprovalPlan::DirectIdentity {
+                auth_domain: "alice.smith".to_string(),
+            },
+        );
     }
 
     #[test]
@@ -1581,23 +1266,22 @@ mod tests {
     }
 
     #[test]
-    fn sub_identity_apply_with_parent_local_auth_still_requires_explicit_auth_when_missing() {
-        let error =
-            resolve_non_interactive_approval_plan("phone.alice.smith", None, Some("alice.smith"))
-                .unwrap_err();
-        let rendered = error.to_string();
-        assert!(rendered.contains("--auth email"), "{rendered}");
-        assert!(rendered.contains("--auth identity"), "{rendered}");
+    fn sub_identity_apply_automatically_uses_ready_parent() {
+        assert_eq!(
+            resolve_non_interactive_approval_plan("phone.alice.smith", None, Some("alice.smith"),)
+                .unwrap(),
+            ApplyApprovalPlan::DirectIdentity {
+                auth_domain: "alice.smith".to_string(),
+            },
+        );
     }
 
     #[test]
     fn apply_identity_name_opening_matches_spec_copy() {
-        let opening = apply_identity_name_opening();
-        assert!(opening.contains("Apply an identity here."));
-        assert!(opening.contains("<given_name>.<surname>"));
-        assert!(opening.contains("alice.smith"));
-        assert!(opening.contains("phone.alice.smith"));
-        assert!(opening.contains("register it first"), "{opening}");
+        assert_eq!(
+            apply_identity_name_opening(),
+            "Name format:\n  [handle.]your.name"
+        );
     }
 
     #[test]
@@ -1684,48 +1368,6 @@ mod tests {
     }
 
     #[test]
-    fn apply_with_invalid_local_identity_uses_reapply_copy() {
-        let options = build_apply_approval_options(Some(LocalApprovalCandidate::invalid(
-            "alice.smith",
-            "alice.smith.dhttp.net",
-            "certificate is unreadable",
-        )));
-
-        assert_eq!(
-            options
-                .iter()
-                .map(ApprovalMenuOption::label)
-                .collect::<Vec<_>>(),
-            vec![
-                "Verify with email".to_string(),
-                "Re-apply alice.smith here, then verify with alice.smith".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn apply_with_expired_local_identity_shows_renew_before_reapply() {
-        let options = build_apply_approval_options(Some(LocalApprovalCandidate::expired(
-            "alice.smith",
-            "alice.smith.dhttp.net",
-            true,
-            true,
-        )));
-
-        assert_eq!(
-            options
-                .iter()
-                .map(ApprovalMenuOption::label)
-                .collect::<Vec<_>>(),
-            vec![
-                "Verify with email".to_string(),
-                "Renew alice.smith here, then verify with alice.smith".to_string(),
-                "Re-apply alice.smith here, then verify with alice.smith".to_string(),
-            ]
-        );
-    }
-
-    #[test]
     fn interactive_apply_selection_can_choose_email() {
         let options = apply_verification_options("alice.smith.dhttp.net");
 
@@ -1757,11 +1399,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "Resend verification code".to_string(),
-                "Send code to another email (go back to email)".to_string(),
-                "Switch verification method (go back to verification method selection)".to_string(),
-                "Change certificate kind (go back to identity kind)".to_string(),
-                "Change identity (go back to identity selection)".to_string(),
-                "Return to create phone.alice.smith".to_string(),
+                "Change email".to_string(),
+                "Cancel".to_string(),
             ]
         );
         assert_eq!(
@@ -1769,12 +1408,7 @@ mod tests {
             vec![
                 ApplyVerifyCodeAction::ResendVerificationCode,
                 ApplyVerifyCodeAction::ChangeEmail,
-                ApplyVerifyCodeAction::SwitchVerificationMethod,
-                ApplyVerifyCodeAction::ChangeCertificateKind,
-                ApplyVerifyCodeAction::ChangeIdentitySelection,
-                ApplyVerifyCodeAction::ReturnToCaller {
-                    label: "create phone.alice.smith".to_string(),
-                },
+                ApplyVerifyCodeAction::Cancel,
             ]
         );
     }
@@ -1800,31 +1434,6 @@ mod tests {
                 ApplyEmailAction::ChangeCertificateKind,
                 ApplyEmailAction::ChangeIdentitySelection,
                 ApplyEmailAction::ReturnToCaller {
-                    label: "create phone.alice.smith".to_string(),
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn apply_approval_menu_actions_include_explicit_return_points() {
-        assert_eq!(
-            apply_approval_menu_actions(Some("create phone.alice.smith"))
-                .into_iter()
-                .map(|action| action.label())
-                .collect::<Vec<_>>(),
-            vec![
-                "Change certificate kind (go back to identity kind)".to_string(),
-                "Change identity (go back to identity selection)".to_string(),
-                "Return to create phone.alice.smith".to_string(),
-            ]
-        );
-        assert_eq!(
-            apply_approval_menu_actions(Some("create phone.alice.smith")),
-            vec![
-                ApplyApprovalMenuAction::ChangeCertificateKind,
-                ApplyApprovalMenuAction::ChangeIdentitySelection,
-                ApplyApprovalMenuAction::ReturnToCaller {
                     label: "create phone.alice.smith".to_string(),
                 },
             ]

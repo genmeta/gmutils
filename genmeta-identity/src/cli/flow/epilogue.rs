@@ -151,30 +151,6 @@ pub(crate) async fn run_lifecycle_epilogue(
     Ok(())
 }
 
-pub(crate) async fn run_local_epilogue(
-    dhttp_home: &DhttpHome,
-    name: DhttpName<'_>,
-    action: output::SavedIdentityAction,
-    welcome: Option<&super::welcome::WelcomeServiceCreated>,
-) -> Result<(), Error> {
-    let ansi = std::io::stdout().is_terminal();
-    let default_name = current_default_name(dhttp_home).await?;
-    let summary = local::load_summary(
-        dhttp_home,
-        name,
-        default_name.as_ref().map(|default| default.borrow()),
-    )
-    .await?;
-    transcript::print_block(&output::format_saved_identity_result(
-        action, &summary, ansi,
-    ));
-    transcript::print_line(output::format_safekeeping_reminder(ansi));
-    if let Some(welcome) = welcome {
-        transcript::print_block(&super::welcome::format_welcome_service_created(welcome));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::{

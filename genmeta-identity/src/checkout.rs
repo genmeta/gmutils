@@ -63,7 +63,6 @@ fn payment_instruction_block(response: &CreateDomainResponse, include_qr: bool) 
         ));
     }
     if let Some(payment_entry) = &response.payment_entry {
-        lines.push(format!("checkout token: {}", payment_entry.checkout_token));
         lines.push(format!("checkout expires at: {}", payment_entry.expires_at));
         return checkout_instruction_block(&lines.join("\n"), &payment_entry.url, include_qr);
     }
@@ -74,6 +73,8 @@ fn render_terminal_qr(url: &str) -> Result<String, QrError> {
     let code = QrCode::new(url.as_bytes())?;
     Ok(code
         .render()
+        .quiet_zone(true)
+        .module_dimensions(2, 1)
         .dark_color("\u{1b}[40m  \u{1b}[0m")
         .light_color("\u{1b}[47m  \u{1b}[0m")
         .build())
@@ -87,7 +88,7 @@ pub(crate) fn checkout_instruction_block(summary: &str, url: &str, include_qr: b
         block.push_str(&qr);
     }
 
-    block.push_str("\n\nCheckout URL:\n  ");
+    block.push_str("\n\nOpen link: ");
     block.push_str(url);
     block
 }
@@ -146,7 +147,7 @@ mod tests {
         assert!(block.contains("Payment is required to create alice.smith."));
         assert!(block.contains("Scan this QR code to pay:"));
         assert!(block.contains("\u{1b}[47m"), "{block:?}");
-        assert!(block.contains("Checkout URL:\n  https://pay.example.test/checkout/ckt_123"));
+        assert!(block.contains("Open link: https://pay.example.test/checkout/ckt_123"));
     }
 
     #[test]
@@ -162,7 +163,7 @@ mod tests {
         assert!(!block.contains("\u{1b}[47m"));
         assert_eq!(
             block,
-            "Payment is required to create alice.smith.\n\nCheckout URL:\n  https://pay.example.test/checkout/ckt_123"
+            "Payment is required to create alice.smith.\n\nOpen link: https://pay.example.test/checkout/ckt_123"
         );
     }
 
@@ -178,6 +179,7 @@ mod tests {
         assert!(block.contains("payment required for alice.smith.dhttp.net"));
         assert!(block.contains("currency: USD"));
         assert!(block.contains("Scan this QR code to pay:"));
-        assert!(block.contains("Checkout URL:\n  https://pay.example.com"));
+        assert!(block.contains("Open link: https://pay.example.com"));
+        assert!(!block.contains("tok_123"));
     }
 }

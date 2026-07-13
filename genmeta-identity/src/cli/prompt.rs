@@ -2,8 +2,6 @@ use std::{borrow::Cow, fmt::Display};
 
 use crate::cli::{flow::kind::IdentityKind, validator};
 
-pub(crate) const MORE_OPTIONS_LABEL: &str = "More options...";
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TextPromptResult {
     Submitted(String),
@@ -104,7 +102,7 @@ macro_rules! sync {
 
 pub(crate) async fn prompt_email() -> Result<String, inquire::InquireError> {
     sync!(
-        inquire::Text::new("Enter your email address:")
+        inquire::Text::new("Enter your email:")
             .with_validator(inquire::required!("Email address cannot be empty."))
             .with_validator(validator::EmailValidator)
             .prompt()
@@ -126,7 +124,7 @@ pub(crate) async fn prompt_identity_name_with_default(
     }
     let default = default.map(ToOwned::to_owned);
     sync!({
-        let mut prompt = inquire::Text::new("Enter the identity name:")
+        let mut prompt = inquire::Text::new("Enter your name:")
             .with_validator(inquire::required!("Identity name cannot be empty."))
             .with_validator(|value: &str| {
                 match crate::cli::flow::target::IdentityTarget::parse(value) {
@@ -261,7 +259,7 @@ pub(crate) async fn prompt_select_string_with_cursor(
 mod tests {
     use inquire::validator::{StringValidator, Validation};
 
-    use super::{MORE_OPTIONS_LABEL, MoreOptionsFriendlyValidator};
+    use super::MoreOptionsFriendlyValidator;
 
     #[test]
     fn question_mark_bypasses_inner_validation() {
@@ -283,10 +281,5 @@ mod tests {
             validator.validate("value").unwrap(),
             Validation::Invalid(inquire::validator::ErrorMessage::from("always invalid"))
         );
-    }
-
-    #[test]
-    fn more_options_label_matches_spec_copy() {
-        assert_eq!(MORE_OPTIONS_LABEL, "More options...");
     }
 }

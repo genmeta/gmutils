@@ -19,7 +19,9 @@ pub(crate) struct LocalIdentityAssessment {
     pub(crate) certificate: LocalIdentityMaterialState,
     pub(crate) private_key: LocalIdentityMaterialState,
     pub(crate) certificate_chain: Option<String>,
+    pub(crate) valid_from: Option<i64>,
     pub(crate) expires_at: Option<i64>,
+    pub(crate) issuer: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,12 +45,22 @@ impl LocalIdentityStatus {
     pub(crate) fn is_ready(&self) -> bool {
         matches!(self, Self::Ready { .. })
     }
+
+    pub(crate) fn expires_at(&self) -> Option<i64> {
+        match self {
+            Self::Ready { expires_at } => Some(*expires_at),
+            Self::Expired { expired_at } => Some(*expired_at),
+            Self::Incomplete { .. } | Self::Invalid { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LocalIdentitySummary {
     pub(crate) target: IdentityTarget,
     pub(crate) certificate_chain: Option<String>,
+    pub(crate) valid_from: Option<i64>,
+    pub(crate) issuer: Option<String>,
     pub(crate) status: LocalIdentityStatus,
     pub(crate) saved_at: PathBuf,
     pub(crate) is_default: bool,
@@ -88,6 +100,7 @@ pub(crate) struct LocalInventory {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum InteractiveInventoryChoice {
     Saved(LocalIdentitySummary),
     Organization { target: IdentityTarget },
@@ -257,6 +270,8 @@ pub(crate) async fn load_summary(
     Ok(LocalIdentitySummary {
         target,
         certificate_chain: assessment.certificate_chain,
+        valid_from: assessment.valid_from,
+        issuer: assessment.issuer,
         status,
         saved_at: profile.path().to_path_buf(),
         is_default: default_name
@@ -266,6 +281,7 @@ pub(crate) async fn load_summary(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn build_renew_inventory_choices(
     inventory: &LocalInventory,
 ) -> Vec<InteractiveInventoryChoice> {
@@ -292,6 +308,7 @@ pub(crate) fn build_renew_inventory_choices(
     choices
 }
 
+#[cfg(test)]
 pub(crate) fn build_default_inventory_choices(
     inventory: &LocalInventory,
 ) -> Vec<InteractiveInventoryChoice> {
@@ -345,7 +362,9 @@ async fn assess_profile(
                 certificate: certificate_state_from_error(&error),
                 private_key: LocalIdentityMaterialState::Present,
                 certificate_chain: None,
+                valid_from: None,
                 expires_at: None,
+                issuer: None,
             };
         }
     };
@@ -361,7 +380,9 @@ async fn assess_profile(
         certificate: LocalIdentityMaterialState::Present,
         private_key: LocalIdentityMaterialState::Present,
         certificate_chain: None,
+        valid_from: None,
         expires_at: None,
+        issuer: None,
     };
 
     match profile.load_key().await {
@@ -400,7 +421,9 @@ async fn assess_profile(
     };
     match x509_parser::parse_x509_certificate(leaf.as_ref()) {
         Ok((_, certificate)) => {
+            assessment.valid_from = Some(certificate.validity().not_before.timestamp());
             assessment.expires_at = Some(certificate.validity().not_after.timestamp());
+            assessment.issuer = Some(certificate.issuer().to_string());
         }
         Err(_) => {
             assessment.certificate =
@@ -484,6 +507,8 @@ mod tests {
         LocalIdentitySummary {
             target: IdentityTarget::parse(name).unwrap(),
             certificate_chain: Some(chain.to_string()),
+            valid_from: Some(NOW - 300),
+            issuer: Some("CN=Genmeta Test CA".to_string()),
             status: LocalIdentityStatus::Ready {
                 expires_at: NOW + 300,
             },
@@ -499,7 +524,9 @@ mod tests {
                 certificate: LocalIdentityMaterialState::Present,
                 private_key: LocalIdentityMaterialState::Present,
                 certificate_chain: Some("primary:0".to_string()),
+                valid_from: Some(NOW - 300),
                 expires_at: Some(NOW + 300),
+                issuer: Some("CN=Genmeta Test CA".to_string()),
             },
             NOW,
         );
@@ -515,7 +542,9 @@ mod tests {
                 certificate: LocalIdentityMaterialState::Present,
                 private_key: LocalIdentityMaterialState::Present,
                 certificate_chain: Some("secondary:2".to_string()),
+                valid_from: Some(NOW - 300),
                 expires_at: Some(NOW - 1),
+                issuer: Some("CN=Genmeta Test CA".to_string()),
             },
             NOW,
         );
@@ -531,7 +560,9 @@ mod tests {
                 certificate: LocalIdentityMaterialState::Present,
                 private_key: LocalIdentityMaterialState::Missing("private key missing"),
                 certificate_chain: Some("secondary:3".to_string()),
+                valid_from: Some(NOW - 300),
                 expires_at: Some(NOW + 300),
+                issuer: Some("CN=Genmeta Test CA".to_string()),
             },
             NOW,
         );
@@ -549,7 +580,9 @@ mod tests {
                 ),
                 private_key: LocalIdentityMaterialState::Present,
                 certificate_chain: Some("secondary:4".to_string()),
+                valid_from: Some(NOW - 300),
                 expires_at: Some(NOW + 300),
+                issuer: Some("CN=Genmeta Test CA".to_string()),
             },
             NOW,
         );

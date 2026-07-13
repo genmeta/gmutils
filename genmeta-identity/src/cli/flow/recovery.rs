@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum VerificationRecovery {
     StayCurrentStep { message: String },
+    OfferResend { message: String },
     BackToEmail { message: String },
     Abort,
 }
@@ -34,9 +35,18 @@ pub(crate) fn classify_verify_submit_error(
     error: &crate::cert_server::Error,
 ) -> VerificationRecovery {
     match error {
+        crate::cert_server::Error::Api {
+            status,
+            code,
+            message,
+        } if *status == reqwest::StatusCode::UNAUTHORIZED && code == "verify_code_expired" =>
+        {
+            VerificationRecovery::OfferResend {
+                message: message.clone(),
+            }
+        }
         crate::cert_server::Error::Api { status, code, .. }
-            if *status == reqwest::StatusCode::UNAUTHORIZED
-                && matches!(code.as_str(), "verify_code_invalid" | "verify_code_expired") =>
+            if *status == reqwest::StatusCode::UNAUTHORIZED && code == "verify_code_invalid" =>
         {
             VerificationRecovery::StayCurrentStep {
                 message: "The verification code could not be used. To continue, enter the code again or choose another option.".to_string(),
@@ -100,6 +110,22 @@ mod tests {
         assert_eq!(
             classify_verify_submit_error(&error),
             VerificationRecovery::Abort
+        );
+    }
+
+    #[test]
+    fn expired_code_offers_resend_with_server_message() {
+        let error = crate::cert_server::Error::Api {
+            status: reqwest::StatusCode::UNAUTHORIZED,
+            code: "verify_code_expired".to_string(),
+            message: "verification code expired".to_string(),
+        };
+
+        assert_eq!(
+            classify_verify_submit_error(&error),
+            VerificationRecovery::OfferResend {
+                message: "verification code expired".to_string(),
+            }
         );
     }
 
