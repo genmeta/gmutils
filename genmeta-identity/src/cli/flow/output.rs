@@ -10,35 +10,17 @@ use super::{
 
 pub(crate) fn render_inventory(inventory: &LocalInventory, ansi: bool) -> String {
     let mut lines = Vec::new();
-    let width = inventory
-        .groups
-        .iter()
-        .flat_map(|group| {
-            std::iter::once(root_label(&group.root).len()).chain(
-                group
-                    .children
-                    .iter()
-                    .map(|summary| child_label(summary).len()),
-            )
-        })
-        .max()
-        .unwrap_or_default()
-        .max(40);
-
     for group in &inventory.groups {
-        lines.push(render_root(&group.root, width, ansi));
-        for (index, child) in group.children.iter().enumerate() {
-            let branch = if index + 1 == group.children.len() {
-                "└─ "
-            } else {
-                "├─ "
-            };
+        if let LocalInventoryRoot::Saved(summary) = &group.root {
             lines.push(render_line(
-                render_summary_text(
-                    &format!("{branch}{}", child.target.short_name()),
-                    child,
-                    width,
-                ),
+                compact_identity_label(summary),
+                summary_line_style(summary),
+                ansi,
+            ));
+        }
+        for child in &group.children {
+            lines.push(render_line(
+                compact_identity_label(child),
                 summary_line_style(child),
                 ansi,
             ));
@@ -46,6 +28,22 @@ pub(crate) fn render_inventory(inventory: &LocalInventory, ansi: bool) -> String
     }
 
     lines.join("\n")
+}
+
+pub(crate) fn render_verbose_inventory(inventory: &LocalInventory, ansi: bool) -> String {
+    let mut blocks = Vec::new();
+    for group in &inventory.groups {
+        if let LocalInventoryRoot::Saved(summary) = &group.root {
+            blocks.push(format_info(summary, ansi));
+        }
+        blocks.extend(
+            group
+                .children
+                .iter()
+                .map(|summary| format_info(summary, ansi)),
+        );
+    }
+    blocks.join("\n\n")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,9 +112,12 @@ pub(crate) fn compact_identity_label_parts(
     status: &LocalIdentityStatus,
     is_default: bool,
 ) -> String {
-    let mut label = format!("{name} [{}]", status.label());
+    let mut label = name.to_string();
+    if !matches!(status, LocalIdentityStatus::Ready { .. }) {
+        label.push_str(&format!(" [{}]", status.label()));
+    }
     if is_default {
-        label.push_str(" (default identity)");
+        label.push_str(" (default)");
     }
     label
 }
@@ -220,6 +221,38 @@ pub(crate) fn format_default_summary(summary: &LocalIdentitySummary, ansi: bool)
     format_info(summary, ansi)
 }
 
+pub(crate) fn format_default_query(summary: &LocalIdentitySummary) -> String {
+    let name = summary.target.short_name();
+    match summary.status {
+        LocalIdentityStatus::Expired { expired_at } => format!(
+            "{name}\n\nWARNING: This name expired on {}. Renew it soon, or the name may be released.\nRun `genmeta identity renew {name}` to renew it.",
+            format_natural_date(expired_at),
+        ),
+        _ => name.to_string(),
+    }
+}
+
+fn format_natural_date(timestamp: i64) -> String {
+    let date = time::OffsetDateTime::from_unix_timestamp(timestamp)
+        .expect("certificate timestamp should fit OffsetDateTime")
+        .date();
+    let month = match date.month() {
+        time::Month::January => "Jan",
+        time::Month::February => "Feb",
+        time::Month::March => "Mar",
+        time::Month::April => "Apr",
+        time::Month::May => "May",
+        time::Month::June => "Jun",
+        time::Month::July => "Jul",
+        time::Month::August => "Aug",
+        time::Month::September => "Sep",
+        time::Month::October => "Oct",
+        time::Month::November => "Nov",
+        time::Month::December => "Dec",
+    };
+    format!("{:02} {month} {}", date.day(), date.year())
+}
+
 fn detail_lines(summary: &LocalIdentitySummary) -> Vec<String> {
     let mut lines = Vec::new();
     match (&summary.status, summary.certificate_chain.as_deref()) {
@@ -233,61 +266,8 @@ fn detail_lines(summary: &LocalIdentitySummary) -> Vec<String> {
         }
         _ => {}
     }
-    lines.push(format!("  saved at {}", summary.saved_at.display()));
+    lines.push(format!("  dir: {}", summary.saved_at.display()));
     lines
-}
-
-fn render_root(root: &LocalInventoryRoot, width: usize, ansi: bool) -> String {
-    match root {
-        LocalInventoryRoot::Saved(summary) => render_line(
-            render_summary_text(&root_label(root), summary, width),
-            summary_line_style(summary),
-            ansi,
-        ),
-        LocalInventoryRoot::Organization { .. } => {
-            render_line(root_label(root), LineStyle::Dim, ansi)
-        }
-    }
-}
-
-fn render_summary_text(label: &str, summary: &LocalIdentitySummary, width: usize) -> String {
-    let supplement = match &summary.status {
-        LocalIdentityStatus::Ready { .. } | LocalIdentityStatus::Expired { .. } => summary
-            .certificate_chain
-            .as_deref()
-            .unwrap_or("(certificate chain unavailable)")
-            .to_string(),
-        LocalIdentityStatus::Incomplete { detail } | LocalIdentityStatus::Invalid { detail } => {
-            format!("({detail})")
-        }
-    };
-
-    format!(
-        "{label:<width$}  {:<10}  {supplement}",
-        summary.status.label(),
-        width = width
-    )
-}
-
-fn root_label(root: &LocalInventoryRoot) -> String {
-    match root {
-        LocalInventoryRoot::Saved(summary) => summary_label(summary),
-        LocalInventoryRoot::Organization { target } => {
-            format!("{} (not saved here)", target.short_name())
-        }
-    }
-}
-
-fn child_label(summary: &LocalIdentitySummary) -> String {
-    format!("├─ {}", summary.target.short_name())
-}
-
-fn summary_label(summary: &LocalIdentitySummary) -> String {
-    let mut label = summary.target.short_name().to_string();
-    if summary.is_default {
-        label.push_str(" (default identity)");
-    }
-    label
 }
 
 #[cfg(test)]
@@ -295,9 +275,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        DefaultIdentityBlock, LineStyle, SavedIdentityAction, compact_identity_label,
-        format_current_default_suffix, format_default_identity_sentence, format_default_summary,
-        format_info, format_saved_identity_result, render_choice_label, render_inventory,
+        DefaultIdentityBlock, LineStyle, compact_identity_label, format_current_default_suffix,
+        format_default_identity_sentence, format_default_query, format_default_summary,
+        format_info, render_choice_label, render_inventory, render_verbose_inventory,
         summary_line_style,
     };
     use crate::cli::flow::{
@@ -325,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn formats_compact_info_and_default_summary() {
+    fn formats_info_with_dir_detail() {
         let profile = summary(
             "phone.alice.smith",
             true,
@@ -335,28 +315,26 @@ mod tests {
             Some("secondary:2"),
         );
 
-        let expected = "phone.alice.smith [ready] (default identity)\n  uses certificate chain secondary:2\n  saved at /tmp/phone.alice.smith";
+        let expected = "phone.alice.smith (default)\n  uses certificate chain secondary:2\n  dir: /tmp/phone.alice.smith";
 
         assert_eq!(format_info(&profile, false), expected);
         assert_eq!(format_default_summary(&profile, false), expected);
     }
 
     #[test]
-    fn formats_created_identity_result() {
+    fn expired_default_query_keeps_name_and_actionable_warning() {
         let profile = summary(
             "alice.smith",
-            false,
-            LocalIdentityStatus::Ready {
-                expires_at: EXPIRES_AT,
+            true,
+            LocalIdentityStatus::Expired {
+                expired_at: 1_783_478_400,
             },
             Some("primary:0"),
         );
 
-        let expected = "Created identity alice.smith [ready]\n  uses certificate chain primary:0\n  saved at /tmp/alice.smith";
-
         assert_eq!(
-            format_saved_identity_result(SavedIdentityAction::Created, &profile, false),
-            expected,
+            format_default_query(&profile),
+            "alice.smith\n\nWARNING: This name expired on 08 Jul 2026. Renew it soon, or the name may be released.\nRun `genmeta identity renew alice.smith` to renew it.",
         );
     }
 
@@ -375,7 +353,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_label_uses_square_bracket_status_without_chain_id() {
+    fn compact_label_hides_ready_status() {
         let profile = summary(
             "alice.smith",
             false,
@@ -385,7 +363,7 @@ mod tests {
             Some("primary:0"),
         );
 
-        assert_eq!(compact_identity_label(&profile), "alice.smith [ready]");
+        assert_eq!(compact_identity_label(&profile), "alice.smith");
     }
 
     #[test]
@@ -413,7 +391,7 @@ mod tests {
             None,
         );
 
-        let expected = "alice.smith [invalid]\n  certificate chain metadata is invalid\n  saved at /tmp/alice.smith";
+        let expected = "alice.smith [invalid]\n  certificate chain metadata is invalid\n  dir: /tmp/alice.smith";
 
         assert_eq!(format_info(&profile, false), expected);
     }
@@ -460,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_tree_inventory_lines() {
+    fn renders_flat_compact_inventory_lines() {
         let inventory = build_inventory(vec![
             summary(
                 "tablet.reimu.scarlet",
@@ -497,13 +475,29 @@ mod tests {
         ]);
 
         let expected = "\
-alice.smith (default identity)            ready       primary:0\n\
-├─ phone.alice.smith                      ready       secondary:2\n\
-└─ tv.alice.smith                         incomplete  (private key missing)\n\
-reimu.scarlet (not saved here)\n\
-└─ tablet.reimu.scarlet                   expired     secondary:1";
+alice.smith (default)\n\
+phone.alice.smith\n\
+tv.alice.smith [incomplete]\n\
+tablet.reimu.scarlet [expired]";
 
         assert_eq!(render_inventory(&inventory, false), expected);
+    }
+
+    #[test]
+    fn verbose_inventory_reuses_info_renderer() {
+        let inventory = build_inventory(vec![summary(
+            "alice.smith",
+            true,
+            LocalIdentityStatus::Ready {
+                expires_at: EXPIRES_AT,
+            },
+            Some("primary:0"),
+        )]);
+
+        assert_eq!(
+            render_verbose_inventory(&inventory, false),
+            "alice.smith (default)\n  uses certificate chain primary:0\n  dir: /tmp/alice.smith",
+        );
     }
 
     #[test]
@@ -532,7 +526,7 @@ reimu.scarlet (not saved here)\n\
             labels,
             vec![
                 "alice.ma (not saved here)".to_string(),
-                "  shanghai.alice.ma [ready]".to_string(),
+                "  shanghai.alice.ma".to_string(),
             ]
         );
     }
@@ -573,9 +567,9 @@ reimu.scarlet (not saved here)\n\
         assert_eq!(
             labels,
             vec![
-                "alice.smith [ready] (default identity)".to_string(),
+                "alice.smith (default)".to_string(),
                 "reimu.scarlet (not saved here)".to_string(),
-                "  tablet.reimu.scarlet [ready]".to_string(),
+                "  tablet.reimu.scarlet".to_string(),
             ]
         );
     }

@@ -11,6 +11,7 @@ enum Options {
         #[command(subcommand)]
         options: genmeta_doctor::Options,
     },
+    #[command(visible_alias = "id")]
     Identity(genmeta_identity::Cli),
     Nslookup(genmeta_nslookup::Options),
     Proxy(genmeta_proxy::Options),
@@ -127,7 +128,7 @@ async fn run(options: Options) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
 
     use super::{Options, install_process_crypto_provider};
 
@@ -142,5 +143,23 @@ mod tests {
     fn launcher_accepts_identity_global_flag() {
         let parsed = Options::try_parse_from(["genmeta", "identity", "--global", "list"]);
         assert!(parsed.is_ok(), "{parsed:?}");
+    }
+
+    #[test]
+    fn launcher_accepts_identity_alias() {
+        let canonical = Options::try_parse_from(["genmeta", "identity", "apply", "alice.smith"])
+            .expect("canonical identity command should parse");
+        let alias = Options::try_parse_from(["genmeta", "id", "apply", "alice.smith"])
+            .expect("id alias should parse");
+
+        assert!(matches!(canonical, Options::Identity(_)));
+        assert!(matches!(alias, Options::Identity(_)));
+    }
+
+    #[test]
+    fn launcher_help_exposes_identity_alias() {
+        let help = Options::command().render_long_help().to_string();
+        assert!(help.contains("identity"), "{help}");
+        assert!(help.contains("id"), "{help}");
     }
 }

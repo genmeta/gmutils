@@ -349,7 +349,7 @@ fn rewrite_apply_email_issue_error(
 }
 
 fn is_subdomain_quota_exceeded(error: &crate::cert_server::Error) -> bool {
-    super::create::is_subdomain_quota_exceeded(error)
+    super::registration::is_subdomain_quota_exceeded(error)
 }
 
 fn rewrite_apply_registration_error(target: &IdentityTarget, error: Error) -> Error {
@@ -736,7 +736,7 @@ async fn ensure_identity_exists_after_apply_login(
     match target.level() {
         IdentityLevel::Identity => {
             if interactive {
-                super::create::ensure_identity_exists_with_token_interactively(
+                super::registration::ensure_identity_exists_with_token_interactively(
                     cert_server,
                     target,
                     access_token,
@@ -744,7 +744,7 @@ async fn ensure_identity_exists_after_apply_login(
                 )
                 .await
             } else {
-                super::create::ensure_identity_exists_with_token(
+                super::registration::ensure_identity_exists_with_token(
                     cert_server,
                     target,
                     access_token,
@@ -761,7 +761,7 @@ async fn ensure_identity_exists_after_apply_login(
                 "sub-identity target is missing its direct child label",
             )?;
             let created = if interactive {
-                super::create::create_sub_identity_with_token_interactively(
+                super::registration::create_sub_identity_with_token_interactively(
                     cert_server,
                     target,
                     access_token,
@@ -770,7 +770,7 @@ async fn ensure_identity_exists_after_apply_login(
                 )
                 .await?
             } else {
-                let created = super::create::create_sub_identity_with_token(
+                let created = super::registration::create_sub_identity_with_token(
                     cert_server,
                     target,
                     access_token,
@@ -778,7 +778,7 @@ async fn ensure_identity_exists_after_apply_login(
                     label,
                 )
                 .await?;
-                super::create::ensure_non_interactive_sub_identity_checkout_not_required(
+                super::registration::ensure_non_interactive_sub_identity_checkout_not_required(
                     target, &created,
                 )?;
                 created

@@ -4,10 +4,7 @@ use dhttp::home::{DhttpHome, HomeScope};
 use snafu::{OptionExt, whatever};
 use tracing::Instrument;
 
-use super::{
-    approval,
-    local::{self, InteractiveInventoryChoice},
-};
+use super::{approval, local};
 use crate::{
     auth::AuthMethod,
     cert_server::CertServer,
@@ -259,47 +256,9 @@ async fn resolve_target(
     command: &Renew,
     dhttp_home: &DhttpHome,
 ) -> Result<dhttp::name::DhttpName<'static>, Error> {
-    if command.use_default {
-        return cli::resolve_default_target_name(dhttp_home).await;
-    }
-
     match command.name.as_deref() {
         Some(name) => cli::parse_identity_name(name),
-        None => {
-            let default_name = cli::load_current_settings(dhttp_home)
-                .await?
-                .and_then(|config| config.settings().default_identity_name().cloned());
-            let inventory =
-                local::load_inventory(dhttp_home, default_name.as_ref().map(|name| name.borrow()))
-                    .await?;
-            let choices = local::build_renew_inventory_choices(&inventory);
-            if choices.is_empty() {
-                whatever!("No identities found here. Renew requires an identity saved here.");
-            }
-            let labels: Vec<String> = choices
-                .iter()
-                .map(|choice| {
-                    super::output::render_choice_label(choice, std::io::stdout().is_terminal())
-                })
-                .collect();
-            let selected = crate::cli::prompt::prompt_select_string(
-                "Select an identity to renew here:",
-                labels.clone(),
-            )
-            .await
-            .require_interactive("IDENTITY")?;
-            let choice = choices
-                .into_iter()
-                .zip(labels)
-                .find_map(|(choice, label)| (label == selected).then_some(choice))
-                .whatever_context::<_, Error>("selected identity choice is unavailable")?;
-            match choice {
-                InteractiveInventoryChoice::Saved(summary) => Ok(summary.target.into_dhttp_name()),
-                InteractiveInventoryChoice::Organization { .. } => {
-                    whatever!("renew requires an identity already saved here")
-                }
-            }
-        }
+        None => cli::resolve_default_target_name(dhttp_home).await,
     }
 }
 
@@ -366,60 +325,13 @@ async fn run_interactive(
     home_scope: HomeScope,
     cert_server: &CertServer,
 ) -> Result<(), Error> {
-    let initial_target = if command.use_default {
-        Some(cli::resolve_default_target_name(dhttp_home).await?)
-    } else {
-        command
-            .name
-            .as_deref()
-            .map(cli::parse_identity_name)
-            .transpose()?
+    let initial_target = match command.name.as_deref() {
+        Some(name) => cli::parse_identity_name(name)?,
+        None => cli::resolve_default_target_name(dhttp_home).await?,
     };
-    let mut state = InteractiveRenewState::from_command(command, initial_target);
+    let mut state = InteractiveRenewState::from_command(command, Some(initial_target));
 
     loop {
-        if state.target.is_none() {
-            let default_name = cli::load_current_settings(dhttp_home)
-                .await?
-                .and_then(|config| config.settings().default_identity_name().cloned());
-            let inventory =
-                local::load_inventory(dhttp_home, default_name.as_ref().map(|name| name.borrow()))
-                    .await?;
-            let choices = local::build_renew_inventory_choices(&inventory);
-            if choices.is_empty() {
-                whatever!("No identities found here. Renew requires an identity saved here.");
-            }
-            let labels: Vec<String> = choices
-                .iter()
-                .map(|choice| {
-                    super::output::render_choice_label(choice, std::io::stdout().is_terminal())
-                })
-                .collect();
-            let selected = crate::cli::prompt::prompt_select_string(
-                "Select an identity to renew here:",
-                labels.clone(),
-            )
-            .await
-            .require_interactive("IDENTITY")?;
-            let choice = choices
-                .into_iter()
-                .zip(labels)
-                .find_map(|(choice, label)| (label == selected).then_some(choice))
-                .whatever_context::<_, Error>("selected identity choice is unavailable")?;
-            match choice {
-                InteractiveInventoryChoice::Saved(summary) => {
-                    state.target = Some(summary.target.into_dhttp_name());
-                }
-                InteractiveInventoryChoice::Organization { target } => {
-                    crate::cli::flow::transcript::print_block(&renew_not_saved_root_message(
-                        target.short_name(),
-                    ));
-                    state.revisit_target_selection();
-                }
-            }
-            continue;
-        }
-
         let domain = state
             .target
             .clone()
@@ -654,7 +566,6 @@ pub(crate) async fn run_helper_for_verification(
 ) -> Result<bool, Error> {
     let command = Renew {
         name: Some(short_name.to_string()),
-        use_default: false,
         device_name: None,
         email: None,
         send_code: false,
@@ -795,7 +706,6 @@ mod tests {
         let mut state = InteractiveRenewState::from_command(
             &Renew {
                 name: Some("alice.smith".to_string()),
-                use_default: false,
                 device_name: None,
                 email: Some("alice@example.test".to_string()),
                 send_code: false,
@@ -821,7 +731,6 @@ mod tests {
         let mut state = InteractiveRenewState::from_command(
             &Renew {
                 name: Some("alice.smith".to_string()),
-                use_default: false,
                 device_name: None,
                 email: Some("alice@example.test".to_string()),
                 send_code: false,
@@ -897,7 +806,6 @@ Apply alice.ma here first, then return to renew."
         let dhttp_home = DhttpHome::new(home_path);
         let command = Renew {
             name: Some("alice.smith".to_string()),
-            use_default: false,
             device_name: None,
             email: None,
             send_code: false,

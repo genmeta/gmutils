@@ -309,27 +309,6 @@ async fn login_with_email(
     }
 }
 
-/// Create a new identity
-#[derive(Parser, Debug, Clone)]
-pub struct Create {
-    #[arg(value_name = "IDENTITY")]
-    pub name: Option<String>,
-    #[arg(long)]
-    pub kind: Option<String>,
-    #[arg(long)]
-    pub replace_local: bool,
-    #[arg(long)]
-    pub device_name: Option<String>,
-    #[arg(short, long)]
-    pub email: Option<String>,
-    #[arg(long, conflicts_with = "verify_code")]
-    pub send_code: bool,
-    #[arg(long, value_name = "VERIFY_CODE", hide = true)]
-    pub verify_code: Option<String>,
-    #[arg(long, value_enum)]
-    pub auth: Option<crate::auth::AuthMethod>,
-}
-
 /// Apply identity
 #[derive(Parser, Debug, Clone)]
 pub struct Apply {
@@ -356,8 +335,6 @@ pub struct Apply {
 pub struct Renew {
     #[arg(value_name = "IDENTITY")]
     pub name: Option<String>,
-    #[arg(long = "default", conflicts_with = "name")]
-    pub use_default: bool,
     #[arg(long)]
     pub device_name: Option<String>,
     #[arg(short, long)]
@@ -373,8 +350,10 @@ pub struct Renew {
 /// Set default identity
 #[derive(Parser, Debug, Clone)]
 pub struct Default {
-    #[arg(value_name = "IDENTITY")]
+    #[arg(value_name = "IDENTITY", conflicts_with = "verbose")]
     pub name: Option<String>,
+    #[arg(short, long)]
+    pub verbose: bool,
     #[arg(long)]
     pub allow_nonready: bool,
 }
@@ -416,13 +395,13 @@ impl List {
         if inventory.groups.is_empty() {
             flow::transcript::print_line("No identities found here");
         } else {
-            flow::transcript::print_block(&flow::output::render_inventory(
-                &inventory,
-                std::io::stdout().is_terminal(),
-            ));
-            if self.verbose {
-                tracing::debug!("verbose identity list details are not implemented yet");
-            }
+            let ansi = std::io::stdout().is_terminal();
+            let rendered = if self.verbose {
+                flow::output::render_verbose_inventory(&inventory, ansi)
+            } else {
+                flow::output::render_inventory(&inventory, ansi)
+            };
+            flow::transcript::print_block(&rendered);
         }
         Ok(())
     }
@@ -503,7 +482,6 @@ impl Cli {
 #[derive(Parser, Debug, Clone)]
 #[command(about, disable_help_flag = true, disable_version_flag = true)]
 pub enum Options {
-    Create(Create),
     Apply(Apply),
     Renew(Renew),
     Default(Default),
@@ -514,10 +492,7 @@ pub enum Options {
 
 impl Options {
     pub fn writes_home(&self) -> bool {
-        matches!(
-            self,
-            Self::Create(_) | Self::Apply(_) | Self::Renew(_) | Self::Default(_)
-        )
+        matches!(self, Self::Apply(_) | Self::Renew(_) | Self::Default(_))
     }
 
     pub async fn run(
@@ -527,9 +502,6 @@ impl Options {
         cert_server: &CertServer,
     ) -> Result<(), Error> {
         match self {
-            Options::Create(cmd) => {
-                flow::run_create(cmd, dhttp_home, home_scope, cert_server).await
-            }
             Options::Apply(cmd) => flow::run_apply(cmd, dhttp_home, home_scope, cert_server).await,
             Options::Renew(cmd) => flow::run_renew(cmd, dhttp_home, home_scope, cert_server).await,
             Options::Default(cmd) => {
@@ -615,7 +587,7 @@ mod tests {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
     use super::{
-        Cli, Create, Default, Info, Options, cert_server_base_url,
+        Apply, Cli, Default, Info, Options, cert_server_base_url,
         certificate_chain_key_from_identity,
     };
     use crate::CERT_SERVER_BASE_URL;
@@ -668,10 +640,10 @@ mod tests {
     }
 
     #[test]
-    fn create_rejects_auth_auto() {
+    fn apply_rejects_auth_auto() {
         let error = Options::try_parse_from([
             "genmeta",
-            "create",
+            "apply",
             "alice.smith",
             "--kind",
             "primary",
@@ -687,14 +659,14 @@ mod tests {
 
     #[test]
     fn verify_code_is_hidden_from_help_but_still_parses() {
-        let mut command = Create::command();
+        let mut command = Apply::command();
         let help = command.render_long_help().to_string();
         assert!(!help.contains("--verify-code"), "{help}");
 
         assert!(
             Options::try_parse_from([
                 "genmeta",
-                "create",
+                "apply",
                 "alice.smith",
                 "--kind",
                 "primary",
@@ -718,6 +690,27 @@ mod tests {
     }
 
     #[test]
+    fn create_subcommand_is_removed() {
+        let error = Options::try_parse_from(["genmeta", "create", "alice.smith"])
+            .expect_err("create must no longer parse");
+        assert!(error.to_string().contains("unrecognized subcommand"));
+    }
+
+    #[test]
+    fn renew_uses_optional_positional_identity_without_default_flag() {
+        assert!(Options::try_parse_from(["genmeta", "renew"]).is_ok());
+        assert!(Options::try_parse_from(["genmeta", "renew", "alice.smith"]).is_ok());
+        assert!(Options::try_parse_from(["genmeta", "renew", "--default"]).is_err());
+    }
+
+    #[test]
+    fn default_verbose_is_query_only() {
+        assert!(Options::try_parse_from(["genmeta", "default", "-v"]).is_ok());
+        assert!(Options::try_parse_from(["genmeta", "default", "--verbose"]).is_ok());
+        assert!(Options::try_parse_from(["genmeta", "default", "alice.smith", "-v"]).is_err());
+    }
+
+    #[test]
     fn helper_style_read_and_write_subcommands_are_rejected() {
         for command in ["read", "write"] {
             let error = Options::try_parse_from(["genmeta", command]).unwrap_err();
@@ -737,48 +730,44 @@ mod tests {
     }
 
     #[test]
-    fn create_and_apply_reject_sequence_flag() {
-        for command in ["create", "apply"] {
-            let error = Options::try_parse_from([
+    fn apply_rejects_sequence_flag() {
+        let error = Options::try_parse_from([
+            "genmeta",
+            "apply",
+            "alice.smith",
+            "--kind",
+            "primary",
+            "--sequence",
+            "1",
+        ])
+        .unwrap_err();
+        let rendered = error.to_string();
+        assert!(rendered.contains("--sequence"), "{rendered}");
+    }
+
+    #[test]
+    fn apply_accepts_replace_local_flag() {
+        assert!(
+            Options::try_parse_from([
                 "genmeta",
-                command,
+                "apply",
                 "alice.smith",
                 "--kind",
                 "primary",
-                "--sequence",
-                "1",
+                "--replace-local",
             ])
-            .unwrap_err();
-            let rendered = error.to_string();
-            assert!(rendered.contains("--sequence"), "{rendered}");
-        }
+            .is_ok()
+        );
     }
 
     #[test]
-    fn create_and_apply_accept_replace_local_flag() {
-        for command in ["create", "apply"] {
-            assert!(
-                Options::try_parse_from([
-                    "genmeta",
-                    command,
-                    "alice.smith",
-                    "--kind",
-                    "primary",
-                    "--replace-local",
-                ])
-                .is_ok()
-            );
-        }
-    }
-
-    #[test]
-    fn apply_rejects_default_flag_while_renew_keeps_it() {
+    fn apply_and_renew_reject_default_flag() {
         let apply_error =
             Options::try_parse_from(["genmeta", "apply", "--default", "--kind", "primary"])
                 .unwrap_err();
         assert!(apply_error.to_string().contains("--default"));
 
-        assert!(Options::try_parse_from(["genmeta", "renew", "--default"]).is_ok());
+        assert!(Options::try_parse_from(["genmeta", "renew", "--default"]).is_err());
     }
 
     #[test]
@@ -786,7 +775,7 @@ mod tests {
         assert!(
             Options::try_parse_from([
                 "genmeta",
-                "create",
+                "apply",
                 "alice.smith",
                 "--kind",
                 "primary",
@@ -801,7 +790,7 @@ mod tests {
 
         let error = Options::try_parse_from([
             "genmeta",
-            "create",
+            "apply",
             "alice.smith",
             "--kind",
             "primary",
@@ -863,6 +852,7 @@ mod tests {
         let dhttp_home = DhttpHome::new(home_path);
         let command = Default {
             name: Some("alice.smith".to_string()),
+            verbose: false,
             allow_nonready: false,
         };
 
@@ -888,6 +878,7 @@ mod tests {
 
         let command = Default {
             name: Some("alice.smith".to_string()),
+            verbose: false,
             allow_nonready: true,
         };
 
@@ -920,7 +911,6 @@ mod tests {
     #[test]
     fn write_commands_are_marked_for_global_warning() {
         for argv in [
-            ["genmeta", "create", "alice.smith", "--kind", "primary"].as_slice(),
             ["genmeta", "apply", "alice.smith", "--kind", "primary"].as_slice(),
             ["genmeta", "renew", "alice.smith"].as_slice(),
             ["genmeta", "default", "alice.smith"].as_slice(),

@@ -1,6 +1,5 @@
 pub(crate) mod apply;
 pub(crate) mod approval;
-pub(crate) mod create;
 pub(crate) mod default_identity;
 pub(crate) mod device;
 pub(crate) mod email;
@@ -10,6 +9,7 @@ pub(crate) mod local;
 pub(crate) mod output;
 pub(crate) mod progress;
 pub(crate) mod recovery;
+pub(crate) mod registration;
 pub(crate) mod renew;
 pub(crate) mod target;
 pub(crate) mod transcript;
@@ -19,17 +19,8 @@ use dhttp::home::{DhttpHome, HomeScope};
 
 use crate::{
     cert_server::CertServer,
-    cli::{Apply, Create, Default, Error, Info, List, Renew},
+    cli::{Apply, Default, Error, Info, List, Renew},
 };
-
-pub(crate) async fn run_create(
-    command: &Create,
-    dhttp_home: &DhttpHome,
-    home_scope: HomeScope,
-    cert_server: &CertServer,
-) -> Result<(), Error> {
-    create::run(command, dhttp_home, home_scope, cert_server).await
-}
 
 pub(crate) async fn run_apply(
     command: &Apply,
