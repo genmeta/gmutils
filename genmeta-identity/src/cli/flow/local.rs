@@ -18,6 +18,7 @@ pub(crate) enum LocalIdentityMaterialState {
 pub(crate) struct LocalIdentityAssessment {
     pub(crate) certificate: LocalIdentityMaterialState,
     pub(crate) private_key: LocalIdentityMaterialState,
+    pub(crate) certificate_target_matches: Option<bool>,
     pub(crate) usage: Option<IdentityUsage>,
     pub(crate) sequence: Option<u32>,
     pub(crate) valid_from: Option<i64>,
@@ -379,6 +380,7 @@ async fn assess_profile(
             return LocalIdentityAssessment {
                 certificate: certificate_state_from_error(&error),
                 private_key: LocalIdentityMaterialState::Present,
+                certificate_target_matches: None,
                 usage: None,
                 sequence: None,
                 valid_from: None,
@@ -397,6 +399,7 @@ async fn assess_profile(
     let mut assessment = LocalIdentityAssessment {
         certificate: LocalIdentityMaterialState::Present,
         private_key: LocalIdentityMaterialState::Present,
+        certificate_target_matches: None,
         usage: None,
         sequence: None,
         valid_from: None,
@@ -441,6 +444,25 @@ async fn assess_profile(
         Ok((_, certificate)) => {
             assessment.valid_from = Some(certificate.validity().not_before.timestamp());
             assessment.expires_at = Some(certificate.validity().not_after.timestamp());
+            let target_matches = certificate
+                .subject_alternative_name()
+                .ok()
+                .flatten()
+                .is_some_and(|extension| {
+                    extension.value.general_names.iter().any(|name| {
+                        matches!(
+                            name,
+                            x509_parser::extensions::GeneralName::DNSName(candidate)
+                                if candidate == &profile.name().as_full()
+                        )
+                    })
+                });
+            assessment.certificate_target_matches = Some(target_matches);
+            if !target_matches {
+                assessment.certificate = LocalIdentityMaterialState::Invalid(
+                    "certificate target does not match identity profile".to_string(),
+                );
+            }
         }
         Err(_) => {
             assessment.certificate =
@@ -467,6 +489,14 @@ async fn assess_profile(
     }
 
     assessment
+}
+
+pub(crate) async fn assess_profile_exact(
+    dhttp_home: &DhttpHome,
+    name: DhttpName<'_>,
+) -> Result<LocalIdentityAssessment, Error> {
+    let profile = dhttp_home.resolve_identity_profile_exactly(name).await?;
+    Ok(assess_profile(&profile).await)
 }
 
 fn certificate_state_from_error(
@@ -585,6 +615,7 @@ mod tests {
             &LocalIdentityAssessment {
                 certificate: LocalIdentityMaterialState::Present,
                 private_key: LocalIdentityMaterialState::Present,
+                certificate_target_matches: Some(true),
                 usage: Some(IdentityUsage::BothClientAndServer),
                 sequence: Some(0),
                 valid_from: Some(NOW - 300),
@@ -603,6 +634,7 @@ mod tests {
             &LocalIdentityAssessment {
                 certificate: LocalIdentityMaterialState::Present,
                 private_key: LocalIdentityMaterialState::Present,
+                certificate_target_matches: Some(true),
                 usage: Some(IdentityUsage::ClientOnly),
                 sequence: Some(2),
                 valid_from: Some(NOW - 300),
@@ -621,6 +653,7 @@ mod tests {
             &LocalIdentityAssessment {
                 certificate: LocalIdentityMaterialState::Present,
                 private_key: LocalIdentityMaterialState::Missing("private key missing"),
+                certificate_target_matches: Some(true),
                 usage: Some(IdentityUsage::ClientOnly),
                 sequence: Some(3),
                 valid_from: Some(NOW - 300),
@@ -641,6 +674,7 @@ mod tests {
                     "certificate does not match local key".to_string(),
                 ),
                 private_key: LocalIdentityMaterialState::Present,
+                certificate_target_matches: Some(true),
                 usage: Some(IdentityUsage::ClientOnly),
                 sequence: Some(4),
                 valid_from: Some(NOW - 300),

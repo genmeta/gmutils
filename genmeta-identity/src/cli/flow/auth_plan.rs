@@ -168,25 +168,6 @@ where
     }
 }
 
-pub(crate) async fn first_auth_candidate(
-    dhttp_home: &DhttpHome,
-    target: &IdentityTarget,
-    remote: RemoteTargetState,
-) -> Result<CandidateEvent, Error> {
-    let mut runner = AuthCandidateRunner::new(
-        HomeExactIdentityLoader::new(dhttp_home),
-        candidate_specs(target, remote),
-    );
-    loop {
-        match runner.next().await? {
-            CandidateEvent::Warning(warning) => {
-                super::transcript::print_warning(&warning);
-            }
-            selected => return Ok(selected),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{collections::BTreeMap, path::PathBuf};

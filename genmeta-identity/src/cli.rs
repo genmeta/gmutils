@@ -4,8 +4,9 @@ pub mod validator;
 use std::io::IsTerminal;
 
 use clap::Parser;
+#[cfg(test)]
+use dhttp::certificate::CertificateChainKey;
 use dhttp::{
-    certificate::CertificateChainKey,
     home::{
         DhttpHome, HomeScope, LoadDhttpHomeError,
         identity::{
@@ -111,6 +112,7 @@ impl snafu::FromString for Error {
     }
 }
 
+#[cfg(test)]
 fn certificate_chain_key_from_identity(
     identity: &dhttp::identity::Identity,
 ) -> Result<Option<CertificateChainKey>, Error> {
@@ -118,16 +120,6 @@ fn certificate_chain_key_from_identity(
         Ok(ski) => Ok(Some(ski.chain().clone())),
         Err(_) => Ok(None),
     }
-}
-
-fn generate_private_key_and_csr(name: &Name<'_>) -> Result<(String, String), Error> {
-    let mut material = flow::key_material::LazyKeyMaterial::for_name(name.clone());
-    let csr_pem = material.csr_pem()?.to_string();
-    let key_pem = material
-        .key_pem()
-        .expect("requesting a CSR generates its key first")
-        .to_string();
-    Ok((key_pem, csr_pem))
 }
 
 #[tracing::instrument()]
