@@ -21,8 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Identity authentication skips expired, incomplete, and invalid local
   certificates with an actionable warning, then tries the direct parent when
   available before falling back to email verification.
-- Compact identity output uses `(default)`, while detail output uses `dir` and
-  includes certificate usage, sequence, validity, and issuer information.
+- Compact identity output uses `(default)` and retains abnormal states. Detail
+  output keeps the chain in the summary, then shows `Issuer`, `Valid from`,
+  `Expires`/`Expired`, `dir`, and an invalid/incomplete reason when available.
 
 ## [0.8.0-beta.3] - 2026-07-09
 

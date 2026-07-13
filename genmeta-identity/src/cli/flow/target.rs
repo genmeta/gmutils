@@ -85,19 +85,28 @@ impl fmt::Display for IdentityTarget {
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 pub enum ParseIdentityTargetError {
-    #[snafu(display("identity name is invalid"))]
+    #[snafu(display("This name contains unsupported special characters."))]
     Name { source: InvalidDhttpName },
 
-    #[snafu(display("identity name {identity} has an invalid parent identity"))]
+    #[snafu(display("This name contains unsupported special characters."))]
     Parent {
         identity: String,
         source: InvalidDhttpName,
     },
 
-    #[snafu(display(
-        "identity name {identity} is not supported; use <given_name>.<surname> or <sub_identity>.<given_name>.<surname>"
-    ))]
+    #[snafu(display("This name must match [handle.]your.name."))]
     UnsupportedDepth { identity: String },
+}
+
+impl ParseIdentityTargetError {
+    pub(crate) fn prompt_message(&self) -> &'static str {
+        match self {
+            Self::Name { .. } | Self::Parent { .. } => {
+                "This name contains unsupported special characters."
+            }
+            Self::UnsupportedDepth { .. } => "This name must match [handle.]your.name.",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -128,9 +137,35 @@ mod tests {
     fn rejects_unsupported_identity_depths() {
         for input in ["alice", "one.two.three.four"] {
             let error = IdentityTarget::parse(input).unwrap_err();
-            let rendered = error.to_string();
-            assert!(rendered.contains(input), "{rendered}");
+            assert_eq!(
+                error.to_string(),
+                "This name must match [handle.]your.name."
+            );
         }
+    }
+
+    #[test]
+    fn direct_name_errors_use_the_same_copy_as_the_prompt() {
+        assert_eq!(
+            IdentityTarget::parse("alice!.smith")
+                .unwrap_err()
+                .to_string(),
+            "This name contains unsupported special characters."
+        );
+    }
+
+    #[test]
+    fn prompt_errors_use_the_approved_name_language() {
+        assert_eq!(
+            IdentityTarget::parse("alice").unwrap_err().prompt_message(),
+            "This name must match [handle.]your.name."
+        );
+        assert_eq!(
+            IdentityTarget::parse("alice!.smith")
+                .unwrap_err()
+                .prompt_message(),
+            "This name contains unsupported special characters."
+        );
     }
 
     #[test]

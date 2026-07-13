@@ -26,34 +26,15 @@ pub(crate) fn suggest_default_change(
         Some(current) if current.name == saved_name => None,
         Some(current) => Some(DefaultSuggestion {
             prompt: format!(
-                "Set {saved_name} as the default here? {}",
+                "Set this name({saved_name}) as default? {}",
                 output::format_current_default_suffix(&current.name, &current.status, ansi)
             ),
             default: false,
         }),
         None => Some(DefaultSuggestion {
-            prompt: format!("Set {saved_name} as the default here?"),
+            prompt: format!("Set this name({saved_name}) as default?"),
             default: true,
         }),
-    }
-}
-
-pub(crate) fn default_block(
-    before: Option<&str>,
-    after: Option<&str>,
-) -> output::DefaultIdentityBlock {
-    match (before, after) {
-        (_, None) => output::DefaultIdentityBlock::None,
-        (None, Some(current)) => output::DefaultIdentityBlock::NewlySet {
-            name: current.to_string(),
-        },
-        (Some(old), Some(current)) if old == current => output::DefaultIdentityBlock::Unchanged {
-            name: current.to_string(),
-        },
-        (Some(old), Some(current)) => output::DefaultIdentityBlock::Changed {
-            old: old.to_string(),
-            new: current.to_string(),
-        },
     }
 }
 
@@ -101,13 +82,13 @@ async fn save_default_name(
 pub(crate) async fn run_lifecycle_epilogue(
     dhttp_home: &DhttpHome,
     name: DhttpName<'_>,
-    default_at_start: Option<DhttpName<'static>>,
+    _default_at_start: Option<DhttpName<'static>>,
     interactive: bool,
     action: output::SavedIdentityAction,
     welcome: Option<&super::welcome::WelcomeServiceCreated>,
 ) -> Result<(), Error> {
     let ansi = std::io::stdout().is_terminal();
-    let mut default_after = current_default_name(dhttp_home).await?;
+    let default_after = current_default_name(dhttp_home).await?;
     let current_default = current_default_summary(dhttp_home).await?;
     let summary = local::load_summary(
         dhttp_home,
@@ -119,7 +100,6 @@ pub(crate) async fn run_lifecycle_epilogue(
     transcript::print_block(&output::format_saved_identity_result(
         action, &summary, ansi,
     ));
-    transcript::print_line(output::format_safekeeping_reminder(ansi));
 
     if interactive
         && let Some(suggestion) =
@@ -134,17 +114,10 @@ pub(crate) async fn run_lifecycle_epilogue(
         .require_interactive("interactive input")?;
 
         if accepted {
-            default_after = Some(save_default_name(dhttp_home, name.clone()).await?);
+            save_default_name(dhttp_home, name.clone()).await?;
         }
     }
 
-    let block = default_block(
-        default_at_start
-            .as_ref()
-            .map(|default| default.as_partial()),
-        default_after.as_ref().map(|default| default.as_partial()),
-    );
-    transcript::print_line(output::format_default_identity_sentence(&block));
     if let Some(welcome) = welcome {
         transcript::print_block(&super::welcome::format_welcome_service_created(welcome));
     }
@@ -161,8 +134,8 @@ mod tests {
     use dhttp::{home::DhttpHome, name::DhttpName};
     use tokio::fs;
 
-    use super::{CurrentDefaultSummary, DefaultSuggestion, default_block, suggest_default_change};
-    use crate::cli::flow::{local::LocalIdentityStatus, output::DefaultIdentityBlock};
+    use super::{CurrentDefaultSummary, DefaultSuggestion, suggest_default_change};
+    use crate::cli::flow::local::LocalIdentityStatus;
 
     fn unique_test_home_path(test_name: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -180,7 +153,7 @@ mod tests {
         let suggestion = suggest_default_change("alice.smith", None, false).unwrap();
 
         assert!(suggestion.default);
-        assert_eq!(suggestion.prompt, "Set alice.smith as the default here?");
+        assert_eq!(suggestion.prompt, "Set this name(alice.smith) as default?");
     }
 
     #[test]
@@ -200,20 +173,9 @@ mod tests {
         assert_eq!(
             suggestion,
             DefaultSuggestion {
-                prompt: "Set alice.smith as the default here? (current: meng.lin [invalid])"
+                prompt: "Set this name(alice.smith) as default? (current: meng.lin [invalid])"
                     .to_string(),
                 default: false,
-            }
-        );
-    }
-
-    #[test]
-    fn default_block_reports_changed_identity() {
-        assert_eq!(
-            default_block(Some("meng.lin"), Some("alice.smith")),
-            DefaultIdentityBlock::Changed {
-                old: "meng.lin".to_string(),
-                new: "alice.smith".to_string(),
             }
         );
     }
@@ -231,7 +193,7 @@ mod tests {
             name.borrow(),
             None,
             false,
-            crate::cli::flow::output::SavedIdentityAction::Created,
+            crate::cli::flow::output::SavedIdentityAction::Applied,
             None,
         )
         .await

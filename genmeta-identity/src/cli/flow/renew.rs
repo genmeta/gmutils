@@ -2,7 +2,6 @@ use std::io::IsTerminal;
 
 use dhttp::home::{DhttpHome, HomeScope};
 use snafu::{OptionExt, whatever};
-use tracing::Instrument;
 
 use super::local;
 use crate::{
@@ -18,50 +17,18 @@ enum RenewApprovalPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum RenewEmailAction {
-    SwitchVerificationMethod,
-    ChangeIdentitySelection,
-}
-
-impl RenewEmailAction {
-    fn label(&self) -> String {
-        match self {
-            Self::SwitchVerificationMethod => {
-                "Switch verification method (go back to verification method selection)".to_string()
-            }
-            Self::ChangeIdentitySelection => {
-                "Change identity (go back to identity selection)".to_string()
-            }
-        }
-    }
-}
-
-fn renew_email_actions() -> Vec<RenewEmailAction> {
-    vec![
-        RenewEmailAction::SwitchVerificationMethod,
-        RenewEmailAction::ChangeIdentitySelection,
-    ]
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 enum RenewVerifyCodeAction {
     ResendVerificationCode,
     ChangeEmail,
-    SwitchVerificationMethod,
-    ChangeIdentitySelection,
+    Cancel,
 }
 
 impl RenewVerifyCodeAction {
     fn label(&self) -> String {
         match self {
             Self::ResendVerificationCode => "Resend verification code".to_string(),
-            Self::ChangeEmail => "Send code to another email (go back to email)".to_string(),
-            Self::SwitchVerificationMethod => {
-                "Switch verification method (go back to verification method selection)".to_string()
-            }
-            Self::ChangeIdentitySelection => {
-                "Change identity (go back to identity selection)".to_string()
-            }
+            Self::ChangeEmail => "Change email".to_string(),
+            Self::Cancel => "Cancel".to_string(),
         }
     }
 }
@@ -70,8 +37,7 @@ fn renew_verify_code_actions() -> Vec<RenewVerifyCodeAction> {
     vec![
         RenewVerifyCodeAction::ResendVerificationCode,
         RenewVerifyCodeAction::ChangeEmail,
-        RenewVerifyCodeAction::SwitchVerificationMethod,
-        RenewVerifyCodeAction::ChangeIdentitySelection,
+        RenewVerifyCodeAction::Cancel,
     ]
 }
 
@@ -97,24 +63,7 @@ impl InteractiveRenewState {
         }
     }
 
-    fn revisit_target_selection(&mut self) {
-        self.target = None;
-        self.approval_plan = None;
-        self.email = None;
-        self.email_prompt_required = true;
-        self.verify_code = None;
-        self.verification_code_sent_to = None;
-    }
-
     fn revisit_email(&mut self) {
-        self.email_prompt_required = true;
-        self.verify_code = None;
-        self.verification_code_sent_to = None;
-    }
-
-    fn revisit_verification_method(&mut self) {
-        self.approval_plan = None;
-        self.email = None;
         self.email_prompt_required = true;
         self.verify_code = None;
         self.verification_code_sent_to = None;
@@ -149,7 +98,9 @@ async fn offer_expired_code_resend(
     email: &str,
     message: &str,
 ) -> Result<(), Error> {
-    crate::cli::flow::transcript::print_line(message);
+    crate::cli::flow::transcript::print_block(&crate::cli::flow::recovery::format_resend_offer(
+        message,
+    ));
     let resend = crate::cli::prompt::sync(|| {
         inquire::Confirm::new("Send a new verification code?")
             .with_default(true)
@@ -170,9 +121,7 @@ async fn offer_expired_code_resend(
 }
 
 fn renew_not_saved_root_message(short_name: &str) -> String {
-    format!(
-        "The identity {short_name} is not saved here.\n\nRenew updates an identity already saved here.\nThis identity has not been applied here yet.\n\nApply {short_name} here first, then return to renew."
-    )
+    format!("Failed to renew: {short_name} not found!")
 }
 
 async fn ensure_saved_renew_target(
@@ -231,22 +180,6 @@ async fn resolve_email(command: &Renew) -> Result<String, Error> {
     }
 }
 
-async fn prompt_renew_email_action() -> Result<RenewEmailAction, Error> {
-    let actions = renew_email_actions();
-    let labels = actions
-        .iter()
-        .map(RenewEmailAction::label)
-        .collect::<Vec<_>>();
-    let selected = crate::cli::prompt::prompt_select_string("More options:", labels.clone())
-        .await
-        .require_interactive("interactive input")?;
-    actions
-        .into_iter()
-        .zip(labels)
-        .find_map(|(action, label)| (label == selected).then_some(action))
-        .whatever_context::<_, Error>("selected renew email action is unavailable")
-}
-
 async fn prompt_renew_verify_code_action() -> Result<RenewVerifyCodeAction, Error> {
     let actions = renew_verify_code_actions();
     let labels = actions
@@ -303,25 +236,11 @@ async fn run_interactive(
         if matches!(approval_plan, RenewApprovalPlan::Email)
             && (state.email.is_none() || state.email_prompt_required)
         {
-            match crate::cli::prompt::prompt_email_with_more_options(state.email.as_deref())
+            let email = crate::cli::prompt::prompt_email_with_default(state.email.as_deref())
                 .await
-                .require_interactive("--email")?
-            {
-                crate::cli::prompt::TextPromptResult::Submitted(email) => {
-                    state.email = Some(email);
-                    state.email_prompt_required = false;
-                }
-                crate::cli::prompt::TextPromptResult::MoreOptions => {
-                    match prompt_renew_email_action().await? {
-                        RenewEmailAction::SwitchVerificationMethod => {
-                            state.revisit_verification_method();
-                        }
-                        RenewEmailAction::ChangeIdentitySelection => {
-                            state.revisit_target_selection();
-                        }
-                    }
-                }
-            }
+                .require_interactive("--email")?;
+            state.email = Some(email);
+            state.email_prompt_required = false;
             continue;
         }
 
@@ -385,11 +304,10 @@ async fn run_interactive(
                             }
                         }
                         RenewVerifyCodeAction::ChangeEmail => state.revisit_email(),
-                        RenewVerifyCodeAction::SwitchVerificationMethod => {
-                            state.revisit_verification_method();
-                        }
-                        RenewVerifyCodeAction::ChangeIdentitySelection => {
-                            state.revisit_target_selection();
+                        RenewVerifyCodeAction::Cancel => {
+                            whatever!(
+                                "Renew was cancelled.\nNo local identity files were changed."
+                            );
                         }
                     }
                 }
@@ -481,7 +399,6 @@ async fn run_interactive(
             key_pem.as_bytes(),
             detail.cert_pem.as_bytes(),
         )
-        .instrument(super::progress::save_identity_span())
         .await?;
         return Ok(());
     }
@@ -590,8 +507,8 @@ mod tests {
     use dhttp::home::{DhttpHome, HomeScope};
 
     use super::{
-        InteractiveRenewState, RenewApprovalPlan, RenewEmailAction, RenewVerifyCodeAction,
-        renew_email_actions, renew_not_saved_root_message, renew_verify_code_actions,
+        InteractiveRenewState, RenewApprovalPlan, RenewVerifyCodeAction,
+        renew_not_saved_root_message, renew_verify_code_actions,
         resolve_non_interactive_approval_plan,
     };
     use crate::{auth::AuthMethod, cli::Renew};
@@ -703,15 +620,10 @@ mod tests {
     }
 
     #[test]
-    fn renew_not_saved_root_message_mentions_apply_and_return() {
+    fn renew_not_saved_message_matches_the_edited_document() {
         assert_eq!(
             renew_not_saved_root_message("alice.ma"),
-            "The identity alice.ma is not saved here.
-
-Renew updates an identity already saved here.
-This identity has not been applied here yet.
-
-Apply alice.ma here first, then return to renew."
+            "Failed to renew: alice.ma not found!"
         );
     }
 
@@ -733,31 +645,7 @@ Apply alice.ma here first, then return to renew."
             .unwrap_err();
         let rendered = error.to_string();
 
-        assert!(
-            rendered.contains("Apply alice.smith here first"),
-            "{rendered}"
-        );
-    }
-
-    #[test]
-    fn renew_email_actions_include_explicit_return_points() {
-        assert_eq!(
-            renew_email_actions()
-                .into_iter()
-                .map(|action| action.label())
-                .collect::<Vec<_>>(),
-            vec![
-                "Switch verification method (go back to verification method selection)".to_string(),
-                "Change identity (go back to identity selection)".to_string(),
-            ]
-        );
-        assert_eq!(
-            renew_email_actions(),
-            vec![
-                RenewEmailAction::SwitchVerificationMethod,
-                RenewEmailAction::ChangeIdentitySelection,
-            ]
-        );
+        assert_eq!(rendered, "Failed to renew: alice.smith not found!");
     }
 
     #[test]
@@ -769,9 +657,8 @@ Apply alice.ma here first, then return to renew."
                 .collect::<Vec<_>>(),
             vec![
                 "Resend verification code".to_string(),
-                "Send code to another email (go back to email)".to_string(),
-                "Switch verification method (go back to verification method selection)".to_string(),
-                "Change identity (go back to identity selection)".to_string(),
+                "Change email".to_string(),
+                "Cancel".to_string(),
             ]
         );
         assert_eq!(
@@ -779,8 +666,7 @@ Apply alice.ma here first, then return to renew."
             vec![
                 RenewVerifyCodeAction::ResendVerificationCode,
                 RenewVerifyCodeAction::ChangeEmail,
-                RenewVerifyCodeAction::SwitchVerificationMethod,
-                RenewVerifyCodeAction::ChangeIdentitySelection,
+                RenewVerifyCodeAction::Cancel,
             ]
         );
     }

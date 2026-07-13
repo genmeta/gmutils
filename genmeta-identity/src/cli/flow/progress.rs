@@ -1,11 +1,7 @@
 use std::future::Future;
 
-use tracing::{Instrument, Span, info_span};
+use tracing::{Instrument, info_span};
 use tracing_indicatif::span_ext::IndicatifSpanExt;
-
-pub(crate) fn save_identity_span() -> Span {
-    info_span!("save_identity", indicatif.pb_show = tracing::field::Empty)
-}
 
 pub(crate) async fn run_with_spinner<T, E, Fut>(message: &str, future: Fut) -> Result<T, E>
 where

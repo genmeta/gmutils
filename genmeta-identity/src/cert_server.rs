@@ -9,7 +9,7 @@ use snafu::{FromString, ResultExt, Snafu, Whatever};
 pub enum Error {
     #[snafu(transparent)]
     Request { source: reqwest::Error },
-    #[snafu(display("cert server returned {status} {code}: {message}"))]
+    #[snafu(display("{message}"))]
     Api {
         status: reqwest::StatusCode,
         code: String,
@@ -818,6 +818,17 @@ mod tests {
         assert_eq!(error.api_code(), Some("starter_domain_limit_reached"));
         assert!(error.is_api_code("starter_domain_limit_reached"));
         assert!(!error.is_api_code("domain_not_found"));
+    }
+
+    #[test]
+    fn api_error_displays_the_certserver_problem_message_verbatim() {
+        let error = Error::Api {
+            status: reqwest::StatusCode::FORBIDDEN,
+            code: "domain_forbidden".to_string(),
+            message: "domain access is forbidden".to_string(),
+        };
+
+        assert_eq!(error.to_string(), "domain access is forbidden");
     }
 
     #[test]

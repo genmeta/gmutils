@@ -51,7 +51,9 @@ impl StringValidator for EmailValidator {
         if input.contains('@') && input.contains('.') {
             Ok(Validation::Valid)
         } else {
-            Ok(validation_failed("Invalid email format."))
+            Ok(validation_failed(
+                "Invalid email address. Please enter a valid email address.",
+            ))
         }
     }
 }
@@ -77,5 +79,15 @@ mod tests {
         assert_eq!(validate_kind("primary"), Ok(()));
         assert_eq!(validate_kind("secondary"), Ok(()));
         assert!(validate_kind("device").is_err());
+    }
+
+    #[test]
+    fn invalid_email_uses_the_approved_actionable_copy() {
+        assert_eq!(
+            EmailValidator.validate("not-an-email").unwrap(),
+            Validation::Invalid(inquire::validator::ErrorMessage::from(
+                "Invalid email address. Please enter a valid email address."
+            ))
+        );
     }
 }

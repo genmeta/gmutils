@@ -100,13 +100,43 @@ macro_rules! sync {
     };
 }
 
+pub(crate) fn identity_name_prompt_message() -> &'static str {
+    "Enter your name:"
+}
+
+pub(crate) fn identity_name_help_message() -> &'static str {
+    "For example:\n  [handle.]your.name"
+}
+
+pub(crate) fn email_prompt_message() -> &'static str {
+    "Enter your email:"
+}
+
+pub(crate) fn verify_code_prompt_message() -> &'static str {
+    "Enter verification code:"
+}
+
+pub(crate) fn more_options_help_message() -> &'static str {
+    "Type ? for more options."
+}
+
 pub(crate) async fn prompt_email() -> Result<String, inquire::InquireError> {
-    sync!(
-        inquire::Text::new("Enter your email:")
+    prompt_email_with_default(None).await
+}
+
+pub(crate) async fn prompt_email_with_default(
+    default: Option<&str>,
+) -> Result<String, inquire::InquireError> {
+    let default = default.map(ToOwned::to_owned);
+    sync!({
+        let mut prompt = inquire::Text::new(email_prompt_message())
             .with_validator(inquire::required!("Email address cannot be empty."))
-            .with_validator(validator::EmailValidator)
-            .prompt()
-    )
+            .with_validator(validator::EmailValidator);
+        if let Some(default) = default.as_deref() {
+            prompt = prompt.with_default(default);
+        }
+        prompt.prompt()
+    })
 }
 
 pub(crate) async fn prompt_identity_name(
@@ -124,13 +154,16 @@ pub(crate) async fn prompt_identity_name_with_default(
     }
     let default = default.map(ToOwned::to_owned);
     sync!({
-        let mut prompt = inquire::Text::new("Enter your name:")
+        let mut prompt = inquire::Text::new(identity_name_prompt_message())
+            .with_help_message(identity_name_help_message())
             .with_validator(inquire::required!("Identity name cannot be empty."))
             .with_validator(|value: &str| {
                 match crate::cli::flow::target::IdentityTarget::parse(value) {
                     Ok(_) => Ok(inquire::validator::Validation::Valid),
                     Err(error) => Ok(inquire::validator::Validation::Invalid(
-                        inquire::validator::ErrorMessage::Custom(error.to_string()),
+                        inquire::validator::ErrorMessage::Custom(
+                            error.prompt_message().to_string(),
+                        ),
                     )),
                 }
             });
@@ -150,7 +183,7 @@ pub(crate) async fn prompt_select_string(
 
 pub(crate) async fn prompt_verify_code() -> Result<String, inquire::InquireError> {
     sync!(
-        inquire::Text::new("Enter the verification code sent to your email:")
+        inquire::Text::new(verify_code_prompt_message())
             .with_validator(inquire::required!("Verification code cannot be empty."))
             .with_validator(inquire::length!(
                 6,
@@ -160,35 +193,35 @@ pub(crate) async fn prompt_verify_code() -> Result<String, inquire::InquireError
     )
 }
 
-pub(crate) async fn prompt_kind() -> Result<String, inquire::InquireError> {
+pub(crate) async fn prompt_kind() -> Result<IdentityKind, inquire::InquireError> {
     prompt_kind_with_cursor(None).await
 }
 
 pub(crate) async fn prompt_kind_with_cursor(
     selected_kind: Option<IdentityKind>,
-) -> Result<String, inquire::InquireError> {
-    let prompt = format!(
-        "{}\n\n{}\n\n{}",
-        IdentityKind::SELECT_PROMPT,
-        IdentityKind::PRIMARY_HELP,
-        IdentityKind::SECONDARY_HELP
-    );
+) -> Result<IdentityKind, inquire::InquireError> {
     let starting_cursor = match selected_kind {
         Some(IdentityKind::Primary) => Some(0),
         Some(IdentityKind::Secondary) => Some(1),
         None => None,
     };
-    sync!(
+    let selected = sync!(
         inquire::Select::new(
-            &prompt,
+            IdentityKind::SELECT_PROMPT,
             vec![
-                IdentityKind::Primary.to_string(),
-                IdentityKind::Secondary.to_string()
+                IdentityKind::Primary.usage_label(),
+                IdentityKind::Secondary.usage_label()
             ]
         )
+        .with_help_message(IdentityKind::USAGE_HELP)
         .with_starting_cursor(starting_cursor.unwrap_or(0))
         .prompt()
-    )
+    )?;
+    Ok(match selected {
+        "both client and server" => IdentityKind::Primary,
+        "client only" => IdentityKind::Secondary,
+        _ => unreachable!("inquire returned an option that was not provided"),
+    })
 }
 
 fn text_prompt_result(answer: String) -> TextPromptResult {
@@ -199,32 +232,13 @@ fn text_prompt_result(answer: String) -> TextPromptResult {
     }
 }
 
-pub(crate) async fn prompt_email_with_more_options(
-    default: Option<&str>,
-) -> Result<TextPromptResult, inquire::InquireError> {
-    let default = default.map(ToOwned::to_owned);
-    sync!({
-        let mut prompt = inquire::Text::new("Email:")
-            .with_help_message("Type ? for more options.")
-            .with_validator(MoreOptionsFriendlyValidator::new(inquire::required!(
-                "Email address cannot be empty."
-            )))
-            .with_validator(MoreOptionsFriendlyValidator::new(validator::EmailValidator));
-        if let Some(default) = default.as_deref() {
-            prompt = prompt.with_default(default);
-        }
-        prompt.prompt()
-    })
-    .map(text_prompt_result)
-}
-
 pub(crate) async fn prompt_verify_code_with_more_options(
     default: Option<&str>,
 ) -> Result<TextPromptResult, inquire::InquireError> {
     let default = default.map(ToOwned::to_owned);
     sync!({
-        let mut prompt = inquire::Text::new("Verification code:")
-            .with_help_message("Type ? for more options.")
+        let mut prompt = inquire::Text::new(verify_code_prompt_message())
+            .with_help_message(more_options_help_message())
             .with_validator(MoreOptionsFriendlyValidator::new(inquire::required!(
                 "Verification code cannot be empty."
             )))
@@ -259,7 +273,22 @@ pub(crate) async fn prompt_select_string_with_cursor(
 mod tests {
     use inquire::validator::{StringValidator, Validation};
 
-    use super::MoreOptionsFriendlyValidator;
+    use super::{
+        MoreOptionsFriendlyValidator, email_prompt_message, identity_name_help_message,
+        identity_name_prompt_message, more_options_help_message, verify_code_prompt_message,
+    };
+
+    #[test]
+    fn prompt_copy_matches_the_approved_document() {
+        assert_eq!(identity_name_prompt_message(), "Enter your name:");
+        assert_eq!(
+            identity_name_help_message(),
+            "For example:\n  [handle.]your.name"
+        );
+        assert_eq!(email_prompt_message(), "Enter your email:");
+        assert_eq!(verify_code_prompt_message(), "Enter verification code:");
+        assert_eq!(more_options_help_message(), "Type ? for more options.");
+    }
 
     #[test]
     fn question_mark_bypasses_inner_validation() {

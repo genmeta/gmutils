@@ -9,6 +9,10 @@ use crate::{
     cli::{self, Default, Error},
 };
 
+fn default_not_found_message(short_name: &str) -> String {
+    format!("Failed to set default identity: {short_name} not found!")
+}
+
 async fn set_default_summary(
     dhttp_home: &DhttpHome,
     current_config: Option<dhttp::home::identity::settings::DhttpSettingsFile>,
@@ -62,11 +66,7 @@ pub(crate) async fn run(
     )
     .await?
     else {
-        whatever!(
-            "{} is not saved here.\n\nApply {} here first, then set it as the default identity.",
-            target.short_name(),
-            target.short_name(),
-        );
+        whatever!("{}", default_not_found_message(target.short_name()));
     };
 
     if !summary.status.is_ready() && !command.allow_nonready {
@@ -78,4 +78,17 @@ pub(crate) async fn run(
     }
 
     set_default_summary(dhttp_home, current_config, summary).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_not_found_message;
+
+    #[test]
+    fn missing_default_target_matches_the_edited_document() {
+        assert_eq!(
+            default_not_found_message("alice.smith"),
+            "Failed to set default identity: alice.smith not found!"
+        );
+    }
 }

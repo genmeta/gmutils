@@ -69,15 +69,21 @@ pub(crate) fn plan_auth_candidates(
             .iter()
             .flatten()
             .find(|candidate| candidate.status.is_ready());
-        let action = match next_ready {
-            Some(next) => format!("Trying its parent identity, {}.", next.target.short_name()),
-            None => "Falling back to email verification.".to_string(),
-        };
-        warnings.push(format!(
-            "Cannot verify with {} because {}.\n{action}",
+        let problem = format!(
+            "Cannot verify with {} because {}.",
             summary.target.short_name(),
             unavailable_reason(summary),
-        ));
+        );
+        let later_saved_candidate_exists = summaries[index + 1..].iter().flatten().next().is_some();
+        let warning = match next_ready {
+            Some(next) => format!(
+                "{problem}\nTrying its parent identity, {}.",
+                next.target.short_name()
+            ),
+            None if later_saved_candidate_exists => problem,
+            None => format!("{problem}\nFalling back to email verification."),
+        };
+        warnings.push(warning);
     }
 
     candidates.push(AuthCandidate::Email);
@@ -204,6 +210,33 @@ mod tests {
             plan.warnings,
             vec![
                 "Cannot verify with alice.smith because its local identity is invalid: certificate does not match local key.\nFalling back to email verification."
+            ]
+        );
+    }
+
+    #[test]
+    fn unavailable_target_and_parent_explain_each_skip_before_one_email_fallback() {
+        let target = summary(
+            "phone.alice.smith",
+            LocalIdentityStatus::Incomplete {
+                detail: "private key missing".into(),
+            },
+        );
+        let parent = summary(
+            "alice.smith",
+            LocalIdentityStatus::Invalid {
+                detail: "certificate is unreadable".into(),
+            },
+        );
+
+        let plan = plan_auth_candidates(Some(&target), Some(&parent));
+
+        assert_eq!(plan.candidates, vec![AuthCandidate::Email]);
+        assert_eq!(
+            plan.warnings,
+            vec![
+                "Cannot verify with phone.alice.smith because its local identity is incomplete: private key missing.",
+                "Cannot verify with alice.smith because its local identity is invalid: certificate is unreadable.\nFalling back to email verification.",
             ]
         );
     }

@@ -27,7 +27,6 @@ use tokio::io;
 use tracing_indicatif::{
     IndicatifLayer,
     filter::{IndicatifFilter, hide_indicatif_span_fields},
-    span_ext::IndicatifSpanExt,
 };
 use tracing_subscriber::{
     EnvFilter, filter::LevelFilter, fmt::format::DefaultFields, prelude::*, util::SubscriberInitExt,
@@ -136,9 +135,6 @@ fn generate_private_key_and_csr(
                 .context(GenerateKeySnafu)
         },
     )?;
-    tracing::Span::current().pb_set_message(&format!(
-        "Generating Certificate Signing Request (CSR) for {name}..."
-    ));
     let csr = rankey::generate_csr(&key_pem, "CN", name.as_full(), &[name.as_full()])
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
         .context(GenerateCsrSnafu)?;
@@ -146,9 +142,6 @@ fn generate_private_key_and_csr(
         .to_pem(rankey::LineEnding::LF)
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
         .context(EncodeCsrSnafu)?;
-    tracing::Span::current().pb_set_message(&format!(
-        "Successfully generated private key and CSR for {name}."
-    ));
     Ok((key_pem, csr_pem))
 }
 
@@ -158,20 +151,21 @@ async fn save_identity(
     key_pem: &[u8],
     cert_pem: &[u8],
 ) -> Result<(), Error> {
-    let identity_dir = dhttp_home.join_identity_name(name.borrow());
-    tracing::Span::current().pb_set_message(&format!(
-        "Saving identity for {name} to {}...",
-        identity_dir.display()
-    ));
-    dhttp_home
-        .identity_profile(name.borrow())
-        .save_identity(cert_pem, key_pem)
-        .await?;
-    tracing::Span::current().pb_set_finish_message(&format!(
-        "Identity for {name} successfully saved to {}",
-        identity_dir.display()
-    ));
+    let profile = dhttp_home.identity_profile(name.borrow());
+    flow::progress::run_with_spinner(
+        save_identity_progress_message(),
+        profile.save_identity(cert_pem, key_pem),
+    )
+    .await?;
     Ok(())
+}
+
+fn save_identity_progress_message() -> &'static str {
+    "Saving identity..."
+}
+
+fn save_default_identity_progress_message() -> &'static str {
+    "Saving default identity..."
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +177,27 @@ pub(crate) enum LocalIdentitySave {
 impl LocalIdentitySave {
     pub(crate) fn created_new_identity(self) -> bool {
         matches!(self, Self::New)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LocalReplacementDecision {
+    New,
+    Replace,
+    RequireFlag,
+}
+
+fn local_replacement_decision(
+    profile_exists: bool,
+    replace_local: bool,
+    interactive: bool,
+) -> LocalReplacementDecision {
+    if !profile_exists {
+        LocalReplacementDecision::New
+    } else if replace_local || interactive {
+        LocalReplacementDecision::Replace
+    } else {
+        LocalReplacementDecision::RequireFlag
     }
 }
 
@@ -199,7 +214,7 @@ async fn load_current_settings(dhttp_home: &DhttpHome) -> Result<Option<DhttpSet
     }
 }
 
-#[tracing::instrument(fields(indicatif.pb_show = tracing::field::Empty))]
+#[tracing::instrument]
 async fn save_settings(default_config: &DhttpSettingsFile) -> Result<(), Error> {
     if let Some(parent) = default_config.path().parent() {
         tokio::fs::create_dir_all(parent)
@@ -209,11 +224,11 @@ async fn save_settings(default_config: &DhttpSettingsFile) -> Result<(), Error> 
             })?;
     }
 
-    let path = default_config.path().display();
-    tracing::Span::current().pb_set_message(&format!("Saving default configuration to {path}..."));
-    default_config.save().await?;
-    tracing::Span::current()
-        .pb_set_finish_message(&format!("Default configuration saved to {path}."));
+    flow::progress::run_with_spinner(
+        save_default_identity_progress_message(),
+        default_config.save(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -234,28 +249,20 @@ async fn ensure_replace_local_allowed(
     name: Name<'_>,
     replace_local: bool,
 ) -> Result<LocalIdentitySave, Error> {
-    if !dhttp_home
+    let profile_exists = dhttp_home
         .identity_profile_exists_exactly(name.clone())
-        .await
-    {
-        return Ok(LocalIdentitySave::New);
-    }
-    if replace_local {
-        return Ok(LocalIdentitySave::Replace);
-    }
-
-    let message = format!(
-        "Replace the local identity saved at {}?",
-        dhttp_home.join_identity_name(name.clone()).display()
-    );
-    let confirmed =
-        prompt::sync(move || inquire::Confirm::new(&message).with_default(false).prompt())
-            .await
-            .require_interactive("--replace-local")?;
-    if confirmed {
-        Ok(LocalIdentitySave::Replace)
-    } else {
-        whatever!("local identity was not replaced")
+        .await;
+    match local_replacement_decision(
+        profile_exists,
+        replace_local,
+        std::io::stdin().is_terminal(),
+    ) {
+        LocalReplacementDecision::New => Ok(LocalIdentitySave::New),
+        LocalReplacementDecision::Replace => Ok(LocalIdentitySave::Replace),
+        LocalReplacementDecision::RequireFlag => Err(prompt::Error::NotInteractive {
+            hint: "--replace-local".into(),
+        }
+        .into()),
     }
 }
 
@@ -321,6 +328,9 @@ pub struct Apply {
     pub name: Option<String>,
     #[arg(long)]
     pub kind: Option<String>,
+    /// Register a missing sub-identity before applying it.
+    #[arg(long)]
+    pub register_if_missing: bool,
     #[arg(long)]
     pub replace_local: bool,
     #[arg(long)]
@@ -592,8 +602,9 @@ mod tests {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
     use super::{
-        Apply, Cli, Default, Info, Options, cert_server_base_url,
-        certificate_chain_key_from_identity,
+        Apply, Cli, Default, Info, LocalReplacementDecision, Options, cert_server_base_url,
+        certificate_chain_key_from_identity, local_replacement_decision,
+        save_default_identity_progress_message, save_identity_progress_message,
     };
     use crate::CERT_SERVER_BASE_URL;
 
@@ -687,6 +698,26 @@ mod tests {
     }
 
     #[test]
+    fn apply_accepts_register_if_missing() {
+        let help = Apply::command().render_long_help().to_string();
+        assert!(
+            help.contains("Register a missing sub-identity before applying it"),
+            "{help}"
+        );
+        assert!(
+            Options::try_parse_from([
+                "genmeta",
+                "apply",
+                "phone.alice.smith",
+                "--kind",
+                "primary",
+                "--register-if-missing",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
     fn default_accepts_allow_nonready() {
         assert!(
             Options::try_parse_from(["genmeta", "default", "alice.smith", "--allow-nonready",])
@@ -762,6 +793,35 @@ mod tests {
                 "--replace-local",
             ])
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn local_replacement_has_no_deleted_confirmation_copy() {
+        assert_eq!(
+            local_replacement_decision(true, false, true),
+            LocalReplacementDecision::Replace
+        );
+        assert_eq!(
+            local_replacement_decision(true, false, false),
+            LocalReplacementDecision::RequireFlag
+        );
+        assert_eq!(
+            local_replacement_decision(true, true, false),
+            LocalReplacementDecision::Replace
+        );
+        assert_eq!(
+            local_replacement_decision(false, false, true),
+            LocalReplacementDecision::New
+        );
+    }
+
+    #[test]
+    fn save_progress_uses_user_task_copy() {
+        assert_eq!(save_identity_progress_message(), "Saving identity...");
+        assert_eq!(
+            save_default_identity_progress_message(),
+            "Saving default identity..."
         );
     }
 
@@ -867,9 +927,9 @@ mod tests {
             .unwrap_err();
         let rendered = error.to_string();
 
-        assert!(
-            rendered.contains("alice.smith is not saved here"),
-            "{rendered}"
+        assert_eq!(
+            rendered,
+            "Failed to set default identity: alice.smith not found!"
         );
     }
 

@@ -6,14 +6,22 @@ pub(crate) enum VerificationRecovery {
     Abort,
 }
 
+pub(crate) fn format_resend_offer(message: &str) -> String {
+    format!("{message}\n")
+}
+
 pub(crate) fn classify_resend_error(error: &crate::cert_server::Error) -> VerificationRecovery {
     match error {
-        crate::cert_server::Error::Api { status, code, .. }
+        crate::cert_server::Error::Api {
+            status,
+            code,
+            message,
+        }
             if *status == reqwest::StatusCode::TOO_MANY_REQUESTS
                 && code == "verify_code_too_frequent" =>
         {
             VerificationRecovery::StayCurrentStep {
-                message: "The verification code was sent too recently. To continue, wait a moment and enter the existing code, or retry resend later.".to_string(),
+                message: message.clone(),
             }
         }
         crate::cert_server::Error::Request { .. }
@@ -25,6 +33,9 @@ pub(crate) fn classify_resend_error(error: &crate::cert_server::Error) -> Verifi
         crate::cert_server::Error::Api { status, .. } if status.is_server_error() => {
             VerificationRecovery::Abort
         }
+        crate::cert_server::Error::Api { message, .. } => VerificationRecovery::BackToEmail {
+            message: message.clone(),
+        },
         _ => VerificationRecovery::BackToEmail {
             message: "The current verification session can no longer be used. To continue, enter your email again.".to_string(),
         },
@@ -45,19 +56,27 @@ pub(crate) fn classify_verify_submit_error(
                 message: message.clone(),
             }
         }
-        crate::cert_server::Error::Api { status, code, .. }
+        crate::cert_server::Error::Api {
+            status,
+            code,
+            message,
+        }
             if *status == reqwest::StatusCode::UNAUTHORIZED && code == "verify_code_invalid" =>
         {
             VerificationRecovery::StayCurrentStep {
-                message: "The verification code could not be used. To continue, enter the code again or choose another option.".to_string(),
+                message: message.clone(),
             }
         }
-        crate::cert_server::Error::Api { status, code, .. }
+        crate::cert_server::Error::Api {
+            status,
+            code,
+            message,
+        }
             if *status == reqwest::StatusCode::TOO_MANY_REQUESTS
                 && code == "verify_code_too_frequent" =>
         {
             VerificationRecovery::StayCurrentStep {
-                message: "The verification code was sent too recently. To continue, wait a moment and enter the existing code, or retry resend later.".to_string(),
+                message: message.clone(),
             }
         }
         crate::cert_server::Error::Api { status, code, message }
@@ -65,14 +84,15 @@ pub(crate) fn classify_verify_submit_error(
                 && code == "domain_email_not_matched" =>
         {
             VerificationRecovery::BackToEmail {
-                message: format!(
-                    "{message}. To continue, enter the owner email again or choose another option."
-                ),
+                message: message.clone(),
             }
         }
         crate::cert_server::Error::Api { status, .. } if status.is_server_error() => {
             VerificationRecovery::Abort
         }
+        crate::cert_server::Error::Api { message, .. } => VerificationRecovery::BackToEmail {
+            message: message.clone(),
+        },
         _ => VerificationRecovery::BackToEmail {
             message: "The verification code session needs to be restarted. To continue, enter your email again.".to_string(),
         },
@@ -81,7 +101,18 @@ pub(crate) fn classify_verify_submit_error(
 
 #[cfg(test)]
 mod tests {
-    use super::{VerificationRecovery, classify_resend_error, classify_verify_submit_error};
+    use super::{
+        VerificationRecovery, classify_resend_error, classify_verify_submit_error,
+        format_resend_offer,
+    };
+
+    #[test]
+    fn resend_offer_leaves_one_blank_line_before_the_confirm_prompt() {
+        assert_eq!(
+            format_resend_offer("verification code expired"),
+            "verification code expired\n"
+        );
+    }
 
     #[test]
     fn resend_rate_limit_stays_on_current_step() {
@@ -94,7 +125,23 @@ mod tests {
         assert_eq!(
             classify_resend_error(&error),
             VerificationRecovery::StayCurrentStep {
-                message: "The verification code was sent too recently. To continue, wait a moment and enter the existing code, or retry resend later.".to_string(),
+                message: "email code sent too frequently".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn invalid_code_keeps_the_certserver_problem_message() {
+        let error = crate::cert_server::Error::Api {
+            status: reqwest::StatusCode::UNAUTHORIZED,
+            code: "verify_code_invalid".to_string(),
+            message: "Your verification code is incorrect. Please try again.".to_string(),
+        };
+
+        assert_eq!(
+            classify_verify_submit_error(&error),
+            VerificationRecovery::StayCurrentStep {
+                message: "Your verification code is incorrect. Please try again.".to_string(),
             }
         );
     }
@@ -140,7 +187,7 @@ mod tests {
         assert_eq!(
             classify_verify_submit_error(&error),
             VerificationRecovery::BackToEmail {
-                message: "email does not match the current owner of the domain. To continue, enter the owner email again or choose another option.".to_string(),
+                message: "email does not match the current owner of the domain".to_string(),
             }
         );
     }
@@ -156,7 +203,23 @@ mod tests {
         assert_eq!(
             classify_verify_submit_error(&error),
             VerificationRecovery::BackToEmail {
-                message: "The verification code session needs to be restarted. To continue, enter your email again.".to_string(),
+                message: "domain not found".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn resend_business_error_keeps_the_certserver_problem_message() {
+        let error = crate::cert_server::Error::Api {
+            status: reqwest::StatusCode::UNAUTHORIZED,
+            code: "verify_session_invalid".to_string(),
+            message: "verification session is no longer valid".to_string(),
+        };
+
+        assert_eq!(
+            classify_resend_error(&error),
+            VerificationRecovery::BackToEmail {
+                message: "verification session is no longer valid".to_string(),
             }
         );
     }

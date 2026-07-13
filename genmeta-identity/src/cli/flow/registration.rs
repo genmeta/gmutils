@@ -1,6 +1,6 @@
 use std::io::IsTerminal;
 
-use snafu::{OptionExt, whatever};
+use snafu::{FromString, OptionExt, whatever};
 
 use super::target::IdentityTarget;
 use crate::{
@@ -24,6 +24,17 @@ fn is_domain_conflict(error: &crate::cert_server::Error) -> bool {
 
 pub(crate) fn is_subdomain_quota_exceeded(error: &crate::cert_server::Error) -> bool {
     error.is_api_code("subdomain_quota_exceeded")
+}
+
+pub(crate) fn create_identity_progress_message() -> &'static str {
+    "Creating identity..."
+}
+
+fn missing_parent_identity_message(target: &IdentityTarget, parent: &str) -> String {
+    format!(
+        "Cannot register {} because its parent identity, {parent}, does not exist.",
+        target.short_name()
+    )
 }
 pub(crate) fn ensure_non_interactive_root_checkout_not_required(
     target: &IdentityTarget,
@@ -147,21 +158,6 @@ async fn wait_for_invoice_terminal(
     .await
 }
 
-pub(crate) async fn ensure_root_identity_exists_with_token(
-    cert_server: &CertServer,
-    parent: &dhttp::name::DhttpName<'_>,
-    access_token: &str,
-) -> Result<(), Error> {
-    let parent_target = IdentityTarget::parse(parent.as_partial())?;
-    ensure_identity_exists_with_token(
-        cert_server,
-        &parent_target,
-        access_token,
-        "Creating parent identity...",
-    )
-    .await
-}
-
 pub(crate) async fn ensure_identity_exists_with_token(
     cert_server: &CertServer,
     target: &IdentityTarget,
@@ -181,21 +177,6 @@ pub(crate) async fn ensure_identity_exists_with_token(
 
     ensure_non_interactive_root_checkout_not_required(target, &created)?;
     Ok(())
-}
-
-pub(crate) async fn ensure_root_identity_exists_with_token_interactively(
-    cert_server: &CertServer,
-    parent: &dhttp::name::DhttpName<'_>,
-    access_token: &str,
-) -> Result<(), Error> {
-    let parent_target = IdentityTarget::parse(parent.as_partial())?;
-    ensure_identity_exists_with_token_interactively(
-        cert_server,
-        &parent_target,
-        access_token,
-        "Creating parent identity...",
-    )
-    .await
 }
 
 pub(crate) async fn ensure_identity_exists_with_token_interactively(
@@ -260,27 +241,22 @@ pub(crate) async fn ensure_identity_exists_with_token_interactively(
 
 pub(crate) async fn create_sub_identity_with_token(
     cert_server: &CertServer,
-    _target: &IdentityTarget,
+    target: &IdentityTarget,
     access_token: &str,
     parent: &dhttp::name::DhttpName<'_>,
     label: &str,
 ) -> Result<CreateSubdomainResponse, Error> {
     match super::progress::run_with_spinner(
-        "Creating sub-identity...",
+        create_identity_progress_message(),
         cert_server.create_subdomain(access_token, parent.as_full(), label, None),
     )
     .await
     {
         Ok(created) => Ok(created),
-        Err(error) if is_domain_not_found(&error) => {
-            ensure_root_identity_exists_with_token(cert_server, parent, access_token).await?;
-            super::progress::run_with_spinner(
-                "Creating sub-identity...",
-                cert_server.create_subdomain(access_token, parent.as_full(), label, None),
-            )
-            .await
-            .map_err(Error::from)
-        }
+        Err(error) if is_domain_not_found(&error) => Err(Error::with_source(
+            Box::new(error),
+            missing_parent_identity_message(target, parent.as_partial()),
+        )),
         Err(error) => Err(Error::from(error)),
     }
 }
@@ -294,7 +270,7 @@ pub(crate) async fn create_sub_identity_with_token_interactively(
 ) -> Result<CreateSubdomainResponse, Error> {
     loop {
         match super::progress::run_with_spinner(
-            "Creating sub-identity...",
+            create_identity_progress_message(),
             cert_server.create_subdomain_attempt(access_token, parent.as_full(), label, None),
         )
         .await
@@ -313,7 +289,7 @@ pub(crate) async fn create_sub_identity_with_token_interactively(
 
                 loop {
                     let invoice_response = match super::progress::run_with_spinner(
-                        "Creating sub-identity...",
+                        create_identity_progress_message(),
                         cert_server.create_subdomain_attempt(
                             access_token,
                             parent.as_full(),
@@ -368,17 +344,35 @@ pub(crate) async fn create_sub_identity_with_token_interactively(
                 }
             }
             Err(error) if is_domain_not_found(&error) => {
-                ensure_root_identity_exists_with_token_interactively(
-                    cert_server,
-                    parent,
-                    access_token,
-                )
-                .await?;
-                crate::cli::flow::transcript::print_line(
-                    "Parent identity was created. Continuing with sub-identity creation...",
-                );
+                return Err(Error::with_source(
+                    Box::new(error),
+                    missing_parent_identity_message(target, parent.as_partial()),
+                ));
             }
             Err(error) => return Err(Error::from(error)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        IdentityTarget, create_identity_progress_message, missing_parent_identity_message,
+    };
+
+    #[test]
+    fn root_and_sub_identity_creation_share_the_approved_progress_copy() {
+        assert_eq!(create_identity_progress_message(), "Creating identity...");
+    }
+
+    #[test]
+    fn missing_parent_does_not_offer_to_create_a_root_identity() {
+        let target = IdentityTarget::parse("phone.alice.smith").unwrap();
+        let parent = target.parent().unwrap();
+
+        assert_eq!(
+            missing_parent_identity_message(&target, parent.as_partial()),
+            "Cannot register phone.alice.smith because its parent identity, alice.smith, does not exist."
+        );
     }
 }

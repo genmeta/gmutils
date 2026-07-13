@@ -1,6 +1,6 @@
 use std::io::IsTerminal;
 
-use qrcode::{QrCode, types::QrError};
+use qrcode::{QrCode, render::unicode, types::QrError};
 
 use crate::{cert_server::CreateDomainResponse, cli::flow::transcript};
 
@@ -72,11 +72,9 @@ fn payment_instruction_block(response: &CreateDomainResponse, include_qr: bool) 
 fn render_terminal_qr(url: &str) -> Result<String, QrError> {
     let code = QrCode::new(url.as_bytes())?;
     Ok(code
-        .render()
+        .render::<unicode::Dense1x2>()
         .quiet_zone(true)
-        .module_dimensions(2, 1)
-        .dark_color("\u{1b}[40m  \u{1b}[0m")
-        .light_color("\u{1b}[47m  \u{1b}[0m")
+        .module_dimensions(1, 1)
         .build())
 }
 
@@ -146,8 +144,23 @@ mod tests {
 
         assert!(block.contains("Payment is required to create alice.smith."));
         assert!(block.contains("Scan this QR code to pay:"));
-        assert!(block.contains("\u{1b}[47m"), "{block:?}");
+        assert!(block.contains(['▀', '▄', '█']), "{block:?}");
         assert!(block.contains("Open link: https://pay.example.test/checkout/ckt_123"));
+    }
+
+    #[test]
+    fn terminal_qr_uses_the_compact_stable_layout() {
+        let qr = render_terminal_qr("https://pay.example.test/checkout/ckt_123").unwrap();
+        let rows = qr.lines().count();
+        let columns = qr
+            .lines()
+            .map(str::chars)
+            .map(Iterator::count)
+            .max()
+            .unwrap();
+
+        assert!(rows <= 24, "QR uses {rows} terminal rows");
+        assert!(columns <= 64, "QR uses {columns} terminal columns");
     }
 
     #[test]
@@ -160,7 +173,7 @@ mod tests {
 
         assert!(block.contains("Payment is required to create alice.smith."));
         assert!(!block.contains("Scan this QR code to pay:"));
-        assert!(!block.contains("\u{1b}[47m"));
+        assert!(!block.contains(['▀', '▄', '█']));
         assert_eq!(
             block,
             "Payment is required to create alice.smith.\n\nOpen link: https://pay.example.test/checkout/ckt_123"
