@@ -5,7 +5,6 @@ use snafu::{OptionExt, whatever};
 
 use super::local;
 use crate::{
-    auth::AuthMethod,
     cert_server::CertServer,
     cli::{self, Error, Renew, prompt::InquireResultExt},
 };
@@ -109,8 +108,8 @@ async fn offer_expired_code_resend(
     .await
     .require_interactive("interactive input")?;
     if resend {
-        super::progress::run_with_spinner(
-            "Sending verification code...",
+        super::progress::run(
+            super::progress::SEND_CODE,
             cert_server.send_email_verification(email),
         )
         .await?;
@@ -138,26 +137,12 @@ async fn ensure_saved_renew_target(
     whatever!("{}", renew_not_saved_root_message(name.as_partial()));
 }
 
-fn resolve_non_interactive_approval_plan(
-    target: &str,
-    requested_auth: Option<AuthMethod>,
-    ready_identity: Option<&str>,
-) -> Result<RenewApprovalPlan, Error> {
-    match requested_auth {
-        Some(AuthMethod::Email) => Ok(RenewApprovalPlan::Email),
-        Some(AuthMethod::Identity) => ready_identity
-            .map(|auth_domain| RenewApprovalPlan::Identity {
-                auth_domain: auth_domain.to_string(),
-            })
-            .whatever_context::<_, Error>(format!(
-                "renewing {target} cannot use local identity verification because neither it nor its parent has a ready local certificate; use --auth email"
-            )),
-        None => Ok(match ready_identity {
-            Some(auth_domain) => RenewApprovalPlan::Identity {
-                auth_domain: auth_domain.to_string(),
-            },
-            None => RenewApprovalPlan::Email,
-        }),
+fn resolve_non_interactive_approval_plan(ready_identity: Option<&str>) -> RenewApprovalPlan {
+    match ready_identity {
+        Some(auth_domain) => RenewApprovalPlan::Identity {
+            auth_domain: auth_domain.to_string(),
+        },
+        None => RenewApprovalPlan::Email,
     }
 }
 
@@ -168,15 +153,6 @@ async fn resolve_target(
     match command.name.as_deref() {
         Some(name) => cli::parse_identity_name(name),
         None => cli::resolve_default_target_name(dhttp_home).await,
-    }
-}
-
-async fn resolve_email(command: &Renew) -> Result<String, Error> {
-    match command.email.clone() {
-        Some(email) => Ok(email),
-        None => Ok(crate::cli::prompt::prompt_email()
-            .await
-            .require_interactive("--email")?),
     }
 }
 
@@ -222,10 +198,8 @@ async fn run_interactive(
                 crate::cli::flow::transcript::print_err_block(warning);
             }
             state.approval_plan = Some(resolve_non_interactive_approval_plan(
-                domain.as_partial(),
-                command.auth,
                 auth_plan.first_identity_full_name(),
-            )?);
+            ));
             continue;
         }
 
@@ -250,8 +224,8 @@ async fn run_interactive(
                 .clone()
                 .whatever_context::<_, Error>("interactive renew email is unavailable")?;
             if state.verification_code_sent_to.as_deref() != Some(email.as_str()) {
-                match super::progress::run_with_spinner(
-                    "Sending verification code...",
+                match super::progress::run(
+                    super::progress::SEND_CODE,
                     cert_server.send_email_verification(&email),
                 )
                 .await
@@ -284,8 +258,8 @@ async fn run_interactive(
                 crate::cli::prompt::TextPromptResult::MoreOptions => {
                     match prompt_renew_verify_code_action().await? {
                         RenewVerifyCodeAction::ResendVerificationCode => {
-                            match super::progress::run_with_spinner(
-                                "Sending verification code...",
+                            match super::progress::run(
+                                super::progress::SEND_CODE,
                                 cert_server.send_email_verification(&email),
                             )
                             .await
@@ -334,8 +308,8 @@ async fn run_interactive(
                 let verify_code = state.verify_code.as_deref().whatever_context::<_, Error>(
                     "interactive renew verification code is unavailable",
                 )?;
-                let token = match super::progress::run_with_spinner(
-                    "Verifying with email...",
+                let token = match super::progress::run(
+                    super::progress::VERIFY_EMAIL,
                     cert_server.domain_login(domain.as_full(), &email, verify_code),
                 )
                 .await
@@ -364,8 +338,8 @@ async fn run_interactive(
                         return Err(Error::from(error));
                     }
                 };
-                super::progress::run_with_spinner(
-                    "Renewing identity...",
+                super::progress::run(
+                    super::progress::RENEW_IDENTITY,
                     cert_server.renew_cert(
                         &token,
                         domain.as_full(),
@@ -378,8 +352,8 @@ async fn run_interactive(
                 .await?
             }
             RenewApprovalPlan::Identity { auth_domain } => {
-                super::progress::run_with_spinner(
-                    "Renewing identity...",
+                super::progress::run(
+                    super::progress::RENEW_IDENTITY,
                     cert_server.renew_cert_with_identity(
                         &auth_domain,
                         domain.as_full(),
@@ -411,7 +385,7 @@ pub(crate) async fn run(
     cert_server: &CertServer,
 ) -> Result<(), Error> {
     let is_interactive = std::io::stdin().is_terminal();
-    if is_interactive && !command.send_code {
+    if is_interactive {
         return run_interactive(command, dhttp_home, home_scope, cert_server).await;
     }
     let domain = resolve_target(command, dhttp_home).await?;
@@ -421,11 +395,7 @@ pub(crate) async fn run(
     for warning in &auth_plan.warnings {
         crate::cli::flow::transcript::print_err_block(warning);
     }
-    let approval_plan = resolve_non_interactive_approval_plan(
-        domain.as_partial(),
-        command.auth,
-        auth_plan.first_identity_full_name(),
-    )?;
+    let approval_plan = resolve_non_interactive_approval_plan(auth_plan.first_identity_full_name());
     let identity_profile = dhttp_home.resolve_identity_profile(domain.borrow()).await?;
     let local_identity = identity_profile.load_identity().await?;
     let chain_key = cli::certificate_chain_key_from_identity(&local_identity)?
@@ -434,19 +404,6 @@ pub(crate) async fn run(
     let sequence = chain_key.sequence().get();
     let device_name =
         super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
-
-    if command.send_code {
-        if !matches!(command.auth, Some(AuthMethod::Email)) {
-            whatever!("--send-code requires --auth email");
-        }
-        let email = resolve_email(command).await?;
-        super::progress::run_with_spinner(
-            "Sending verification code...",
-            cert_server.send_email_verification(&email),
-        )
-        .await?;
-        return Ok(());
-    }
 
     let (key_pem, csr_pem) = cli::generate_private_key_and_csr(&domain)?;
     let detail = match approval_plan {
@@ -458,8 +415,8 @@ pub(crate) async fn run(
                 command.verify_code.clone(),
             )
             .await?;
-            super::progress::run_with_spinner(
-                "Renewing identity...",
+            super::progress::run(
+                super::progress::RENEW_IDENTITY,
                 cert_server.renew_cert(
                     &token,
                     domain.as_full(),
@@ -472,8 +429,8 @@ pub(crate) async fn run(
             .await?
         }
         RenewApprovalPlan::Identity { auth_domain } => {
-            super::progress::run_with_spinner(
-                "Renewing identity...",
+            super::progress::run(
+                super::progress::RENEW_IDENTITY,
                 cert_server.renew_cert_with_identity(
                     &auth_domain,
                     domain.as_full(),
@@ -511,7 +468,7 @@ mod tests {
         renew_not_saved_root_message, renew_verify_code_actions,
         resolve_non_interactive_approval_plan,
     };
-    use crate::{auth::AuthMethod, cli::Renew};
+    use crate::cli::Renew;
 
     fn unique_test_home_path(test_name: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -534,11 +491,10 @@ mod tests {
         let mut state = InteractiveRenewState::from_command(
             &Renew {
                 name: Some("alice.smith".to_string()),
+                force: false,
                 device_name: None,
                 email: Some("alice@example.test".to_string()),
-                send_code: false,
                 verify_code: None,
-                auth: None,
             },
             None,
         );
@@ -559,11 +515,10 @@ mod tests {
         let mut state = InteractiveRenewState::from_command(
             &Renew {
                 name: Some("alice.smith".to_string()),
+                force: false,
                 device_name: None,
                 email: Some("alice@example.test".to_string()),
-                send_code: false,
                 verify_code: None,
-                auth: None,
             },
             None,
         );
@@ -583,12 +538,7 @@ mod tests {
     #[test]
     fn renew_prefers_ready_identity_non_interactively() {
         assert_eq!(
-            resolve_non_interactive_approval_plan(
-                "alice.smith",
-                None,
-                Some("alice.smith.dhttp.net")
-            )
-            .unwrap(),
+            resolve_non_interactive_approval_plan(Some("alice.smith.dhttp.net")),
             RenewApprovalPlan::Identity {
                 auth_domain: "alice.smith.dhttp.net".to_string()
             }
@@ -596,25 +546,9 @@ mod tests {
     }
 
     #[test]
-    fn renew_identity_auth_is_allowed() {
+    fn renew_without_ready_identity_uses_email_non_interactively() {
         assert_eq!(
-            resolve_non_interactive_approval_plan(
-                "alice.smith",
-                Some(AuthMethod::Identity),
-                Some("alice.smith.dhttp.net")
-            )
-            .unwrap(),
-            RenewApprovalPlan::Identity {
-                auth_domain: "alice.smith.dhttp.net".to_string()
-            },
-        );
-    }
-
-    #[test]
-    fn renew_email_auth_is_allowed() {
-        assert_eq!(
-            resolve_non_interactive_approval_plan("alice.smith", Some(AuthMethod::Email), None)
-                .unwrap(),
+            resolve_non_interactive_approval_plan(None),
             RenewApprovalPlan::Email,
         );
     }
@@ -633,11 +567,10 @@ mod tests {
         let dhttp_home = DhttpHome::new(home_path);
         let command = Renew {
             name: Some("alice.smith".to_string()),
+            force: false,
             device_name: None,
             email: None,
-            send_code: false,
             verify_code: None,
-            auth: None,
         };
 
         let error = super::run(&command, &dhttp_home, HomeScope::User, &dummy_cert_server())

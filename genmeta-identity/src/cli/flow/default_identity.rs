@@ -69,9 +69,9 @@ pub(crate) async fn run(
         whatever!("{}", default_not_found_message(target.short_name()));
     };
 
-    if !summary.status.is_ready() && !command.allow_nonready {
+    if !summary.status.is_ready() && !command.force {
         whatever!(
-            "{} is {} and cannot be set as the default identity without --allow-nonready",
+            "{} is {} and cannot be set as the default identity without --force",
             summary.target.short_name(),
             summary.status.label(),
         );

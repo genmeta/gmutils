@@ -105,7 +105,7 @@ pub(crate) fn identity_name_prompt_message() -> &'static str {
 }
 
 pub(crate) fn identity_name_help_message() -> &'static str {
-    "For example:\n  [handle.]your.name"
+    "Name format: [handle.]your.name"
 }
 
 pub(crate) fn email_prompt_message() -> &'static str {
@@ -279,11 +279,11 @@ mod tests {
     };
 
     #[test]
-    fn prompt_copy_matches_the_approved_document() {
+    fn prompt_copy_matches_the_approved_transcript() {
         assert_eq!(identity_name_prompt_message(), "Enter your name:");
         assert_eq!(
             identity_name_help_message(),
-            "For example:\n  [handle.]your.name"
+            "Name format: [handle.]your.name"
         );
         assert_eq!(email_prompt_message(), "Enter your email:");
         assert_eq!(verify_code_prompt_message(), "Enter verification code:");

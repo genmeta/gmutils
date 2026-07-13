@@ -1,11 +1,3 @@
-use clap::ValueEnum;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum AuthMethod {
-    Identity,
-    Email,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthFailureKind {
     MissingIdentity,
@@ -26,12 +18,8 @@ pub enum AuthFailureKind {
 ///
 /// The caller must already have established that the server permits email as
 /// an alternate proof. Transport and server failures never change proof.
-pub fn should_fallback_to_email(
-    method: Option<AuthMethod>,
-    can_get_email_credentials: bool,
-    failure: AuthFailureKind,
-) -> bool {
-    method.is_none() && can_get_email_credentials && is_email_fallback_failure(failure)
+pub fn should_fallback_to_email(can_get_email_credentials: bool, failure: AuthFailureKind) -> bool {
+    can_get_email_credentials && is_email_fallback_failure(failure)
 }
 
 pub fn is_email_fallback_failure(failure: AuthFailureKind) -> bool {
@@ -74,17 +62,14 @@ mod tests {
     #[test]
     fn auto_interactive_falls_back_for_credential_failures() {
         assert!(should_fallback_to_email(
-            None,
             true,
             AuthFailureKind::MissingIdentity
         ));
         assert!(should_fallback_to_email(
-            None,
             true,
             AuthFailureKind::MtlsRejected
         ));
         assert!(should_fallback_to_email(
-            None,
             true,
             AuthFailureKind::DomainForbidden
         ));
@@ -93,7 +78,6 @@ mod tests {
     #[test]
     fn transport_unavailability_does_not_fallback() {
         assert!(!should_fallback_to_email(
-            None,
             true,
             AuthFailureKind::TransportUnavailable
         ));
@@ -110,28 +94,13 @@ mod tests {
             AuthFailureKind::PaymentRequired,
             AuthFailureKind::ServerError,
         ] {
-            assert!(!should_fallback_to_email(None, true, failure));
+            assert!(!should_fallback_to_email(true, failure));
         }
-    }
-
-    #[test]
-    fn identity_and_email_policy_never_auto_fallback() {
-        assert!(!should_fallback_to_email(
-            Some(AuthMethod::Identity),
-            true,
-            AuthFailureKind::MissingIdentity
-        ));
-        assert!(!should_fallback_to_email(
-            Some(AuthMethod::Email),
-            true,
-            AuthFailureKind::MissingIdentity
-        ));
     }
 
     #[test]
     fn non_interactive_auto_does_not_prompt_fallback() {
         assert!(!should_fallback_to_email(
-            None,
             false,
             AuthFailureKind::MissingIdentity
         ));
@@ -146,11 +115,7 @@ mod tests {
         };
 
         assert_eq!(classify_api_error(&error), AuthFailureKind::ChainNotFound);
-        assert!(!should_fallback_to_email(
-            None,
-            true,
-            classify_api_error(&error)
-        ));
+        assert!(!should_fallback_to_email(true, classify_api_error(&error)));
     }
 
     #[test]
@@ -169,7 +134,7 @@ mod tests {
         ] {
             let failure = classify_api_error(&error);
             assert_eq!(failure, AuthFailureKind::ServerError);
-            assert!(!should_fallback_to_email(None, true, failure));
+            assert!(!should_fallback_to_email(true, failure));
         }
     }
 }

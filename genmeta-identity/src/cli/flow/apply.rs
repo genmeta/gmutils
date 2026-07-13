@@ -8,7 +8,6 @@ use super::{
     target::{IdentityLevel, IdentityTarget},
 };
 use crate::{
-    auth::AuthMethod,
     cert_server::CertServer,
     cli::{self, Apply, Error, prompt::InquireResultExt},
 };
@@ -48,7 +47,7 @@ fn missing_target_action(
 }
 
 fn private_test_root_registration(command: &Apply) -> bool {
-    command.verify_code.is_some() && matches!(command.auth, Some(AuthMethod::Email))
+    command.verify_code.is_some()
 }
 
 fn missing_root_target_error(target: &IdentityTarget) -> Error {
@@ -170,8 +169,8 @@ async fn offer_expired_code_resend(
     .await
     .require_interactive("interactive input")?;
     if resend {
-        super::progress::run_with_spinner(
-            "Sending verification code...",
+        super::progress::run(
+            super::progress::SEND_CODE,
             cert_server.send_email_verification(email),
         )
         .await?;
@@ -215,41 +214,17 @@ fn preserve_apply_registration_error(error: Error) -> Error {
     error
 }
 
-fn resolve_non_interactive_approval_plan(
-    target: &str,
-    requested_auth: Option<AuthMethod>,
-    identity_auth_domain: Option<&str>,
-) -> Result<ApplyApprovalPlan, Error> {
-    match requested_auth {
-        Some(AuthMethod::Email) => Ok(ApplyApprovalPlan::Email),
-        Some(AuthMethod::Identity) => {
-            let Some(auth_domain) = identity_auth_domain else {
-                whatever!(
-                    "applying {} with --auth identity requires a ready local identity that can approve this apply flow",
-                    target
-                );
-            };
-            Ok(ApplyApprovalPlan::DirectIdentity {
-                auth_domain: auth_domain.to_string(),
-            })
-        }
-        None => {
-            if let Some(auth_domain) = identity_auth_domain {
-                return Ok(ApplyApprovalPlan::DirectIdentity {
-                    auth_domain: auth_domain.to_string(),
-                });
-            }
-            Ok(ApplyApprovalPlan::Email)
-        }
+fn resolve_non_interactive_approval_plan(identity_auth_domain: Option<&str>) -> ApplyApprovalPlan {
+    if let Some(auth_domain) = identity_auth_domain {
+        return ApplyApprovalPlan::DirectIdentity {
+            auth_domain: auth_domain.to_string(),
+        };
     }
+    ApplyApprovalPlan::Email
 }
 
 fn apply_identity_name_opening() -> &'static str {
     "Apply an identity here."
-}
-
-fn interactive_name_check_progress_message() -> &'static str {
-    "Checking the validity of this name..."
 }
 
 fn interactive_name_unavailable_message() -> &'static str {
@@ -309,8 +284,8 @@ async fn prompt_apply_target_with_online_validation(
         let name = prompt_apply_target_with_opening(opening).await?;
         opening = "";
         let target = IdentityTarget::parse(name.as_partial())?;
-        let response = match super::progress::run_with_spinner(
-            interactive_name_check_progress_message(),
+        let response = match super::progress::run(
+            super::progress::CHECK_NAME,
             cert_server.inspect_domain_availability(name.as_full()),
         )
         .await
@@ -532,10 +507,8 @@ async fn run_interactive_with_policy(
                 crate::cli::flow::transcript::print_err_block(warning);
             }
             state.approval_plan = Some(resolve_non_interactive_approval_plan(
-                target.short_name(),
-                command.auth,
                 auth_plan.first_identity_full_name(),
-            )?);
+            ));
             continue;
         }
 
@@ -560,8 +533,8 @@ async fn run_interactive_with_policy(
                 .clone()
                 .whatever_context::<_, Error>("interactive apply email is unavailable")?;
             if state.verification_code_sent_to.as_deref() != Some(email.as_str()) {
-                match super::progress::run_with_spinner(
-                    "Sending verification code...",
+                match super::progress::run(
+                    super::progress::SEND_CODE,
                     cert_server.send_email_verification(&email),
                 )
                 .await
@@ -594,8 +567,8 @@ async fn run_interactive_with_policy(
                 crate::cli::prompt::TextPromptResult::MoreOptions => {
                     match prompt_apply_verify_code_action().await? {
                         ApplyVerifyCodeAction::ResendVerificationCode => {
-                            match super::progress::run_with_spinner(
-                                "Sending verification code...",
+                            match super::progress::run(
+                                super::progress::SEND_CODE,
                                 cert_server.send_email_verification(&email),
                             )
                             .await
@@ -638,8 +611,8 @@ async fn run_interactive_with_policy(
                 let verify_code = state.verify_code.as_deref().whatever_context::<_, Error>(
                     "interactive apply verification code is unavailable",
                 )?;
-                let token = match super::progress::run_with_spinner(
-                    "Verifying with email...",
+                let token = match super::progress::run(
+                    super::progress::VERIFY_EMAIL,
                     cert_server.login(&email, verify_code),
                 )
                 .await
@@ -668,8 +641,8 @@ async fn run_interactive_with_policy(
                         return Err(Error::from(error));
                     }
                 };
-                match super::progress::run_with_spinner(
-                    "Applying identity...",
+                match super::progress::run(
+                    super::progress::REQUEST_CERT,
                     cert_server.issue_cert(
                         &token,
                         domain.as_full(),
@@ -701,8 +674,8 @@ async fn run_interactive_with_policy(
                         crate::cli::flow::transcript::print_line(
                             new_identity_confirmation_message(),
                         );
-                        let detail = super::progress::run_with_spinner(
-                            "Applying identity...",
+                        let detail = super::progress::run(
+                            super::progress::REQUEST_CERT,
                             cert_server.issue_cert(
                                 &token,
                                 domain.as_full(),
@@ -716,7 +689,7 @@ async fn run_interactive_with_policy(
                         let local_identity_save = cli::ensure_replace_local_allowed(
                             dhttp_home,
                             domain.borrow(),
-                            command.replace_local,
+                            command.force,
                         )
                         .await?;
                         cli::save_identity(
@@ -755,8 +728,8 @@ async fn run_interactive_with_policy(
                 }
             }
             ApplyApprovalPlan::DirectIdentity { auth_domain } => {
-                match super::progress::run_with_spinner(
-                    "Applying identity...",
+                match super::progress::run(
+                    super::progress::REQUEST_CERT,
                     cert_server.issue_cert_with_identity(
                         &auth_domain,
                         domain.as_full(),
@@ -810,8 +783,8 @@ async fn run_interactive_with_policy(
                         crate::cli::flow::transcript::print_line(
                             new_identity_confirmation_message(),
                         );
-                        super::progress::run_with_spinner(
-                            "Applying identity...",
+                        super::progress::run(
+                            super::progress::REQUEST_CERT,
                             cert_server.issue_cert_with_identity(
                                 &auth_domain,
                                 domain.as_full(),
@@ -829,8 +802,7 @@ async fn run_interactive_with_policy(
         };
 
         let local_identity_save =
-            cli::ensure_replace_local_allowed(dhttp_home, domain.borrow(), command.replace_local)
-                .await?;
+            cli::ensure_replace_local_allowed(dhttp_home, domain.borrow(), command.force).await?;
         cli::save_identity(
             dhttp_home,
             &domain,
@@ -865,7 +837,7 @@ pub(crate) async fn run_with_policy(
     post_save: ApplyPostSavePolicy,
 ) -> Result<(), Error> {
     let is_interactive = std::io::stdin().is_terminal();
-    if is_interactive && !command.send_code {
+    if is_interactive {
         return match run_interactive_with_policy(
             command,
             dhttp_home,
@@ -891,28 +863,10 @@ pub(crate) async fn run_with_policy(
     for warning in &auth_plan.warnings {
         crate::cli::flow::transcript::print_err_block(warning);
     }
-    let approval_plan = resolve_non_interactive_approval_plan(
-        target.short_name(),
-        command.auth,
-        auth_plan.first_identity_full_name(),
-    )?;
-
-    if command.send_code {
-        if !matches!(command.auth, Some(AuthMethod::Email)) {
-            whatever!("--send-code requires --auth email");
-        }
-        let email = resolve_email(command).await?;
-        super::progress::run_with_spinner(
-            "Sending verification code...",
-            cert_server.send_email_verification(&email),
-        )
-        .await?;
-        return Ok(());
-    }
+    let approval_plan = resolve_non_interactive_approval_plan(auth_plan.first_identity_full_name());
 
     let local_identity_save =
-        cli::ensure_replace_local_allowed(dhttp_home, domain.borrow(), command.replace_local)
-            .await?;
+        cli::ensure_replace_local_allowed(dhttp_home, domain.borrow(), command.force).await?;
     let (key_pem, csr_pem) = cli::generate_private_key_and_csr(&domain)?;
     let detail = match approval_plan {
         ApplyApprovalPlan::Email => {
@@ -920,8 +874,8 @@ pub(crate) async fn run_with_policy(
             let verify_code = match command.verify_code.clone() {
                 Some(code) => code,
                 None => {
-                    super::progress::run_with_spinner(
-                        "Sending verification code...",
+                    super::progress::run(
+                        super::progress::SEND_CODE,
                         cert_server.send_email_verification(&email),
                     )
                     .await?;
@@ -930,14 +884,14 @@ pub(crate) async fn run_with_policy(
                         .require_interactive("--verify-code")?
                 }
             };
-            let token = super::progress::run_with_spinner(
-                "Verifying with email...",
+            let token = super::progress::run(
+                super::progress::VERIFY_EMAIL,
                 cert_server.login(&email, &verify_code),
             )
             .await?
             .access_token;
-            match super::progress::run_with_spinner(
-                "Applying identity...",
+            match super::progress::run(
+                super::progress::REQUEST_CERT,
                 cert_server.issue_cert(
                     &token,
                     domain.as_full(),
@@ -965,8 +919,8 @@ pub(crate) async fn run_with_policy(
                     .await
                     .map_err(preserve_apply_registration_error)?;
                     crate::cli::flow::transcript::print_line(new_identity_confirmation_message());
-                    super::progress::run_with_spinner(
-                        "Applying identity...",
+                    super::progress::run(
+                        super::progress::REQUEST_CERT,
                         cert_server.issue_cert(
                             &token,
                             domain.as_full(),
@@ -983,8 +937,8 @@ pub(crate) async fn run_with_policy(
             }
         }
         ApplyApprovalPlan::DirectIdentity { auth_domain } => {
-            match super::progress::run_with_spinner(
-                "Applying identity...",
+            match super::progress::run(
+                super::progress::REQUEST_CERT,
                 cert_server.issue_cert_with_identity(
                     &auth_domain,
                     domain.as_full(),
@@ -1005,15 +959,15 @@ pub(crate) async fn run_with_policy(
                     }
                     if target.level() != IdentityLevel::SubIdentity {
                         whatever!(
-                            "registering {} requires email verification; rerun with --auth email",
+                            "registering {} requires interactive email verification",
                             target.short_name()
                         );
                     }
                     ensure_sub_identity_exists_with_identity(&target, cert_server, &auth_domain)
                         .await?;
                     crate::cli::flow::transcript::print_line(new_identity_confirmation_message());
-                    super::progress::run_with_spinner(
-                        "Applying identity...",
+                    super::progress::run(
+                        super::progress::REQUEST_CERT,
                         cert_server.issue_cert_with_identity(
                             &auth_domain,
                             domain.as_full(),
@@ -1077,15 +1031,11 @@ mod tests {
         InteractiveNameAvailability, MissingTargetAction, apply_identity_name_opening,
         apply_verify_code_actions, classify_apply_email_issue_error,
         classify_interactive_name_availability, explicit_target_from_command,
-        interactive_name_check_progress_message, interactive_name_unavailable_message,
-        missing_root_target_error, missing_target_action, new_identity_confirmation_message,
-        preserve_apply_email_issue_error, preserve_apply_registration_error,
-        resolve_non_interactive_approval_plan,
+        interactive_name_unavailable_message, missing_root_target_error, missing_target_action,
+        new_identity_confirmation_message, preserve_apply_email_issue_error,
+        preserve_apply_registration_error, resolve_non_interactive_approval_plan,
     };
-    use crate::{
-        auth::AuthMethod,
-        cli::{Apply, flow::target::IdentityTarget},
-    };
+    use crate::cli::{Apply, flow::target::IdentityTarget};
 
     #[test]
     fn stay_recovery_keeps_apply_verify_state() {
@@ -1093,12 +1043,10 @@ mod tests {
             &Apply {
                 name: Some("alice.smith".to_string()),
                 kind: Some("primary".to_string()),
-                replace_local: false,
+                force: false,
                 device_name: None,
                 email: Some("alice@example.test".to_string()),
-                send_code: false,
                 verify_code: None,
-                auth: None,
             },
             None,
         )
@@ -1121,12 +1069,10 @@ mod tests {
             &Apply {
                 name: Some("alice.smith".to_string()),
                 kind: Some("primary".to_string()),
-                replace_local: false,
+                force: false,
                 device_name: None,
                 email: Some("alice@example.test".to_string()),
-                send_code: false,
                 verify_code: None,
-                auth: None,
             },
             None,
         )
@@ -1180,12 +1126,10 @@ mod tests {
         let target = explicit_target_from_command(&Apply {
             name: None,
             kind: None,
-            replace_local: false,
+            force: false,
             device_name: None,
             email: None,
-            send_code: false,
             verify_code: None,
-            auth: None,
         })
         .unwrap();
 
@@ -1195,7 +1139,7 @@ mod tests {
     #[test]
     fn root_apply_without_local_auth_defaults_to_email_non_interactively() {
         assert_eq!(
-            resolve_non_interactive_approval_plan("alice.smith", None, None).unwrap(),
+            resolve_non_interactive_approval_plan(None),
             ApplyApprovalPlan::Email,
         );
     }
@@ -1203,36 +1147,7 @@ mod tests {
     #[test]
     fn root_apply_prefers_ready_local_auth_non_interactively() {
         assert_eq!(
-            resolve_non_interactive_approval_plan("alice.smith", None, Some("alice.smith"))
-                .unwrap(),
-            ApplyApprovalPlan::DirectIdentity {
-                auth_domain: "alice.smith".to_string(),
-            },
-        );
-    }
-
-    #[test]
-    fn apply_identity_auth_requires_ready_local_identity_or_parent() {
-        let error = resolve_non_interactive_approval_plan(
-            "phone.alice.smith",
-            Some(AuthMethod::Identity),
-            None,
-        )
-        .unwrap_err();
-        let rendered = error.to_string();
-        assert!(rendered.contains("ready local identity"), "{rendered}");
-        assert!(rendered.contains("phone.alice.smith"), "{rendered}");
-    }
-
-    #[test]
-    fn sub_identity_apply_can_use_ready_parent_identity() {
-        assert_eq!(
-            resolve_non_interactive_approval_plan(
-                "phone.alice.smith",
-                Some(AuthMethod::Identity),
-                Some("alice.smith"),
-            )
-            .unwrap(),
+            resolve_non_interactive_approval_plan(Some("alice.smith")),
             ApplyApprovalPlan::DirectIdentity {
                 auth_domain: "alice.smith".to_string(),
             },
@@ -1242,8 +1157,7 @@ mod tests {
     #[test]
     fn sub_identity_apply_automatically_uses_ready_parent() {
         assert_eq!(
-            resolve_non_interactive_approval_plan("phone.alice.smith", None, Some("alice.smith"),)
-                .unwrap(),
+            resolve_non_interactive_approval_plan(Some("alice.smith")),
             ApplyApprovalPlan::DirectIdentity {
                 auth_domain: "alice.smith".to_string(),
             },
@@ -1285,10 +1199,6 @@ mod tests {
 
     #[test]
     fn interactive_name_check_copy_matches_spec() {
-        assert_eq!(
-            interactive_name_check_progress_message(),
-            "Checking the validity of this name..."
-        );
         assert_eq!(
             interactive_name_unavailable_message(),
             "Sorry, this name is not available. Please try another one."

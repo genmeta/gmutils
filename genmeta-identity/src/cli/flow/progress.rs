@@ -3,6 +3,74 @@ use std::future::Future;
 use tracing::{Instrument, info_span};
 use tracing_indicatif::span_ext::IndicatifSpanExt;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProgressCopy {
+    pub(crate) running: &'static str,
+    pub(crate) success: &'static str,
+}
+
+impl ProgressCopy {
+    pub(crate) const fn new(running: &'static str, success: &'static str) -> Self {
+        Self { running, success }
+    }
+}
+
+pub(crate) const CHECK_NAME: ProgressCopy = ProgressCopy::new(
+    "Checking the validity of this name...",
+    "Checked the validity of this name.",
+);
+pub(crate) const SEND_CODE: ProgressCopy =
+    ProgressCopy::new("Sending verification code...", "Sent verification code.");
+pub(crate) const VERIFY_EMAIL: ProgressCopy =
+    ProgressCopy::new("Verifying with email...", "Verified with email.");
+pub(crate) const GENERATE_KEY: ProgressCopy = ProgressCopy::new(
+    "Generating secp384r1 ECC key pair locally...",
+    "Generated secp384r1 ECC key pair locally.",
+);
+pub(crate) const REQUEST_CERT: ProgressCopy = ProgressCopy::new(
+    "Generating CSR and requesting certificate...",
+    "Generated CSR and requested certificate.",
+);
+pub(crate) const RENEW_IDENTITY: ProgressCopy =
+    ProgressCopy::new("Renewing identity...", "Renewed identity.");
+pub(crate) const SAVE_DEFAULT: ProgressCopy =
+    ProgressCopy::new("Saving default identity...", "Saved default identity.");
+
+pub(crate) async fn run<T, E>(
+    copy: ProgressCopy,
+    future: impl Future<Output = Result<T, E>>,
+) -> Result<T, E> {
+    let span = info_span!("cli_progress", indicatif.pb_show = tracing::field::Empty);
+    span.pb_set_message(copy.running);
+    span.pb_start();
+    let result = future.instrument(span.clone()).await;
+    if result.is_ok() {
+        span.pb_set_finish_message(copy.success);
+    }
+    drop(span);
+    result
+}
+
+pub(crate) fn run_sync<T, E>(
+    copy: ProgressCopy,
+    operation: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    let span = info_span!("cli_progress", indicatif.pb_show = tracing::field::Empty);
+    span.pb_set_message(copy.running);
+    span.pb_start();
+    let result = {
+        let _entered = span.enter();
+        operation()
+    };
+    if result.is_ok() {
+        span.pb_set_finish_message(copy.success);
+    }
+    drop(span);
+    result
+}
+
+/// Transitional helper for call sites that do not yet have approved retained
+/// completion copy. New flow code should use [`run`] with a named copy pair.
 pub(crate) async fn run_with_spinner<T, E, Fut>(message: &str, future: Fut) -> Result<T, E>
 where
     Fut: Future<Output = Result<T, E>>,
@@ -11,23 +79,6 @@ where
     span.pb_set_message(message);
     span.pb_start();
     let result = future.instrument(span.clone()).await;
-    drop(span);
-    result
-}
-
-pub(crate) fn run_with_retained_progress<T, E>(
-    message: &str,
-    finish_message: &str,
-    operation: impl FnOnce() -> Result<T, E>,
-) -> Result<T, E> {
-    let span = info_span!("cli_progress", indicatif.pb_show = tracing::field::Empty);
-    span.pb_set_message(message);
-    span.pb_set_finish_message(finish_message);
-    span.pb_start();
-    let result = {
-        let _entered = span.enter();
-        operation()
-    };
     drop(span);
     result
 }
@@ -43,7 +94,33 @@ mod tests {
     use tracing_indicatif::filter::IndicatifFilter;
     use tracing_subscriber::{Layer, layer::SubscriberExt, registry::LookupSpan};
 
-    use super::{run_with_retained_progress, run_with_spinner};
+    use super::{
+        CHECK_NAME, GENERATE_KEY, ProgressCopy, RENEW_IDENTITY, REQUEST_CERT, SAVE_DEFAULT,
+        SEND_CODE, VERIFY_EMAIL, run_with_spinner,
+    };
+
+    #[test]
+    fn progress_pairs_are_stable() {
+        assert_eq!(
+            CHECK_NAME,
+            ProgressCopy::new(
+                "Checking the validity of this name...",
+                "Checked the validity of this name.",
+            )
+        );
+        assert_eq!(SEND_CODE.success, "Sent verification code.");
+        assert_eq!(VERIFY_EMAIL.success, "Verified with email.");
+        assert_eq!(
+            GENERATE_KEY.success,
+            "Generated secp384r1 ECC key pair locally."
+        );
+        assert_eq!(
+            REQUEST_CERT.success,
+            "Generated CSR and requested certificate."
+        );
+        assert_eq!(RENEW_IDENTITY.success, "Renewed identity.");
+        assert_eq!(SAVE_DEFAULT.success, "Saved default identity.");
+    }
 
     #[tokio::test]
     async fn run_with_spinner_returns_inner_result() {
@@ -51,18 +128,6 @@ mod tests {
             Ok::<_, std::io::Error>("ok")
         })
         .await
-        .unwrap();
-
-        assert_eq!(value, "ok");
-    }
-
-    #[test]
-    fn retained_progress_returns_inner_result() {
-        let value = run_with_retained_progress(
-            "Generating secp384r1 ECC key pair locally...",
-            "Generated secp384r1 ECC key pair locally.",
-            || Ok::<_, std::io::Error>("ok"),
-        )
         .unwrap();
 
         assert_eq!(value, "ok");

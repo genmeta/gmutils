@@ -126,15 +126,11 @@ fn certificate_chain_key_from_identity(
 fn generate_private_key_and_csr(
     name: &Name<'_>,
 ) -> Result<(impl Deref<Target = String> + use<>, String), Error> {
-    let key_pem = flow::progress::run_with_retained_progress(
-        "Generating secp384r1 ECC key pair locally...",
-        "Generated secp384r1 ECC key pair locally.",
-        || {
-            rankey::generate_secp384r1_key()
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-                .context(GenerateKeySnafu)
-        },
-    )?;
+    let key_pem = flow::progress::run_sync(flow::progress::GENERATE_KEY, || {
+        rankey::generate_secp384r1_key()
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+            .context(GenerateKeySnafu)
+    })?;
     let csr = rankey::generate_csr(&key_pem, "CN", name.as_full(), &[name.as_full()])
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
         .context(GenerateCsrSnafu)?;
@@ -162,10 +158,6 @@ async fn save_identity(
 
 fn save_identity_progress_message() -> &'static str {
     "Saving identity..."
-}
-
-fn save_default_identity_progress_message() -> &'static str {
-    "Saving default identity..."
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,11 +216,7 @@ async fn save_settings(default_config: &DhttpSettingsFile) -> Result<(), Error> 
             })?;
     }
 
-    flow::progress::run_with_spinner(
-        save_default_identity_progress_message(),
-        default_config.save(),
-    )
-    .await?;
+    flow::progress::run(flow::progress::SAVE_DEFAULT, default_config.save()).await?;
     Ok(())
 }
 
@@ -247,20 +235,16 @@ async fn resolve_default_target_name(dhttp_home: &DhttpHome) -> Result<Name<'sta
 async fn ensure_replace_local_allowed(
     dhttp_home: &DhttpHome,
     name: Name<'_>,
-    replace_local: bool,
+    force: bool,
 ) -> Result<LocalIdentitySave, Error> {
     let profile_exists = dhttp_home
         .identity_profile_exists_exactly(name.clone())
         .await;
-    match local_replacement_decision(
-        profile_exists,
-        replace_local,
-        std::io::stdin().is_terminal(),
-    ) {
+    match local_replacement_decision(profile_exists, force, std::io::stdin().is_terminal()) {
         LocalReplacementDecision::New => Ok(LocalIdentitySave::New),
         LocalReplacementDecision::Replace => Ok(LocalIdentitySave::Replace),
         LocalReplacementDecision::RequireFlag => Err(prompt::Error::NotInteractive {
-            hint: "--replace-local".into(),
+            hint: "--force".into(),
         }
         .into()),
     }
@@ -274,8 +258,8 @@ async fn acquire_verify_code(
     match flow::email::EmailVerificationAction::from_verify_code(provided) {
         flow::email::EmailVerificationAction::ReuseProvidedCode(code) => Ok(code),
         flow::email::EmailVerificationAction::SendAndPrompt => {
-            flow::progress::run_with_spinner(
-                "Sending verification code...",
+            flow::progress::run(
+                flow::progress::SEND_CODE,
                 cert_server.send_email_verification(email),
             )
             .await?;
@@ -305,15 +289,15 @@ async fn login_with_email(
     };
     let verify_code = acquire_verify_code(cert_server, &email, verify_code).await?;
     if let Some(domain) = domain {
-        Ok(flow::progress::run_with_spinner(
-            "Verifying with email...",
+        Ok(flow::progress::run(
+            flow::progress::VERIFY_EMAIL,
             cert_server.domain_login(domain.as_full(), &email, &verify_code),
         )
         .await?
         .access_token)
     } else {
-        Ok(flow::progress::run_with_spinner(
-            "Verifying with email...",
+        Ok(flow::progress::run(
+            flow::progress::VERIFY_EMAIL,
             cert_server.login(&email, &verify_code),
         )
         .await?
@@ -328,18 +312,14 @@ pub struct Apply {
     pub name: Option<String>,
     #[arg(long)]
     pub kind: Option<String>,
-    #[arg(long)]
-    pub replace_local: bool,
+    #[arg(short, long)]
+    pub force: bool,
     #[arg(long)]
     pub device_name: Option<String>,
     #[arg(short, long)]
     pub email: Option<String>,
-    #[arg(long, conflicts_with = "verify_code")]
-    pub send_code: bool,
     #[arg(long, value_name = "VERIFY_CODE", hide = true)]
     pub verify_code: Option<String>,
-    #[arg(long, value_enum)]
-    pub auth: Option<crate::auth::AuthMethod>,
 }
 
 /// Renew identities
@@ -347,16 +327,14 @@ pub struct Apply {
 pub struct Renew {
     #[arg(value_name = "IDENTITY")]
     pub name: Option<String>,
+    #[arg(short, long)]
+    pub force: bool,
     #[arg(long)]
     pub device_name: Option<String>,
     #[arg(short, long)]
     pub email: Option<String>,
-    #[arg(long, conflicts_with = "verify_code")]
-    pub send_code: bool,
     #[arg(long, value_name = "VERIFY_CODE", hide = true)]
     pub verify_code: Option<String>,
-    #[arg(long, value_enum)]
-    pub auth: Option<crate::auth::AuthMethod>,
 }
 
 /// Set default identity
@@ -366,8 +344,8 @@ pub struct Default {
     pub name: Option<String>,
     #[arg(short, long)]
     pub verbose: bool,
-    #[arg(long)]
-    pub allow_nonready: bool,
+    #[arg(short, long, requires = "name", conflicts_with = "verbose")]
+    pub force: bool,
 }
 
 impl Default {
@@ -601,7 +579,7 @@ mod tests {
     use super::{
         Apply, Cli, Default, Info, LocalReplacementDecision, Options, cert_server_base_url,
         certificate_chain_key_from_identity, local_replacement_decision,
-        save_default_identity_progress_message, save_identity_progress_message,
+        save_identity_progress_message,
     };
     use crate::CERT_SERVER_BASE_URL;
 
@@ -620,6 +598,60 @@ mod tests {
     fn cert_server_base_url_uses_compile_time_bootstrap_url() {
         let url = cert_server_base_url();
         assert_eq!(url, CERT_SERVER_BASE_URL);
+    }
+
+    #[test]
+    fn removed_public_options_do_not_parse_or_appear_in_help() {
+        let help = Cli::command().render_long_help().to_string();
+        for removed in [
+            "--auth",
+            "--send-code",
+            "--replace-local",
+            "--allow-nonready",
+            "--register-if-missing",
+        ] {
+            assert!(
+                !help.contains(removed),
+                "{removed} leaked into help:\n{help}"
+            );
+        }
+
+        for argv in [
+            vec!["genmeta", "apply", "alice.smith", "--auth", "email"],
+            vec!["genmeta", "apply", "alice.smith", "--send-code"],
+            vec!["genmeta", "apply", "alice.smith", "--replace-local"],
+            vec!["genmeta", "default", "alice.smith", "--allow-nonready"],
+        ] {
+            assert!(Options::try_parse_from(argv).is_err());
+        }
+    }
+
+    #[test]
+    fn force_is_scoped_to_apply_renew_and_named_default() {
+        assert!(Options::try_parse_from(["genmeta", "apply", "alice.smith", "--force"]).is_ok());
+        assert!(Options::try_parse_from(["genmeta", "renew", "alice.smith", "-f"]).is_ok());
+        assert!(Options::try_parse_from(["genmeta", "default", "alice.smith", "--force"]).is_ok());
+        assert!(Options::try_parse_from(["genmeta", "default", "-v", "--force"]).is_err());
+    }
+
+    #[test]
+    fn hidden_verify_code_still_parses_without_help_exposure() {
+        let help = Apply::command().render_long_help().to_string();
+        assert!(!help.contains("--verify-code"), "{help}");
+        assert!(
+            Options::try_parse_from([
+                "genmeta",
+                "apply",
+                "alice.smith",
+                "--kind",
+                "primary",
+                "--email",
+                "alice@example.test",
+                "--verify-code",
+                "000000",
+            ])
+            .is_ok()
+        );
     }
 
     fn local_identity_with_dhttp_ski() -> Identity {
@@ -653,48 +685,6 @@ mod tests {
     }
 
     #[test]
-    fn apply_rejects_auth_auto() {
-        let error = Options::try_parse_from([
-            "genmeta",
-            "apply",
-            "alice.smith",
-            "--kind",
-            "primary",
-            "--auth",
-            "auto",
-        ])
-        .unwrap_err();
-
-        let rendered = error.to_string();
-        assert!(rendered.contains("--auth"), "{rendered}");
-        assert!(rendered.contains("auto"), "{rendered}");
-    }
-
-    #[test]
-    fn verify_code_is_hidden_from_help_but_still_parses() {
-        let mut command = Apply::command();
-        let help = command.render_long_help().to_string();
-        assert!(!help.contains("--verify-code"), "{help}");
-
-        assert!(
-            Options::try_parse_from([
-                "genmeta",
-                "apply",
-                "alice.smith",
-                "--kind",
-                "primary",
-                "--auth",
-                "email",
-                "--email",
-                "user@example.com",
-                "--verify-code",
-                "000000",
-            ])
-            .is_ok()
-        );
-    }
-
-    #[test]
     fn apply_does_not_expose_register_if_missing() {
         let help = Apply::command().render_long_help().to_string();
         assert!(!help.contains("register-if-missing"), "{help}");
@@ -709,14 +699,6 @@ mod tests {
         ])
         .unwrap_err();
         assert!(error.to_string().contains("unexpected argument"));
-    }
-
-    #[test]
-    fn default_accepts_allow_nonready() {
-        assert!(
-            Options::try_parse_from(["genmeta", "default", "alice.smith", "--allow-nonready",])
-                .is_ok()
-        );
     }
 
     #[test]
@@ -776,21 +758,6 @@ mod tests {
     }
 
     #[test]
-    fn apply_accepts_replace_local_flag() {
-        assert!(
-            Options::try_parse_from([
-                "genmeta",
-                "apply",
-                "alice.smith",
-                "--kind",
-                "primary",
-                "--replace-local",
-            ])
-            .is_ok()
-        );
-    }
-
-    #[test]
     fn local_replacement_has_no_deleted_confirmation_copy() {
         assert_eq!(
             local_replacement_decision(true, false, true),
@@ -813,10 +780,6 @@ mod tests {
     #[test]
     fn save_progress_uses_user_task_copy() {
         assert_eq!(save_identity_progress_message(), "Saving identity...");
-        assert_eq!(
-            save_default_identity_progress_message(),
-            "Saving default identity..."
-        );
     }
 
     #[test]
@@ -827,44 +790,6 @@ mod tests {
         assert!(apply_error.to_string().contains("--default"));
 
         assert!(Options::try_parse_from(["genmeta", "renew", "--default"]).is_err());
-    }
-
-    #[test]
-    fn send_code_is_available_and_mutually_exclusive_with_verify_code() {
-        assert!(
-            Options::try_parse_from([
-                "genmeta",
-                "apply",
-                "alice.smith",
-                "--kind",
-                "primary",
-                "--auth",
-                "email",
-                "--email",
-                "user@example.com",
-                "--send-code",
-            ])
-            .is_ok()
-        );
-
-        let error = Options::try_parse_from([
-            "genmeta",
-            "apply",
-            "alice.smith",
-            "--kind",
-            "primary",
-            "--auth",
-            "email",
-            "--email",
-            "user@example.com",
-            "--send-code",
-            "--verify-code",
-            "000000",
-        ])
-        .unwrap_err();
-        let rendered = error.to_string();
-        assert!(rendered.contains("--send-code"), "{rendered}");
-        assert!(rendered.contains("--verify-code"), "{rendered}");
     }
 
     #[tokio::test]
@@ -912,7 +837,7 @@ mod tests {
         let command = Default {
             name: Some("alice.smith".to_string()),
             verbose: false,
-            allow_nonready: false,
+            force: false,
         };
 
         let error = command
@@ -938,7 +863,7 @@ mod tests {
         let command = Default {
             name: Some("alice.smith".to_string()),
             verbose: false,
-            allow_nonready: true,
+            force: true,
         };
 
         command
