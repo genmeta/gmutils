@@ -671,24 +671,25 @@ mod tests {
 
     #[tokio::test]
     async fn default_reports_unsaved_identity_non_interactively() {
-        let home_path = unique_test_home_path("default-unsaved");
-        let dhttp_home = DhttpHome::new(home_path);
-        let command = Default {
-            name: Some("alice.smith".to_string()),
-            verbose: false,
-            force: false,
-        };
+        for force in [false, true] {
+            let home_path = unique_test_home_path("default-unsaved");
+            let dhttp_home = DhttpHome::new(home_path);
+            let command = Default {
+                name: Some("alice.smith".to_string()),
+                verbose: false,
+                force,
+            };
 
-        let error = command
-            .run(&dhttp_home, HomeScope::User, &dummy_cert_server())
-            .await
-            .unwrap_err();
-        let rendered = error.to_string();
+            let error = command
+                .run(&dhttp_home, HomeScope::User, &dummy_cert_server())
+                .await
+                .unwrap_err();
 
-        assert_eq!(
-            rendered,
-            "Failed to set default identity: alice.smith not found!"
-        );
+            assert_eq!(
+                error.to_string(),
+                "Failed to set default identity: alice.smith not found!"
+            );
+        }
     }
 
     #[tokio::test]

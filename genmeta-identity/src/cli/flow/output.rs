@@ -434,6 +434,15 @@ mod tests {
     }
 
     #[test]
+    fn verbose_default_info_and_verbose_list_share_the_same_block() {
+        let summary = near_expiry();
+        let expected = format_info(&summary, NOW, false);
+        let inventory = build_inventory(vec![summary]);
+
+        assert_eq!(render_verbose_inventory(&inventory, NOW, false), expected);
+    }
+
+    #[test]
     fn saved_choice_label_remains_stable() {
         let profile = ready_default();
         assert_eq!(
