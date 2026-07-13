@@ -11,7 +11,6 @@ pub(crate) enum IdentityKind {
 
 impl IdentityKind {
     pub(crate) const SELECT_PROMPT: &str = "Select usage for this name:";
-    pub(crate) const USAGE_HELP: &str = "both client and server\n  For a main host, server, desktop, home gateway, or always-on endpoint.\nclient only\n  For an additional device, such as a phone, laptop, or temporary endpoint.";
 
     pub(crate) fn as_str(self) -> &'static str {
         match self {
@@ -91,9 +90,5 @@ mod tests {
             "both client and server"
         );
         assert_eq!(IdentityKind::Secondary.usage_label(), "client only");
-        assert_eq!(
-            IdentityKind::USAGE_HELP,
-            "both client and server\n  For a main host, server, desktop, home gateway, or always-on endpoint.\nclient only\n  For an additional device, such as a phone, laptop, or temporary endpoint."
-        );
     }
 }

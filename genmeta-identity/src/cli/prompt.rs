@@ -209,7 +209,6 @@ pub(crate) async fn prompt_kind_with_cursor(
                 IdentityKind::Secondary.usage_label()
             ]
         )
-        .with_help_message(IdentityKind::USAGE_HELP)
         .with_starting_cursor(starting_cursor.unwrap_or(0))
         .prompt()
     )?;

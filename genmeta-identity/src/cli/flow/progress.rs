@@ -71,20 +71,6 @@ pub(crate) fn run_sync<T, E>(
     result
 }
 
-/// Transitional helper for call sites that do not yet have approved retained
-/// completion copy. New flow code should use [`run`] with a named copy pair.
-pub(crate) async fn run_with_spinner<T, E, Fut>(message: &str, future: Fut) -> Result<T, E>
-where
-    Fut: Future<Output = Result<T, E>>,
-{
-    let span = info_span!("cli_progress", indicatif.pb_show = tracing::field::Empty);
-    span.pb_set_message(message);
-    span.pb_start();
-    let result = future.instrument(span.clone()).await;
-    drop(span);
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::{
@@ -98,7 +84,7 @@ mod tests {
 
     use super::{
         CHECK_NAME, GENERATE_KEY, ProgressCopy, RENEW_IDENTITY, REQUEST_CERT, SAVE_DEFAULT,
-        SEND_CODE, VERIFY_EMAIL, WAIT_FOR_PAYMENT, run_with_spinner,
+        SEND_CODE, VERIFY_EMAIL, WAIT_FOR_PAYMENT, run,
     };
 
     #[test]
@@ -123,17 +109,6 @@ mod tests {
         assert_eq!(WAIT_FOR_PAYMENT.success, "Payment completed.");
         assert_eq!(RENEW_IDENTITY.success, "Renewed identity.");
         assert_eq!(SAVE_DEFAULT.success, "Saved default identity.");
-    }
-
-    #[tokio::test]
-    async fn run_with_spinner_returns_inner_result() {
-        let value = run_with_spinner("Sending verification code...", async {
-            Ok::<_, std::io::Error>("ok")
-        })
-        .await
-        .unwrap();
-
-        assert_eq!(value, "ok");
     }
 
     #[derive(Clone, Default)]
@@ -170,11 +145,9 @@ mod tests {
         let subscriber =
             tracing_subscriber::registry().with(layer.with_filter(IndicatifFilter::new(false)));
         let _guard = tracing::subscriber::set_default(subscriber);
-        run_with_spinner("Sending verification code...", async {
-            Ok::<_, std::io::Error>(())
-        })
-        .await
-        .unwrap();
+        run(SEND_CODE, async { Ok::<_, std::io::Error>(()) })
+            .await
+            .unwrap();
         assert_eq!(seen.load(Ordering::SeqCst), 1);
     }
 }

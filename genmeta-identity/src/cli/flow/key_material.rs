@@ -50,13 +50,21 @@ where
         }
     }
 
-    pub(crate) fn csr_pem(&mut self) -> Result<&str, Error> {
+    pub(crate) fn ensure_key(&mut self) -> Result<&str, Error> {
         if self.key_pem.is_none() {
             self.key_pem = Some(super::progress::run_sync(
                 super::progress::GENERATE_KEY,
                 || self.generator.generate_key(),
             )?);
         }
+        Ok(self
+            .key_pem
+            .as_deref()
+            .expect("key material was generated above"))
+    }
+
+    pub(crate) fn csr_pem(&mut self) -> Result<&str, Error> {
+        self.ensure_key()?;
         if self.csr_pem.is_none() {
             let csr = self.generator.generate_csr(
                 self.key_pem

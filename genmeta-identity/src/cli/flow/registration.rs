@@ -1,6 +1,6 @@
 use std::io::IsTerminal;
 
-use snafu::{FromString, Snafu, whatever};
+use snafu::{FromString, Snafu};
 
 use super::target::IdentityTarget;
 use crate::{
@@ -23,14 +23,6 @@ fn is_domain_conflict(error: &crate::cert_server::Error) -> bool {
 
 fn is_subdomain_conflict(error: &crate::cert_server::Error) -> bool {
     error.is_api_code("subdomain_conflict") || is_domain_conflict(error)
-}
-
-pub(crate) fn is_subdomain_quota_exceeded(error: &crate::cert_server::Error) -> bool {
-    error.is_api_code("subdomain_quota_exceeded")
-}
-
-pub(crate) fn create_identity_progress_message() -> &'static str {
-    "Creating identity..."
 }
 
 fn missing_parent_identity_message(target: &IdentityTarget, parent: &str) -> String {
@@ -323,95 +315,6 @@ pub(crate) async fn register_missing_child(
     Ok(RegistrationOutcome::CreatedFree)
 }
 
-pub(crate) fn ensure_non_interactive_root_checkout_not_required(
-    target: &IdentityTarget,
-    response: &CreateDomainResponse,
-) -> Result<(), Error> {
-    match crate::checkout::classify_checkout(response) {
-        crate::checkout::CheckoutState::Completed => Ok(()),
-        crate::checkout::CheckoutState::Pending
-        | crate::checkout::CheckoutState::Expired
-        | crate::checkout::CheckoutState::Cancelled
-        | crate::checkout::CheckoutState::Failed => whatever!(
-            "creating {} requires interactive checkout; rerun this command in an interactive terminal to complete payment",
-            target.short_name()
-        ),
-    }
-}
-
-pub(crate) fn ensure_non_interactive_sub_identity_checkout_not_required(
-    target: &IdentityTarget,
-    response: &CreateSubdomainResponse,
-) -> Result<(), Error> {
-    if response.invoice.is_some() {
-        whatever!(
-            "creating {} exceeded the sub-identity quota and requires interactive checkout; rerun this command in an interactive terminal to expand the parent identity quota",
-            target.short_name()
-        );
-    }
-    Ok(())
-}
-
-pub(crate) async fn ensure_identity_exists_with_token(
-    cert_server: &CertServer,
-    target: &IdentityTarget,
-    access_token: &str,
-    _progress_message: &str,
-) -> Result<(), Error> {
-    let api = CertServerRegistrationApi::new(cert_server);
-    register_missing_root(&api, &NoRegistrationUi, target, access_token, false)
-        .await
-        .map(|_| ())
-        .map_err(Error::from)
-}
-
-pub(crate) async fn ensure_identity_exists_with_token_interactively(
-    cert_server: &CertServer,
-    target: &IdentityTarget,
-    access_token: &str,
-    _progress_message: &str,
-) -> Result<(), Error> {
-    let api = CertServerRegistrationApi::new(cert_server);
-    register_missing_root(&api, &InquireRegistrationUi, target, access_token, true)
-        .await
-        .map(|_| ())
-        .map_err(Error::from)
-}
-
-pub(crate) async fn create_sub_identity_with_token(
-    cert_server: &CertServer,
-    target: &IdentityTarget,
-    access_token: &str,
-    parent: &dhttp::name::DhttpName<'_>,
-    label: &str,
-) -> Result<CreateSubdomainResponse, Error> {
-    match super::progress::run_with_spinner(
-        create_identity_progress_message(),
-        cert_server.create_subdomain(access_token, parent.as_full(), label, None),
-    )
-    .await
-    {
-        Ok(created) => Ok(created),
-        Err(error) if is_domain_not_found(&error) => Err(Error::with_source(
-            Box::new(error),
-            missing_parent_identity_message(target, parent.as_partial()),
-        )),
-        Err(error) => Err(Error::from(error)),
-    }
-}
-
-pub(crate) async fn create_sub_identity_with_token_interactively(
-    cert_server: &CertServer,
-    target: &IdentityTarget,
-    access_token: &str,
-    parent: &dhttp::name::DhttpName<'_>,
-    label: &str,
-) -> Result<CreateSubdomainResponse, Error> {
-    // Child quota failures are terminal. They belong to a separate quota flow and
-    // must never enter the root-name payment transcript.
-    create_sub_identity_with_token(cert_server, target, access_token, parent, label).await
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -638,11 +541,6 @@ mod tests {
             RegistrationOutcome::CreatedFree
         );
         assert_eq!(parent_api.calls(), ["register-child:parent"]);
-    }
-
-    #[test]
-    fn root_and_sub_identity_creation_share_the_approved_progress_copy() {
-        assert_eq!(create_identity_progress_message(), "Creating identity...");
     }
 
     #[test]
