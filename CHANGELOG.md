@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `genmeta id` is a visible alias for `genmeta identity`.
+- `genmeta identity default -v` shows the default identity's full details.
+
+### Changed
+
+- `genmeta identity apply [name]` is now the single create-or-update flow;
+  the former `identity create` command has been removed.
+- Bare `genmeta identity renew` targets the configured default identity, and
+  renew no longer accepts `--default`.
+- Identity authentication skips expired, incomplete, and invalid local
+  certificates with an actionable warning, then tries the direct parent when
+  available before falling back to email verification.
+- Compact identity output uses `(default)`, while detail output uses `dir` and
+  includes certificate usage, sequence, validity, and issuer information.
+
 ## [0.8.0-beta.3] - 2026-07-09
 
 ### Added
