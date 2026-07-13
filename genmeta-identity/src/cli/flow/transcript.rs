@@ -20,6 +20,11 @@ pub(crate) fn print_err_block(block: &str) {
     }
 }
 
+pub(crate) fn print_warning(message: &str) {
+    let message = message.strip_prefix("WARN: ").unwrap_or(message);
+    indicatif_eprintln!("WARN: {message}");
+}
+
 #[cfg(test)]
 mod tests {
     use super::block_lines;
@@ -33,6 +38,14 @@ mod tests {
                 "".to_string(),
                 "  https://example.test".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn warning_prefix_is_stable() {
+        assert_eq!(
+            "WARN: already prefixed".strip_prefix("WARN: "),
+            Some("already prefixed")
         );
     }
 }

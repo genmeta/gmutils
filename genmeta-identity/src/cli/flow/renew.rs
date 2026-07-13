@@ -3,7 +3,7 @@ use std::io::IsTerminal;
 use dhttp::home::{DhttpHome, HomeScope};
 use snafu::{OptionExt, whatever};
 
-use super::local;
+use super::{auth_plan::CandidateEvent, local};
 use crate::{
     cert_server::CertServer,
     cli::{self, Error, Renew, prompt::InquireResultExt},
@@ -137,12 +137,18 @@ async fn ensure_saved_renew_target(
     whatever!("{}", renew_not_saved_root_message(name.as_partial()));
 }
 
-fn resolve_non_interactive_approval_plan(ready_identity: Option<&str>) -> RenewApprovalPlan {
-    match ready_identity {
-        Some(auth_domain) => RenewApprovalPlan::Identity {
-            auth_domain: auth_domain.to_string(),
-        },
-        None => RenewApprovalPlan::Email,
+fn approval_plan_from_candidate(candidate: CandidateEvent) -> Result<RenewApprovalPlan, Error> {
+    match candidate {
+        CandidateEvent::Identity { full_name, .. } => Ok(RenewApprovalPlan::Identity {
+            auth_domain: full_name,
+        }),
+        CandidateEvent::Email => Ok(RenewApprovalPlan::Email),
+        CandidateEvent::Warning(_) => {
+            unreachable!("first_auth_candidate consumes warnings")
+        }
+        CandidateEvent::Exhausted => {
+            whatever!("no authentication candidate is available")
+        }
     }
 }
 
@@ -193,13 +199,13 @@ async fn run_interactive(
 
         if state.approval_plan.is_none() {
             let target = crate::cli::flow::target::IdentityTarget::parse(domain.as_partial())?;
-            let auth_plan = super::auth_plan::load_apply_auth_plan(dhttp_home, &target).await?;
-            for warning in &auth_plan.warnings {
-                crate::cli::flow::transcript::print_err_block(warning);
-            }
-            state.approval_plan = Some(resolve_non_interactive_approval_plan(
-                auth_plan.first_identity_full_name(),
-            ));
+            let candidate = super::auth_plan::first_auth_candidate(
+                dhttp_home,
+                &target,
+                crate::cli::flow::target::RemoteTargetState::Exists,
+            )
+            .await?;
+            state.approval_plan = Some(approval_plan_from_candidate(candidate)?);
             continue;
         }
 
@@ -391,11 +397,14 @@ pub(crate) async fn run(
     let domain = resolve_target(command, dhttp_home).await?;
     ensure_saved_renew_target(dhttp_home, domain.borrow()).await?;
     let target = crate::cli::flow::target::IdentityTarget::parse(domain.as_partial())?;
-    let auth_plan = super::auth_plan::load_apply_auth_plan(dhttp_home, &target).await?;
-    for warning in &auth_plan.warnings {
-        crate::cli::flow::transcript::print_err_block(warning);
-    }
-    let approval_plan = resolve_non_interactive_approval_plan(auth_plan.first_identity_full_name());
+    let approval_plan = approval_plan_from_candidate(
+        super::auth_plan::first_auth_candidate(
+            dhttp_home,
+            &target,
+            crate::cli::flow::target::RemoteTargetState::Exists,
+        )
+        .await?,
+    )?;
     let identity_profile = dhttp_home.resolve_identity_profile(domain.borrow()).await?;
     let local_identity = identity_profile.load_identity().await?;
     let chain_key = cli::certificate_chain_key_from_identity(&local_identity)?
@@ -464,9 +473,8 @@ mod tests {
     use dhttp::home::{DhttpHome, HomeScope};
 
     use super::{
-        InteractiveRenewState, RenewApprovalPlan, RenewVerifyCodeAction,
-        renew_not_saved_root_message, renew_verify_code_actions,
-        resolve_non_interactive_approval_plan,
+        CandidateEvent, InteractiveRenewState, RenewApprovalPlan, RenewVerifyCodeAction,
+        approval_plan_from_candidate, renew_not_saved_root_message, renew_verify_code_actions,
     };
     use crate::cli::Renew;
 
@@ -538,7 +546,11 @@ mod tests {
     #[test]
     fn renew_prefers_ready_identity_non_interactively() {
         assert_eq!(
-            resolve_non_interactive_approval_plan(Some("alice.smith.dhttp.net")),
+            approval_plan_from_candidate(CandidateEvent::Identity {
+                short_name: "alice.smith".to_string(),
+                full_name: "alice.smith.dhttp.net".to_string(),
+            })
+            .unwrap(),
             RenewApprovalPlan::Identity {
                 auth_domain: "alice.smith.dhttp.net".to_string()
             }
@@ -548,7 +560,7 @@ mod tests {
     #[test]
     fn renew_without_ready_identity_uses_email_non_interactively() {
         assert_eq!(
-            resolve_non_interactive_approval_plan(None),
+            approval_plan_from_candidate(CandidateEvent::Email).unwrap(),
             RenewApprovalPlan::Email,
         );
     }

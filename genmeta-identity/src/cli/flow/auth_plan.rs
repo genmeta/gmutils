@@ -1,127 +1,232 @@
-use dhttp::home::DhttpHome;
+use std::collections::VecDeque;
+
+use dhttp::{home::DhttpHome, name::DhttpName};
 
 use super::{
     local::{self, LocalIdentityStatus, LocalIdentitySummary},
-    target::{IdentityLevel, IdentityTarget},
+    target::{IdentityLevel, IdentityTarget, RemoteTargetState},
 };
 use crate::cli::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum AuthCandidate {
-    Identity {
-        short_name: String,
-        full_name: String,
-    },
+pub(crate) enum AuthCandidateSpec {
+    Identity(DhttpName<'static>),
     Email,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AuthPlan {
-    pub(crate) candidates: Vec<AuthCandidate>,
-    pub(crate) warnings: Vec<String>,
+pub(crate) enum CandidateEvent {
+    Identity {
+        short_name: String,
+        full_name: String,
+    },
+    Warning(String),
+    Email,
+    Exhausted,
 }
 
-impl AuthPlan {
-    pub(crate) fn first_identity_full_name(&self) -> Option<&str> {
-        self.candidates
-            .iter()
-            .find_map(|candidate| match candidate {
-                AuthCandidate::Identity { full_name, .. } => Some(full_name.as_str()),
-                AuthCandidate::Email => None,
-            })
-    }
-}
-
-fn unavailable_reason(summary: &LocalIdentitySummary) -> String {
-    match &summary.status {
-        LocalIdentityStatus::Expired { .. } => "its local certificate has expired".to_string(),
-        LocalIdentityStatus::Incomplete { detail } => {
-            format!("its local identity is incomplete: {detail}")
-        }
-        LocalIdentityStatus::Invalid { detail } => {
-            format!("its local identity is invalid: {detail}")
-        }
-        LocalIdentityStatus::Ready { .. } => unreachable!("ready identities are available"),
-    }
-}
-
-pub(crate) fn plan_auth_candidates(
-    target: Option<&LocalIdentitySummary>,
-    parent: Option<&LocalIdentitySummary>,
-) -> AuthPlan {
-    let summaries = [target, parent];
+pub(crate) fn candidate_specs(
+    target: &IdentityTarget,
+    remote: RemoteTargetState,
+) -> Vec<AuthCandidateSpec> {
     let mut candidates = Vec::new();
-    let mut warnings = Vec::new();
-
-    for (index, summary) in summaries.iter().enumerate() {
-        let Some(summary) = summary else {
-            continue;
-        };
-        if summary.status.is_ready() {
-            candidates.push(AuthCandidate::Identity {
-                short_name: summary.target.short_name().to_string(),
-                full_name: summary.target.full_name().to_string(),
-            });
-            continue;
+    match (target.level(), remote) {
+        (IdentityLevel::Identity, RemoteTargetState::Missing) => {}
+        (IdentityLevel::SubIdentity, RemoteTargetState::Missing) => {
+            if let Some(parent) = target.parent() {
+                candidates.push(AuthCandidateSpec::Identity(parent.into_owned()));
+            }
         }
-
-        let next_ready = summaries[index + 1..]
-            .iter()
-            .flatten()
-            .find(|candidate| candidate.status.is_ready());
-        let problem = format!(
-            "Cannot verify with {} because {}.",
-            summary.target.short_name(),
-            unavailable_reason(summary),
-        );
-        let later_saved_candidate_exists = summaries[index + 1..].iter().flatten().next().is_some();
-        let warning = match next_ready {
-            Some(next) => format!(
-                "{problem}\nTrying its parent identity, {}.",
-                next.target.short_name()
-            ),
-            None if later_saved_candidate_exists => problem,
-            None => format!("{problem}\nFalling back to email verification."),
-        };
-        warnings.push(warning);
+        (IdentityLevel::Identity, _) => {
+            candidates.push(AuthCandidateSpec::Identity(
+                target.dhttp_name().into_owned(),
+            ));
+        }
+        (IdentityLevel::SubIdentity, _) => {
+            candidates.push(AuthCandidateSpec::Identity(
+                target.dhttp_name().into_owned(),
+            ));
+            if let Some(parent) = target.parent() {
+                candidates.push(AuthCandidateSpec::Identity(parent.into_owned()));
+            }
+        }
     }
+    candidates.push(AuthCandidateSpec::Email);
+    candidates
+}
 
-    candidates.push(AuthCandidate::Email);
-    AuthPlan {
-        candidates,
-        warnings,
+pub(crate) trait ExactIdentityLoader {
+    async fn load_exact(
+        &mut self,
+        name: DhttpName<'_>,
+    ) -> Result<Option<LocalIdentitySummary>, Error>;
+}
+
+pub(crate) struct HomeExactIdentityLoader<'a> {
+    home: &'a DhttpHome,
+}
+
+impl<'a> HomeExactIdentityLoader<'a> {
+    pub(crate) fn new(home: &'a DhttpHome) -> Self {
+        Self { home }
     }
 }
 
-pub(crate) async fn load_apply_auth_plan(
+impl ExactIdentityLoader for HomeExactIdentityLoader<'_> {
+    async fn load_exact(
+        &mut self,
+        name: DhttpName<'_>,
+    ) -> Result<Option<LocalIdentitySummary>, Error> {
+        let Some(mut summary) =
+            local::try_load_summary_exact(self.home, name.clone(), None).await?
+        else {
+            return Ok(None);
+        };
+        if !summary.status.is_ready() {
+            return Ok(Some(summary));
+        }
+
+        let profile = match self.home.resolve_identity_profile_exactly(name).await {
+            Ok(profile) => profile,
+            Err(dhttp::home::identity::ssl::ResolveIdentityProfileError::ExactNotFound {
+                ..
+            }) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        if let Err(error) = profile.load_identity().await {
+            summary.status = LocalIdentityStatus::Invalid {
+                detail: format!("local credentials could not be loaded: {error}"),
+            };
+        }
+        Ok(Some(summary))
+    }
+}
+
+pub(crate) struct AuthCandidateRunner<L> {
+    loader: L,
+    pending: VecDeque<AuthCandidateSpec>,
+}
+
+impl<L> AuthCandidateRunner<L>
+where
+    L: ExactIdentityLoader,
+{
+    pub(crate) fn new(loader: L, candidates: Vec<AuthCandidateSpec>) -> Self {
+        Self {
+            loader,
+            pending: candidates.into(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn loader(&self) -> &L {
+        &self.loader
+    }
+
+    pub(crate) async fn next(&mut self) -> Result<CandidateEvent, Error> {
+        loop {
+            let Some(candidate) = self.pending.pop_front() else {
+                return Ok(CandidateEvent::Exhausted);
+            };
+            match candidate {
+                AuthCandidateSpec::Email => return Ok(CandidateEvent::Email),
+                AuthCandidateSpec::Identity(name) => {
+                    let Some(summary) = self.loader.load_exact(name.borrow()).await? else {
+                        continue;
+                    };
+                    if summary.status.is_ready() {
+                        return Ok(CandidateEvent::Identity {
+                            short_name: summary.target.short_name().to_string(),
+                            full_name: summary.target.full_name().to_string(),
+                        });
+                    }
+                    return Ok(CandidateEvent::Warning(self.warning_for(&summary)));
+                }
+            }
+        }
+    }
+
+    fn warning_for(&self, summary: &LocalIdentitySummary) -> String {
+        let reason = match summary.status {
+            LocalIdentityStatus::Expired { .. } => "its local certificate has expired",
+            LocalIdentityStatus::Incomplete { .. } => "its local identity is incomplete",
+            LocalIdentityStatus::Invalid { .. } => "its local identity is invalid",
+            LocalIdentityStatus::Ready { .. } => unreachable!("ready identity is usable"),
+        };
+        let continuation = match self.pending.front() {
+            Some(AuthCandidateSpec::Identity(name)) => {
+                format!("trying {}", name.as_partial())
+            }
+            Some(AuthCandidateSpec::Email) | None => {
+                "falling back to email verification".to_string()
+            }
+        };
+        format!(
+            "WARN: Cannot authenticate with {} because {reason}; {continuation}",
+            summary.target.short_name()
+        )
+    }
+}
+
+pub(crate) async fn first_auth_candidate(
     dhttp_home: &DhttpHome,
     target: &IdentityTarget,
-) -> Result<AuthPlan, Error> {
-    let target_summary =
-        local::try_load_summary_exact(dhttp_home, target.dhttp_name(), None).await?;
-    let parent_summary = if target.level() == IdentityLevel::SubIdentity {
-        match target.parent() {
-            Some(parent) => local::try_load_summary_exact(dhttp_home, parent, None).await?,
-            None => None,
+    remote: RemoteTargetState,
+) -> Result<CandidateEvent, Error> {
+    let mut runner = AuthCandidateRunner::new(
+        HomeExactIdentityLoader::new(dhttp_home),
+        candidate_specs(target, remote),
+    );
+    loop {
+        match runner.next().await? {
+            CandidateEvent::Warning(warning) => {
+                super::transcript::print_warning(&warning);
+            }
+            selected => return Ok(selected),
         }
-    } else {
-        None
-    };
-    Ok(plan_auth_candidates(
-        target_summary.as_ref(),
-        parent_summary.as_ref(),
-    ))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{collections::BTreeMap, path::PathBuf};
 
     use super::*;
-    use crate::cli::flow::{
-        local::{IdentityUsage, LocalIdentityStatus, LocalIdentitySummary},
-        target::IdentityTarget,
-    };
+    use crate::cli::flow::local::{IdentityUsage, LocalIdentityStatus};
+
+    fn identity(name: &str) -> AuthCandidateSpec {
+        AuthCandidateSpec::Identity(DhttpName::try_from(name).unwrap().into_owned())
+    }
+
+    fn email() -> AuthCandidateSpec {
+        AuthCandidateSpec::Email
+    }
+
+    #[test]
+    fn candidate_orders_cover_existing_and_missing_root_and_child() {
+        let root = IdentityTarget::parse("alice.smith").unwrap();
+        let child = IdentityTarget::parse("phone.alice.smith").unwrap();
+        assert_eq!(
+            candidate_specs(&root, RemoteTargetState::Exists),
+            vec![identity("alice.smith"), email()]
+        );
+        assert_eq!(
+            candidate_specs(&child, RemoteTargetState::Exists),
+            vec![
+                identity("phone.alice.smith"),
+                identity("alice.smith"),
+                email()
+            ]
+        );
+        assert_eq!(
+            candidate_specs(&root, RemoteTargetState::Missing),
+            vec![email()]
+        );
+        assert_eq!(
+            candidate_specs(&child, RemoteTargetState::Missing),
+            vec![identity("alice.smith"), email()]
+        );
+    }
 
     fn summary(name: &str, status: LocalIdentityStatus) -> LocalIdentitySummary {
         LocalIdentitySummary {
@@ -136,116 +241,112 @@ mod tests {
         }
     }
 
-    fn ready(name: &str) -> LocalIdentitySummary {
-        summary(
-            name,
-            LocalIdentityStatus::Ready {
-                expires_at: 1_900_000_000,
-            },
-        )
+    #[derive(Default)]
+    struct FakeExactLoader {
+        summaries: BTreeMap<String, LocalIdentitySummary>,
+        requested: Vec<String>,
     }
 
-    #[test]
-    fn ready_subidentity_prefers_target_then_parent_then_email() {
-        let target = ready("handle.alice.smith");
-        let parent = ready("alice.smith");
-        let plan = plan_auth_candidates(Some(&target), Some(&parent));
+    impl FakeExactLoader {
+        fn with(summaries: impl IntoIterator<Item = LocalIdentitySummary>) -> Self {
+            Self {
+                summaries: summaries
+                    .into_iter()
+                    .map(|summary| (summary.target.short_name().to_string(), summary))
+                    .collect(),
+                requested: Vec::new(),
+            }
+        }
 
-        assert_eq!(
-            plan.candidates,
-            vec![
-                AuthCandidate::Identity {
-                    short_name: "handle.alice.smith".into(),
-                    full_name: "handle.alice.smith.dhttp.net".into(),
+        fn requested(&self) -> &[String] {
+            &self.requested
+        }
+    }
+
+    impl ExactIdentityLoader for FakeExactLoader {
+        async fn load_exact(
+            &mut self,
+            name: DhttpName<'_>,
+        ) -> Result<Option<LocalIdentitySummary>, Error> {
+            self.requested.push(name.as_partial().to_string());
+            Ok(self.summaries.get(name.as_partial()).cloned())
+        }
+    }
+
+    #[tokio::test]
+    async fn successful_current_identity_never_loads_parent_or_email() {
+        let ready = |name| {
+            summary(
+                name,
+                LocalIdentityStatus::Ready {
+                    expires_at: 1_900_000_000,
                 },
-                AuthCandidate::Identity {
-                    short_name: "alice.smith".into(),
-                    full_name: "alice.smith.dhttp.net".into(),
+            )
+        };
+        let target = IdentityTarget::parse("phone.alice.smith").unwrap();
+        let loader = FakeExactLoader::with([ready("phone.alice.smith"), ready("alice.smith")]);
+        let mut runner =
+            AuthCandidateRunner::new(loader, candidate_specs(&target, RemoteTargetState::Exists));
+
+        assert!(matches!(
+            runner.next().await.unwrap(),
+            CandidateEvent::Identity { short_name, .. } if short_name == "phone.alice.smith"
+        ));
+        assert_eq!(runner.loader().requested(), ["phone.alice.smith"]);
+    }
+
+    #[tokio::test]
+    async fn abnormal_candidates_warn_only_when_visited() {
+        let target = IdentityTarget::parse("phone.alice.smith").unwrap();
+        let loader = FakeExactLoader::with([
+            summary(
+                "phone.alice.smith",
+                LocalIdentityStatus::Expired {
+                    expired_at: 1_700_000_000,
                 },
-                AuthCandidate::Email,
-            ]
-        );
-        assert!(plan.warnings.is_empty());
-    }
-
-    #[test]
-    fn expired_target_warns_then_uses_ready_parent() {
-        let target = summary(
-            "handle.alice.smith",
-            LocalIdentityStatus::Expired {
-                expired_at: 1_700_000_000,
-            },
-        );
-        let parent = ready("alice.smith");
-        let plan = plan_auth_candidates(Some(&target), Some(&parent));
-
-        assert_eq!(
-            plan.candidates,
-            vec![
-                AuthCandidate::Identity {
-                    short_name: "alice.smith".into(),
-                    full_name: "alice.smith.dhttp.net".into(),
+            ),
+            summary(
+                "alice.smith",
+                LocalIdentityStatus::Incomplete {
+                    detail: "private key is missing".to_string(),
                 },
-                AuthCandidate::Email,
-            ]
+            ),
+        ]);
+        let mut runner =
+            AuthCandidateRunner::new(loader, candidate_specs(&target, RemoteTargetState::Exists));
+
+        assert_eq!(
+            runner.next().await.unwrap(),
+            CandidateEvent::Warning(
+                "WARN: Cannot authenticate with phone.alice.smith because its local certificate has expired; trying alice.smith".to_string()
+            )
+        );
+        assert_eq!(runner.loader().requested(), ["phone.alice.smith"]);
+        assert_eq!(
+            runner.next().await.unwrap(),
+            CandidateEvent::Warning(
+                "WARN: Cannot authenticate with alice.smith because its local identity is incomplete; falling back to email verification".to_string()
+            )
         );
         assert_eq!(
-            plan.warnings,
-            vec![
-                "Cannot verify with handle.alice.smith because its local certificate has expired.\nTrying its parent identity, alice.smith."
-            ]
+            runner.loader().requested(),
+            ["phone.alice.smith", "alice.smith"]
         );
+        assert_eq!(runner.next().await.unwrap(), CandidateEvent::Email);
     }
 
-    #[test]
-    fn invalid_parent_warns_before_email() {
-        let parent = summary(
-            "alice.smith",
-            LocalIdentityStatus::Invalid {
-                detail: "certificate does not match local key".into(),
-            },
+    #[tokio::test]
+    async fn missing_candidates_advance_silently() {
+        let target = IdentityTarget::parse("phone.alice.smith").unwrap();
+        let mut runner = AuthCandidateRunner::new(
+            FakeExactLoader::default(),
+            candidate_specs(&target, RemoteTargetState::Exists),
         );
-        let plan = plan_auth_candidates(None, Some(&parent));
 
-        assert_eq!(plan.candidates, vec![AuthCandidate::Email]);
+        assert_eq!(runner.next().await.unwrap(), CandidateEvent::Email);
         assert_eq!(
-            plan.warnings,
-            vec![
-                "Cannot verify with alice.smith because its local identity is invalid: certificate does not match local key.\nFalling back to email verification."
-            ]
+            runner.loader().requested(),
+            ["phone.alice.smith", "alice.smith"]
         );
-    }
-
-    #[test]
-    fn unavailable_target_and_parent_explain_each_skip_before_one_email_fallback() {
-        let target = summary(
-            "phone.alice.smith",
-            LocalIdentityStatus::Incomplete {
-                detail: "private key missing".into(),
-            },
-        );
-        let parent = summary(
-            "alice.smith",
-            LocalIdentityStatus::Invalid {
-                detail: "certificate is unreadable".into(),
-            },
-        );
-
-        let plan = plan_auth_candidates(Some(&target), Some(&parent));
-
-        assert_eq!(plan.candidates, vec![AuthCandidate::Email]);
-        assert_eq!(
-            plan.warnings,
-            vec![
-                "Cannot verify with phone.alice.smith because its local identity is incomplete: private key missing.",
-                "Cannot verify with alice.smith because its local identity is invalid: certificate is unreadable.\nFalling back to email verification.",
-            ]
-        );
-    }
-
-    #[test]
-    fn unrelated_default_is_never_a_candidate() {
-        let plan = plan_auth_candidates(None, None);
-        assert_eq!(plan.candidates, vec![AuthCandidate::Email]);
     }
 }

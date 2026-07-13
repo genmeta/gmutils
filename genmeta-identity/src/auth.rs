@@ -1,57 +1,26 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuthFailureKind {
-    MissingIdentity,
-    MtlsRejected,
-    DomainForbidden,
-    TransportUnavailable,
-    CsrInvalid,
-    SequenceInvalid,
-    KindInvalid,
-    ChainNotFound,
-    SubscriptionInactive,
-    PaymentRequired,
-    ServerError,
+pub(crate) enum AuthAttemptDisposition {
+    TryNext,
+    ReplanMissingTarget,
+    Terminal,
 }
 
-/// Returns whether an automatic flow may use email after a stable
-/// authentication failure.
-///
-/// The caller must already have established that the server permits email as
-/// an alternate proof. Transport and server failures never change proof.
-pub fn should_fallback_to_email(can_get_email_credentials: bool, failure: AuthFailureKind) -> bool {
-    can_get_email_credentials && is_email_fallback_failure(failure)
-}
-
-pub fn is_email_fallback_failure(failure: AuthFailureKind) -> bool {
-    matches!(
-        failure,
-        AuthFailureKind::MissingIdentity
-            | AuthFailureKind::MtlsRejected
-            | AuthFailureKind::DomainForbidden
-    )
-}
-
-pub fn classify_api_error(error: &crate::cert_server::Error) -> AuthFailureKind {
+pub(crate) fn classify_identity_attempt(
+    error: &crate::cert_server::Error,
+) -> AuthAttemptDisposition {
     match error {
-        crate::cert_server::Error::Api { status, code, .. } => match code.as_str() {
-            "unauthorized" => AuthFailureKind::MtlsRejected,
-            "domain_forbidden" => AuthFailureKind::DomainForbidden,
-            "csr_invalid" => AuthFailureKind::CsrInvalid,
-            "sequence_invalid" => AuthFailureKind::SequenceInvalid,
-            "kind_invalid" => AuthFailureKind::KindInvalid,
-            "cert_sequence_not_found" => AuthFailureKind::ChainNotFound,
-            "domain_not_found" => AuthFailureKind::SubscriptionInactive,
-            "payment_required" => AuthFailureKind::PaymentRequired,
-            _ if status.is_server_error() => AuthFailureKind::ServerError,
-            _ => AuthFailureKind::ServerError,
+        crate::cert_server::Error::Api { code, .. } => match code.as_str() {
+            "unauthorized" | "domain_forbidden" => AuthAttemptDisposition::TryNext,
+            "domain_not_found" => AuthAttemptDisposition::ReplanMissingTarget,
+            _ => AuthAttemptDisposition::Terminal,
         },
         crate::cert_server::Error::Request { .. }
         | crate::cert_server::Error::DhttpEndpoint { .. }
         | crate::cert_server::Error::DhttpRequest { .. }
-        | crate::cert_server::Error::DhttpRead { .. } => AuthFailureKind::TransportUnavailable,
-        crate::cert_server::Error::IdentityFallbackUnavailable
+        | crate::cert_server::Error::DhttpRead { .. }
+        | crate::cert_server::Error::IdentityFallbackUnavailable
         | crate::cert_server::Error::Json { .. }
-        | crate::cert_server::Error::Whatever { .. } => AuthFailureKind::ServerError,
+        | crate::cert_server::Error::Whatever { .. } => AuthAttemptDisposition::Terminal,
     }
 }
 
@@ -59,82 +28,49 @@ pub fn classify_api_error(error: &crate::cert_server::Error) -> AuthFailureKind 
 mod tests {
     use super::*;
 
-    #[test]
-    fn auto_interactive_falls_back_for_credential_failures() {
-        assert!(should_fallback_to_email(
-            true,
-            AuthFailureKind::MissingIdentity
-        ));
-        assert!(should_fallback_to_email(
-            true,
-            AuthFailureKind::MtlsRejected
-        ));
-        assert!(should_fallback_to_email(
-            true,
-            AuthFailureKind::DomainForbidden
-        ));
-    }
-
-    #[test]
-    fn transport_unavailability_does_not_fallback() {
-        assert!(!should_fallback_to_email(
-            true,
-            AuthFailureKind::TransportUnavailable
-        ));
-    }
-
-    #[test]
-    fn auto_does_not_fallback_for_business_failures() {
-        for failure in [
-            AuthFailureKind::CsrInvalid,
-            AuthFailureKind::SequenceInvalid,
-            AuthFailureKind::KindInvalid,
-            AuthFailureKind::ChainNotFound,
-            AuthFailureKind::SubscriptionInactive,
-            AuthFailureKind::PaymentRequired,
-            AuthFailureKind::ServerError,
-        ] {
-            assert!(!should_fallback_to_email(true, failure));
+    fn api(status: reqwest::StatusCode, code: &str) -> crate::cert_server::Error {
+        crate::cert_server::Error::Api {
+            status,
+            code: code.to_string(),
+            message: code.to_string(),
         }
     }
 
     #[test]
-    fn non_interactive_auto_does_not_prompt_fallback() {
-        assert!(!should_fallback_to_email(
-            false,
-            AuthFailureKind::MissingIdentity
-        ));
+    fn only_explicit_auth_rejection_can_try_the_next_proof() {
+        assert_eq!(
+            classify_identity_attempt(&api(reqwest::StatusCode::UNAUTHORIZED, "unauthorized")),
+            AuthAttemptDisposition::TryNext
+        );
+        assert_eq!(
+            classify_identity_attempt(&api(reqwest::StatusCode::FORBIDDEN, "domain_forbidden")),
+            AuthAttemptDisposition::TryNext
+        );
+        assert_eq!(
+            classify_identity_attempt(&api(
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error"
+            )),
+            AuthAttemptDisposition::Terminal
+        );
+        assert_eq!(
+            classify_identity_attempt(&api(reqwest::StatusCode::CONFLICT, "future_code")),
+            AuthAttemptDisposition::Terminal
+        );
     }
 
     #[test]
-    fn classifier_keeps_business_errors_out_of_auth_fallback() {
-        let error = crate::cert_server::Error::Api {
-            status: reqwest::StatusCode::NOT_FOUND,
-            code: "cert_sequence_not_found".to_string(),
-            message: "certificate sequence not found".to_string(),
-        };
-
-        assert_eq!(classify_api_error(&error), AuthFailureKind::ChainNotFound);
-        assert!(!should_fallback_to_email(true, classify_api_error(&error)));
-    }
-
-    #[test]
-    fn classifier_keeps_server_and_unknown_client_errors_terminal() {
-        for error in [
-            crate::cert_server::Error::Api {
-                status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-                code: "internal_error".to_string(),
-                message: "internal error".to_string(),
-            },
-            crate::cert_server::Error::Api {
-                status: reqwest::StatusCode::CONFLICT,
-                code: "future_conflict".to_string(),
-                message: "future conflict".to_string(),
-            },
-        ] {
-            let failure = classify_api_error(&error);
-            assert_eq!(failure, AuthFailureKind::ServerError);
-            assert!(!should_fallback_to_email(true, failure));
-        }
+    fn missing_apply_target_is_replanned_separately() {
+        assert_eq!(
+            classify_identity_attempt(&api(reqwest::StatusCode::NOT_FOUND, "domain_not_found")),
+            AuthAttemptDisposition::ReplanMissingTarget
+        );
+        assert_eq!(
+            classify_identity_attempt(&api(
+                reqwest::StatusCode::NOT_FOUND,
+                "cert_sequence_not_found"
+            )),
+            AuthAttemptDisposition::Terminal
+        );
     }
 }

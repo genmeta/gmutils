@@ -4,6 +4,7 @@ use dhttp::home::{DhttpHome, HomeScope};
 use snafu::{FromString, OptionExt, whatever};
 
 use super::{
+    auth_plan::CandidateEvent,
     kind::IdentityKind,
     target::{
         IdentityLevel, IdentityTarget, RemoteTargetState, ReplacementRequirement,
@@ -184,7 +185,10 @@ async fn offer_expired_code_resend(
 }
 
 fn is_domain_not_found(error: &crate::cert_server::Error) -> bool {
-    error.is_api_code("domain_not_found")
+    matches!(
+        crate::auth::classify_identity_attempt(error),
+        crate::auth::AuthAttemptDisposition::ReplanMissingTarget
+    )
 }
 
 fn classify_apply_email_issue_error(
@@ -217,13 +221,19 @@ fn preserve_apply_registration_error(error: Error) -> Error {
     error
 }
 
-fn resolve_non_interactive_approval_plan(identity_auth_domain: Option<&str>) -> ApplyApprovalPlan {
-    if let Some(auth_domain) = identity_auth_domain {
-        return ApplyApprovalPlan::DirectIdentity {
-            auth_domain: auth_domain.to_string(),
-        };
+fn approval_plan_from_candidate(candidate: CandidateEvent) -> Result<ApplyApprovalPlan, Error> {
+    match candidate {
+        CandidateEvent::Identity { full_name, .. } => Ok(ApplyApprovalPlan::DirectIdentity {
+            auth_domain: full_name,
+        }),
+        CandidateEvent::Email => Ok(ApplyApprovalPlan::Email),
+        CandidateEvent::Warning(_) => {
+            unreachable!("first_auth_candidate consumes warnings")
+        }
+        CandidateEvent::Exhausted => {
+            whatever!("no authentication candidate is available")
+        }
     }
-    ApplyApprovalPlan::Email
 }
 
 fn apply_identity_name_opening() -> &'static str {
@@ -508,7 +518,7 @@ async fn run_interactive_with_policy(
         .and_then(|config| config.settings().default_identity_name().cloned());
     let resolved = resolve_apply_target(command, dhttp_home, cert_server, true).await?;
     let local_identity_save = authorize_local_replacement(&resolved, command.force, true).await?;
-    let _remote = resolved.remote;
+    let remote_target_state = resolved.remote;
     let mut state = InteractiveApplyState::from_command(
         command,
         Some(resolved.target.clone().into_dhttp_name()),
@@ -531,13 +541,10 @@ async fn run_interactive_with_policy(
             .whatever_context::<_, Error>("interactive apply target is unavailable")?;
         let target = IdentityTarget::parse(domain.as_partial())?;
         if state.approval_plan.is_none() {
-            let auth_plan = super::auth_plan::load_apply_auth_plan(dhttp_home, &target).await?;
-            for warning in &auth_plan.warnings {
-                crate::cli::flow::transcript::print_err_block(warning);
-            }
-            state.approval_plan = Some(resolve_non_interactive_approval_plan(
-                auth_plan.first_identity_full_name(),
-            ));
+            let candidate =
+                super::auth_plan::first_auth_candidate(dhttp_home, &target, remote_target_state)
+                    .await?;
+            state.approval_plan = Some(approval_plan_from_candidate(candidate)?);
             continue;
         }
 
@@ -878,17 +885,15 @@ pub(crate) async fn run_with_policy(
         .and_then(|config| config.settings().default_identity_name().cloned());
     let resolved = resolve_apply_target(command, dhttp_home, cert_server, false).await?;
     let local_identity_save = authorize_local_replacement(&resolved, command.force, false).await?;
-    let _remote = resolved.remote;
+    let remote_target_state = resolved.remote;
     let target = resolved.target;
     let domain = target.dhttp_name().into_owned();
     let kind = resolve_kind(command).await?;
     let device_name =
         super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
-    let auth_plan = super::auth_plan::load_apply_auth_plan(dhttp_home, &target).await?;
-    for warning in &auth_plan.warnings {
-        crate::cli::flow::transcript::print_err_block(warning);
-    }
-    let approval_plan = resolve_non_interactive_approval_plan(auth_plan.first_identity_full_name());
+    let approval_plan = approval_plan_from_candidate(
+        super::auth_plan::first_auth_candidate(dhttp_home, &target, remote_target_state).await?,
+    )?;
 
     let (key_pem, csr_pem) = cli::generate_private_key_and_csr(&domain)?;
     let detail = match approval_plan {
@@ -1050,13 +1055,13 @@ pub(crate) async fn run(
 #[cfg(test)]
 mod tests {
     use super::{
-        ApplyApprovalPlan, ApplyVerifyCodeAction, InteractiveApplyState, MissingTargetAction,
-        apply_identity_name_opening, apply_verify_code_actions, authorize_local_replacement,
+        ApplyApprovalPlan, ApplyVerifyCodeAction, CandidateEvent, InteractiveApplyState,
+        MissingTargetAction, apply_identity_name_opening, apply_verify_code_actions,
+        approval_plan_from_candidate, authorize_local_replacement,
         classify_apply_email_issue_error, explicit_target_from_command,
         interactive_name_unavailable_message, missing_root_target_error, missing_target_action,
         new_identity_confirmation_message, preserve_apply_email_issue_error,
         preserve_apply_registration_error, resolve_apply_target,
-        resolve_non_interactive_approval_plan,
     };
     use crate::cli::{
         Apply, LocalIdentitySave,
@@ -1246,7 +1251,7 @@ mod tests {
     #[test]
     fn root_apply_without_local_auth_defaults_to_email_non_interactively() {
         assert_eq!(
-            resolve_non_interactive_approval_plan(None),
+            approval_plan_from_candidate(CandidateEvent::Email).unwrap(),
             ApplyApprovalPlan::Email,
         );
     }
@@ -1254,9 +1259,13 @@ mod tests {
     #[test]
     fn root_apply_prefers_ready_local_auth_non_interactively() {
         assert_eq!(
-            resolve_non_interactive_approval_plan(Some("alice.smith")),
+            approval_plan_from_candidate(CandidateEvent::Identity {
+                short_name: "alice.smith".to_string(),
+                full_name: "alice.smith.dhttp.net".to_string(),
+            })
+            .unwrap(),
             ApplyApprovalPlan::DirectIdentity {
-                auth_domain: "alice.smith".to_string(),
+                auth_domain: "alice.smith.dhttp.net".to_string(),
             },
         );
     }
@@ -1264,9 +1273,13 @@ mod tests {
     #[test]
     fn sub_identity_apply_automatically_uses_ready_parent() {
         assert_eq!(
-            resolve_non_interactive_approval_plan(Some("alice.smith")),
+            approval_plan_from_candidate(CandidateEvent::Identity {
+                short_name: "alice.smith".to_string(),
+                full_name: "alice.smith.dhttp.net".to_string(),
+            })
+            .unwrap(),
             ApplyApprovalPlan::DirectIdentity {
-                auth_domain: "alice.smith".to_string(),
+                auth_domain: "alice.smith.dhttp.net".to_string(),
             },
         );
     }
