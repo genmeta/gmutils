@@ -289,20 +289,33 @@ fn print_auth_rejection(name: &str, error: &crate::cert_server::Error) {
 
 #[derive(Debug)]
 enum ApplyAttempt {
-    Certificate(CertificateDetail),
+    Certificate(Box<CertificateDetail>),
     ReplanMissing,
 }
 
-async fn attempt_apply_with_candidates(
-    command: &Apply,
-    dhttp_home: &DhttpHome,
-    cert_server: &CertServer,
-    resolved: &mut ResolvedApplyTarget,
+struct ApplyAttemptContext<'a> {
+    command: &'a Apply,
+    dhttp_home: &'a DhttpHome,
+    cert_server: &'a CertServer,
     kind: IdentityKind,
-    device_name: &str,
+    device_name: &'a str,
     interactive: bool,
-    key_material: &mut super::key_material::LazyKeyMaterial,
+    key_material: &'a mut super::key_material::LazyKeyMaterial,
+}
+
+async fn attempt_apply_with_candidates(
+    resolved: &mut ResolvedApplyTarget,
+    context: ApplyAttemptContext<'_>,
 ) -> Result<ApplyAttempt, Error> {
+    let ApplyAttemptContext {
+        command,
+        dhttp_home,
+        cert_server,
+        kind,
+        device_name,
+        interactive,
+        key_material,
+    } = context;
     let specs = super::auth_plan::candidate_specs(&resolved.target, resolved.remote);
     let loader = super::auth_plan::HomeExactIdentityLoader::new(dhttp_home);
     let mut candidates = super::auth_plan::AuthCandidateRunner::new(loader, specs);
@@ -344,7 +357,7 @@ async fn attempt_apply_with_candidates(
                 )
                 .await
                 {
-                    Ok(detail) => return Ok(ApplyAttempt::Certificate(detail)),
+                    Ok(detail) => return Ok(ApplyAttempt::Certificate(Box::new(detail))),
                     Err(RequestFailure::Local(error)) => return Err(error),
                     Err(RequestFailure::Remote(error)) => {
                         match crate::auth::classify_identity_attempt(&error) {
@@ -419,7 +432,7 @@ async fn attempt_apply_with_candidates(
                     }
                     Err(RequestFailure::Remote(error)) => return Err(error.into()),
                 };
-                return Ok(ApplyAttempt::Certificate(detail));
+                return Ok(ApplyAttempt::Certificate(Box::new(detail)));
             }
             CandidateEvent::Exhausted => {
                 if let Some(error) = last_rejection {
@@ -496,14 +509,16 @@ pub(crate) async fn run(
 
     loop {
         match attempt_apply_with_candidates(
-            command,
-            dhttp_home,
-            cert_server,
             &mut resolved,
-            kind,
-            &device_name,
-            interactive,
-            &mut key_material,
+            ApplyAttemptContext {
+                command,
+                dhttp_home,
+                cert_server,
+                kind,
+                device_name: &device_name,
+                interactive,
+                key_material: &mut key_material,
+            },
         )
         .await?
         {
