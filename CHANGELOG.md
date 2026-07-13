@@ -16,9 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `genmeta identity apply [name]` is now the single create-or-update flow;
   the former `identity create` command has been removed.
-- Missing eligible sub-identities now enter registration naturally during
-  `identity apply`, without a separate registration flag. Names entered by an
-  interactive prompt receive an early certserver availability check.
+- Existing identities, new root identities, and new direct sub-identities now
+  share the same `identity apply` lifecycle. Names entered by an interactive
+  prompt receive an early local and certserver availability check.
 - Bare `genmeta identity renew` targets the configured default identity, and
   renew no longer accepts `--default`.
 - Identity authentication selects the first usable proof from the target,
@@ -27,9 +27,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failures remain terminal instead of changing proof.
 - Verification-code recovery keeps attempt limits at the code prompt without
   resending automatically, and treats blocked accounts as terminal.
-- Compact identity output uses `(default)` and retains abnormal states. Detail
-  output keeps the chain in the summary, then shows `Issuer`, `Valid from`,
-  `Expires`/`Expired`, `dir`, and an invalid/incomplete reason when available.
+- `apply`, `renew`, and `default` now give `--force` command-specific meanings:
+  local replacement approval, recoverable renewal preflight, and non-ready
+  default selection respectively. Force never bypasses authentication,
+  certificate validation, payment confirmation, or a missing local target.
+- Removed legacy public identity flow switches, including `--auth`,
+  `--register-if-missing`, `--replace-local`, `--send-code`, and
+  `--allow-nonready`.
+- Compact identity output uses `(default)` and retains abnormal states. The
+  shared detail renderer reports usage, sequence, profile directory, validity,
+  reason, and warning fields; `default -v`, `info`, and `list -v` use the same
+  format.
+- Renewal preserves the original certificate-chain kind and sequence, performs
+  strict local preflight, installs validated material transactionally, and
+  prints a visible success result.
+
+### Fixed
+
+- Identity authentication now degrades only after unusable local material or
+  explicit authorization rejection; transport, parsing, quota, and unknown
+  failures remain terminal.
+- Generated private keys stay in memory until a validated certificate can be
+  installed, and local certificate/key replacement rolls back on commit
+  failure without deleting service files.
 
 ## [0.8.0-beta.3] - 2026-07-09
 
