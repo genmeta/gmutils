@@ -287,6 +287,21 @@ fn print_auth_rejection(name: &str, error: &crate::cert_server::Error) {
     ));
 }
 
+fn should_register_with_parent(target: &IdentityTarget, remote: RemoteTargetState) -> bool {
+    target.level() == IdentityLevel::SubIdentity
+        && matches!(
+            remote,
+            RemoteTargetState::Missing | RemoteTargetState::Unknown
+        )
+}
+
+fn should_register_with_email(remote: RemoteTargetState) -> bool {
+    matches!(
+        remote,
+        RemoteTargetState::Missing | RemoteTargetState::Unknown
+    )
+}
+
 #[derive(Debug)]
 enum ApplyAttempt {
     Certificate(Box<CertificateDetail>),
@@ -330,7 +345,7 @@ async fn attempt_apply_with_candidates(
                 short_name,
                 full_name,
             } => {
-                if resolved.remote == RemoteTargetState::Missing {
+                if should_register_with_parent(&resolved.target, resolved.remote) {
                     match register_with_parent(cert_server, &resolved.target, &full_name).await {
                         Ok(outcome) => {
                             print_new_name(outcome);
@@ -386,7 +401,7 @@ async fn attempt_apply_with_candidates(
                 )
                 .await?;
 
-                if resolved.remote == RemoteTargetState::Missing {
+                if should_register_with_email(resolved.remote) {
                     let outcome =
                         register_with_email(cert_server, &resolved.target, &token, interactive)
                             .await?;
@@ -642,5 +657,27 @@ mod tests {
                 super::super::auth_plan::AuthCandidateSpec::Email,
             ]
         );
+    }
+
+    #[test]
+    fn explicit_targets_register_only_before_the_proof_that_can_own_them() {
+        let root = IdentityTarget::parse("alice.smith").unwrap();
+        let child = IdentityTarget::parse("phone.alice.smith").unwrap();
+
+        assert!(!should_register_with_parent(
+            &root,
+            RemoteTargetState::Unknown
+        ));
+        assert!(should_register_with_parent(
+            &child,
+            RemoteTargetState::Unknown
+        ));
+        assert!(!should_register_with_parent(
+            &child,
+            RemoteTargetState::Exists
+        ));
+        assert!(should_register_with_email(RemoteTargetState::Unknown));
+        assert!(should_register_with_email(RemoteTargetState::Missing));
+        assert!(!should_register_with_email(RemoteTargetState::Exists));
     }
 }

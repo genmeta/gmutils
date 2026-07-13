@@ -1,4 +1,7 @@
-use std::future::Future;
+use std::{
+    future::Future,
+    io::{self, IsTerminal},
+};
 
 use tracing::{Instrument, info_span};
 use tracing_indicatif::span_ext::IndicatifSpanExt;
@@ -47,7 +50,7 @@ pub(crate) async fn run<T, E>(
     span.pb_start();
     let result = future.instrument(span.clone()).await;
     if result.is_ok() {
-        span.pb_set_finish_message(copy.success);
+        retain_success(&span, copy.success);
     }
     drop(span);
     result
@@ -65,10 +68,18 @@ pub(crate) fn run_sync<T, E>(
         operation()
     };
     if result.is_ok() {
-        span.pb_set_finish_message(copy.success);
+        retain_success(&span, copy.success);
     }
     drop(span);
     result
+}
+
+fn retain_success(span: &tracing::Span, success: &'static str) {
+    if io::stderr().is_terminal() {
+        span.pb_set_finish_message(success);
+    } else {
+        super::transcript::print_line(success);
+    }
 }
 
 #[cfg(test)]
