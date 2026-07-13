@@ -21,9 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interactive prompt receive an early certserver availability check.
 - Bare `genmeta identity renew` targets the configured default identity, and
   renew no longer accepts `--default`.
-- Identity authentication skips expired, incomplete, and invalid local
-  certificates with an actionable warning, then tries the direct parent when
-  available before falling back to email verification.
+- Identity authentication selects the first usable proof from the target,
+  direct parent, and email sequence. It skips expired, incomplete, and invalid
+  local certificates with an actionable warning, while transport and server
+  failures remain terminal instead of changing proof.
+- Verification-code recovery keeps attempt limits at the code prompt without
+  resending automatically, and treats blocked accounts as terminal.
 - Compact identity output uses `(default)` and retains abnormal states. Detail
   output keeps the chain in the summary, then shows `Issuer`, `Valid from`,
   `Expires`/`Expired`, `dir`, and an invalid/incomplete reason when available.

@@ -21,6 +21,11 @@ pub enum AuthFailureKind {
     ServerError,
 }
 
+/// Returns whether an automatic flow may use email after a stable
+/// authentication failure.
+///
+/// The caller must already have established that the server permits email as
+/// an alternate proof. Transport and server failures never change proof.
 pub fn should_fallback_to_email(
     method: Option<AuthMethod>,
     can_get_email_credentials: bool,
@@ -35,7 +40,6 @@ pub fn is_email_fallback_failure(failure: AuthFailureKind) -> bool {
         AuthFailureKind::MissingIdentity
             | AuthFailureKind::MtlsRejected
             | AuthFailureKind::DomainForbidden
-            | AuthFailureKind::TransportUnavailable
     )
 }
 
@@ -68,7 +72,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auto_interactive_falls_back_for_auth_only_failures() {
+    fn auto_interactive_falls_back_for_credential_failures() {
         assert!(should_fallback_to_email(
             None,
             true,
@@ -84,7 +88,11 @@ mod tests {
             true,
             AuthFailureKind::DomainForbidden
         ));
-        assert!(should_fallback_to_email(
+    }
+
+    #[test]
+    fn transport_unavailability_does_not_fallback() {
+        assert!(!should_fallback_to_email(
             None,
             true,
             AuthFailureKind::TransportUnavailable
@@ -143,5 +151,25 @@ mod tests {
             true,
             classify_api_error(&error)
         ));
+    }
+
+    #[test]
+    fn classifier_keeps_server_and_unknown_client_errors_terminal() {
+        for error in [
+            crate::cert_server::Error::Api {
+                status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                code: "internal_error".to_string(),
+                message: "internal error".to_string(),
+            },
+            crate::cert_server::Error::Api {
+                status: reqwest::StatusCode::CONFLICT,
+                code: "future_conflict".to_string(),
+                message: "future conflict".to_string(),
+            },
+        ] {
+            let failure = classify_api_error(&error);
+            assert_eq!(failure, AuthFailureKind::ServerError);
+            assert!(!should_fallback_to_email(None, true, failure));
+        }
     }
 }

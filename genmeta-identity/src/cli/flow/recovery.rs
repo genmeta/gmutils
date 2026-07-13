@@ -18,7 +18,12 @@ pub(crate) fn classify_resend_error(error: &crate::cert_server::Error) -> Verifi
             message,
         }
             if *status == reqwest::StatusCode::TOO_MANY_REQUESTS
-                && code == "verify_code_too_frequent" =>
+                && matches!(
+                    code.as_str(),
+                    "verify_code_too_frequent"
+                        | "verify_code_attempt_exceeded"
+                        | "verify_code_rate_limited"
+                ) =>
         {
             VerificationRecovery::StayCurrentStep {
                 message: message.clone(),
@@ -87,6 +92,22 @@ pub(crate) fn classify_verify_submit_error(
                 message: message.clone(),
             }
         }
+        crate::cert_server::Error::Api {
+            status,
+            code,
+            message,
+        } if *status == reqwest::StatusCode::TOO_MANY_REQUESTS
+            && code == "verify_code_attempt_exceeded" =>
+        {
+            VerificationRecovery::StayCurrentStep {
+                message: message.clone(),
+            }
+        }
+        crate::cert_server::Error::Api { status, code, .. }
+            if *status == reqwest::StatusCode::FORBIDDEN && code == "user_blocked" =>
+        {
+            VerificationRecovery::Abort
+        }
         crate::cert_server::Error::Api { status, .. } if status.is_server_error() => {
             VerificationRecovery::Abort
         }
@@ -115,19 +136,25 @@ mod tests {
     }
 
     #[test]
-    fn resend_rate_limit_stays_on_current_step() {
-        let error = crate::cert_server::Error::Api {
-            status: reqwest::StatusCode::TOO_MANY_REQUESTS,
-            code: "verify_code_too_frequent".to_string(),
-            message: "email code sent too frequently".to_string(),
-        };
+    fn resend_rate_limits_stay_on_current_step() {
+        for code in [
+            "verify_code_too_frequent",
+            "verify_code_attempt_exceeded",
+            "verify_code_rate_limited",
+        ] {
+            let error = crate::cert_server::Error::Api {
+                status: reqwest::StatusCode::TOO_MANY_REQUESTS,
+                code: code.to_string(),
+                message: "email verification is temporarily rate limited".to_string(),
+            };
 
-        assert_eq!(
-            classify_resend_error(&error),
-            VerificationRecovery::StayCurrentStep {
-                message: "email code sent too frequently".to_string(),
-            }
-        );
+            assert_eq!(
+                classify_resend_error(&error),
+                VerificationRecovery::StayCurrentStep {
+                    message: "email verification is temporarily rate limited".to_string(),
+                }
+            );
+        }
     }
 
     #[test]
@@ -157,6 +184,36 @@ mod tests {
         assert_eq!(
             classify_verify_submit_error(&error),
             VerificationRecovery::Abort
+        );
+    }
+
+    #[test]
+    fn blocked_user_aborts_verification() {
+        let error = crate::cert_server::Error::Api {
+            status: reqwest::StatusCode::FORBIDDEN,
+            code: "user_blocked".to_string(),
+            message: "user is blocked".to_string(),
+        };
+
+        assert_eq!(
+            classify_verify_submit_error(&error),
+            VerificationRecovery::Abort
+        );
+    }
+
+    #[test]
+    fn verification_attempt_limit_stays_at_code_input() {
+        let error = crate::cert_server::Error::Api {
+            status: reqwest::StatusCode::TOO_MANY_REQUESTS,
+            code: "verify_code_attempt_exceeded".to_string(),
+            message: "too many failed verification attempts, try again later".to_string(),
+        };
+
+        assert_eq!(
+            classify_verify_submit_error(&error),
+            VerificationRecovery::StayCurrentStep {
+                message: "too many failed verification attempts, try again later".to_string(),
+            }
         );
     }
 
