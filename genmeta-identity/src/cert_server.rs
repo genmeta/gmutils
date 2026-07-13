@@ -152,6 +152,36 @@ pub struct DomainLoginResponse {
 pub struct DomainAvailabilityResponse {
     pub domain: String,
     pub availability: String,
+    pub currency: String,
+    pub prices: Vec<PricingItem>,
+}
+
+impl DomainAvailabilityResponse {
+    pub fn monthly_amount(&self) -> Option<i64> {
+        self.prices
+            .iter()
+            .find(|price| price.interval == "monthly")
+            .map(|price| price.amount)
+    }
+
+    pub fn yearly_amount(&self) -> Option<i64> {
+        self.prices
+            .iter()
+            .find(|price| price.interval == "yearly")
+            .map(|price| price.amount)
+    }
+
+    pub fn is_free(&self) -> bool {
+        !self.prices.is_empty() && self.prices.iter().all(|price| price.amount == 0)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PricingItem {
+    pub interval: String,
+    pub amount: i64,
+    #[serde(default)]
+    pub discount: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -857,12 +887,19 @@ mod tests {
           "domain":"alice.smith.dhttp.net",
           "availability":"conflict",
           "currency":"USD",
-          "prices":[]
+          "prices":[
+            {"interval":"monthly","amount":500},
+            {"interval":"yearly","amount":3000,"discount":0.5}
+          ]
         }
         "#;
         let response: DomainAvailabilityResponse = serde_json::from_str(payload).unwrap();
         assert_eq!(response.domain, "alice.smith.dhttp.net");
         assert_eq!(response.availability, "conflict");
+        assert_eq!(response.currency, "USD");
+        assert_eq!(response.monthly_amount(), Some(500));
+        assert_eq!(response.yearly_amount(), Some(3000));
+        assert!(!response.is_free());
     }
 
     #[test]

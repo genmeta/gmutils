@@ -1,6 +1,7 @@
 use std::io::IsTerminal;
 
 use qrcode::{QrCode, render::unicode, types::QrError};
+use snafu::FromString;
 
 use crate::{cert_server::CreateDomainResponse, cli::flow::transcript};
 
@@ -10,6 +11,7 @@ pub enum CheckoutState {
     Completed,
     Expired,
     Cancelled,
+    Failed,
 }
 
 pub fn classify_checkout(response: &CreateDomainResponse) -> CheckoutState {
@@ -22,7 +24,8 @@ pub fn classify_checkout(response: &CreateDomainResponse) -> CheckoutState {
             "paid" => CheckoutState::Completed,
             "expired" => CheckoutState::Expired,
             "cancelled" | "canceled" => CheckoutState::Cancelled,
-            _ => CheckoutState::Pending,
+            "pending" | "open" | "unpaid" | "processing" => CheckoutState::Pending,
+            _ => CheckoutState::Failed,
         };
     }
 
@@ -30,43 +33,25 @@ pub fn classify_checkout(response: &CreateDomainResponse) -> CheckoutState {
         return match reservation.status.as_str() {
             "expired" => CheckoutState::Expired,
             "cancelled" | "canceled" => CheckoutState::Cancelled,
-            _ => CheckoutState::Pending,
+            "pending" | "reserved" => CheckoutState::Pending,
+            _ => CheckoutState::Failed,
         };
     }
 
-    CheckoutState::Pending
+    match response.next_action.as_str() {
+        "payment" | "pending" => CheckoutState::Pending,
+        _ => CheckoutState::Failed,
+    }
 }
 
 pub fn print_payment_instructions(response: &CreateDomainResponse) {
-    transcript::print_err_block(&payment_instruction_block(
-        response,
-        std::io::stderr().is_terminal(),
-    ));
-}
-
-fn payment_instruction_block(response: &CreateDomainResponse, include_qr: bool) -> String {
-    let mut lines = vec![
-        format!("payment required for {}", response.domain),
-        format!("currency: {}", response.quotes.currency),
-        format!("monthly: {}", response.quotes.monthly),
-        format!("yearly: {}", response.quotes.yearly),
-        format!(
-            "default billing cycle: {}",
-            response.quotes.default_billing_cycle
-        ),
-    ];
-    if let Some(reservation) = &response.reservation {
-        lines.push(format!("reservation: {}", reservation.reservation_no));
-        lines.push(format!(
-            "reservation expires at: {}",
-            reservation.expires_at
-        ));
-    }
     if let Some(payment_entry) = &response.payment_entry {
-        lines.push(format!("checkout expires at: {}", payment_entry.expires_at));
-        return checkout_instruction_block(&lines.join("\n"), &payment_entry.url, include_qr);
+        let include_qr = std::io::stderr().is_terminal();
+        let block = payment_instruction_block(&payment_entry.url, include_qr)
+            .or_else(|_| payment_instruction_block(&payment_entry.url, false))
+            .expect("rendering payment instructions without a QR code cannot fail");
+        transcript::print_err_block(&block);
     }
-    lines.join("\n")
 }
 
 fn render_terminal_qr(url: &str) -> Result<String, QrError> {
@@ -78,29 +63,44 @@ fn render_terminal_qr(url: &str) -> Result<String, QrError> {
         .build())
 }
 
-pub(crate) fn checkout_instruction_block(summary: &str, url: &str, include_qr: bool) -> String {
-    let mut block = summary.to_string();
+pub(crate) fn payment_instruction_block(url: &str, include_qr: bool) -> Result<String, QrError> {
+    let mut block = String::new();
 
-    if include_qr && let Ok(qr) = render_terminal_qr(url) {
-        block.push_str("\n\nScan this QR code to pay:\n");
-        block.push_str(&qr);
+    if include_qr {
+        block.push_str(render_terminal_qr(url)?.trim_end());
+        block.push_str("\n\n");
     }
 
-    block.push_str("\n\nOpen link: ");
+    block.push_str("[!] Please complete your payment within 15 minutes.\n");
+    block.push_str("    Open the link below, or scan the QR code above\n\n");
+    block.push_str("    Link: ");
     block.push_str(url);
-    block
+    Ok(block)
 }
 
 pub async fn wait_for_checkout_completion(
     cert_server: &crate::cert_server::CertServer,
     checkout_token: &str,
 ) -> Result<CreateDomainResponse, crate::cert_server::Error> {
-    crate::cli::flow::progress::run_with_spinner("Waiting for payment confirmation...", async {
+    crate::cli::flow::progress::run(crate::cli::flow::progress::WAIT_FOR_PAYMENT, async {
         loop {
             let response = cert_server.get_checkout(checkout_token).await?;
             match classify_checkout(&response) {
-                CheckoutState::Completed | CheckoutState::Expired | CheckoutState::Cancelled => {
-                    return Ok(response);
+                CheckoutState::Completed => return Ok(response),
+                CheckoutState::Expired => {
+                    return Err(crate::cert_server::Error::without_source(
+                        "checkout expired before payment was completed".to_string(),
+                    ));
+                }
+                CheckoutState::Cancelled => {
+                    return Err(crate::cert_server::Error::without_source(
+                        "checkout was cancelled before payment was completed".to_string(),
+                    ));
+                }
+                CheckoutState::Failed => {
+                    return Err(crate::cert_server::Error::without_source(
+                        "checkout failed or returned an unsupported terminal state".to_string(),
+                    ));
                 }
                 CheckoutState::Pending => {
                     tokio::time::sleep(std::time::Duration::from_secs(3)).await
@@ -135,20 +135,6 @@ mod tests {
     }
 
     #[test]
-    fn checkout_block_includes_terminal_qr_when_stderr_is_terminal() {
-        let block = checkout_instruction_block(
-            "Payment is required to create alice.smith.",
-            "https://pay.example.test/checkout/ckt_123",
-            true,
-        );
-
-        assert!(block.contains("Payment is required to create alice.smith."));
-        assert!(block.contains("Scan this QR code to pay:"));
-        assert!(block.contains(['▀', '▄', '█']), "{block:?}");
-        assert!(block.contains("Open link: https://pay.example.test/checkout/ckt_123"));
-    }
-
-    #[test]
     fn terminal_qr_uses_the_compact_stable_layout() {
         let qr = render_terminal_qr("https://pay.example.test/checkout/ckt_123").unwrap();
         let rows = qr.lines().count();
@@ -164,35 +150,41 @@ mod tests {
     }
 
     #[test]
-    fn checkout_block_omits_terminal_qr_when_stderr_is_not_terminal() {
-        let block = checkout_instruction_block(
-            "Payment is required to create alice.smith.",
-            "https://pay.example.test/checkout/ckt_123",
-            false,
-        );
+    fn payment_block_omits_only_the_qr_on_a_non_terminal_stream() {
+        let block =
+            payment_instruction_block("https://pay.example.test/checkout/ckt_123", false).unwrap();
 
-        assert!(block.contains("Payment is required to create alice.smith."));
-        assert!(!block.contains("Scan this QR code to pay:"));
         assert!(!block.contains(['▀', '▄', '█']));
         assert_eq!(
             block,
-            "Payment is required to create alice.smith.\n\nOpen link: https://pay.example.test/checkout/ckt_123"
+            "[!] Please complete your payment within 15 minutes.\n    Open the link below, or scan the QR code above\n\n    Link: https://pay.example.test/checkout/ckt_123"
         );
     }
 
     #[test]
-    fn payment_instruction_block_adds_qr_to_payment_entry() {
+    fn payment_block_places_compact_qr_before_the_link() {
+        let rendered =
+            payment_instruction_block("https://pay.example.test/checkout", true).unwrap();
+        let qr = rendered.find('█').unwrap();
+        let notice = rendered
+            .find("[!] Please complete your payment within 15 minutes.")
+            .unwrap();
+        let link = rendered
+            .find("Link: https://pay.example.test/checkout")
+            .unwrap();
+
+        assert!(qr < notice && notice < link, "{rendered}");
+        assert!(rendered.contains("Open the link below, or scan the QR code above"));
+        assert!(!rendered.contains("Open link:"));
+    }
+
+    #[test]
+    fn unknown_invoice_state_is_a_terminal_failure() {
         let response: CreateDomainResponse = serde_json::from_str(
-            r#"{"domain":"alice.smith.dhttp.net","quotes":{"currency":"USD","monthly":9900,"yearly":99000,"default_billing_cycle":"yearly"},"next_action":"payment","payment_entry":{"url":"https://pay.example.com","checkout_token":"tok_123","expires_at":123456}}"#,
+            r#"{"domain":"alice.smith.dhttp.net","quotes":{"currency":"USD","monthly":9900,"yearly":99000,"default_billing_cycle":"yearly"},"next_action":"payment","invoice":{"number":"INV1","status":"surprising","amount":9900,"currency":"USD"}}"#,
         )
         .unwrap();
 
-        let block = payment_instruction_block(&response, true);
-
-        assert!(block.contains("payment required for alice.smith.dhttp.net"));
-        assert!(block.contains("currency: USD"));
-        assert!(block.contains("Scan this QR code to pay:"));
-        assert!(block.contains("Open link: https://pay.example.com"));
-        assert!(!block.contains("tok_123"));
+        assert_eq!(classify_checkout(&response), CheckoutState::Failed);
     }
 }

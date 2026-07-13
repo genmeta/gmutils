@@ -31,6 +31,8 @@ pub(crate) const REQUEST_CERT: ProgressCopy = ProgressCopy::new(
     "Generating CSR and requesting certificate...",
     "Generated CSR and requested certificate.",
 );
+pub(crate) const WAIT_FOR_PAYMENT: ProgressCopy =
+    ProgressCopy::new("Waiting for payment completion...", "Payment completed.");
 pub(crate) const RENEW_IDENTITY: ProgressCopy =
     ProgressCopy::new("Renewing identity...", "Renewed identity.");
 pub(crate) const SAVE_DEFAULT: ProgressCopy =
@@ -96,7 +98,7 @@ mod tests {
 
     use super::{
         CHECK_NAME, GENERATE_KEY, ProgressCopy, RENEW_IDENTITY, REQUEST_CERT, SAVE_DEFAULT,
-        SEND_CODE, VERIFY_EMAIL, run_with_spinner,
+        SEND_CODE, VERIFY_EMAIL, WAIT_FOR_PAYMENT, run_with_spinner,
     };
 
     #[test]
@@ -118,6 +120,7 @@ mod tests {
             REQUEST_CERT.success,
             "Generated CSR and requested certificate."
         );
+        assert_eq!(WAIT_FOR_PAYMENT.success, "Payment completed.");
         assert_eq!(RENEW_IDENTITY.success, "Renewed identity.");
         assert_eq!(SAVE_DEFAULT.success, "Saved default identity.");
     }
