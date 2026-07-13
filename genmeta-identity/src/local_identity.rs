@@ -16,8 +16,12 @@ pub enum Error {
 pub fn private_key_matches_certificate(key_der: &[u8], cert_pem: &[u8]) -> Result<bool, Error> {
     let (_, pem) =
         x509_parser::pem::parse_x509_pem(cert_pem).map_err(|_| Error::ParseCertificatePem)?;
+    private_key_matches_certificate_der(key_der, &pem.contents)
+}
+
+pub fn private_key_matches_certificate_der(key_der: &[u8], cert_der: &[u8]) -> Result<bool, Error> {
     let (_, cert) =
-        x509_parser::parse_x509_certificate(&pem.contents).map_err(|_| Error::ParseCertificate)?;
+        x509_parser::parse_x509_certificate(cert_der).map_err(|_| Error::ParseCertificate)?;
     let cert_spki = cert.public_key().raw;
 
     let signing_key =

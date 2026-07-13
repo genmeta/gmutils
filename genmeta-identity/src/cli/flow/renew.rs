@@ -63,6 +63,28 @@ fn approval_plan_from_candidate(candidate: CandidateEvent) -> Result<RenewApprov
     }
 }
 
+async fn validate_and_save_renew(
+    dhttp_home: &DhttpHome,
+    domain: dhttp::name::DhttpName<'_>,
+    kind: dhttp::certificate::CertificateChainKind,
+    sequence: u32,
+    key_pem: &str,
+    detail: &crate::cert_server::CertificateDetail,
+) -> Result<(), Error> {
+    super::install::validate_and_save(
+        dhttp_home,
+        detail,
+        &super::install::InstallExpectation {
+            target: domain,
+            kind,
+            sequence: Some(sequence),
+        },
+        key_pem,
+    )
+    .await?;
+    Ok(())
+}
+
 async fn resolve_target(
     command: &Renew,
     dhttp_home: &DhttpHome,
@@ -113,7 +135,8 @@ async fn run_interactive(
         let local_identity = identity_profile.load_identity().await?;
         let chain_key = cli::certificate_chain_key_from_identity(&local_identity)?
             .whatever_context::<_, Error>("local identity does not expose a certificate chain")?;
-        let kind = chain_key.kind().as_str();
+        let chain_kind = chain_key.kind();
+        let kind = chain_kind.as_str();
         let sequence = chain_key.sequence().get();
         let device_name =
             super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
@@ -158,11 +181,13 @@ async fn run_interactive(
             }
         };
 
-        cli::save_identity(
+        validate_and_save_renew(
             dhttp_home,
-            &domain,
-            key_pem.as_bytes(),
-            detail.cert_pem.as_bytes(),
+            domain.borrow(),
+            chain_kind,
+            sequence,
+            &key_pem,
+            &detail,
         )
         .await?;
         return Ok(());
@@ -194,7 +219,8 @@ pub(crate) async fn run(
     let local_identity = identity_profile.load_identity().await?;
     let chain_key = cli::certificate_chain_key_from_identity(&local_identity)?
         .whatever_context::<_, Error>("local identity does not expose a certificate chain")?;
-    let kind = chain_key.kind().as_str();
+    let chain_kind = chain_key.kind();
+    let kind = chain_kind.as_str();
     let sequence = chain_key.sequence().get();
     let device_name =
         super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
@@ -239,11 +265,13 @@ pub(crate) async fn run(
         }
     };
 
-    cli::save_identity(
+    validate_and_save_renew(
         dhttp_home,
-        &domain,
-        key_pem.as_bytes(),
-        detail.cert_pem.as_bytes(),
+        domain.borrow(),
+        chain_kind,
+        sequence,
+        &key_pem,
+        &detail,
     )
     .await?;
     Ok(())

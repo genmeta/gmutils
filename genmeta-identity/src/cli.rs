@@ -1,8 +1,7 @@
 pub mod flow;
 pub mod prompt;
 pub mod validator;
-
-use std::{io::IsTerminal, ops::Deref};
+use std::io::IsTerminal;
 
 use clap::Parser;
 use dhttp::{
@@ -13,15 +12,14 @@ use dhttp::{
             settings::{DhttpSettingsFile, LoadDhttpSettingsError, SaveDhttpSettingsError},
             ssl::{
                 ListIdentityProfilesError, LoadCertsError, LoadIdentityError, LoadKeyError,
-                ResolveIdentityProfileError, SaveIdentityError,
+                ResolveIdentityProfileError,
             },
         },
     },
     name::DhttpName as Name,
 };
-pub use flow::welcome::WelcomeServiceError;
+pub use flow::{install::Error as InstallError, welcome::WelcomeServiceError};
 use indicatif::ProgressStyle;
-use rankey::EncodePem;
 use snafu::{ResultExt, Snafu, Whatever, whatever};
 use tokio::io;
 use tracing_indicatif::{
@@ -43,8 +41,6 @@ pub enum Error {
     Prompt { source: prompt::Error },
     #[snafu(transparent)]
     CertServer { source: cert_server::Error },
-    #[snafu(transparent)]
-    SaveIdentity { source: SaveIdentityError },
     #[snafu(transparent)]
     LoadDefaultConfig { source: LoadDhttpSettingsError },
     #[snafu(transparent)]
@@ -78,6 +74,8 @@ pub enum Error {
     LocalIdentity {
         source: crate::local_identity::Error,
     },
+    #[snafu(transparent)]
+    Install { source: InstallError },
 
     #[snafu(display("failed to generate private key"))]
     GenerateKey {
@@ -122,41 +120,14 @@ fn certificate_chain_key_from_identity(
     }
 }
 
-fn generate_private_key_and_csr(
-    name: &Name<'_>,
-) -> Result<(impl Deref<Target = String> + use<>, String), Error> {
-    let key_pem = flow::progress::run_sync(flow::progress::GENERATE_KEY, || {
-        rankey::generate_secp384r1_key()
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-            .context(GenerateKeySnafu)
-    })?;
-    let csr = rankey::generate_csr(&key_pem, "CN", name.as_full(), &[name.as_full()])
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-        .context(GenerateCsrSnafu)?;
-    let csr_pem = csr
-        .to_pem(rankey::LineEnding::LF)
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-        .context(EncodeCsrSnafu)?;
+fn generate_private_key_and_csr(name: &Name<'_>) -> Result<(String, String), Error> {
+    let mut material = flow::key_material::LazyKeyMaterial::for_name(name.clone());
+    let csr_pem = material.csr_pem()?.to_string();
+    let key_pem = material
+        .key_pem()
+        .expect("requesting a CSR generates its key first")
+        .to_string();
     Ok((key_pem, csr_pem))
-}
-
-async fn save_identity(
-    dhttp_home: &DhttpHome,
-    name: &Name<'_>,
-    key_pem: &[u8],
-    cert_pem: &[u8],
-) -> Result<(), Error> {
-    let profile = dhttp_home.identity_profile(name.borrow());
-    flow::progress::run_with_spinner(
-        save_identity_progress_message(),
-        profile.save_identity(cert_pem, key_pem),
-    )
-    .await?;
-    Ok(())
-}
-
-fn save_identity_progress_message() -> &'static str {
-    "Saving identity..."
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -492,7 +463,7 @@ mod tests {
 
     use super::{
         Apply, Cli, Default, Info, Options, cert_server_base_url,
-        certificate_chain_key_from_identity, save_identity_progress_message,
+        certificate_chain_key_from_identity,
     };
     use crate::CERT_SERVER_BASE_URL;
 
@@ -668,11 +639,6 @@ mod tests {
         .unwrap_err();
         let rendered = error.to_string();
         assert!(rendered.contains("--sequence"), "{rendered}");
-    }
-
-    #[test]
-    fn save_progress_uses_user_task_copy() {
-        assert_eq!(save_identity_progress_message(), "Saving identity...");
     }
 
     #[test]

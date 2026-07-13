@@ -4,6 +4,8 @@ pub(crate) mod default_identity;
 pub(crate) mod device;
 pub(crate) mod email;
 pub(crate) mod epilogue;
+pub(crate) mod install;
+pub(crate) mod key_material;
 pub(crate) mod kind;
 pub(crate) mod local;
 pub(crate) mod output;

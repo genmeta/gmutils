@@ -121,6 +121,27 @@ fn approval_plan_from_candidate(candidate: CandidateEvent) -> Result<ApplyApprov
     }
 }
 
+async fn validate_and_save_apply(
+    dhttp_home: &DhttpHome,
+    domain: dhttp::name::DhttpName<'_>,
+    kind: IdentityKind,
+    key_pem: &str,
+    detail: &crate::cert_server::CertificateDetail,
+) -> Result<(), Error> {
+    super::install::validate_and_save(
+        dhttp_home,
+        detail,
+        &super::install::InstallExpectation {
+            target: domain,
+            kind: kind.into(),
+            sequence: None,
+        },
+        key_pem,
+    )
+    .await?;
+    Ok(())
+}
+
 fn apply_identity_name_opening() -> &'static str {
     "Applying identity, generating ECC key pair locally, then requesting and deploying certificate."
 }
@@ -474,11 +495,12 @@ async fn run_interactive_with_policy(
                             ),
                         )
                         .await?;
-                        cli::save_identity(
+                        validate_and_save_apply(
                             dhttp_home,
-                            &domain,
-                            key_pem.as_bytes(),
-                            detail.cert_pem.as_bytes(),
+                            domain.borrow(),
+                            kind,
+                            &key_pem,
+                            &detail,
                         )
                         .await?;
                         let welcome = super::welcome::maybe_create_welcome_service(
@@ -575,13 +597,7 @@ async fn run_interactive_with_policy(
             }
         };
 
-        cli::save_identity(
-            dhttp_home,
-            &domain,
-            key_pem.as_bytes(),
-            detail.cert_pem.as_bytes(),
-        )
-        .await?;
+        validate_and_save_apply(dhttp_home, domain.borrow(), kind, &key_pem, &detail).await?;
         let welcome = super::welcome::maybe_create_welcome_service(
             dhttp_home,
             domain.borrow(),
@@ -742,13 +758,7 @@ pub(crate) async fn run_with_policy(
         }
     };
 
-    cli::save_identity(
-        dhttp_home,
-        &domain,
-        key_pem.as_bytes(),
-        detail.cert_pem.as_bytes(),
-    )
-    .await?;
+    validate_and_save_apply(dhttp_home, domain.borrow(), kind, &key_pem, &detail).await?;
     let welcome = super::welcome::maybe_create_welcome_service(
         dhttp_home,
         domain.borrow(),
