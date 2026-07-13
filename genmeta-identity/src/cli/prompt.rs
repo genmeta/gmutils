@@ -132,10 +132,6 @@ pub(crate) async fn prompt_local_replacement() -> Result<bool, inquire::InquireE
     )
 }
 
-pub(crate) async fn prompt_email() -> Result<String, inquire::InquireError> {
-    prompt_email_with_default(None).await
-}
-
 pub(crate) async fn prompt_email_with_default(
     default: Option<&str>,
 ) -> Result<String, inquire::InquireError> {
@@ -191,18 +187,6 @@ pub(crate) async fn prompt_select_string(
     options: Vec<String>,
 ) -> Result<String, inquire::InquireError> {
     prompt_select_string_with_cursor(message, options, None).await
-}
-
-pub(crate) async fn prompt_verify_code() -> Result<String, inquire::InquireError> {
-    sync!(
-        inquire::Text::new(verify_code_prompt_message())
-            .with_validator(inquire::required!("Verification code cannot be empty."))
-            .with_validator(inquire::length!(
-                6,
-                "Verification code must be exactly 6 characters."
-            ))
-            .prompt()
-    )
 }
 
 pub(crate) async fn prompt_kind() -> Result<IdentityKind, inquire::InquireError> {
@@ -264,6 +248,14 @@ pub(crate) async fn prompt_verify_code_with_more_options(
         prompt.prompt()
     })
     .map(text_prompt_result)
+}
+
+pub(crate) async fn confirm_send_new_verification_code() -> Result<bool, inquire::InquireError> {
+    sync!(
+        inquire::Confirm::new("Send a new verification code?")
+            .with_default(true)
+            .prompt()
+    )
 }
 
 pub(crate) async fn prompt_select_string_with_cursor(

@@ -6,7 +6,7 @@ use snafu::{OptionExt, whatever};
 use super::{auth_plan::CandidateEvent, local};
 use crate::{
     cert_server::CertServer,
-    cli::{self, Error, Renew, prompt::InquireResultExt},
+    cli::{self, Error, Renew},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,108 +15,19 @@ enum RenewApprovalPlan {
     Identity { auth_domain: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum RenewVerifyCodeAction {
-    ResendVerificationCode,
-    ChangeEmail,
-    Cancel,
-}
-
-impl RenewVerifyCodeAction {
-    fn label(&self) -> String {
-        match self {
-            Self::ResendVerificationCode => "Resend verification code".to_string(),
-            Self::ChangeEmail => "Change email".to_string(),
-            Self::Cancel => "Cancel".to_string(),
-        }
-    }
-}
-
-fn renew_verify_code_actions() -> Vec<RenewVerifyCodeAction> {
-    vec![
-        RenewVerifyCodeAction::ResendVerificationCode,
-        RenewVerifyCodeAction::ChangeEmail,
-        RenewVerifyCodeAction::Cancel,
-    ]
-}
-
 #[derive(Debug, Clone)]
 struct InteractiveRenewState {
     target: Option<dhttp::name::DhttpName<'static>>,
     approval_plan: Option<RenewApprovalPlan>,
-    email: Option<String>,
-    email_prompt_required: bool,
-    verify_code: Option<String>,
-    verification_code_sent_to: Option<String>,
 }
 
 impl InteractiveRenewState {
-    fn from_command(command: &Renew, target: Option<dhttp::name::DhttpName<'static>>) -> Self {
+    fn from_command(_command: &Renew, target: Option<dhttp::name::DhttpName<'static>>) -> Self {
         Self {
             target,
             approval_plan: None,
-            email: command.email.clone(),
-            email_prompt_required: command.email.is_none(),
-            verify_code: command.verify_code.clone(),
-            verification_code_sent_to: None,
         }
     }
-
-    fn revisit_email(&mut self) {
-        self.email_prompt_required = true;
-        self.verify_code = None;
-        self.verification_code_sent_to = None;
-    }
-}
-
-fn apply_verification_recovery(
-    state: &mut InteractiveRenewState,
-    recovery: &crate::cli::flow::recovery::VerificationRecovery,
-) -> bool {
-    match recovery {
-        crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep { message } => {
-            crate::cli::flow::transcript::print_line(message);
-            true
-        }
-        crate::cli::flow::recovery::VerificationRecovery::OfferResend { message } => {
-            crate::cli::flow::transcript::print_line(message);
-            true
-        }
-        crate::cli::flow::recovery::VerificationRecovery::BackToEmail { message } => {
-            crate::cli::flow::transcript::print_line(message);
-            state.revisit_email();
-            true
-        }
-        crate::cli::flow::recovery::VerificationRecovery::Abort => false,
-    }
-}
-
-async fn offer_expired_code_resend(
-    state: &mut InteractiveRenewState,
-    cert_server: &CertServer,
-    email: &str,
-    message: &str,
-) -> Result<(), Error> {
-    crate::cli::flow::transcript::print_block(&crate::cli::flow::recovery::format_resend_offer(
-        message,
-    ));
-    let resend = crate::cli::prompt::sync(|| {
-        inquire::Confirm::new("Send a new verification code?")
-            .with_default(true)
-            .prompt()
-    })
-    .await
-    .require_interactive("interactive input")?;
-    if resend {
-        super::progress::run(
-            super::progress::SEND_CODE,
-            cert_server.send_email_verification(email),
-        )
-        .await?;
-        state.verification_code_sent_to = Some(email.to_string());
-    }
-    state.verify_code = None;
-    Ok(())
 }
 
 fn renew_not_saved_root_message(short_name: &str) -> String {
@@ -162,22 +73,6 @@ async fn resolve_target(
     }
 }
 
-async fn prompt_renew_verify_code_action() -> Result<RenewVerifyCodeAction, Error> {
-    let actions = renew_verify_code_actions();
-    let labels = actions
-        .iter()
-        .map(RenewVerifyCodeAction::label)
-        .collect::<Vec<_>>();
-    let selected = crate::cli::prompt::prompt_select_string("More options:", labels.clone())
-        .await
-        .require_interactive("interactive input")?;
-    actions
-        .into_iter()
-        .zip(labels)
-        .find_map(|(action, label)| (label == selected).then_some(action))
-        .whatever_context::<_, Error>("selected renew action is unavailable")
-}
-
 async fn run_interactive(
     command: &Renew,
     dhttp_home: &DhttpHome,
@@ -213,87 +108,6 @@ async fn run_interactive(
             .approval_plan
             .clone()
             .whatever_context::<_, Error>("interactive renew approval plan is unavailable")?;
-        if matches!(approval_plan, RenewApprovalPlan::Email)
-            && (state.email.is_none() || state.email_prompt_required)
-        {
-            let email = crate::cli::prompt::prompt_email_with_default(state.email.as_deref())
-                .await
-                .require_interactive("--email")?;
-            state.email = Some(email);
-            state.email_prompt_required = false;
-            continue;
-        }
-
-        if matches!(approval_plan, RenewApprovalPlan::Email) && state.verify_code.is_none() {
-            let email = state
-                .email
-                .clone()
-                .whatever_context::<_, Error>("interactive renew email is unavailable")?;
-            if state.verification_code_sent_to.as_deref() != Some(email.as_str()) {
-                match super::progress::run(
-                    super::progress::SEND_CODE,
-                    cert_server.send_email_verification(&email),
-                )
-                .await
-                {
-                    Ok(_) => {
-                        state.verification_code_sent_to = Some(email.clone());
-                    }
-                    Err(error) => {
-                        let recovery = crate::cli::flow::recovery::classify_resend_error(&error);
-                        if matches!(
-                            recovery,
-                            crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep { .. }
-                        ) {
-                            state.verification_code_sent_to = Some(email.clone());
-                        }
-                        if apply_verification_recovery(&mut state, &recovery) {
-                            continue;
-                        }
-                        return Err(Error::from(error));
-                    }
-                }
-            }
-            match crate::cli::prompt::prompt_verify_code_with_more_options(None)
-                .await
-                .require_interactive("--verify-code")?
-            {
-                crate::cli::prompt::TextPromptResult::Submitted(code) => {
-                    state.verify_code = Some(code);
-                }
-                crate::cli::prompt::TextPromptResult::MoreOptions => {
-                    match prompt_renew_verify_code_action().await? {
-                        RenewVerifyCodeAction::ResendVerificationCode => {
-                            match super::progress::run(
-                                super::progress::SEND_CODE,
-                                cert_server.send_email_verification(&email),
-                            )
-                            .await
-                            {
-                                Ok(_) => {
-                                    state.verification_code_sent_to = Some(email);
-                                }
-                                Err(error) => {
-                                    let recovery =
-                                        crate::cli::flow::recovery::classify_resend_error(&error);
-                                    if apply_verification_recovery(&mut state, &recovery) {
-                                        continue;
-                                    }
-                                    return Err(Error::from(error));
-                                }
-                            }
-                        }
-                        RenewVerifyCodeAction::ChangeEmail => state.revisit_email(),
-                        RenewVerifyCodeAction::Cancel => {
-                            whatever!(
-                                "Renew was cancelled.\nNo local identity files were changed."
-                            );
-                        }
-                    }
-                }
-            }
-            continue;
-        }
 
         let identity_profile = dhttp_home.resolve_identity_profile(domain.borrow()).await?;
         let local_identity = identity_profile.load_identity().await?;
@@ -307,43 +121,14 @@ async fn run_interactive(
 
         let detail = match approval_plan {
             RenewApprovalPlan::Email => {
-                let email = state
-                    .email
-                    .clone()
-                    .whatever_context::<_, Error>("interactive renew email is unavailable")?;
-                let verify_code = state.verify_code.as_deref().whatever_context::<_, Error>(
-                    "interactive renew verification code is unavailable",
-                )?;
-                let token = match super::progress::run(
-                    super::progress::VERIFY_EMAIL,
-                    cert_server.domain_login(domain.as_full(), &email, verify_code),
+                let token = super::email::run_cert_server_email_session(
+                    cert_server,
+                    super::email::EmailLogin::Domain(domain.as_full().to_string()),
+                    command.email.as_deref(),
+                    command.verify_code.as_deref(),
+                    true,
                 )
-                .await
-                {
-                    Ok(login) => login.access_token,
-                    Err(error) => {
-                        let recovery =
-                            crate::cli::flow::recovery::classify_verify_submit_error(&error);
-                        if let crate::cli::flow::recovery::VerificationRecovery::OfferResend {
-                            message,
-                        } = &recovery
-                        {
-                            offer_expired_code_resend(&mut state, cert_server, &email, message)
-                                .await?;
-                            continue;
-                        }
-                        if matches!(
-                            recovery,
-                            crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep { .. }
-                        ) {
-                            state.verify_code = None;
-                        }
-                        if apply_verification_recovery(&mut state, &recovery) {
-                            continue;
-                        }
-                        return Err(Error::from(error));
-                    }
-                };
+                .await?;
                 super::progress::run(
                     super::progress::RENEW_IDENTITY,
                     cert_server.renew_cert(
@@ -417,11 +202,12 @@ pub(crate) async fn run(
     let (key_pem, csr_pem) = cli::generate_private_key_and_csr(&domain)?;
     let detail = match approval_plan {
         RenewApprovalPlan::Email => {
-            let token = cli::login_with_email(
+            let token = super::email::run_cert_server_email_session(
                 cert_server,
-                Some(&domain),
-                command.email.clone(),
-                command.verify_code.clone(),
+                super::email::EmailLogin::Domain(domain.as_full().to_string()),
+                command.email.as_deref(),
+                command.verify_code.as_deref(),
+                false,
             )
             .await?;
             super::progress::run(
@@ -473,8 +259,8 @@ mod tests {
     use dhttp::home::{DhttpHome, HomeScope};
 
     use super::{
-        CandidateEvent, InteractiveRenewState, RenewApprovalPlan, RenewVerifyCodeAction,
-        approval_plan_from_candidate, renew_not_saved_root_message, renew_verify_code_actions,
+        CandidateEvent, RenewApprovalPlan, approval_plan_from_candidate,
+        renew_not_saved_root_message,
     };
     use crate::cli::Renew;
 
@@ -492,55 +278,6 @@ mod tests {
     fn dummy_cert_server() -> crate::cert_server::CertServer {
         _ = rustls::crypto::ring::default_provider().install_default();
         crate::cert_server::CertServer::new("https://license.genmeta.net").unwrap()
-    }
-
-    #[test]
-    fn stay_recovery_keeps_renew_verify_state() {
-        let mut state = InteractiveRenewState::from_command(
-            &Renew {
-                name: Some("alice.smith".to_string()),
-                force: false,
-                device_name: None,
-                email: Some("alice@example.test".to_string()),
-                verify_code: None,
-            },
-            None,
-        );
-        state.verify_code = Some("123456".to_string());
-
-        super::apply_verification_recovery(
-            &mut state,
-            &crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep {
-                message: "retry later".to_string(),
-            },
-        );
-
-        assert_eq!(state.verify_code.as_deref(), Some("123456"));
-    }
-
-    #[test]
-    fn back_to_email_recovery_reopens_renew_email_prompt() {
-        let mut state = InteractiveRenewState::from_command(
-            &Renew {
-                name: Some("alice.smith".to_string()),
-                force: false,
-                device_name: None,
-                email: Some("alice@example.test".to_string()),
-                verify_code: None,
-            },
-            None,
-        );
-        state.email_prompt_required = false;
-
-        super::apply_verification_recovery(
-            &mut state,
-            &crate::cli::flow::recovery::VerificationRecovery::BackToEmail {
-                message: "start over".to_string(),
-            },
-        );
-
-        assert!(state.email_prompt_required);
-        assert!(state.verify_code.is_none());
     }
 
     #[test]
@@ -591,28 +328,5 @@ mod tests {
         let rendered = error.to_string();
 
         assert_eq!(rendered, "Failed to renew: alice.smith not found!");
-    }
-
-    #[test]
-    fn renew_verify_code_actions_include_resend_and_return_points() {
-        assert_eq!(
-            renew_verify_code_actions()
-                .into_iter()
-                .map(|action| action.label())
-                .collect::<Vec<_>>(),
-            vec![
-                "Resend verification code".to_string(),
-                "Change email".to_string(),
-                "Cancel".to_string(),
-            ]
-        );
-        assert_eq!(
-            renew_verify_code_actions(),
-            vec![
-                RenewVerifyCodeAction::ResendVerificationCode,
-                RenewVerifyCodeAction::ChangeEmail,
-                RenewVerifyCodeAction::Cancel,
-            ]
-        );
     }
 }

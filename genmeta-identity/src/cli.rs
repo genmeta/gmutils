@@ -35,7 +35,6 @@ use tracing_subscriber::{
 use crate::{
     CERT_SERVER_BASE_URL,
     cert_server::{self, CertServer},
-    cli::prompt::InquireResultExt,
 };
 
 #[derive(Debug, Snafu)]
@@ -211,59 +210,8 @@ async fn resolve_default_target_name(dhttp_home: &DhttpHome) -> Result<Name<'sta
     }
 }
 
-async fn acquire_verify_code(
-    cert_server: &CertServer,
-    email: &str,
-    provided: Option<String>,
-) -> Result<String, Error> {
-    match flow::email::EmailVerificationAction::from_verify_code(provided) {
-        flow::email::EmailVerificationAction::ReuseProvidedCode(code) => Ok(code),
-        flow::email::EmailVerificationAction::SendAndPrompt => {
-            flow::progress::run(
-                flow::progress::SEND_CODE,
-                cert_server.send_email_verification(email),
-            )
-            .await?;
-            prompt::prompt_verify_code()
-                .await
-                .require_interactive("--verify-code")
-                .map_err(Error::from)
-        }
-    }
-}
-
 fn parse_identity_name(identity: &str) -> Result<Name<'static>, Error> {
     Ok(flow::target::IdentityTarget::parse(identity)?.into_dhttp_name())
-}
-
-async fn login_with_email(
-    cert_server: &CertServer,
-    domain: Option<&Name<'_>>,
-    email: Option<String>,
-    verify_code: Option<String>,
-) -> Result<String, Error> {
-    let email = match email {
-        Some(email) => email,
-        None => prompt::prompt_email()
-            .await
-            .require_interactive("--email")?,
-    };
-    let verify_code = acquire_verify_code(cert_server, &email, verify_code).await?;
-    if let Some(domain) = domain {
-        Ok(flow::progress::run(
-            flow::progress::VERIFY_EMAIL,
-            cert_server.domain_login(domain.as_full(), &email, &verify_code),
-        )
-        .await?
-        .access_token)
-    } else {
-        Ok(flow::progress::run(
-            flow::progress::VERIFY_EMAIL,
-            cert_server.login(&email, &verify_code),
-        )
-        .await?
-        .access_token)
-    }
 }
 
 /// Apply identity

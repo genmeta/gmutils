@@ -25,7 +25,6 @@ enum ApplyApprovalPlan {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ApplyRunOutcome {
     Applied,
-    ReturnedToCaller,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,41 +61,12 @@ fn missing_root_target_error(target: &IdentityTarget) -> Error {
     ))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ApplyVerifyCodeAction {
-    ResendVerificationCode,
-    ChangeEmail,
-    Cancel,
-}
-
-impl ApplyVerifyCodeAction {
-    fn label(&self) -> String {
-        match self {
-            Self::ResendVerificationCode => "Resend verification code".to_string(),
-            Self::ChangeEmail => "Change email".to_string(),
-            Self::Cancel => "Cancel".to_string(),
-        }
-    }
-}
-
-fn apply_verify_code_actions() -> Vec<ApplyVerifyCodeAction> {
-    vec![
-        ApplyVerifyCodeAction::ResendVerificationCode,
-        ApplyVerifyCodeAction::ChangeEmail,
-        ApplyVerifyCodeAction::Cancel,
-    ]
-}
-
 #[derive(Debug, Clone)]
 struct InteractiveApplyState {
     target: Option<dhttp::name::DhttpName<'static>>,
     kind: Option<IdentityKind>,
     kind_prompt_required: bool,
     approval_plan: Option<ApplyApprovalPlan>,
-    email: Option<String>,
-    email_prompt_required: bool,
-    verify_code: Option<String>,
-    verification_code_sent_to: Option<String>,
 }
 
 impl InteractiveApplyState {
@@ -113,75 +83,12 @@ impl InteractiveApplyState {
                 .transpose()?,
             kind_prompt_required: command.kind.is_none(),
             approval_plan: None,
-            email: command.email.clone(),
-            email_prompt_required: command.email.is_none(),
-            verify_code: command.verify_code.clone(),
-            verification_code_sent_to: None,
         })
-    }
-
-    fn revisit_email(&mut self) {
-        self.email_prompt_required = true;
-        self.verify_code = None;
-        self.verification_code_sent_to = None;
     }
 
     fn fall_back_to_email(&mut self) {
         self.approval_plan = Some(ApplyApprovalPlan::Email);
-        self.email_prompt_required = true;
-        self.verify_code = None;
-        self.verification_code_sent_to = None;
     }
-}
-
-fn apply_verification_recovery(
-    state: &mut InteractiveApplyState,
-    recovery: &crate::cli::flow::recovery::VerificationRecovery,
-) -> bool {
-    match recovery {
-        crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep { message } => {
-            crate::cli::flow::transcript::print_line(message);
-            true
-        }
-        crate::cli::flow::recovery::VerificationRecovery::OfferResend { message } => {
-            crate::cli::flow::transcript::print_line(message);
-            true
-        }
-        crate::cli::flow::recovery::VerificationRecovery::BackToEmail { message } => {
-            crate::cli::flow::transcript::print_line(message);
-            state.revisit_email();
-            true
-        }
-        crate::cli::flow::recovery::VerificationRecovery::Abort => false,
-    }
-}
-
-async fn offer_expired_code_resend(
-    state: &mut InteractiveApplyState,
-    cert_server: &CertServer,
-    email: &str,
-    message: &str,
-) -> Result<(), Error> {
-    crate::cli::flow::transcript::print_block(&crate::cli::flow::recovery::format_resend_offer(
-        message,
-    ));
-    let resend = crate::cli::prompt::sync(|| {
-        inquire::Confirm::new("Send a new verification code?")
-            .with_default(true)
-            .prompt()
-    })
-    .await
-    .require_interactive("interactive input")?;
-    if resend {
-        super::progress::run(
-            super::progress::SEND_CODE,
-            cert_server.send_email_verification(email),
-        )
-        .await?;
-        state.verification_code_sent_to = Some(email.to_string());
-    }
-    state.verify_code = None;
-    Ok(())
 }
 
 fn is_domain_not_found(error: &crate::cert_server::Error) -> bool {
@@ -189,28 +96,6 @@ fn is_domain_not_found(error: &crate::cert_server::Error) -> bool {
         crate::auth::classify_identity_attempt(error),
         crate::auth::AuthAttemptDisposition::ReplanMissingTarget
     )
-}
-
-fn classify_apply_email_issue_error(
-    _target: &IdentityTarget,
-    error: &crate::cert_server::Error,
-) -> Option<crate::cli::flow::recovery::VerificationRecovery> {
-    match error {
-        crate::cert_server::Error::Api {
-            status,
-            code,
-            message,
-        } if *status == reqwest::StatusCode::FORBIDDEN && code == "domain_forbidden" => Some(
-            crate::cli::flow::recovery::VerificationRecovery::BackToEmail {
-                message: message.clone(),
-            },
-        ),
-        _ => None,
-    }
-}
-
-fn preserve_apply_email_issue_error(error: crate::cert_server::Error) -> Error {
-    Error::from(error)
 }
 
 fn is_subdomain_quota_exceeded(error: &crate::cert_server::Error) -> bool {
@@ -371,31 +256,6 @@ async fn resolve_kind(command: &Apply) -> Result<IdentityKind, Error> {
     }
 }
 
-async fn resolve_email(command: &Apply) -> Result<String, Error> {
-    match command.email.clone() {
-        Some(email) => Ok(email),
-        None => Ok(crate::cli::prompt::prompt_email()
-            .await
-            .require_interactive("--email")?),
-    }
-}
-
-async fn prompt_apply_verify_code_action() -> Result<ApplyVerifyCodeAction, Error> {
-    let actions = apply_verify_code_actions();
-    let labels = actions
-        .iter()
-        .map(ApplyVerifyCodeAction::label)
-        .collect::<Vec<_>>();
-    let selected = crate::cli::prompt::prompt_select_string("More options:", labels.clone())
-        .await
-        .require_interactive("interactive input")?;
-    actions
-        .into_iter()
-        .zip(labels)
-        .find_map(|(action, label)| (label == selected).then_some(action))
-        .whatever_context::<_, Error>("selected apply action is unavailable")
-}
-
 async fn run_post_save_epilogue(
     post_save: ApplyPostSavePolicy,
     dhttp_home: &DhttpHome,
@@ -552,85 +412,6 @@ async fn run_interactive_with_policy(
             .approval_plan
             .clone()
             .whatever_context::<_, Error>("interactive apply approval plan is unavailable")?;
-        if matches!(approval_plan, ApplyApprovalPlan::Email)
-            && (state.email.is_none() || state.email_prompt_required)
-        {
-            let email = crate::cli::prompt::prompt_email_with_default(state.email.as_deref())
-                .await
-                .require_interactive("--email")?;
-            state.email = Some(email);
-            state.email_prompt_required = false;
-            continue;
-        }
-
-        if matches!(approval_plan, ApplyApprovalPlan::Email) && state.verify_code.is_none() {
-            let email = state
-                .email
-                .clone()
-                .whatever_context::<_, Error>("interactive apply email is unavailable")?;
-            if state.verification_code_sent_to.as_deref() != Some(email.as_str()) {
-                match super::progress::run(
-                    super::progress::SEND_CODE,
-                    cert_server.send_email_verification(&email),
-                )
-                .await
-                {
-                    Ok(_) => {
-                        state.verification_code_sent_to = Some(email.clone());
-                    }
-                    Err(error) => {
-                        let recovery = crate::cli::flow::recovery::classify_resend_error(&error);
-                        if matches!(
-                            recovery,
-                            crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep { .. }
-                        ) {
-                            state.verification_code_sent_to = Some(email.clone());
-                        }
-                        if apply_verification_recovery(&mut state, &recovery) {
-                            continue;
-                        }
-                        return Err(Error::from(error));
-                    }
-                }
-            }
-            match crate::cli::prompt::prompt_verify_code_with_more_options(None)
-                .await
-                .require_interactive("--verify-code")?
-            {
-                crate::cli::prompt::TextPromptResult::Submitted(code) => {
-                    state.verify_code = Some(code);
-                }
-                crate::cli::prompt::TextPromptResult::MoreOptions => {
-                    match prompt_apply_verify_code_action().await? {
-                        ApplyVerifyCodeAction::ResendVerificationCode => {
-                            match super::progress::run(
-                                super::progress::SEND_CODE,
-                                cert_server.send_email_verification(&email),
-                            )
-                            .await
-                            {
-                                Ok(_) => {
-                                    state.verification_code_sent_to = Some(email);
-                                }
-                                Err(error) => {
-                                    let recovery =
-                                        crate::cli::flow::recovery::classify_resend_error(&error);
-                                    if apply_verification_recovery(&mut state, &recovery) {
-                                        continue;
-                                    }
-                                    return Err(Error::from(error));
-                                }
-                            }
-                        }
-                        ApplyVerifyCodeAction::ChangeEmail => state.revisit_email(),
-                        ApplyVerifyCodeAction::Cancel => {
-                            return Ok(ApplyRunOutcome::ReturnedToCaller);
-                        }
-                    }
-                }
-            }
-            continue;
-        }
 
         let (key_pem, csr_pem) = cli::generate_private_key_and_csr(&domain)?;
         let kind = state
@@ -640,43 +421,14 @@ async fn run_interactive_with_policy(
             super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
         let detail = match approval_plan {
             ApplyApprovalPlan::Email => {
-                let email = state
-                    .email
-                    .clone()
-                    .whatever_context::<_, Error>("interactive apply email is unavailable")?;
-                let verify_code = state.verify_code.as_deref().whatever_context::<_, Error>(
-                    "interactive apply verification code is unavailable",
-                )?;
-                let token = match super::progress::run(
-                    super::progress::VERIFY_EMAIL,
-                    cert_server.login(&email, verify_code),
+                let token = super::email::run_cert_server_email_session(
+                    cert_server,
+                    super::email::EmailLogin::Account,
+                    command.email.as_deref(),
+                    command.verify_code.as_deref(),
+                    true,
                 )
-                .await
-                {
-                    Ok(login) => login.access_token,
-                    Err(error) => {
-                        let recovery =
-                            crate::cli::flow::recovery::classify_verify_submit_error(&error);
-                        if let crate::cli::flow::recovery::VerificationRecovery::OfferResend {
-                            message,
-                        } = &recovery
-                        {
-                            offer_expired_code_resend(&mut state, cert_server, &email, message)
-                                .await?;
-                            continue;
-                        }
-                        if matches!(
-                            recovery,
-                            crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep { .. }
-                        ) {
-                            state.verify_code = None;
-                        }
-                        if apply_verification_recovery(&mut state, &recovery) {
-                            continue;
-                        }
-                        return Err(Error::from(error));
-                    }
-                };
+                .await?;
                 match super::progress::run(
                     super::progress::REQUEST_CERT,
                     cert_server.issue_cert(
@@ -746,15 +498,7 @@ async fn run_interactive_with_policy(
                         .await?;
                         return Ok(ApplyRunOutcome::Applied);
                     }
-                    Err(error) => {
-                        if let Some(recovery) = classify_apply_email_issue_error(&target, &error) {
-                            state.verify_code = None;
-                            if apply_verification_recovery(&mut state, &recovery) {
-                                continue;
-                            }
-                        }
-                        return Err(Error::from(error));
-                    }
+                    Err(error) => return Err(Error::from(error)),
                 }
             }
             ApplyApprovalPlan::DirectIdentity { auth_domain } => {
@@ -877,7 +621,6 @@ pub(crate) async fn run_with_policy(
         .await?
         {
             ApplyRunOutcome::Applied => Ok(()),
-            ApplyRunOutcome::ReturnedToCaller => whatever!("apply was cancelled"),
         };
     }
     let default_identity_when_command_started = cli::load_current_settings(dhttp_home)
@@ -898,26 +641,14 @@ pub(crate) async fn run_with_policy(
     let (key_pem, csr_pem) = cli::generate_private_key_and_csr(&domain)?;
     let detail = match approval_plan {
         ApplyApprovalPlan::Email => {
-            let email = resolve_email(command).await?;
-            let verify_code = match command.verify_code.clone() {
-                Some(code) => code,
-                None => {
-                    super::progress::run(
-                        super::progress::SEND_CODE,
-                        cert_server.send_email_verification(&email),
-                    )
-                    .await?;
-                    crate::cli::prompt::prompt_verify_code()
-                        .await
-                        .require_interactive("--verify-code")?
-                }
-            };
-            let token = super::progress::run(
-                super::progress::VERIFY_EMAIL,
-                cert_server.login(&email, &verify_code),
+            let token = super::email::run_cert_server_email_session(
+                cert_server,
+                super::email::EmailLogin::Account,
+                command.email.as_deref(),
+                command.verify_code.as_deref(),
+                false,
             )
-            .await?
-            .access_token;
+            .await?;
             match super::progress::run(
                 super::progress::REQUEST_CERT,
                 cert_server.issue_cert(
@@ -958,10 +689,9 @@ pub(crate) async fn run_with_policy(
                             &csr_pem,
                         ),
                     )
-                    .await
-                    .map_err(preserve_apply_email_issue_error)?
+                    .await?
                 }
-                Err(error) => return Err(preserve_apply_email_issue_error(error)),
+                Err(error) => return Err(Error::from(error)),
             }
         }
         ApplyApprovalPlan::DirectIdentity { auth_domain } => {
@@ -1055,13 +785,10 @@ pub(crate) async fn run(
 #[cfg(test)]
 mod tests {
     use super::{
-        ApplyApprovalPlan, ApplyVerifyCodeAction, CandidateEvent, InteractiveApplyState,
-        MissingTargetAction, apply_identity_name_opening, apply_verify_code_actions,
-        approval_plan_from_candidate, authorize_local_replacement,
-        classify_apply_email_issue_error, explicit_target_from_command,
+        ApplyApprovalPlan, CandidateEvent, MissingTargetAction, apply_identity_name_opening,
+        approval_plan_from_candidate, authorize_local_replacement, explicit_target_from_command,
         interactive_name_unavailable_message, missing_root_target_error, missing_target_action,
-        new_identity_confirmation_message, preserve_apply_email_issue_error,
-        preserve_apply_registration_error, resolve_apply_target,
+        new_identity_confirmation_message, preserve_apply_registration_error, resolve_apply_target,
     };
     use crate::cli::{
         Apply, LocalIdentitySave,
@@ -1147,90 +874,6 @@ mod tests {
 
         assert_eq!(resolved.remote, RemoteTargetState::Unknown);
         assert!(resolved.local.is_none());
-    }
-
-    #[test]
-    fn stay_recovery_keeps_apply_verify_state() {
-        let mut state = InteractiveApplyState::from_command(
-            &Apply {
-                name: Some("alice.smith".to_string()),
-                kind: Some("primary".to_string()),
-                force: false,
-                device_name: None,
-                email: Some("alice@example.test".to_string()),
-                verify_code: None,
-            },
-            None,
-        )
-        .unwrap();
-        state.verify_code = Some("123456".to_string());
-
-        super::apply_verification_recovery(
-            &mut state,
-            &crate::cli::flow::recovery::VerificationRecovery::StayCurrentStep {
-                message: "retry later".to_string(),
-            },
-        );
-
-        assert_eq!(state.verify_code.as_deref(), Some("123456"));
-    }
-
-    #[test]
-    fn back_to_email_recovery_reopens_apply_email_prompt() {
-        let mut state = InteractiveApplyState::from_command(
-            &Apply {
-                name: Some("alice.smith".to_string()),
-                kind: Some("primary".to_string()),
-                force: false,
-                device_name: None,
-                email: Some("alice@example.test".to_string()),
-                verify_code: None,
-            },
-            None,
-        )
-        .unwrap();
-        state.email_prompt_required = false;
-
-        super::apply_verification_recovery(
-            &mut state,
-            &crate::cli::flow::recovery::VerificationRecovery::BackToEmail {
-                message: "start over".to_string(),
-            },
-        );
-
-        assert!(state.email_prompt_required);
-        assert!(state.verify_code.is_none());
-    }
-
-    #[test]
-    fn apply_email_issue_domain_forbidden_reopens_owner_email_prompt() {
-        let error = crate::cert_server::Error::Api {
-            status: reqwest::StatusCode::FORBIDDEN,
-            code: "domain_forbidden".to_string(),
-            message: "domain access is forbidden".to_string(),
-        };
-        let target = IdentityTarget::parse("alice.smith").unwrap();
-
-        assert_eq!(
-            classify_apply_email_issue_error(&target, &error),
-            Some(
-                crate::cli::flow::recovery::VerificationRecovery::BackToEmail {
-                    message: "domain access is forbidden".to_string(),
-                }
-            ),
-        );
-    }
-
-    #[test]
-    fn non_interactive_apply_email_issue_keeps_the_certserver_problem_message() {
-        let error = crate::cert_server::Error::Api {
-            status: reqwest::StatusCode::FORBIDDEN,
-            code: "domain_forbidden".to_string(),
-            message: "domain access is forbidden".to_string(),
-        };
-        let rendered = preserve_apply_email_issue_error(error).to_string();
-
-        assert_eq!(rendered, "domain access is forbidden");
     }
 
     #[test]
@@ -1378,28 +1021,5 @@ mod tests {
                 message: "domain not found".to_string(),
             }
         ));
-    }
-
-    #[test]
-    fn apply_verify_code_actions_are_limited_to_the_code_recovery_boundary() {
-        assert_eq!(
-            apply_verify_code_actions()
-                .into_iter()
-                .map(|action| action.label())
-                .collect::<Vec<_>>(),
-            vec![
-                "Resend verification code".to_string(),
-                "Change email".to_string(),
-                "Cancel".to_string(),
-            ]
-        );
-        assert_eq!(
-            apply_verify_code_actions(),
-            vec![
-                ApplyVerifyCodeAction::ResendVerificationCode,
-                ApplyVerifyCodeAction::ChangeEmail,
-                ApplyVerifyCodeAction::Cancel,
-            ]
-        );
     }
 }
