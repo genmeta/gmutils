@@ -120,6 +120,18 @@ pub(crate) fn more_options_help_message() -> &'static str {
     "Type ? for more options."
 }
 
+pub(crate) fn local_replacement_prompt_message() -> &'static str {
+    "This identity already exists locally. Continue and replace it?"
+}
+
+pub(crate) async fn prompt_local_replacement() -> Result<bool, inquire::InquireError> {
+    sync!(
+        inquire::Confirm::new(local_replacement_prompt_message())
+            .with_default(false)
+            .prompt()
+    )
+}
+
 pub(crate) async fn prompt_email() -> Result<String, inquire::InquireError> {
     prompt_email_with_default(None).await
 }
@@ -275,7 +287,8 @@ mod tests {
 
     use super::{
         MoreOptionsFriendlyValidator, email_prompt_message, identity_name_help_message,
-        identity_name_prompt_message, more_options_help_message, verify_code_prompt_message,
+        identity_name_prompt_message, local_replacement_prompt_message, more_options_help_message,
+        verify_code_prompt_message,
     };
 
     #[test]
@@ -288,6 +301,10 @@ mod tests {
         assert_eq!(email_prompt_message(), "Enter your email:");
         assert_eq!(verify_code_prompt_message(), "Enter verification code:");
         assert_eq!(more_options_help_message(), "Type ? for more options.");
+        assert_eq!(
+            local_replacement_prompt_message(),
+            "This identity already exists locally. Continue and replace it?"
+        );
     }
 
     #[test]

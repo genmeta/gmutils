@@ -5,7 +5,10 @@ use snafu::{FromString, OptionExt, whatever};
 
 use super::{
     kind::IdentityKind,
-    target::{IdentityLevel, IdentityTarget},
+    target::{
+        IdentityLevel, IdentityTarget, RemoteTargetState, ReplacementRequirement,
+        ResolvedApplyTarget, remote_state_from_availability, replacement_requirement,
+    },
 };
 use crate::{
     cert_server::CertServer,
@@ -224,103 +227,129 @@ fn resolve_non_interactive_approval_plan(identity_auth_domain: Option<&str>) -> 
 }
 
 fn apply_identity_name_opening() -> &'static str {
-    "Apply an identity here."
+    "Applying identity, generating ECC key pair locally, then requesting and deploying certificate."
 }
 
 fn interactive_name_unavailable_message() -> &'static str {
     "Sorry, this name is not available. Please try another one."
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InteractiveNameAvailability {
-    Applicable,
-    Retry,
-}
-
-fn classify_interactive_name_availability(
-    target: &IdentityTarget,
-    availability: &str,
-) -> Result<InteractiveNameAvailability, Error> {
-    match availability {
-        "conflict" => Ok(InteractiveNameAvailability::Applicable),
-        "available" if target.level() == IdentityLevel::SubIdentity => {
-            Ok(InteractiveNameAvailability::Applicable)
-        }
-        "available" | "reserved" | "unavailable" => Ok(InteractiveNameAvailability::Retry),
-        other => Err(Error::without_source(format!(
-            "cert server returned unsupported domain availability: {other}"
-        ))),
-    }
-}
-
-fn explicit_target_from_command(
-    command: &Apply,
-) -> Result<Option<dhttp::name::DhttpName<'static>>, Error> {
+fn explicit_target_from_command(command: &Apply) -> Result<Option<IdentityTarget>, Error> {
     command
         .name
         .as_deref()
-        .map(cli::parse_identity_name)
+        .map(IdentityTarget::parse)
         .transpose()
+        .map_err(Error::from)
 }
 
-async fn prompt_apply_target_with_opening(
-    opening: &'static str,
-) -> Result<dhttp::name::DhttpName<'static>, Error> {
-    let identity = crate::cli::prompt::prompt_identity_name(opening)
+async fn prompt_apply_target() -> Result<IdentityTarget, Error> {
+    let identity = crate::cli::prompt::prompt_identity_name("")
         .await
         .require_interactive("IDENTITY")?;
-    cli::parse_identity_name(&identity)
-}
-
-async fn prompt_apply_target() -> Result<dhttp::name::DhttpName<'static>, Error> {
-    prompt_apply_target_with_opening(apply_identity_name_opening()).await
+    Ok(IdentityTarget::parse(&identity)?)
 }
 
 async fn prompt_apply_target_with_online_validation(
+    dhttp_home: &DhttpHome,
     cert_server: &CertServer,
-) -> Result<dhttp::name::DhttpName<'static>, Error> {
-    let mut opening = apply_identity_name_opening();
+) -> Result<ResolvedApplyTarget, Error> {
     loop {
-        let name = prompt_apply_target_with_opening(opening).await?;
-        opening = "";
-        let target = IdentityTarget::parse(name.as_partial())?;
-        let response = match super::progress::run(
-            super::progress::CHECK_NAME,
-            cert_server.inspect_domain_availability(name.as_full()),
-        )
-        .await
-        {
-            Ok(response) => response,
-            Err(error) if error.is_api_code("domain_invalid") => {
+        let target = prompt_apply_target().await?;
+        let inspected = super::progress::run(super::progress::CHECK_NAME, async {
+            let local =
+                super::local::try_load_summary_exact(dhttp_home, target.dhttp_name(), None).await?;
+            let remote = cert_server
+                .inspect_domain_availability(target.full_name())
+                .await?;
+            Ok::<_, Error>((local, remote))
+        })
+        .await;
+        let (local, response) = match inspected {
+            Ok(inspected) => inspected,
+            Err(Error::CertServer { source }) if source.is_api_code("domain_invalid") => {
                 crate::cli::flow::transcript::print_err_block(
                     interactive_name_unavailable_message(),
                 );
                 continue;
             }
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(error),
         };
-        match classify_interactive_name_availability(&target, &response.availability)? {
-            InteractiveNameAvailability::Applicable => return Ok(name),
-            InteractiveNameAvailability::Retry => {
+        let remote = remote_state_from_availability(&response.availability)
+            .map_err(|error| Error::without_source(error.to_string()))?;
+        match remote {
+            RemoteTargetState::Exists | RemoteTargetState::Missing => {
+                return Ok(ResolvedApplyTarget {
+                    target,
+                    remote,
+                    local,
+                });
+            }
+            RemoteTargetState::Unavailable => {
                 crate::cli::flow::transcript::print_err_block(
                     interactive_name_unavailable_message(),
                 );
             }
+            RemoteTargetState::Unknown => unreachable!("pricing inspection returns known state"),
         }
     }
 }
 
-async fn resolve_target(
+async fn resolve_apply_target(
     command: &Apply,
-    interactive_cert_server: Option<&CertServer>,
-) -> Result<dhttp::name::DhttpName<'static>, Error> {
+    dhttp_home: &DhttpHome,
+    cert_server: &CertServer,
+    interactive: bool,
+) -> Result<ResolvedApplyTarget, Error> {
     match explicit_target_from_command(command)? {
-        Some(name) => Ok(name),
-        None => match interactive_cert_server {
-            Some(cert_server) => prompt_apply_target_with_online_validation(cert_server).await,
-            None => prompt_apply_target().await,
-        },
+        Some(target) => {
+            let local = super::progress::run(
+                super::progress::CHECK_NAME,
+                super::local::try_load_summary_exact(dhttp_home, target.dhttp_name(), None),
+            )
+            .await?;
+            Ok(ResolvedApplyTarget {
+                target,
+                remote: RemoteTargetState::Unknown,
+                local,
+            })
+        }
+        None if interactive => {
+            prompt_apply_target_with_online_validation(dhttp_home, cert_server).await
+        }
+        None => Err(crate::cli::prompt::Error::NotInteractive {
+            hint: "IDENTITY".into(),
+        }
+        .into()),
     }
+}
+
+async fn authorize_local_replacement(
+    resolved: &ResolvedApplyTarget,
+    force: bool,
+    interactive: bool,
+) -> Result<cli::LocalIdentitySave, Error> {
+    let save = if resolved.local.is_some() {
+        cli::LocalIdentitySave::Replace
+    } else {
+        cli::LocalIdentitySave::New
+    };
+    if replacement_requirement(resolved.local.as_ref()) == ReplacementRequirement::None || force {
+        return Ok(save);
+    }
+    if !interactive {
+        return Err(crate::cli::prompt::Error::NotInteractive {
+            hint: "--force".into(),
+        }
+        .into());
+    }
+    if !crate::cli::prompt::prompt_local_replacement()
+        .await
+        .require_interactive("--force")?
+    {
+        whatever!("apply was cancelled");
+    }
+    Ok(save)
 }
 
 async fn resolve_kind(command: &Apply) -> Result<IdentityKind, Error> {
@@ -477,15 +506,15 @@ async fn run_interactive_with_policy(
     let default_identity_when_command_started = cli::load_current_settings(dhttp_home)
         .await?
         .and_then(|config| config.settings().default_identity_name().cloned());
-    let initial_target = explicit_target_from_command(command)?;
-    let mut state = InteractiveApplyState::from_command(command, initial_target)?;
+    let resolved = resolve_apply_target(command, dhttp_home, cert_server, true).await?;
+    let local_identity_save = authorize_local_replacement(&resolved, command.force, true).await?;
+    let _remote = resolved.remote;
+    let mut state = InteractiveApplyState::from_command(
+        command,
+        Some(resolved.target.clone().into_dhttp_name()),
+    )?;
 
     loop {
-        if state.target.is_none() {
-            state.target = Some(prompt_apply_target_with_online_validation(cert_server).await?);
-            continue;
-        }
-
         if state.kind.is_none() || state.kind_prompt_required {
             state.kind = Some(
                 crate::cli::prompt::prompt_kind_with_cursor(state.kind)
@@ -686,12 +715,6 @@ async fn run_interactive_with_policy(
                             ),
                         )
                         .await?;
-                        let local_identity_save = cli::ensure_replace_local_allowed(
-                            dhttp_home,
-                            domain.borrow(),
-                            command.force,
-                        )
-                        .await?;
                         cli::save_identity(
                             dhttp_home,
                             &domain,
@@ -801,8 +824,6 @@ async fn run_interactive_with_policy(
             }
         };
 
-        let local_identity_save =
-            cli::ensure_replace_local_allowed(dhttp_home, domain.borrow(), command.force).await?;
         cli::save_identity(
             dhttp_home,
             &domain,
@@ -836,6 +857,7 @@ pub(crate) async fn run_with_policy(
     cert_server: &CertServer,
     post_save: ApplyPostSavePolicy,
 ) -> Result<(), Error> {
+    crate::cli::flow::transcript::print_block(apply_identity_name_opening());
     let is_interactive = std::io::stdin().is_terminal();
     if is_interactive {
         return match run_interactive_with_policy(
@@ -854,8 +876,11 @@ pub(crate) async fn run_with_policy(
     let default_identity_when_command_started = cli::load_current_settings(dhttp_home)
         .await?
         .and_then(|config| config.settings().default_identity_name().cloned());
-    let domain = resolve_target(command, is_interactive.then_some(cert_server)).await?;
-    let target = IdentityTarget::parse(domain.as_partial())?;
+    let resolved = resolve_apply_target(command, dhttp_home, cert_server, false).await?;
+    let local_identity_save = authorize_local_replacement(&resolved, command.force, false).await?;
+    let _remote = resolved.remote;
+    let target = resolved.target;
+    let domain = target.dhttp_name().into_owned();
     let kind = resolve_kind(command).await?;
     let device_name =
         super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
@@ -865,8 +890,6 @@ pub(crate) async fn run_with_policy(
     }
     let approval_plan = resolve_non_interactive_approval_plan(auth_plan.first_identity_full_name());
 
-    let local_identity_save =
-        cli::ensure_replace_local_allowed(dhttp_home, domain.borrow(), command.force).await?;
     let (key_pem, csr_pem) = cli::generate_private_key_and_csr(&domain)?;
     let detail = match approval_plan {
         ApplyApprovalPlan::Email => {
@@ -1027,15 +1050,99 @@ pub(crate) async fn run(
 #[cfg(test)]
 mod tests {
     use super::{
-        ApplyApprovalPlan, ApplyVerifyCodeAction, InteractiveApplyState,
-        InteractiveNameAvailability, MissingTargetAction, apply_identity_name_opening,
-        apply_verify_code_actions, classify_apply_email_issue_error,
-        classify_interactive_name_availability, explicit_target_from_command,
+        ApplyApprovalPlan, ApplyVerifyCodeAction, InteractiveApplyState, MissingTargetAction,
+        apply_identity_name_opening, apply_verify_code_actions, authorize_local_replacement,
+        classify_apply_email_issue_error, explicit_target_from_command,
         interactive_name_unavailable_message, missing_root_target_error, missing_target_action,
         new_identity_confirmation_message, preserve_apply_email_issue_error,
-        preserve_apply_registration_error, resolve_non_interactive_approval_plan,
+        preserve_apply_registration_error, resolve_apply_target,
+        resolve_non_interactive_approval_plan,
     };
-    use crate::cli::{Apply, flow::target::IdentityTarget};
+    use crate::cli::{
+        Apply, LocalIdentitySave,
+        flow::{
+            local::{IdentityUsage, LocalIdentityStatus, LocalIdentitySummary},
+            target::{IdentityTarget, RemoteTargetState, ResolvedApplyTarget},
+        },
+    };
+
+    fn command(name: &str) -> Apply {
+        Apply {
+            name: Some(name.to_string()),
+            kind: Some("primary".to_string()),
+            force: false,
+            device_name: None,
+            email: None,
+            verify_code: None,
+        }
+    }
+
+    fn resolved_with(status: Option<LocalIdentityStatus>) -> ResolvedApplyTarget {
+        ResolvedApplyTarget {
+            target: IdentityTarget::parse("alice.smith").unwrap(),
+            remote: RemoteTargetState::Unknown,
+            local: status.map(|status| LocalIdentitySummary {
+                target: IdentityTarget::parse("alice.smith").unwrap(),
+                usage: Some(IdentityUsage::BothClientAndServer),
+                sequence: Some(0),
+                valid_from: Some(1_700_000_000),
+                expires_at: Some(1_900_000_000),
+                status,
+                dir: std::path::PathBuf::from("/tmp/alice.smith"),
+                is_default: false,
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn replacement_authorization_prevents_noninteractive_side_effects_without_force() {
+        let error = authorize_local_replacement(
+            &resolved_with(Some(LocalIdentityStatus::Ready {
+                expires_at: 1_900_000_000,
+            })),
+            false,
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("--force"), "{error}");
+
+        assert_eq!(
+            authorize_local_replacement(
+                &resolved_with(Some(LocalIdentityStatus::Invalid {
+                    detail: "certificate is unreadable".to_string(),
+                })),
+                false,
+                false,
+            )
+            .await
+            .unwrap(),
+            LocalIdentitySave::Replace
+        );
+        assert_eq!(
+            authorize_local_replacement(&resolved_with(None), false, false)
+                .await
+                .unwrap(),
+            LocalIdentitySave::New
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_target_skips_advisory_remote_inspection() {
+        _ = rustls::crypto::ring::default_provider().install_default();
+        let home = dhttp::home::DhttpHome::new(std::env::temp_dir().join(format!(
+            "genmeta-identity-explicit-target-{}",
+            std::process::id()
+        )));
+        let server = crate::cert_server::CertServer::new("http://127.0.0.1:1").unwrap();
+
+        let resolved = resolve_apply_target(&command("alice.smith"), &home, &server, false)
+            .await
+            .unwrap();
+
+        assert_eq!(resolved.remote, RemoteTargetState::Unknown);
+        assert!(resolved.local.is_none());
+    }
 
     #[test]
     fn stay_recovery_keeps_apply_verify_state() {
@@ -1166,35 +1273,10 @@ mod tests {
 
     #[test]
     fn apply_identity_name_opening_matches_spec_copy() {
-        assert_eq!(apply_identity_name_opening(), "Apply an identity here.");
-    }
-
-    #[test]
-    fn interactive_name_availability_respects_target_level() {
-        let root = IdentityTarget::parse("alice.smith").unwrap();
-        let child = IdentityTarget::parse("phone.alice.smith").unwrap();
-
         assert_eq!(
-            classify_interactive_name_availability(&root, "conflict").unwrap(),
-            InteractiveNameAvailability::Applicable
+            apply_identity_name_opening(),
+            "Applying identity, generating ECC key pair locally, then requesting and deploying certificate."
         );
-        assert_eq!(
-            classify_interactive_name_availability(&child, "available").unwrap(),
-            InteractiveNameAvailability::Applicable
-        );
-        assert_eq!(
-            classify_interactive_name_availability(&root, "available").unwrap(),
-            InteractiveNameAvailability::Retry
-        );
-        assert_eq!(
-            classify_interactive_name_availability(&child, "reserved").unwrap(),
-            InteractiveNameAvailability::Retry
-        );
-        assert_eq!(
-            classify_interactive_name_availability(&child, "unavailable").unwrap(),
-            InteractiveNameAvailability::Retry
-        );
-        assert!(classify_interactive_name_availability(&child, "future-status").is_err());
     }
 
     #[test]

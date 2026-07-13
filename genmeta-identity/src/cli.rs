@@ -172,27 +172,6 @@ impl LocalIdentitySave {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LocalReplacementDecision {
-    New,
-    Replace,
-    RequireFlag,
-}
-
-fn local_replacement_decision(
-    profile_exists: bool,
-    replace_local: bool,
-    interactive: bool,
-) -> LocalReplacementDecision {
-    if !profile_exists {
-        LocalReplacementDecision::New
-    } else if replace_local || interactive {
-        LocalReplacementDecision::Replace
-    } else {
-        LocalReplacementDecision::RequireFlag
-    }
-}
-
 #[tracing::instrument()]
 async fn load_current_settings(dhttp_home: &DhttpHome) -> Result<Option<DhttpSettingsFile>, Error> {
     match dhttp_home.load_settings().await {
@@ -229,24 +208,6 @@ async fn resolve_default_target_name(dhttp_home: &DhttpHome) -> Result<Name<'sta
         None => whatever!(
             "No default identity configured. Use `genmeta identity default <name>` to set one."
         ),
-    }
-}
-
-async fn ensure_replace_local_allowed(
-    dhttp_home: &DhttpHome,
-    name: Name<'_>,
-    force: bool,
-) -> Result<LocalIdentitySave, Error> {
-    let profile_exists = dhttp_home
-        .identity_profile_exists_exactly(name.clone())
-        .await;
-    match local_replacement_decision(profile_exists, force, std::io::stdin().is_terminal()) {
-        LocalReplacementDecision::New => Ok(LocalIdentitySave::New),
-        LocalReplacementDecision::Replace => Ok(LocalIdentitySave::Replace),
-        LocalReplacementDecision::RequireFlag => Err(prompt::Error::NotInteractive {
-            hint: "--force".into(),
-        }
-        .into()),
     }
 }
 
@@ -582,9 +543,8 @@ mod tests {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
     use super::{
-        Apply, Cli, Default, Info, LocalReplacementDecision, Options, cert_server_base_url,
-        certificate_chain_key_from_identity, local_replacement_decision,
-        save_identity_progress_message,
+        Apply, Cli, Default, Info, Options, cert_server_base_url,
+        certificate_chain_key_from_identity, save_identity_progress_message,
     };
     use crate::CERT_SERVER_BASE_URL;
 
@@ -760,26 +720,6 @@ mod tests {
         .unwrap_err();
         let rendered = error.to_string();
         assert!(rendered.contains("--sequence"), "{rendered}");
-    }
-
-    #[test]
-    fn local_replacement_has_no_deleted_confirmation_copy() {
-        assert_eq!(
-            local_replacement_decision(true, false, true),
-            LocalReplacementDecision::Replace
-        );
-        assert_eq!(
-            local_replacement_decision(true, false, false),
-            LocalReplacementDecision::RequireFlag
-        );
-        assert_eq!(
-            local_replacement_decision(true, true, false),
-            LocalReplacementDecision::Replace
-        );
-        assert_eq!(
-            local_replacement_decision(false, false, true),
-            LocalReplacementDecision::New
-        );
     }
 
     #[test]
