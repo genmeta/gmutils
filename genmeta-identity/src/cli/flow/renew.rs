@@ -127,7 +127,7 @@ async fn ensure_saved_renew_target(
     dhttp_home: &DhttpHome,
     name: dhttp::name::DhttpName<'_>,
 ) -> Result<(), Error> {
-    if local::try_load_summary(dhttp_home, name.borrow(), None)
+    if local::try_load_summary_exact(dhttp_home, name.borrow(), None)
         .await?
         .is_some()
     {

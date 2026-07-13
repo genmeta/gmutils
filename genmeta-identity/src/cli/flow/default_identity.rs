@@ -46,18 +46,22 @@ pub(crate) async fn run(
             ),
         };
         let summary =
-            local::load_summary(dhttp_home, name, configured_default_name.clone()).await?;
+            local::load_summary_exact(dhttp_home, name, configured_default_name.clone()).await?;
         let rendered = if command.verbose {
-            output::format_info(&summary, std::io::stdout().is_terminal())
+            output::format_info(
+                &summary,
+                local::now_unix_timestamp(),
+                std::io::stdout().is_terminal(),
+            )
         } else {
-            output::format_default_query(&summary)
+            output::format_default_query(&summary, local::now_unix_timestamp())
         };
         crate::cli::flow::transcript::print_block(&rendered);
         return Ok(());
     };
 
     let target = IdentityTarget::parse(name)?;
-    let Some(summary) = local::try_load_summary(
+    let Some(summary) = local::try_load_summary_exact(
         dhttp_home,
         target.dhttp_name(),
         configured_default_name

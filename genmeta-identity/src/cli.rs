@@ -387,7 +387,11 @@ impl List {
         } else {
             let ansi = std::io::stdout().is_terminal();
             let rendered = if self.verbose {
-                flow::output::render_verbose_inventory(&inventory, ansi)
+                flow::output::render_verbose_inventory(
+                    &inventory,
+                    flow::local::now_unix_timestamp(),
+                    ansi,
+                )
             } else {
                 flow::output::render_inventory(&inventory, ansi)
             };
@@ -423,7 +427,7 @@ impl Info {
                 ),
             },
         };
-        let Some(summary) = flow::local::try_load_summary(
+        let Some(summary) = flow::local::try_load_summary_exact(
             dhttp_home,
             name.borrow(),
             default_name.as_ref().map(|default| default.borrow()),
@@ -438,6 +442,7 @@ impl Info {
         };
         flow::transcript::print_block(&flow::output::format_info(
             &summary,
+            flow::local::now_unix_timestamp(),
             std::io::stdout().is_terminal(),
         ));
 

@@ -51,7 +51,7 @@ pub(crate) async fn current_default_summary(
         return Ok(None);
     };
 
-    let status = match local::try_load_summary(dhttp_home, name.borrow(), None).await? {
+    let status = match local::try_load_summary_exact(dhttp_home, name.borrow(), None).await? {
         Some(summary) => summary.status,
         None => local::LocalIdentityStatus::Invalid {
             detail: "identity is not saved here".to_string(),
@@ -90,7 +90,7 @@ pub(crate) async fn run_lifecycle_epilogue(
     let ansi = std::io::stdout().is_terminal();
     let default_after = current_default_name(dhttp_home).await?;
     let current_default = current_default_summary(dhttp_home).await?;
-    let summary = local::load_summary(
+    let summary = local::load_summary_exact(
         dhttp_home,
         name.clone(),
         default_after.as_ref().map(|default| default.borrow()),

@@ -97,10 +97,11 @@ pub(crate) async fn load_apply_auth_plan(
     dhttp_home: &DhttpHome,
     target: &IdentityTarget,
 ) -> Result<AuthPlan, Error> {
-    let target_summary = local::try_load_summary(dhttp_home, target.dhttp_name(), None).await?;
+    let target_summary =
+        local::try_load_summary_exact(dhttp_home, target.dhttp_name(), None).await?;
     let parent_summary = if target.level() == IdentityLevel::SubIdentity {
         match target.parent() {
-            Some(parent) => local::try_load_summary(dhttp_home, parent, None).await?,
+            Some(parent) => local::try_load_summary_exact(dhttp_home, parent, None).await?,
             None => None,
         }
     } else {
@@ -118,18 +119,19 @@ mod tests {
 
     use super::*;
     use crate::cli::flow::{
-        local::{LocalIdentityStatus, LocalIdentitySummary},
+        local::{IdentityUsage, LocalIdentityStatus, LocalIdentitySummary},
         target::IdentityTarget,
     };
 
     fn summary(name: &str, status: LocalIdentityStatus) -> LocalIdentitySummary {
         LocalIdentitySummary {
             target: IdentityTarget::parse(name).unwrap(),
-            certificate_chain: Some("primary:0".to_string()),
+            usage: Some(IdentityUsage::BothClientAndServer),
+            sequence: Some(0),
             valid_from: Some(1_600_000_000),
-            issuer: Some("CN=Genmeta Test CA".to_string()),
+            expires_at: Some(1_900_000_000),
             status,
-            saved_at: PathBuf::from(format!("/tmp/{name}")),
+            dir: PathBuf::from(format!("/tmp/{name}")),
             is_default: false,
         }
     }

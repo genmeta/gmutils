@@ -18,10 +18,25 @@ pub(crate) enum LocalIdentityMaterialState {
 pub(crate) struct LocalIdentityAssessment {
     pub(crate) certificate: LocalIdentityMaterialState,
     pub(crate) private_key: LocalIdentityMaterialState,
-    pub(crate) certificate_chain: Option<String>,
+    pub(crate) usage: Option<IdentityUsage>,
+    pub(crate) sequence: Option<u32>,
     pub(crate) valid_from: Option<i64>,
     pub(crate) expires_at: Option<i64>,
-    pub(crate) issuer: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IdentityUsage {
+    BothClientAndServer,
+    ClientOnly,
+}
+
+impl IdentityUsage {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::BothClientAndServer => "both client and server",
+            Self::ClientOnly => "client only",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,24 +60,17 @@ impl LocalIdentityStatus {
     pub(crate) fn is_ready(&self) -> bool {
         matches!(self, Self::Ready { .. })
     }
-
-    pub(crate) fn expires_at(&self) -> Option<i64> {
-        match self {
-            Self::Ready { expires_at } => Some(*expires_at),
-            Self::Expired { expired_at } => Some(*expired_at),
-            Self::Incomplete { .. } | Self::Invalid { .. } => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LocalIdentitySummary {
     pub(crate) target: IdentityTarget,
-    pub(crate) certificate_chain: Option<String>,
+    pub(crate) usage: Option<IdentityUsage>,
+    pub(crate) sequence: Option<u32>,
     pub(crate) valid_from: Option<i64>,
-    pub(crate) issuer: Option<String>,
+    pub(crate) expires_at: Option<i64>,
     pub(crate) status: LocalIdentityStatus,
-    pub(crate) saved_at: PathBuf,
+    pub(crate) dir: PathBuf,
     pub(crate) is_default: bool,
 }
 
@@ -138,11 +146,11 @@ pub(crate) fn classify_status(
         LocalIdentityMaterialState::Present => {}
     }
 
-    let Some(_) = assessment.certificate_chain.as_ref() else {
+    if assessment.usage.is_none() || assessment.sequence.is_none() {
         return LocalIdentityStatus::Invalid {
             detail: "certificate chain metadata is invalid".to_string(),
         };
-    };
+    }
     let Some(expires_at) = assessment.expires_at else {
         return LocalIdentityStatus::Invalid {
             detail: "certificate expiry is unavailable".to_string(),
@@ -156,6 +164,13 @@ pub(crate) fn classify_status(
     } else {
         LocalIdentityStatus::Ready { expires_at }
     }
+}
+
+pub(crate) fn is_near_expiry(valid_from: i64, expires_at: i64, now: i64) -> bool {
+    now < expires_at
+        && now
+            >= valid_from
+                .saturating_add((expires_at.saturating_sub(valid_from).saturating_mul(2)) / 3)
 }
 
 pub(crate) fn build_inventory(mut summaries: Vec<LocalIdentitySummary>) -> LocalInventory {
@@ -238,42 +253,45 @@ pub(crate) async fn load_inventory(
     };
     let mut summaries = Vec::with_capacity(names.len());
     for name in names {
-        summaries.push(load_summary(dhttp_home, name.borrow(), default_name.clone()).await?);
+        summaries.push(load_summary_exact(dhttp_home, name.borrow(), default_name.clone()).await?);
     }
     Ok(build_inventory(summaries))
 }
 
-pub(crate) async fn try_load_summary(
+pub(crate) async fn try_load_summary_exact(
     dhttp_home: &DhttpHome,
     name: DhttpName<'_>,
     default_name: Option<DhttpName<'_>>,
 ) -> Result<Option<LocalIdentitySummary>, Error> {
-    match load_summary(dhttp_home, name, default_name).await {
+    match load_summary_exact(dhttp_home, name, default_name).await {
         Ok(summary) => Ok(Some(summary)),
         Err(Error::ResolveIdentityProfile {
-            source: dhttp::home::identity::ssl::ResolveIdentityProfileError::NotFound { .. },
+            source: dhttp::home::identity::ssl::ResolveIdentityProfileError::ExactNotFound { .. },
         }) => Ok(None),
         Err(error) => Err(error),
     }
 }
 
-pub(crate) async fn load_summary(
+pub(crate) async fn load_summary_exact(
     dhttp_home: &DhttpHome,
     name: DhttpName<'_>,
     default_name: Option<DhttpName<'_>>,
 ) -> Result<LocalIdentitySummary, Error> {
     let target = IdentityTarget::parse(name.as_partial())?;
-    let profile = dhttp_home.resolve_identity_profile(name.clone()).await?;
+    let profile = dhttp_home
+        .resolve_identity_profile_exactly(name.clone())
+        .await?;
     let assessment = assess_profile(&profile).await;
     let status = classify_status(&assessment, now_unix_timestamp());
 
     Ok(LocalIdentitySummary {
         target,
-        certificate_chain: assessment.certificate_chain,
+        usage: assessment.usage,
+        sequence: assessment.sequence,
         valid_from: assessment.valid_from,
-        issuer: assessment.issuer,
+        expires_at: assessment.expires_at,
         status,
-        saved_at: profile.path().to_path_buf(),
+        dir: profile.path().to_path_buf(),
         is_default: default_name
             .as_ref()
             .map(|default| default.as_partial() == name.as_partial())
@@ -345,7 +363,7 @@ fn summary_sort_key(
         .then_with(|| left.target.short_name().cmp(right.target.short_name()))
 }
 
-fn now_unix_timestamp() -> i64 {
+pub(crate) fn now_unix_timestamp() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock should be after unix epoch")
@@ -361,10 +379,10 @@ async fn assess_profile(
             return LocalIdentityAssessment {
                 certificate: certificate_state_from_error(&error),
                 private_key: LocalIdentityMaterialState::Present,
-                certificate_chain: None,
+                usage: None,
+                sequence: None,
                 valid_from: None,
                 expires_at: None,
-                issuer: None,
             };
         }
     };
@@ -379,10 +397,10 @@ async fn assess_profile(
     let mut assessment = LocalIdentityAssessment {
         certificate: LocalIdentityMaterialState::Present,
         private_key: LocalIdentityMaterialState::Present,
-        certificate_chain: None,
+        usage: None,
+        sequence: None,
         valid_from: None,
         expires_at: None,
-        issuer: None,
     };
 
     match profile.load_key().await {
@@ -423,7 +441,6 @@ async fn assess_profile(
         Ok((_, certificate)) => {
             assessment.valid_from = Some(certificate.validity().not_before.timestamp());
             assessment.expires_at = Some(certificate.validity().not_after.timestamp());
-            assessment.issuer = Some(certificate.issuer().to_string());
         }
         Err(_) => {
             assessment.certificate =
@@ -434,7 +451,13 @@ async fn assess_profile(
 
     match extract_dhttp_subject_key_identifier(&certs) {
         Ok(ski) => {
-            assessment.certificate_chain = Some(ski.chain().to_string());
+            assessment.usage = Some(match ski.chain().kind() {
+                dhttp::certificate::CertificateChainKind::Primary => {
+                    IdentityUsage::BothClientAndServer
+                }
+                dhttp::certificate::CertificateChainKind::Secondary => IdentityUsage::ClientOnly,
+            });
+            assessment.sequence = Some(ski.chain().sequence().get());
         }
         Err(_) => {
             assessment.certificate = LocalIdentityMaterialState::Invalid(
@@ -483,10 +506,10 @@ mod tests {
     use dhttp::{home::DhttpHome, name::DhttpName};
 
     use super::{
-        InteractiveInventoryChoice, LocalIdentityAssessment, LocalIdentityMaterialState,
-        LocalIdentityStatus, LocalIdentitySummary, LocalInventoryRoot,
+        IdentityUsage, InteractiveInventoryChoice, LocalIdentityAssessment,
+        LocalIdentityMaterialState, LocalIdentityStatus, LocalIdentitySummary, LocalInventoryRoot,
         build_default_inventory_choices, build_inventory, build_renew_inventory_choices,
-        classify_status,
+        classify_status, is_near_expiry, try_load_summary_exact,
     };
     use crate::cli::flow::target::IdentityTarget;
 
@@ -504,17 +527,56 @@ mod tests {
     }
 
     fn ready_summary(name: &str, is_default: bool, chain: &str) -> LocalIdentitySummary {
+        let (usage, sequence) = match chain.split_once(':').unwrap() {
+            ("primary", sequence) => (
+                IdentityUsage::BothClientAndServer,
+                sequence.parse().unwrap(),
+            ),
+            ("secondary", sequence) => (IdentityUsage::ClientOnly, sequence.parse().unwrap()),
+            _ => panic!("unsupported test certificate chain"),
+        };
         LocalIdentitySummary {
             target: IdentityTarget::parse(name).unwrap(),
-            certificate_chain: Some(chain.to_string()),
+            usage: Some(usage),
+            sequence: Some(sequence),
             valid_from: Some(NOW - 300),
-            issuer: Some("CN=Genmeta Test CA".to_string()),
+            expires_at: Some(NOW + 300),
             status: LocalIdentityStatus::Ready {
                 expires_at: NOW + 300,
             },
-            saved_at: PathBuf::from(format!("/tmp/{name}")),
+            dir: PathBuf::from(format!("/tmp/{name}")),
             is_default,
         }
+    }
+
+    #[test]
+    fn near_expiry_starts_at_two_thirds_of_the_validity_window() {
+        let valid_from = 1_000;
+        let expires_at = 1_900;
+        assert!(!is_near_expiry(valid_from, expires_at, 1_599));
+        assert!(is_near_expiry(valid_from, expires_at, 1_600));
+        assert!(is_near_expiry(valid_from, expires_at, 1_899));
+        assert!(!is_near_expiry(valid_from, expires_at, 1_900));
+    }
+
+    #[tokio::test]
+    async fn exact_summary_never_falls_back_to_a_wildcard_profile() {
+        let home_path = unique_test_home_path("exact-only");
+        let home = DhttpHome::new(home_path.clone());
+        let requested = DhttpName::try_from("phone.alice.smith").unwrap();
+        let wildcard = requested.clone().to_wildcard();
+        tokio::fs::create_dir_all(home.identity_profile(wildcard.borrow()).ssl_dir())
+            .await
+            .unwrap();
+
+        assert!(
+            try_load_summary_exact(&home, requested.borrow(), None)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        tokio::fs::remove_dir_all(home_path).await.unwrap();
     }
 
     #[test]
@@ -523,10 +585,10 @@ mod tests {
             &LocalIdentityAssessment {
                 certificate: LocalIdentityMaterialState::Present,
                 private_key: LocalIdentityMaterialState::Present,
-                certificate_chain: Some("primary:0".to_string()),
+                usage: Some(IdentityUsage::BothClientAndServer),
+                sequence: Some(0),
                 valid_from: Some(NOW - 300),
                 expires_at: Some(NOW + 300),
-                issuer: Some("CN=Genmeta Test CA".to_string()),
             },
             NOW,
         );
@@ -541,10 +603,10 @@ mod tests {
             &LocalIdentityAssessment {
                 certificate: LocalIdentityMaterialState::Present,
                 private_key: LocalIdentityMaterialState::Present,
-                certificate_chain: Some("secondary:2".to_string()),
+                usage: Some(IdentityUsage::ClientOnly),
+                sequence: Some(2),
                 valid_from: Some(NOW - 300),
                 expires_at: Some(NOW - 1),
-                issuer: Some("CN=Genmeta Test CA".to_string()),
             },
             NOW,
         );
@@ -559,10 +621,10 @@ mod tests {
             &LocalIdentityAssessment {
                 certificate: LocalIdentityMaterialState::Present,
                 private_key: LocalIdentityMaterialState::Missing("private key missing"),
-                certificate_chain: Some("secondary:3".to_string()),
+                usage: Some(IdentityUsage::ClientOnly),
+                sequence: Some(3),
                 valid_from: Some(NOW - 300),
                 expires_at: Some(NOW + 300),
-                issuer: Some("CN=Genmeta Test CA".to_string()),
             },
             NOW,
         );
@@ -579,10 +641,10 @@ mod tests {
                     "certificate does not match local key".to_string(),
                 ),
                 private_key: LocalIdentityMaterialState::Present,
-                certificate_chain: Some("secondary:4".to_string()),
+                usage: Some(IdentityUsage::ClientOnly),
+                sequence: Some(4),
                 valid_from: Some(NOW - 300),
                 expires_at: Some(NOW + 300),
-                issuer: Some("CN=Genmeta Test CA".to_string()),
             },
             NOW,
         );
@@ -600,7 +662,8 @@ mod tests {
         tv.status = LocalIdentityStatus::Incomplete {
             detail: "private key missing".to_string(),
         };
-        tv.certificate_chain = None;
+        tv.usage = None;
+        tv.sequence = None;
 
         let inventory = build_inventory(vec![
             ready_summary("tablet.reimu.scarlet", false, "secondary:1"),
@@ -701,7 +764,7 @@ mod tests {
         let dhttp_home = DhttpHome::new(home_path);
         let name = DhttpName::try_from("alice.smith").unwrap();
 
-        let summary = super::try_load_summary(&dhttp_home, name.borrow(), None)
+        let summary = super::try_load_summary_exact(&dhttp_home, name.borrow(), None)
             .await
             .unwrap();
 
