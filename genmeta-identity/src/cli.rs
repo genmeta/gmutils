@@ -328,9 +328,6 @@ pub struct Apply {
     pub name: Option<String>,
     #[arg(long)]
     pub kind: Option<String>,
-    /// Register a missing sub-identity before applying it.
-    #[arg(long)]
-    pub register_if_missing: bool,
     #[arg(long)]
     pub replace_local: bool,
     #[arg(long)]
@@ -698,23 +695,20 @@ mod tests {
     }
 
     #[test]
-    fn apply_accepts_register_if_missing() {
+    fn apply_does_not_expose_register_if_missing() {
         let help = Apply::command().render_long_help().to_string();
-        assert!(
-            help.contains("Register a missing sub-identity before applying it"),
-            "{help}"
-        );
-        assert!(
-            Options::try_parse_from([
-                "genmeta",
-                "apply",
-                "phone.alice.smith",
-                "--kind",
-                "primary",
-                "--register-if-missing",
-            ])
-            .is_ok()
-        );
+        assert!(!help.contains("register-if-missing"), "{help}");
+
+        let error = Options::try_parse_from([
+            "genmeta",
+            "apply",
+            "phone.alice.smith",
+            "--kind",
+            "primary",
+            "--register-if-missing",
+        ])
+        .unwrap_err();
+        assert!(error.to_string().contains("unexpected argument"));
     }
 
     #[test]

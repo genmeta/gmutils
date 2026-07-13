@@ -38,12 +38,8 @@ enum MissingTargetAction {
 
 fn missing_target_action(
     target: &IdentityTarget,
-    register_if_missing: bool,
     private_test_continuation: bool,
 ) -> MissingTargetAction {
-    if !register_if_missing {
-        return MissingTargetAction::Reject;
-    }
     match target.level() {
         IdentityLevel::SubIdentity => MissingTargetAction::Register,
         IdentityLevel::Identity if private_test_continuation => MissingTargetAction::Register,
@@ -55,18 +51,12 @@ fn private_test_root_registration(command: &Apply) -> bool {
     command.verify_code.is_some() && matches!(command.auth, Some(AuthMethod::Email))
 }
 
-fn missing_target_error(target: &IdentityTarget) -> Error {
-    let message = match target.level() {
-        IdentityLevel::Identity => format!(
-            "{} does not exist yet. Apply can register a missing sub-identity, but not a new root identity.",
-            target.short_name()
-        ),
-        IdentityLevel::SubIdentity => format!(
-            "{} does not exist yet. To register this sub-identity before applying it, rerun with --register-if-missing.",
-            target.short_name()
-        ),
-    };
-    Error::without_source(message)
+fn missing_root_target_error(target: &IdentityTarget) -> Error {
+    debug_assert_eq!(target.level(), IdentityLevel::Identity);
+    Error::without_source(format!(
+        "{} does not exist yet. Apply can register a missing sub-identity, but not a new root identity.",
+        target.short_name()
+    ))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -258,6 +248,36 @@ fn apply_identity_name_opening() -> &'static str {
     "Apply an identity here."
 }
 
+fn interactive_name_check_progress_message() -> &'static str {
+    "Checking the validity of this name..."
+}
+
+fn interactive_name_unavailable_message() -> &'static str {
+    "Sorry, this name is not available. Please try another one."
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InteractiveNameAvailability {
+    Applicable,
+    Retry,
+}
+
+fn classify_interactive_name_availability(
+    target: &IdentityTarget,
+    availability: &str,
+) -> Result<InteractiveNameAvailability, Error> {
+    match availability {
+        "conflict" => Ok(InteractiveNameAvailability::Applicable),
+        "available" if target.level() == IdentityLevel::SubIdentity => {
+            Ok(InteractiveNameAvailability::Applicable)
+        }
+        "available" | "reserved" | "unavailable" => Ok(InteractiveNameAvailability::Retry),
+        other => Err(Error::without_source(format!(
+            "cert server returned unsupported domain availability: {other}"
+        ))),
+    }
+}
+
 fn explicit_target_from_command(
     command: &Apply,
 ) -> Result<Option<dhttp::name::DhttpName<'static>>, Error> {
@@ -268,17 +288,63 @@ fn explicit_target_from_command(
         .transpose()
 }
 
-async fn prompt_apply_target() -> Result<dhttp::name::DhttpName<'static>, Error> {
-    let identity = crate::cli::prompt::prompt_identity_name(apply_identity_name_opening())
+async fn prompt_apply_target_with_opening(
+    opening: &'static str,
+) -> Result<dhttp::name::DhttpName<'static>, Error> {
+    let identity = crate::cli::prompt::prompt_identity_name(opening)
         .await
         .require_interactive("IDENTITY")?;
     cli::parse_identity_name(&identity)
 }
 
-async fn resolve_target(command: &Apply) -> Result<dhttp::name::DhttpName<'static>, Error> {
+async fn prompt_apply_target() -> Result<dhttp::name::DhttpName<'static>, Error> {
+    prompt_apply_target_with_opening(apply_identity_name_opening()).await
+}
+
+async fn prompt_apply_target_with_online_validation(
+    cert_server: &CertServer,
+) -> Result<dhttp::name::DhttpName<'static>, Error> {
+    let mut opening = apply_identity_name_opening();
+    loop {
+        let name = prompt_apply_target_with_opening(opening).await?;
+        opening = "";
+        let target = IdentityTarget::parse(name.as_partial())?;
+        let response = match super::progress::run_with_spinner(
+            interactive_name_check_progress_message(),
+            cert_server.inspect_domain_availability(name.as_full()),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(error) if error.is_api_code("domain_invalid") => {
+                crate::cli::flow::transcript::print_err_block(
+                    interactive_name_unavailable_message(),
+                );
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
+        match classify_interactive_name_availability(&target, &response.availability)? {
+            InteractiveNameAvailability::Applicable => return Ok(name),
+            InteractiveNameAvailability::Retry => {
+                crate::cli::flow::transcript::print_err_block(
+                    interactive_name_unavailable_message(),
+                );
+            }
+        }
+    }
+}
+
+async fn resolve_target(
+    command: &Apply,
+    interactive_cert_server: Option<&CertServer>,
+) -> Result<dhttp::name::DhttpName<'static>, Error> {
     match explicit_target_from_command(command)? {
         Some(name) => Ok(name),
-        None => prompt_apply_target().await,
+        None => match interactive_cert_server {
+            Some(cert_server) => prompt_apply_target_with_online_validation(cert_server).await,
+            None => prompt_apply_target().await,
+        },
     }
 }
 
@@ -441,7 +507,7 @@ async fn run_interactive_with_policy(
 
     loop {
         if state.target.is_none() {
-            state.target = Some(prompt_apply_target().await?);
+            state.target = Some(prompt_apply_target_with_online_validation(cert_server).await?);
             continue;
         }
 
@@ -617,13 +683,10 @@ async fn run_interactive_with_policy(
                 {
                     Ok(detail) => detail,
                     Err(error) if is_domain_not_found(&error) => {
-                        if missing_target_action(
-                            &target,
-                            command.register_if_missing,
-                            private_test_root_registration(command),
-                        ) == MissingTargetAction::Reject
+                        if missing_target_action(&target, private_test_root_registration(command))
+                            == MissingTargetAction::Reject
                         {
-                            return Err(missing_target_error(&target));
+                            return Err(missing_root_target_error(&target));
                         }
                         if let Err(error) = ensure_identity_exists_after_apply_login(
                             &target,
@@ -707,13 +770,10 @@ async fn run_interactive_with_policy(
                 {
                     Ok(detail) => detail,
                     Err(error) if is_domain_not_found(&error) => {
-                        if missing_target_action(
-                            &target,
-                            command.register_if_missing,
-                            private_test_root_registration(command),
-                        ) == MissingTargetAction::Reject
+                        if missing_target_action(&target, private_test_root_registration(command))
+                            == MissingTargetAction::Reject
                         {
-                            return Err(missing_target_error(&target));
+                            return Err(missing_root_target_error(&target));
                         }
                         if target.level() != IdentityLevel::SubIdentity {
                             crate::cli::flow::transcript::print_block(&format!(
@@ -822,7 +882,7 @@ pub(crate) async fn run_with_policy(
     let default_identity_when_command_started = cli::load_current_settings(dhttp_home)
         .await?
         .and_then(|config| config.settings().default_identity_name().cloned());
-    let domain = resolve_target(command).await?;
+    let domain = resolve_target(command, is_interactive.then_some(cert_server)).await?;
     let target = IdentityTarget::parse(domain.as_partial())?;
     let kind = resolve_kind(command).await?;
     let device_name =
@@ -891,13 +951,10 @@ pub(crate) async fn run_with_policy(
             {
                 Ok(detail) => detail,
                 Err(error) if is_domain_not_found(&error) => {
-                    if missing_target_action(
-                        &target,
-                        command.register_if_missing,
-                        private_test_root_registration(command),
-                    ) == MissingTargetAction::Reject
+                    if missing_target_action(&target, private_test_root_registration(command))
+                        == MissingTargetAction::Reject
                     {
-                        return Err(missing_target_error(&target));
+                        return Err(missing_root_target_error(&target));
                     }
                     ensure_identity_exists_after_apply_login(
                         &target,
@@ -941,13 +998,10 @@ pub(crate) async fn run_with_policy(
             {
                 Ok(detail) => detail,
                 Err(error) if is_domain_not_found(&error) => {
-                    if missing_target_action(
-                        &target,
-                        command.register_if_missing,
-                        private_test_root_registration(command),
-                    ) == MissingTargetAction::Reject
+                    if missing_target_action(&target, private_test_root_registration(command))
+                        == MissingTargetAction::Reject
                     {
-                        return Err(missing_target_error(&target));
+                        return Err(missing_root_target_error(&target));
                     }
                     if target.level() != IdentityLevel::SubIdentity {
                         whatever!(
@@ -1019,11 +1073,14 @@ pub(crate) async fn run(
 #[cfg(test)]
 mod tests {
     use super::{
-        ApplyApprovalPlan, ApplyVerifyCodeAction, InteractiveApplyState, MissingTargetAction,
-        apply_identity_name_opening, apply_verify_code_actions, classify_apply_email_issue_error,
-        explicit_target_from_command, missing_target_action, missing_target_error,
-        new_identity_confirmation_message, preserve_apply_email_issue_error,
-        preserve_apply_registration_error, resolve_non_interactive_approval_plan,
+        ApplyApprovalPlan, ApplyVerifyCodeAction, InteractiveApplyState,
+        InteractiveNameAvailability, MissingTargetAction, apply_identity_name_opening,
+        apply_verify_code_actions, classify_apply_email_issue_error,
+        classify_interactive_name_availability, explicit_target_from_command,
+        interactive_name_check_progress_message, interactive_name_unavailable_message,
+        missing_root_target_error, missing_target_action, new_identity_confirmation_message,
+        preserve_apply_email_issue_error, preserve_apply_registration_error,
+        resolve_non_interactive_approval_plan,
     };
     use crate::{
         auth::AuthMethod,
@@ -1036,7 +1093,6 @@ mod tests {
             &Apply {
                 name: Some("alice.smith".to_string()),
                 kind: Some("primary".to_string()),
-                register_if_missing: false,
                 replace_local: false,
                 device_name: None,
                 email: Some("alice@example.test".to_string()),
@@ -1065,7 +1121,6 @@ mod tests {
             &Apply {
                 name: Some("alice.smith".to_string()),
                 kind: Some("primary".to_string()),
-                register_if_missing: false,
                 replace_local: false,
                 device_name: None,
                 email: Some("alice@example.test".to_string()),
@@ -1125,7 +1180,6 @@ mod tests {
         let target = explicit_target_from_command(&Apply {
             name: None,
             kind: None,
-            register_if_missing: false,
             replace_local: false,
             device_name: None,
             email: None,
@@ -1202,6 +1256,46 @@ mod tests {
     }
 
     #[test]
+    fn interactive_name_availability_respects_target_level() {
+        let root = IdentityTarget::parse("alice.smith").unwrap();
+        let child = IdentityTarget::parse("phone.alice.smith").unwrap();
+
+        assert_eq!(
+            classify_interactive_name_availability(&root, "conflict").unwrap(),
+            InteractiveNameAvailability::Applicable
+        );
+        assert_eq!(
+            classify_interactive_name_availability(&child, "available").unwrap(),
+            InteractiveNameAvailability::Applicable
+        );
+        assert_eq!(
+            classify_interactive_name_availability(&root, "available").unwrap(),
+            InteractiveNameAvailability::Retry
+        );
+        assert_eq!(
+            classify_interactive_name_availability(&child, "reserved").unwrap(),
+            InteractiveNameAvailability::Retry
+        );
+        assert_eq!(
+            classify_interactive_name_availability(&child, "unavailable").unwrap(),
+            InteractiveNameAvailability::Retry
+        );
+        assert!(classify_interactive_name_availability(&child, "future-status").is_err());
+    }
+
+    #[test]
+    fn interactive_name_check_copy_matches_spec() {
+        assert_eq!(
+            interactive_name_check_progress_message(),
+            "Checking the validity of this name..."
+        );
+        assert_eq!(
+            interactive_name_unavailable_message(),
+            "Sorry, this name is not available. Please try another one."
+        );
+    }
+
+    #[test]
     fn newly_registered_identity_uses_the_approved_confirmation() {
         assert_eq!(
             new_identity_confirmation_message(),
@@ -1210,20 +1304,11 @@ mod tests {
     }
 
     #[test]
-    fn explicit_registration_flag_allows_registration() {
+    fn missing_sub_identity_registration_is_implicit() {
         let target = IdentityTarget::parse("phone.alice.smith").unwrap();
         assert_eq!(
-            missing_target_action(&target, true, false),
+            missing_target_action(&target, false),
             MissingTargetAction::Register
-        );
-    }
-
-    #[test]
-    fn missing_target_requires_the_explicit_flag_in_every_mode() {
-        let target = IdentityTarget::parse("phone.alice.smith").unwrap();
-        assert_eq!(
-            missing_target_action(&target, false, false),
-            MissingTargetAction::Reject
         );
     }
 
@@ -1232,23 +1317,12 @@ mod tests {
         let target = IdentityTarget::parse("alice.smith").unwrap();
 
         assert_eq!(
-            missing_target_action(&target, true, false),
+            missing_target_action(&target, false),
             MissingTargetAction::Reject
         );
         assert_eq!(
-            missing_target_action(&target, true, true),
+            missing_target_action(&target, true),
             MissingTargetAction::Register
-        );
-    }
-
-    #[test]
-    fn non_interactive_missing_target_error_names_explicit_flag() {
-        let target = IdentityTarget::parse("phone.alice.smith").unwrap();
-        let rendered = missing_target_error(&target).to_string();
-
-        assert_eq!(
-            rendered,
-            "phone.alice.smith does not exist yet. To register this sub-identity before applying it, rerun with --register-if-missing."
         );
     }
 
@@ -1257,7 +1331,7 @@ mod tests {
         let target = IdentityTarget::parse("alice.smith").unwrap();
 
         assert_eq!(
-            missing_target_error(&target).to_string(),
+            missing_root_target_error(&target).to_string(),
             "alice.smith does not exist yet. Apply can register a missing sub-identity, but not a new root identity."
         );
     }

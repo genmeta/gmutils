@@ -149,6 +149,12 @@ pub struct DomainLoginResponse {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct DomainAvailabilityResponse {
+    pub domain: String,
+    pub availability: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreateDomainResponse {
     pub domain: String,
     pub quotes: DomainQuotes,
@@ -433,6 +439,19 @@ impl CertServer {
             .http_client
             .post(format!("{}/v2/email/verify", self.base_url))
             .json(&json!({ "email": email }))
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn inspect_domain_availability(
+        &self,
+        domain: &str,
+    ) -> Result<DomainAvailabilityResponse, Error> {
+        let response = self
+            .http_client
+            .get(format!("{}/v2/pricing", self.base_url))
+            .query(&[("domain", domain)])
             .send()
             .await?;
         parse_response(response).await
@@ -829,6 +848,21 @@ mod tests {
         };
 
         assert_eq!(error.to_string(), "domain access is forbidden");
+    }
+
+    #[test]
+    fn domain_availability_response_reads_pricing_envelope() {
+        let payload = r#"
+        {
+          "domain":"alice.smith.dhttp.net",
+          "availability":"conflict",
+          "currency":"USD",
+          "prices":[]
+        }
+        "#;
+        let response: DomainAvailabilityResponse = serde_json::from_str(payload).unwrap();
+        assert_eq!(response.domain, "alice.smith.dhttp.net");
+        assert_eq!(response.availability, "conflict");
     }
 
     #[test]

@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `genmeta identity apply [name]` is now the single create-or-update flow;
   the former `identity create` command has been removed.
+- Missing eligible sub-identities now enter registration naturally during
+  `identity apply`, without a separate registration flag. Names entered by an
+  interactive prompt receive an early certserver availability check.
 - Bare `genmeta identity renew` targets the configured default identity, and
   renew no longer accepts `--default`.
 - Identity authentication skips expired, incomplete, and invalid local
