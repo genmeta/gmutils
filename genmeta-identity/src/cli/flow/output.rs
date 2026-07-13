@@ -100,24 +100,6 @@ pub(crate) fn compact_identity_label_parts(
     label
 }
 
-pub(crate) fn format_current_default_suffix(
-    name: &str,
-    status: &LocalIdentityStatus,
-    ansi: bool,
-) -> String {
-    render_block(
-        format!(
-            "(current: {})",
-            compact_identity_label_parts(name, status, false)
-        ),
-        BlockStyle {
-            bold: false,
-            dim: true,
-        },
-        ansi,
-    )
-}
-
 #[cfg(test)]
 pub(crate) fn render_choice_label(choice: &InteractiveInventoryChoice, ansi: bool) -> String {
     match choice {
@@ -133,32 +115,6 @@ pub(crate) fn render_choice_label(choice: &InteractiveInventoryChoice, ansi: boo
             ansi,
         ),
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SavedIdentityAction {
-    Applied,
-}
-
-impl SavedIdentityAction {
-    fn verb(self) -> &'static str {
-        match self {
-            Self::Applied => "Applied",
-        }
-    }
-}
-
-pub(crate) fn format_saved_identity_result(
-    action: SavedIdentityAction,
-    summary: &LocalIdentitySummary,
-    _ansi: bool,
-) -> String {
-    format!(
-        "{} identity {} at {}",
-        action.verb(),
-        summary.target.short_name(),
-        summary.dir.display()
-    )
 }
 
 pub(crate) fn format_info(summary: &LocalIdentitySummary, now: i64, ansi: bool) -> String {
@@ -267,8 +223,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        SavedIdentityAction, format_current_default_suffix, format_default_query, format_info,
-        format_saved_identity_result, render_choice_label, render_inventory,
+        format_default_query, format_info, render_choice_label, render_inventory,
         render_verbose_inventory,
     };
     use crate::cli::flow::{
@@ -479,16 +434,8 @@ mod tests {
     }
 
     #[test]
-    fn saved_result_and_prompt_helpers_remain_stable() {
+    fn saved_choice_label_remains_stable() {
         let profile = ready_default();
-        assert_eq!(
-            format_saved_identity_result(SavedIdentityAction::Applied, &profile, false),
-            "Applied identity alice.smith at /tmp/alice.smith"
-        );
-        assert_eq!(
-            format_current_default_suffix("alice.smith", &profile.status, false),
-            "(current: alice.smith)"
-        );
         assert_eq!(
             render_choice_label(&InteractiveInventoryChoice::Saved(profile), false),
             "alice.smith (default)"

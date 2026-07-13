@@ -8,7 +8,6 @@ use tokio::{fs, io::AsyncWriteExt};
 pub(crate) struct WelcomeServiceCreated {
     pub(crate) server_conf_path: PathBuf,
     pub(crate) welcome_page_path: PathBuf,
-    pub(crate) url: String,
 }
 
 #[derive(Debug, Snafu)]
@@ -66,9 +65,9 @@ const WELCOME_PAGE_PATH: &str = "templates/welcome/index.html";
 pub(crate) async fn maybe_create_welcome_service(
     dhttp_home: &DhttpHome,
     name: DhttpName<'_>,
-    identity_was_newly_saved: bool,
+    usage: super::local::IdentityUsage,
 ) -> Result<Option<WelcomeServiceCreated>, WelcomeServiceError> {
-    if !identity_was_newly_saved {
+    if usage == super::local::IdentityUsage::ClientOnly {
         return Ok(None);
     }
 
@@ -112,16 +111,12 @@ pub(crate) async fn maybe_create_welcome_service(
     Ok(Some(WelcomeServiceCreated {
         server_conf_path,
         welcome_page_path,
-        url: format!("https://{}/", name.as_partial()),
     }))
 }
 
-pub(crate) fn format_welcome_service_created(created: &WelcomeServiceCreated) -> String {
+pub(crate) fn format_welcome_service_created(name: &str) -> String {
     format!(
-        "Welcome service created\n  Created server.conf at {}\n  Created welcome page at {}\n  Open {} after pishoo starts or reloads",
-        created.server_conf_path.display(),
-        created.welcome_page_path.display(),
-        created.url,
+        "A sample welcome page has been created. After starting the service, access it with `genmeta curl https://{name}/`."
     )
 }
 
@@ -240,6 +235,7 @@ mod tests {
     use dhttp::{home::DhttpHome, name::DhttpName};
 
     use super::{format_welcome_service_created, maybe_create_welcome_service};
+    use crate::cli::flow::local::IdentityUsage;
 
     fn unique_test_home_path(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -257,9 +253,10 @@ mod tests {
         let home = DhttpHome::new(unique_test_home_path("user-scope-new-identity"));
         let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
 
-        let created = maybe_create_welcome_service(&home, name.borrow(), true)
-            .await
-            .unwrap();
+        let created =
+            maybe_create_welcome_service(&home, name.borrow(), IdentityUsage::BothClientAndServer)
+                .await
+                .unwrap();
 
         let created = created.expect("new user identity should create welcome files");
         assert!(created.server_conf_path.exists());
@@ -267,11 +264,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn skips_welcome_onboarding_when_identity_was_replaced() {
-        let home = DhttpHome::new(unique_test_home_path("replaced-identity"));
+    async fn skips_welcome_onboarding_for_client_only_usage() {
+        let home = DhttpHome::new(unique_test_home_path("client-only"));
         let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
 
-        let created = maybe_create_welcome_service(&home, name.borrow(), false)
+        let created = maybe_create_welcome_service(&home, name.borrow(), IdentityUsage::ClientOnly)
             .await
             .unwrap();
 
@@ -286,9 +283,10 @@ mod tests {
         let home = DhttpHome::new(unique_test_home_path("new-identity"));
         let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
 
-        let created = maybe_create_welcome_service(&home, name.borrow(), true)
-            .await
-            .unwrap();
+        let created =
+            maybe_create_welcome_service(&home, name.borrow(), IdentityUsage::BothClientAndServer)
+                .await
+                .unwrap();
 
         let created = created.expect("new identity should create welcome files");
         let profile = home.identity_profile(name.borrow());
@@ -339,12 +337,35 @@ mod tests {
             .await
             .unwrap();
 
-        let created = maybe_create_welcome_service(&home, name.borrow(), true)
-            .await
-            .unwrap();
+        let created =
+            maybe_create_welcome_service(&home, name.borrow(), IdentityUsage::BothClientAndServer)
+                .await
+                .unwrap();
 
         assert!(created.is_none());
         assert!(!profile.join("templates/welcome/index.html").exists());
+    }
+
+    #[tokio::test]
+    async fn skips_pair_creation_when_welcome_page_already_exists() {
+        let home = DhttpHome::new(unique_test_home_path("welcome-page-exists"));
+        let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
+        let profile = home.identity_profile(name.borrow());
+        let welcome_page = profile.join("templates/welcome/index.html");
+        tokio::fs::create_dir_all(welcome_page.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&welcome_page, "existing page")
+            .await
+            .unwrap();
+
+        let created =
+            maybe_create_welcome_service(&home, name.borrow(), IdentityUsage::BothClientAndServer)
+                .await
+                .unwrap();
+
+        assert!(created.is_none());
+        assert!(!profile.server_conf_path().exists());
     }
 
     #[cfg(unix)]
@@ -365,9 +386,10 @@ mod tests {
         )
         .unwrap();
 
-        let error = maybe_create_welcome_service(&home, name.borrow(), true)
-            .await
-            .expect_err("index.html directory should make file creation fail");
+        let error =
+            maybe_create_welcome_service(&home, name.borrow(), IdentityUsage::BothClientAndServer)
+                .await
+                .expect_err("index.html directory should make file creation fail");
 
         let rendered = error.to_string();
         assert!(rendered.contains("welcome service"), "{rendered}");
@@ -375,15 +397,10 @@ mod tests {
     }
 
     #[test]
-    fn renders_welcome_service_created_block() {
-        let created = super::WelcomeServiceCreated {
-            server_conf_path: PathBuf::from("/tmp/alice/server.conf"),
-            welcome_page_path: PathBuf::from("/tmp/alice/templates/welcome/index.html"),
-            url: "https://alice.smith/".to_string(),
-        };
-
-        let expected = "Welcome service created\n  Created server.conf at /tmp/alice/server.conf\n  Created welcome page at /tmp/alice/templates/welcome/index.html\n  Open https://alice.smith/ after pishoo starts or reloads";
-
-        assert_eq!(format_welcome_service_created(&created), expected);
+    fn welcome_success_copy_is_one_line() {
+        assert_eq!(
+            format_welcome_service_created("alice.smith"),
+            "A sample welcome page has been created. After starting the service, access it with `genmeta curl https://alice.smith/`."
+        );
     }
 }

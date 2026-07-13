@@ -130,18 +130,6 @@ fn generate_private_key_and_csr(name: &Name<'_>) -> Result<(String, String), Err
     Ok((key_pem, csr_pem))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LocalIdentitySave {
-    New,
-    Replace,
-}
-
-impl LocalIdentitySave {
-    pub(crate) fn created_new_identity(self) -> bool {
-        matches!(self, Self::New)
-    }
-}
-
 #[tracing::instrument()]
 async fn load_current_settings(dhttp_home: &DhttpHome) -> Result<Option<DhttpSettingsFile>, Error> {
     match dhttp_home.load_settings().await {

@@ -14,7 +14,7 @@ use super::{
 };
 use crate::{
     cert_server::{CertServer, CertificateDetail},
-    cli::{self, Apply, Error, prompt::InquireResultExt},
+    cli::{Apply, Error, prompt::InquireResultExt},
 };
 
 const APPLY_OPENING: &str = "Applying identity, generating ECC key pair locally, then requesting and deploying certificate.";
@@ -119,14 +119,9 @@ async fn authorize_local_replacement(
     resolved: &ResolvedApplyTarget,
     force: bool,
     interactive: bool,
-) -> Result<cli::LocalIdentitySave, Error> {
-    let save = if resolved.local.is_some() {
-        cli::LocalIdentitySave::Replace
-    } else {
-        cli::LocalIdentitySave::New
-    };
+) -> Result<(), Error> {
     if replacement_requirement(resolved.local.as_ref()) == ReplacementRequirement::None || force {
-        return Ok(save);
+        return Ok(());
     }
     if !interactive {
         return Err(crate::cli::prompt::Error::NotInteractive {
@@ -140,7 +135,7 @@ async fn authorize_local_replacement(
     {
         whatever!("apply was cancelled");
     }
-    Ok(save)
+    Ok(())
 }
 
 async fn resolve_kind(command: &Apply) -> Result<IdentityKind, Error> {
@@ -440,8 +435,6 @@ async fn install_and_finish(
     dhttp_home: &DhttpHome,
     resolved: &ResolvedApplyTarget,
     kind: IdentityKind,
-    local_identity_save: cli::LocalIdentitySave,
-    default_identity_when_command_started: Option<dhttp::name::DhttpName<'static>>,
     interactive: bool,
     key_material: &super::key_material::LazyKeyMaterial,
     detail: &CertificateDetail,
@@ -462,21 +455,27 @@ async fn install_and_finish(
     .await?;
     super::transcript::print_line(INSTALLED);
 
-    let welcome = super::welcome::maybe_create_welcome_service(
+    let usage = match kind {
+        IdentityKind::Primary => super::local::IdentityUsage::BothClientAndServer,
+        IdentityKind::Secondary => super::local::IdentityUsage::ClientOnly,
+    };
+    match super::welcome::maybe_create_welcome_service(
         dhttp_home,
         resolved.target.dhttp_name(),
-        local_identity_save.created_new_identity(),
-    )
-    .await?;
-    super::epilogue::run_lifecycle_epilogue(
-        dhttp_home,
-        resolved.target.dhttp_name(),
-        default_identity_when_command_started,
-        interactive,
-        super::output::SavedIdentityAction::Applied,
-        welcome.as_ref(),
+        usage,
     )
     .await
+    {
+        Ok(Some(_)) => super::transcript::print_line(
+            super::welcome::format_welcome_service_created(resolved.target.short_name()),
+        ),
+        Ok(None) => {}
+        Err(error) => super::transcript::print_warning(&format!(
+            "The identity was installed, but the sample welcome page could not be created: {error}"
+        )),
+    }
+    super::epilogue::run_lifecycle_epilogue(dhttp_home, resolved.target.dhttp_name(), interactive)
+        .await
 }
 
 pub(crate) async fn run(
@@ -487,12 +486,8 @@ pub(crate) async fn run(
 ) -> Result<(), Error> {
     super::transcript::print_line(APPLY_OPENING);
     let interactive = std::io::stdin().is_terminal();
-    let default_identity_when_command_started = cli::load_current_settings(dhttp_home)
-        .await?
-        .and_then(|config| config.settings().default_identity_name().cloned());
     let mut resolved = resolve_apply_target(command, dhttp_home, cert_server, interactive).await?;
-    let local_identity_save =
-        authorize_local_replacement(&resolved, command.force, interactive).await?;
+    authorize_local_replacement(&resolved, command.force, interactive).await?;
     let kind = resolve_kind(command).await?;
     let device_name =
         super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
@@ -517,8 +512,6 @@ pub(crate) async fn run(
                     dhttp_home,
                     &resolved,
                     kind,
-                    local_identity_save,
-                    default_identity_when_command_started,
                     interactive,
                     &key_material,
                     &detail,
@@ -603,22 +596,16 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert_eq!(
-            authorize_local_replacement(&ready, true, false)
-                .await
-                .unwrap(),
-            cli::LocalIdentitySave::Replace
-        );
+        authorize_local_replacement(&ready, true, false)
+            .await
+            .unwrap();
 
         let invalid = resolved_with(Some(LocalIdentityStatus::Invalid {
             detail: "certificate is unreadable".to_string(),
         }));
-        assert_eq!(
-            authorize_local_replacement(&invalid, false, false)
-                .await
-                .unwrap(),
-            cli::LocalIdentitySave::Replace
-        );
+        authorize_local_replacement(&invalid, false, false)
+            .await
+            .unwrap();
     }
 
     #[test]
