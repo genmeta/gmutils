@@ -1015,14 +1015,13 @@ dependencies = [
 [[package]]
 name = "dhttp"
 version = "0.5.0-beta.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dedfca271d296f9c0d9fee052d337495aacb4d1b49eb4b29f09af9cd446757b1"
 dependencies = [
  "bon",
  "bytes",
  "dhttp-access",
  "dhttp-home",
  "dhttp-identity",
+ "dhttp-log",
  "dyns",
  "futures",
  "h3x",
@@ -1038,8 +1037,6 @@ dependencies = [
 [[package]]
 name = "dhttp-access"
 version = "0.4.0-beta.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbcd9d2805ace5bcac3c112e14b9df13d02f38f2a8a77897acb1cec536fe0715"
 dependencies = [
  "chrono",
  "clap",
@@ -1062,8 +1059,6 @@ dependencies = [
 [[package]]
 name = "dhttp-home"
 version = "0.4.0-beta.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3af7727cd3f09f4f81bb928c3f7e77587a1a622796413bcbb8348e9a51b24f49"
 dependencies = [
  "dhttp-identity",
  "dirs",
@@ -1088,6 +1083,18 @@ dependencies = [
  "ring",
  "rustls",
  "serde",
+ "snafu 0.9.1",
+ "x509-parser",
+]
+
+[[package]]
+name = "dhttp-log"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dhttp-identity",
+ "http",
+ "sha2 0.10.9",
  "snafu 0.9.1",
  "x509-parser",
 ]
@@ -1675,6 +1682,7 @@ version = "0.4.0-beta.3"
 dependencies = [
  "base64",
  "bytes",
+ "chrono",
  "clap",
  "crossterm",
  "dhttp",

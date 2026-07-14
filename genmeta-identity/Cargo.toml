@@ -19,6 +19,7 @@ crossterm = { workspace = true, optional = true }
 
 base64 = { workspace = true }
 bytes = { workspace = true }
+chrono = { workspace = true }
 futures = { workspace = true }
 dhttp = { workspace = true }
 rankey = { workspace = true }

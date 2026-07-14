@@ -1,6 +1,8 @@
 pub mod flow;
 pub mod prompt;
 pub mod validator;
+
+mod certificate_log;
 use std::io::IsTerminal;
 
 use clap::Parser;

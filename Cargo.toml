@@ -81,6 +81,7 @@ tracing-indicatif = { version = "0.3" }
 # utils
 base64 = "0.22"
 bytes = "1"
+chrono = "0.4"
 crossterm = { version = "0.29" }
 dirs = { version = "6" }
 sea-orm = { version = "1", features = ["runtime-tokio-rustls"] }
