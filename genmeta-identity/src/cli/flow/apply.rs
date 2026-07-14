@@ -468,6 +468,14 @@ async fn attempt_apply_with_candidates(
     }
 }
 
+fn certificate_action(resolved: &ResolvedApplyTarget) -> dhttp::log::cert::CertificateAction {
+    if resolved.local.is_some() {
+        dhttp::log::cert::CertificateAction::Replace
+    } else {
+        dhttp::log::cert::CertificateAction::Apply
+    }
+}
+
 async fn install_and_finish(
     dhttp_home: &DhttpHome,
     resolved: &ResolvedApplyTarget,
@@ -488,6 +496,7 @@ async fn install_and_finish(
             sequence: None,
         },
         key_pem,
+        certificate_action(resolved),
     )
     .await?;
     super::transcript::print_line(INSTALLED);
@@ -597,6 +606,26 @@ mod tests {
                 is_default: false,
             }),
         }
+    }
+
+    #[test]
+    fn certificate_action_tracks_exact_local_material_lifecycle() {
+        assert_eq!(
+            certificate_action(&resolved_with(None)),
+            dhttp::log::cert::CertificateAction::Apply,
+        );
+        assert_eq!(
+            certificate_action(&resolved_with(Some(LocalIdentityStatus::Invalid {
+                detail: "certificate is unreadable".to_string(),
+            }))),
+            dhttp::log::cert::CertificateAction::Replace,
+        );
+        assert_eq!(
+            certificate_action(&resolved_with(Some(LocalIdentityStatus::Ready {
+                expires_at: 1_900_000_000,
+            }))),
+            dhttp::log::cert::CertificateAction::Replace,
+        );
     }
 
     #[test]

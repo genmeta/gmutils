@@ -214,13 +214,22 @@ pub(crate) async fn validate_and_save(
     detail: &CertificateDetail,
     expected: &InstallExpectation<'_>,
     key_pem: &str,
+    action: dhttp::log::cert::CertificateAction,
 ) -> Result<(), Error> {
     validate_install(detail, expected, key_pem)?;
-    dhttp_home
-        .identity_profile(expected.target.borrow())
+    let profile = dhttp_home.identity_profile(expected.target.borrow());
+    profile
         .save_identity(detail.cert_pem.as_bytes(), key_pem.as_bytes())
         .await
-        .context(error::SaveIdentitySnafu)
+        .context(error::SaveIdentitySnafu)?;
+    if let Err(error) = crate::cli::certificate_log::write_after_commit(&profile, action).await {
+        tracing::warn!(
+            identity = %profile.name(),
+            error = %snafu::Report::from_error(&error),
+            "failed to append certificate log after identity commit"
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -378,9 +387,15 @@ mod tests {
         invalid.domain = "other.smith.dhttp.net".to_string();
 
         assert!(
-            validate_and_save(&home, &invalid, &expectation(name.borrow()), KEY)
-                .await
-                .is_err()
+            validate_and_save(
+                &home,
+                &invalid,
+                &expectation(name.borrow()),
+                KEY,
+                dhttp::log::cert::CertificateAction::Apply,
+            )
+            .await
+            .is_err()
         );
         assert!(!home_path.exists());
     }

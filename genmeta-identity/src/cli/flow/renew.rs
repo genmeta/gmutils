@@ -298,6 +298,7 @@ pub(crate) async fn run(
             sequence: Some(preflight.sequence),
         },
         key_pem,
+        dhttp::log::cert::CertificateAction::Renew,
     )
     .await?;
     super::transcript::print_line(RENEWED);
