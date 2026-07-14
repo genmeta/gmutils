@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `genmeta id` is a visible alias for `genmeta identity`.
 - `genmeta identity default -v` shows the default identity's full details.
+- Successful identity apply, replacement, and renewal append a post-commit
+  certificate audit record to the selected profile's `cert.log`; audit-write
+  failures do not roll back installed identity material.
 
 ### Changed
 
