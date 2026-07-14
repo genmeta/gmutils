@@ -9,18 +9,29 @@ pub(crate) fn classify_identity_attempt(
     error: &crate::cert_server::Error,
 ) -> AuthAttemptDisposition {
     match error {
-        crate::cert_server::Error::Api { code, .. } => match code.as_str() {
-            "unauthorized" | "domain_forbidden" => AuthAttemptDisposition::TryNext,
-            "domain_not_found" => AuthAttemptDisposition::ReplanMissingTarget,
+        crate::cert_server::Error::Api { status, code, .. } => match (*status, code.as_str()) {
+            (reqwest::StatusCode::UNAUTHORIZED, "unauthorized")
+            | (reqwest::StatusCode::FORBIDDEN, "domain_forbidden") => {
+                AuthAttemptDisposition::TryNext
+            }
+            (reqwest::StatusCode::NOT_FOUND, "domain_not_found") => {
+                AuthAttemptDisposition::ReplanMissingTarget
+            }
             _ => AuthAttemptDisposition::Terminal,
         },
+        crate::cert_server::Error::DhttpEndpointFromProfile {
+            source: dhttp::endpoint::LoadEndpointFromPathError::LoadIdentity { .. },
+        } => AuthAttemptDisposition::TryNext,
         crate::cert_server::Error::Request { .. }
         | crate::cert_server::Error::DhttpEndpoint { .. }
         | crate::cert_server::Error::DhttpRequest { .. }
         | crate::cert_server::Error::DhttpRead { .. }
         | crate::cert_server::Error::IdentityFallbackUnavailable
         | crate::cert_server::Error::Json { .. }
-        | crate::cert_server::Error::Whatever { .. } => AuthAttemptDisposition::Terminal,
+        | crate::cert_server::Error::Whatever { .. }
+        | crate::cert_server::Error::DhttpEndpointFromProfile { .. } => {
+            AuthAttemptDisposition::Terminal
+        }
     }
 }
 
@@ -57,6 +68,13 @@ mod tests {
             classify_identity_attempt(&api(reqwest::StatusCode::CONFLICT, "future_code")),
             AuthAttemptDisposition::Terminal
         );
+        assert_eq!(
+            classify_identity_attempt(&api(
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                "unauthorized"
+            )),
+            AuthAttemptDisposition::Terminal
+        );
     }
 
     #[test]
@@ -71,6 +89,31 @@ mod tests {
                 "cert_sequence_not_found"
             )),
             AuthAttemptDisposition::Terminal
+        );
+        assert_eq!(
+            classify_identity_attempt(&api(
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                "domain_not_found"
+            )),
+            AuthAttemptDisposition::Terminal
+        );
+    }
+
+    #[tokio::test]
+    async fn selected_profile_load_failure_can_try_the_next_proof() {
+        let missing = std::env::temp_dir().join(format!(
+            "genmeta-auth-missing-profile-{}",
+            std::process::id()
+        ));
+        let source = match dhttp::endpoint::Endpoint::load_from(missing).await {
+            Ok(_) => panic!("missing identity profile unexpectedly loaded"),
+            Err(source) => source,
+        };
+        let error = crate::cert_server::Error::DhttpEndpointFromProfile { source };
+
+        assert_eq!(
+            classify_identity_attempt(&error),
+            AuthAttemptDisposition::TryNext
         );
     }
 }

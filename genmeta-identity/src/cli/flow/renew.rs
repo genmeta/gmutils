@@ -1,4 +1,4 @@
-use std::io::IsTerminal;
+use std::{io::IsTerminal, path::Path};
 
 use dhttp::{
     certificate::CertificateChainKind,
@@ -111,7 +111,7 @@ async fn resolve_preflight(
 #[derive(Debug, Clone, Copy)]
 enum RenewProof<'a> {
     AccessToken(&'a str),
-    Identity(&'a str),
+    IdentityProfile(&'a Path),
 }
 
 #[derive(Debug)]
@@ -146,10 +146,10 @@ async fn request_renewal(
                     )
                     .await
             }
-            RenewProof::Identity(identity) => {
+            RenewProof::IdentityProfile(profile_dir) => {
                 cert_server
-                    .renew_cert_with_identity(
-                        identity,
+                    .renew_cert_with_identity_profile(
+                        profile_dir,
                         preflight.target.full_name(),
                         preflight.kind.as_str(),
                         preflight.sequence,
@@ -165,7 +165,7 @@ async fn request_renewal(
 }
 
 fn renew_remote_error(error: crate::cert_server::Error, target: &str) -> Error {
-    if error.is_api_code("cert_sequence_not_found") {
+    if error.is_api(reqwest::StatusCode::NOT_FOUND, "cert_sequence_not_found") {
         let message = error.to_string();
         return Error::with_source(
             Box::new(error),
@@ -205,10 +205,11 @@ async fn request_with_candidates(
             CandidateEvent::Warning(warning) => super::transcript::print_warning(&warning),
             CandidateEvent::Identity {
                 short_name,
-                full_name,
+                profile_dir,
+                ..
             } => match request_renewal(
                 cert_server,
-                RenewProof::Identity(&full_name),
+                RenewProof::IdentityProfile(&profile_dir),
                 preflight,
                 device_name,
                 key_material,
@@ -418,6 +419,20 @@ mod tests {
         assert_eq!(
             renew_remote_error(error, "alice.smith").to_string(),
             "certificate chain was not found\nRun `genmeta identity apply alice.smith` to request a new certificate chain."
+        );
+    }
+
+    #[test]
+    fn server_failure_with_reused_code_does_not_offer_apply_recovery() {
+        let error = crate::cert_server::Error::Api {
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            code: "cert_sequence_not_found".to_string(),
+            message: "internal server error".to_string(),
+        };
+
+        assert_eq!(
+            renew_remote_error(error, "alice.smith").to_string(),
+            "internal server error"
         );
     }
 

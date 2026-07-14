@@ -209,6 +209,14 @@ async fn path_exists(path: &Path) -> Result<bool, WelcomeServiceError> {
 }
 
 async fn write_new_file(path: &Path, contents: &[u8]) -> Result<(), WelcomeServiceError> {
+    write_new_file_transaction(path, contents, || Ok(())).await
+}
+
+async fn write_new_file_transaction(
+    path: &Path,
+    contents: &[u8],
+    before_finish: impl FnOnce() -> std::io::Result<()>,
+) -> Result<(), WelcomeServiceError> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     let mut file = options
@@ -217,11 +225,25 @@ async fn write_new_file(path: &Path, contents: &[u8]) -> Result<(), WelcomeServi
         .context(welcome_service_error::CreateFileSnafu {
             path: path.to_path_buf(),
         })?;
-    file.write_all(contents)
-        .await
-        .context(welcome_service_error::WriteFileSnafu {
+    let write_result = async {
+        file.write_all(contents).await?;
+        before_finish()?;
+        file.flush().await
+    }
+    .await;
+    if let Err(source) = write_result {
+        drop(file);
+        if let Err(source) = fs::remove_file(path).await {
+            return Err(welcome_service_error::RollbackDeleteSnafu {
+                path: path.to_path_buf(),
+            }
+            .into_error(source));
+        }
+        return Err(welcome_service_error::WriteFileSnafu {
             path: path.to_path_buf(),
-        })?;
+        }
+        .into_error(source));
+    }
     Ok(())
 }
 
@@ -394,6 +416,25 @@ mod tests {
         let rendered = error.to_string();
         assert!(rendered.contains("welcome service"), "{rendered}");
         assert!(!profile.server_conf_path().exists());
+    }
+
+    #[tokio::test]
+    async fn write_failure_removes_the_new_partial_file() {
+        let home_path = unique_test_home_path("partial-file-rollback");
+        tokio::fs::create_dir_all(&home_path).await.unwrap();
+        let path = home_path.join("server.conf");
+
+        let error = super::write_new_file_transaction(&path, b"partial", || {
+            Err(std::io::Error::other("injected write failure"))
+        })
+        .await
+        .unwrap_err();
+
+        assert!(
+            error.to_string().contains("welcome service file"),
+            "{error}"
+        );
+        assert!(!path.exists(), "partial welcome file was not removed");
     }
 
     #[test]

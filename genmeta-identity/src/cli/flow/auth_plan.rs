@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, path::PathBuf};
 
 use dhttp::{home::DhttpHome, name::DhttpName};
 
@@ -19,6 +19,7 @@ pub(crate) enum CandidateEvent {
     Identity {
         short_name: String,
         full_name: String,
+        profile_dir: PathBuf,
     },
     Warning(String),
     Email,
@@ -138,6 +139,7 @@ where
                         return Ok(CandidateEvent::Identity {
                             short_name: summary.target.short_name().to_string(),
                             full_name: summary.target.full_name().to_string(),
+                            profile_dir: summary.dir,
                         });
                     }
                     return Ok(CandidateEvent::Warning(self.warning_for(&summary)));
@@ -271,7 +273,12 @@ mod tests {
 
         assert!(matches!(
             runner.next().await.unwrap(),
-            CandidateEvent::Identity { short_name, .. } if short_name == "phone.alice.smith"
+            CandidateEvent::Identity {
+                short_name,
+                profile_dir,
+                ..
+            } if short_name == "phone.alice.smith"
+                && profile_dir == std::path::Path::new("/tmp/phone.alice.smith")
         ));
         assert_eq!(runner.loader().requested(), ["phone.alice.smith"]);
     }

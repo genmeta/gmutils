@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use reqwest::header;
 use serde::{Deserialize, de::DeserializeOwned};
@@ -20,6 +20,10 @@ pub enum Error {
     #[snafu(display("failed to load DHTTP identity endpoint"))]
     DhttpEndpoint {
         source: dhttp::endpoint::LoadEndpointError<dhttp::name::InvalidDhttpName>,
+    },
+    #[snafu(display("failed to load DHTTP identity endpoint from selected profile"))]
+    DhttpEndpointFromProfile {
+        source: dhttp::endpoint::LoadEndpointFromPathError,
     },
     #[snafu(display("failed to send DHTTP identity request"))]
     DhttpRequest {
@@ -415,6 +419,15 @@ impl CertServer {
         Ok(Arc::new(endpoint))
     }
 
+    async fn identity_endpoint_from_profile(
+        profile_dir: &Path,
+    ) -> Result<Arc<dhttp::endpoint::Endpoint>, Error> {
+        let endpoint = dhttp::endpoint::Endpoint::load_from(profile_dir)
+            .await
+            .context(DhttpEndpointFromProfileSnafu)?;
+        Ok(Arc::new(endpoint))
+    }
+
     pub fn new(base_url: impl Into<Arc<str>>) -> Result<Self, Whatever> {
         let root_cert = reqwest::Certificate::from_pem(dhttp::trust::DHTTP_ROOT_CA)
             .whatever_context("failed to parse DHTTP root certificate")?;
@@ -438,6 +451,29 @@ impl CertServer {
         body: serde_json::Value,
     ) -> Result<T, Error> {
         let endpoint = Self::identity_endpoint(identity_domain).await?;
+        let uri = format!("{}{}", self.base_url, path);
+        let response = endpoint
+            .new_request()
+            .method(method)
+            .uri(uri)
+            .header(
+                http::header::CONTENT_TYPE,
+                http::HeaderValue::from_static("application/json"),
+            )
+            .body(body.to_string())
+            .await
+            .context(DhttpRequestSnafu)?;
+        parse_dhttp_response(response).await
+    }
+
+    async fn send_identity_profile_json<T: DeserializeOwned>(
+        &self,
+        profile_dir: &Path,
+        method: http::Method,
+        path: &str,
+        body: serde_json::Value,
+    ) -> Result<T, Error> {
+        let endpoint = Self::identity_endpoint_from_profile(profile_dir).await?;
         let uri = format!("{}{}", self.base_url, path);
         let response = endpoint
             .new_request()
@@ -634,6 +670,26 @@ impl CertServer {
         .await
     }
 
+    pub(crate) async fn create_subdomain_with_identity_profile(
+        &self,
+        profile_dir: &Path,
+        parent: &str,
+        label: &str,
+        expected_amount: Option<i64>,
+    ) -> Result<CreateSubdomainResponse, Error> {
+        self.send_identity_profile_json(
+            profile_dir,
+            http::Method::POST,
+            "/v2/subdomain",
+            json!({
+                "parent": parent,
+                "label": label,
+                "expected_amount": expected_amount,
+            }),
+        )
+        .await
+    }
+
     pub async fn issue_cert(
         &self,
         access_token: &str,
@@ -698,6 +754,30 @@ impl CertServer {
         .await
     }
 
+    pub(crate) async fn issue_cert_with_identity_profile(
+        &self,
+        profile_dir: &Path,
+        domain: &str,
+        kind: &str,
+        sequence: Option<u32>,
+        device_name: &str,
+        csr_pem: &str,
+    ) -> Result<CertificateDetail, Error> {
+        self.send_identity_profile_json(
+            profile_dir,
+            http::Method::POST,
+            "/v2/cert",
+            json!({
+                "domain": domain,
+                "kind": kind,
+                "sequence": sequence,
+                "device_name": device_name,
+                "csr": csr_pem,
+            }),
+        )
+        .await
+    }
+
     pub async fn renew_cert(
         &self,
         access_token: &str,
@@ -734,6 +814,30 @@ impl CertServer {
     ) -> Result<CertificateDetail, Error> {
         self.send_identity_json(
             identity_domain,
+            http::Method::POST,
+            "/v2/cert/renew",
+            json!({
+                "domain": domain,
+                "kind": kind,
+                "sequence": sequence,
+                "device_name": device_name,
+                "csr": csr_pem,
+            }),
+        )
+        .await
+    }
+
+    pub(crate) async fn renew_cert_with_identity_profile(
+        &self,
+        profile_dir: &Path,
+        domain: &str,
+        kind: &str,
+        sequence: u32,
+        device_name: Option<&str>,
+        csr_pem: &str,
+    ) -> Result<CertificateDetail, Error> {
+        self.send_identity_profile_json(
+            profile_dir,
             http::Method::POST,
             "/v2/cert/renew",
             json!({
@@ -831,6 +935,14 @@ impl Error {
     pub fn is_api_code(&self, expected: &str) -> bool {
         matches!(self.api_code(), Some(code) if code == expected)
     }
+
+    pub fn is_api(&self, expected_status: reqwest::StatusCode, expected_code: &str) -> bool {
+        matches!(
+            self,
+            Self::Api { status, code, .. }
+                if *status == expected_status && code == expected_code
+        )
+    }
 }
 
 #[cfg(test)]
@@ -867,6 +979,14 @@ mod tests {
         assert_eq!(error.api_code(), Some("starter_domain_limit_reached"));
         assert!(error.is_api_code("starter_domain_limit_reached"));
         assert!(!error.is_api_code("domain_not_found"));
+        assert!(error.is_api(
+            reqwest::StatusCode::CONFLICT,
+            "starter_domain_limit_reached"
+        ));
+        assert!(!error.is_api(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            "starter_domain_limit_reached"
+        ));
     }
 
     #[test]

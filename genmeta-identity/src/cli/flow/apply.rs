@@ -1,4 +1,4 @@
-use std::io::IsTerminal;
+use std::{io::IsTerminal, path::Path};
 
 use dhttp::home::{DhttpHome, HomeScope};
 use snafu::{FromString, whatever};
@@ -58,7 +58,9 @@ async fn prompt_apply_target_with_online_validation(
         .await;
         let (local, response) = match inspected {
             Ok(inspected) => inspected,
-            Err(Error::CertServer { source }) if source.is_api_code("domain_invalid") => {
+            Err(Error::CertServer { source })
+                if source.is_api(reqwest::StatusCode::BAD_REQUEST, "domain_invalid") =>
+            {
                 crate::cli::flow::transcript::print_err_block(
                     interactive_name_unavailable_message(),
                 );
@@ -150,7 +152,7 @@ async fn resolve_kind(command: &Apply) -> Result<IdentityKind, Error> {
 #[derive(Debug, Clone, Copy)]
 enum CertificateProof<'a> {
     AccessToken(&'a str),
-    Identity(&'a str),
+    IdentityProfile(&'a Path),
 }
 
 #[derive(Debug)]
@@ -186,10 +188,10 @@ async fn request_certificate(
                     )
                     .await
             }
-            CertificateProof::Identity(identity) => {
+            CertificateProof::IdentityProfile(profile_dir) => {
                 cert_server
-                    .issue_cert_with_identity(
-                        identity,
+                    .issue_cert_with_identity_profile(
+                        profile_dir,
                         target.full_name(),
                         kind.as_str(),
                         None,
@@ -252,7 +254,7 @@ async fn register_with_email(
 async fn register_with_parent(
     cert_server: &CertServer,
     target: &IdentityTarget,
-    parent_identity: &str,
+    parent_profile_dir: &Path,
 ) -> Result<RegistrationOutcome, RegistrationError> {
     if target.level() != IdentityLevel::SubIdentity {
         return Err(RegistrationError::MissingParent {
@@ -264,7 +266,7 @@ async fn register_with_parent(
     super::registration::register_missing_child(
         &api,
         target,
-        RegistrationProof::ParentIdentity(parent_identity),
+        RegistrationProof::ParentIdentityProfile(parent_profile_dir),
     )
     .await
 }
@@ -287,8 +289,14 @@ fn print_auth_rejection(name: &str, error: &crate::cert_server::Error) {
     ));
 }
 
-fn should_register_with_parent(target: &IdentityTarget, remote: RemoteTargetState) -> bool {
-    target.level() == IdentityLevel::SubIdentity
+fn should_register_with_parent(
+    target: &IdentityTarget,
+    remote: RemoteTargetState,
+    candidate_full_name: &str,
+) -> bool {
+    target
+        .parent()
+        .is_some_and(|parent| parent.as_full() == candidate_full_name)
         && matches!(
             remote,
             RemoteTargetState::Missing | RemoteTargetState::Unknown
@@ -344,9 +352,10 @@ async fn attempt_apply_with_candidates(
             CandidateEvent::Identity {
                 short_name,
                 full_name,
+                profile_dir,
             } => {
-                if should_register_with_parent(&resolved.target, resolved.remote) {
-                    match register_with_parent(cert_server, &resolved.target, &full_name).await {
+                if should_register_with_parent(&resolved.target, resolved.remote, &full_name) {
+                    match register_with_parent(cert_server, &resolved.target, &profile_dir).await {
                         Ok(outcome) => {
                             print_new_name(outcome);
                             resolved.remote = RemoteTargetState::Exists;
@@ -364,7 +373,7 @@ async fn attempt_apply_with_candidates(
 
                 match request_certificate(
                     cert_server,
-                    CertificateProof::Identity(&full_name),
+                    CertificateProof::IdentityProfile(&profile_dir),
                     &resolved.target,
                     kind,
                     device_name,
@@ -660,21 +669,29 @@ mod tests {
     }
 
     #[test]
-    fn explicit_targets_register_only_before_the_proof_that_can_own_them() {
+    fn explicit_targets_register_only_with_the_direct_parent_proof() {
         let root = IdentityTarget::parse("alice.smith").unwrap();
         let child = IdentityTarget::parse("phone.alice.smith").unwrap();
 
         assert!(!should_register_with_parent(
             &root,
-            RemoteTargetState::Unknown
-        ));
-        assert!(should_register_with_parent(
-            &child,
-            RemoteTargetState::Unknown
+            RemoteTargetState::Unknown,
+            "alice.smith.dhttp.net",
         ));
         assert!(!should_register_with_parent(
             &child,
-            RemoteTargetState::Exists
+            RemoteTargetState::Unknown,
+            "phone.alice.smith.dhttp.net",
+        ));
+        assert!(should_register_with_parent(
+            &child,
+            RemoteTargetState::Unknown,
+            "alice.smith.dhttp.net",
+        ));
+        assert!(!should_register_with_parent(
+            &child,
+            RemoteTargetState::Exists,
+            "alice.smith.dhttp.net",
         ));
         assert!(should_register_with_email(RemoteTargetState::Unknown));
         assert!(should_register_with_email(RemoteTargetState::Missing));

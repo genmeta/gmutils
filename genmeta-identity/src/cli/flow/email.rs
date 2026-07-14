@@ -1,5 +1,7 @@
 use std::fmt;
 
+use snafu::FromString;
+
 use super::recovery::{VerificationRecovery, classify_verify_submit_error};
 use crate::{
     cert_server::CertServer,
@@ -43,9 +45,9 @@ impl fmt::Display for EmailSessionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Cancelled => f.write_str("Email verification was cancelled."),
-            Self::NonInteractivePairRequired => f.write_str(
-                "Non-interactive email verification requires both --email and --verify-code.",
-            ),
+            Self::NonInteractivePairRequired => {
+                f.write_str("Email verification requires an interactive terminal for this command.")
+            }
         }
     }
 }
@@ -53,8 +55,6 @@ impl fmt::Display for EmailSessionError {
 impl std::error::Error for EmailSessionError {}
 
 fn session_error(error: EmailSessionError) -> Error {
-    use snafu::FromString;
-
     Error::without_source(error.to_string())
 }
 
@@ -194,6 +194,11 @@ where
         let (Some(email), Some(code)) = (initial_email, initial_verify_code) else {
             return Err(session_error(EmailSessionError::NonInteractivePairRequired));
         };
+        if !crate::cli::validator::is_valid_email(email) {
+            return Err(Error::without_source(
+                "Invalid email address. Please enter a valid email address.".to_string(),
+            ));
+        }
         return super::progress::run(
             super::progress::VERIFY_EMAIL,
             api.verify(&login, email, code),
@@ -202,7 +207,9 @@ where
         .map_err(Error::from);
     }
 
-    let mut email = initial_email.map(ToOwned::to_owned);
+    let mut email = initial_email
+        .filter(|email| crate::cli::validator::is_valid_email(email))
+        .map(ToOwned::to_owned);
     let mut verify_code = initial_verify_code.map(ToOwned::to_owned);
     let mut sent_to = initial_verify_code
         .is_some()
@@ -515,6 +522,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invalid_prefilled_email_returns_to_email_input_before_sending() {
+        let api = FakeEmailApi::accepting("token");
+        let ui = ScriptedEmailUi::new([email("alice@example.test"), code("123456")]);
+
+        let token = run_email_session(
+            &api,
+            &ui,
+            EmailLogin::Account,
+            Some("not-an-email"),
+            None,
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(token, "token");
+        assert_eq!(
+            api.calls(),
+            [
+                "send:alice@example.test",
+                "verify-account:alice@example.test:123456"
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn question_mark_keeps_resend_change_email_and_cancel() {
         let api = FakeEmailApi::accepting("token");
         let ui = ScriptedEmailUi::new([
@@ -689,7 +722,18 @@ mod tests {
             (Some("a@b.test"), None),
             (None, Some("000000")),
         ] {
-            assert!(run_noninteractive_fixture(email, code).await.is_err());
+            let error = match run_noninteractive_fixture(email, code).await {
+                Ok(_) => panic!("incomplete hidden test input unexpectedly authenticated"),
+                Err(error) => error,
+            };
+            assert!(
+                !error.to_string().contains("--verify-code"),
+                "hidden test input leaked into public error copy: {error}"
+            );
+            assert!(
+                error.to_string().contains("interactive terminal"),
+                "{error}"
+            );
         }
 
         let api = run_noninteractive_fixture(Some("a@b.test"), Some("000000"))

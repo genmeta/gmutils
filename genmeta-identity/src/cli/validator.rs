@@ -46,9 +46,13 @@ impl StringValidator for KindValidator {
 #[derive(Debug, Clone, Copy)]
 pub struct EmailValidator;
 
+pub(crate) fn is_valid_email(input: &str) -> bool {
+    input.contains('@') && input.contains('.')
+}
+
 impl StringValidator for EmailValidator {
     fn validate(&self, input: &str) -> Result<Validation, inquire::CustomUserError> {
-        if input.contains('@') && input.contains('.') {
+        if is_valid_email(input) {
             Ok(Validation::Valid)
         } else {
             Ok(validation_failed(

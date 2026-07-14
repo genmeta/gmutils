@@ -41,6 +41,7 @@ pub(crate) fn classify_verify_submit_error(
         },
         crate::cert_server::Error::Request { .. }
         | crate::cert_server::Error::DhttpEndpoint { .. }
+        | crate::cert_server::Error::DhttpEndpointFromProfile { .. }
         | crate::cert_server::Error::DhttpRequest { .. }
         | crate::cert_server::Error::DhttpRead { .. }
         | crate::cert_server::Error::IdentityFallbackUnavailable

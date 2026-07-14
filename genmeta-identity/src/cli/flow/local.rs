@@ -1,7 +1,8 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
 use dhttp::{home::DhttpHome, identity::extract_dhttp_subject_key_identifier, name::DhttpName};
 use futures::TryStreamExt;
+use rustls::pki_types::{CertificateDer, UnixTime};
 use tokio::fs;
 
 use super::target::{IdentityLevel, IdentityTarget};
@@ -157,6 +158,16 @@ pub(crate) fn classify_status(
             detail: "certificate expiry is unavailable".to_string(),
         };
     };
+    let Some(valid_from) = assessment.valid_from else {
+        return LocalIdentityStatus::Invalid {
+            detail: "certificate validity start is unavailable".to_string(),
+        };
+    };
+    if valid_from > now_unix_timestamp {
+        return LocalIdentityStatus::Invalid {
+            detail: "certificate is not valid yet".to_string(),
+        };
+    }
 
     if expires_at <= now_unix_timestamp {
         LocalIdentityStatus::Expired {
@@ -488,6 +499,14 @@ async fn assess_profile(
         }
     }
 
+    if matches!(assessment.certificate, LocalIdentityMaterialState::Present)
+        && let (Some(valid_from), Some(expires_at)) = (assessment.valid_from, assessment.expires_at)
+        && !certificate_chain_is_trusted(&certs, valid_from, expires_at, now_unix_timestamp())
+    {
+        assessment.certificate =
+            LocalIdentityMaterialState::Invalid("certificate chain is not trusted".to_string());
+    }
+
     assessment
 }
 
@@ -524,6 +543,37 @@ fn private_key_state_from_error(
         }
         _ => LocalIdentityMaterialState::Invalid("private key is invalid".to_string()),
     }
+}
+
+fn certificate_chain_is_trusted(
+    certs: &[CertificateDer<'_>],
+    valid_from: i64,
+    expires_at: i64,
+    now: i64,
+) -> bool {
+    let Some(leaf) = certs.first() else {
+        return false;
+    };
+    let Some(verify_at) = trust_check_timestamp(valid_from, expires_at, now) else {
+        return false;
+    };
+    let Ok(verify_at) = u64::try_from(verify_at) else {
+        return false;
+    };
+    dhttp::trust::dhttp_client_cert_verifier(dhttp::trust::ClientIdentityPolicy::Required)
+        .verify_client_cert(
+            leaf,
+            &certs[1..],
+            UnixTime::since_unix_epoch(Duration::from_secs(verify_at)),
+        )
+        .is_ok()
+}
+
+fn trust_check_timestamp(valid_from: i64, expires_at: i64, now: i64) -> Option<i64> {
+    if expires_at < valid_from {
+        return None;
+    }
+    Some(now.clamp(valid_from, expires_at))
 }
 
 #[cfg(test)]
@@ -589,6 +639,15 @@ mod tests {
         assert!(!is_near_expiry(valid_from, expires_at, 1_900));
     }
 
+    #[test]
+    fn trust_check_keeps_zero_length_expired_certificates_classifiable() {
+        assert_eq!(
+            super::trust_check_timestamp(1_000, 1_000, 1_001),
+            Some(1_000)
+        );
+        assert_eq!(super::trust_check_timestamp(1_001, 1_000, 1_001), None);
+    }
+
     #[tokio::test]
     async fn exact_summary_never_falls_back_to_a_wildcard_profile() {
         let home_path = unique_test_home_path("exact-only");
@@ -607,6 +666,30 @@ mod tests {
         );
 
         tokio::fs::remove_dir_all(home_path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn untrusted_local_certificate_is_invalid_before_authentication() {
+        const CHAIN: &str = include_str!("../../../tests/fixtures/install/chain.pem");
+        const KEY: &str = include_str!("../../../tests/fixtures/install/leaf.key");
+
+        let home_path = unique_test_home_path("untrusted-local-certificate");
+        let home = DhttpHome::new(home_path);
+        let name = DhttpName::try_from("alice.smith").unwrap();
+        home.identity_profile(name.borrow())
+            .save_identity(CHAIN.as_bytes(), KEY.as_bytes())
+            .await
+            .unwrap();
+
+        let summary = super::load_summary_exact(&home, name.borrow(), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            summary.status,
+            LocalIdentityStatus::Invalid {
+                detail: "certificate chain is not trusted".to_string(),
+            }
+        );
     }
 
     #[test]
@@ -686,6 +769,25 @@ mod tests {
             invalid,
             LocalIdentityStatus::Invalid {
                 detail: "certificate does not match local key".to_string(),
+            }
+        );
+
+        let not_valid_yet = classify_status(
+            &LocalIdentityAssessment {
+                certificate: LocalIdentityMaterialState::Present,
+                private_key: LocalIdentityMaterialState::Present,
+                certificate_target_matches: Some(true),
+                usage: Some(IdentityUsage::BothClientAndServer),
+                sequence: Some(0),
+                valid_from: Some(NOW + 1),
+                expires_at: Some(NOW + 300),
+            },
+            NOW,
+        );
+        assert_eq!(
+            not_valid_yet,
+            LocalIdentityStatus::Invalid {
+                detail: "certificate is not valid yet".to_string(),
             }
         );
     }

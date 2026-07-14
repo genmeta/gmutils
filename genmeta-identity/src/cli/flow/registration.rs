@@ -1,4 +1,4 @@
-use std::io::IsTerminal;
+use std::path::Path;
 
 use snafu::{FromString, Snafu};
 
@@ -14,15 +14,15 @@ use crate::{
 };
 
 fn is_domain_not_found(error: &crate::cert_server::Error) -> bool {
-    error.is_api_code("domain_not_found")
+    error.is_api(reqwest::StatusCode::NOT_FOUND, "domain_not_found")
 }
 
 fn is_domain_conflict(error: &crate::cert_server::Error) -> bool {
-    error.is_api_code("domain_conflict")
+    error.is_api(reqwest::StatusCode::CONFLICT, "domain_conflict")
 }
 
 fn is_subdomain_conflict(error: &crate::cert_server::Error) -> bool {
-    error.is_api_code("subdomain_conflict") || is_domain_conflict(error)
+    error.is_api(reqwest::StatusCode::CONFLICT, "subdomain_conflict") || is_domain_conflict(error)
 }
 
 fn missing_parent_identity_message(target: &IdentityTarget, parent: &str) -> String {
@@ -35,7 +35,7 @@ fn missing_parent_identity_message(target: &IdentityTarget, parent: &str) -> Str
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum RegistrationProof<'a> {
     AccessToken(&'a str),
-    ParentIdentity(&'a str),
+    ParentIdentityProfile(&'a Path),
 }
 
 pub(crate) trait RegistrationApi {
@@ -56,7 +56,11 @@ pub(crate) trait RegistrationApi {
         target: &IdentityTarget,
     ) -> Result<CreateSubdomainResponse, RegistrationError>;
 
-    async fn checkout(&self, token: &str) -> Result<CreateDomainResponse, RegistrationError>;
+    async fn checkout(
+        &self,
+        token: &str,
+        expires_at: i64,
+    ) -> Result<CreateDomainResponse, RegistrationError>;
 }
 
 pub(crate) trait RegistrationUi {
@@ -78,9 +82,6 @@ pub(crate) enum RegistrationError {
 
     #[snafu(transparent)]
     Prompt { source: prompt::Error },
-
-    #[snafu(display("failed to render the payment QR code"))]
-    PaymentQr { source: qrcode::types::QrError },
 
     #[snafu(display("identity registration was declined"))]
     Declined,
@@ -174,17 +175,33 @@ impl RegistrationApi for CertServerRegistrationApi<'_> {
                     .create_subdomain(token, parent.as_full(), label, None)
                     .await?
             }
-            RegistrationProof::ParentIdentity(identity) => {
+            RegistrationProof::ParentIdentityProfile(profile_dir) => {
                 self.cert_server
-                    .create_subdomain_with_identity(identity, parent.as_full(), label, None)
+                    .create_subdomain_with_identity_profile(
+                        profile_dir,
+                        parent.as_full(),
+                        label,
+                        None,
+                    )
                     .await?
             }
         };
         Ok(response)
     }
 
-    async fn checkout(&self, token: &str) -> Result<CreateDomainResponse, RegistrationError> {
-        Ok(crate::checkout::wait_for_checkout_completion(self.cert_server, token).await?)
+    async fn checkout(
+        &self,
+        token: &str,
+        expires_at: i64,
+    ) -> Result<CreateDomainResponse, RegistrationError> {
+        Ok(
+            crate::checkout::wait_for_checkout_completion_until(
+                self.cert_server,
+                token,
+                expires_at,
+            )
+            .await?,
+        )
     }
 }
 
@@ -205,9 +222,7 @@ impl RegistrationUi for InquireRegistrationUi {
     }
 
     fn print_payment(&self, url: &str) -> Result<(), RegistrationError> {
-        let include_qr = std::io::stderr().is_terminal();
-        let block = crate::checkout::payment_instruction_block(url, include_qr)
-            .map_err(|source| RegistrationError::PaymentQr { source })?;
+        let block = crate::checkout::payment_instruction_block_or_link(url);
         crate::cli::flow::transcript::print_err_block(&block);
         Ok(())
     }
@@ -276,7 +291,9 @@ pub(crate) async fn register_missing_root(
     }
 
     ui.print_payment(&payment_entry.url)?;
-    let completed = api.checkout(&payment_entry.checkout_token).await?;
+    let completed = api
+        .checkout(&payment_entry.checkout_token, payment_entry.expires_at)
+        .await?;
     if crate::checkout::classify_checkout(&completed) != crate::checkout::CheckoutState::Completed {
         return Err(RegistrationError::CheckoutNotCompleted);
     }
@@ -401,7 +418,7 @@ mod tests {
         ) -> Result<CreateSubdomainResponse, RegistrationError> {
             self.calls.lock().unwrap().push(match proof {
                 RegistrationProof::AccessToken(_) => "register-child:token",
-                RegistrationProof::ParentIdentity(_) => "register-child:parent",
+                RegistrationProof::ParentIdentityProfile(_) => "register-child:parent",
             });
             Ok(serde_json::from_value(serde_json::json!({
                 "domain": target.full_name(),
@@ -415,7 +432,11 @@ mod tests {
             .unwrap())
         }
 
-        async fn checkout(&self, _token: &str) -> Result<CreateDomainResponse, RegistrationError> {
+        async fn checkout(
+            &self,
+            _token: &str,
+            _expires_at: i64,
+        ) -> Result<CreateDomainResponse, RegistrationError> {
             self.calls.lock().unwrap().push("checkout");
             let mut completed = self.created.clone();
             completed.next_action = "completed".to_string();
@@ -534,7 +555,7 @@ mod tests {
             register_missing_child(
                 &parent_api,
                 &child,
-                RegistrationProof::ParentIdentity("alice.smith.dhttp.net")
+                RegistrationProof::ParentIdentityProfile(std::path::Path::new("/tmp/alice.smith"))
             )
             .await
             .unwrap(),
@@ -552,5 +573,23 @@ mod tests {
             missing_parent_identity_message(&target, parent.as_partial()),
             "Cannot register phone.alice.smith because its parent identity, alice.smith, does not exist."
         );
+    }
+
+    #[test]
+    fn server_failures_cannot_be_reclassified_as_registration_state() {
+        let conflict = crate::cert_server::Error::Api {
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            code: "domain_conflict".to_string(),
+            message: "internal server error".to_string(),
+        };
+        let missing = crate::cert_server::Error::Api {
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            code: "domain_not_found".to_string(),
+            message: "internal server error".to_string(),
+        };
+
+        assert!(!is_domain_conflict(&conflict));
+        assert!(!is_subdomain_conflict(&conflict));
+        assert!(!is_domain_not_found(&missing));
     }
 }

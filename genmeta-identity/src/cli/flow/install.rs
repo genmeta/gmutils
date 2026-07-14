@@ -38,6 +38,8 @@ pub enum Error {
         "certificate response sequence {actual} does not match expected sequence {expected}"
     ))]
     ResponseSequence { expected: u32, actual: u32 },
+    #[snafu(display("certificate response status {actual} is not active"))]
+    ResponseStatus { actual: String },
     #[snafu(display("certificate response is missing DHTTP certificate metadata"))]
     MissingResponseMetadata,
     #[snafu(display("certificate response contains invalid DHTTP certificate metadata"))]
@@ -140,6 +142,12 @@ fn validate_install_with_verifier(
             }
         );
     }
+    ensure!(
+        detail.status == "active",
+        error::ResponseStatusSnafu {
+            actual: &detail.status,
+        }
+    );
 
     let response_ski = detail
         .ski
@@ -325,6 +333,10 @@ mod tests {
         other_sequence_detail.sequence = 8;
         assert_validation_error(&other_sequence_detail, &other_sequence, KEY, "sequence");
         assert_validation_error(&detail(), &expected, OTHER_KEY, "private key");
+
+        let mut revoked = detail();
+        revoked.status = "revoked".to_string();
+        assert_validation_error(&revoked, &expected, KEY, "status");
 
         let mut missing_response_ski = detail();
         missing_response_ski.ski = None;
