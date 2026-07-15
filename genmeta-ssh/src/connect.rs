@@ -1,4 +1,4 @@
-use std::{io::IsTerminal, num::NonZeroUsize, sync::Arc};
+use std::{num::NonZeroUsize, sync::Arc};
 
 use dhttp::{
     ddns::resolvers::endpoint_candidates::{
@@ -153,13 +153,8 @@ async fn selected_uri(endpoint: &Endpoint, config: &Config) -> Result<http::Uri,
 
     let certs = crate::sequence::fetch_cert_metadata(authority.host(), config.id.as_ref()).await;
     let rows = crate::sequence::merge_candidates(candidates, certs);
-    let sequence = if crate::sequence::terminal_is_interactive() {
-        crate::sequence::prompt_for_sequence(&rows, std::io::stdout().is_terminal())
-            .context(connect_error::ChooseSequenceSnafu)?
-    } else {
-        crate::sequence::choose_non_interactive(authority.host(), &rows)
-            .context(connect_error::ChooseSequenceSnafu)?
-    };
+    let sequence = crate::sequence::choose_server_ranked(authority.host(), &rows)
+        .context(connect_error::ChooseSequenceSnafu)?;
 
     let rewritten = crate::config::authority_with_sequence(authority, sequence)
         .context(connect_error::RewriteSequenceSnafu)?;

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, io::IsTerminal};
+use std::collections::HashMap;
 
 use dhttp::{
     certificate::{CertificateChainKind, CertificateSequence},
@@ -72,37 +72,6 @@ pub(crate) fn merge_candidates(
     rows
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct CandidateChoice {
-    pub(crate) candidate: SshPrimaryCandidate,
-    pub(crate) ansi: bool,
-}
-
-impl fmt::Display for CandidateChoice {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let status = if self.candidate.online {
-            self.candidate.cert_status.as_deref().unwrap_or("online")
-        } else {
-            "offline"
-        };
-        let device = self
-            .candidate
-            .device_name
-            .as_deref()
-            .unwrap_or("unknown device");
-        let line = format!(
-            "primary:{}  {device}  {status}",
-            self.candidate.sequence.get()
-        );
-        if self.ansi && !self.candidate.online {
-            use crossterm::style::Stylize;
-            write!(f, "{}", line.dim())
-        } else {
-            f.write_str(&line)
-        }
-    }
-}
-
 #[derive(Debug, Snafu)]
 #[snafu(module(sequence_error))]
 pub enum Error {
@@ -110,66 +79,19 @@ pub enum Error {
         "No primary sequences were found for {target}.\n\nThe device may not have published DNS endpoints yet, and no certificate metadata was available"
     ))]
     NoCandidates { target: String },
-
-    #[snafu(display(
-        "Cannot choose a primary sequence without interactive input.\n\nAvailable primary sequences:\n{available}\nRun again with a sequence, for example:\n  genmeta ssh {example}"
-    ))]
-    NonInteractive {
-        available: CandidateListDisplay,
-        example: String,
-    },
-
-    #[snafu(display("failed to prompt for primary sequence"))]
-    Prompt { source: inquire::InquireError },
 }
 
-#[derive(Debug, Clone)]
-pub struct CandidateListDisplay(Vec<SshPrimaryCandidate>);
-
-impl fmt::Display for CandidateListDisplay {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for candidate in &self.0 {
-            let status = if candidate.online {
-                "online"
-            } else {
-                "offline"
-            };
-            writeln!(f, "  primary:{}  {status}", candidate.sequence.get())?;
-        }
-        Ok(())
-    }
-}
-
-pub(crate) fn choose_non_interactive(
+pub(crate) fn choose_server_ranked(
     target: &str,
     candidates: &[SshPrimaryCandidate],
 ) -> Result<CertificateSequence, Error> {
-    let first = candidates.first().ok_or_else(|| Error::NoCandidates {
-        target: target.to_string(),
-    })?;
-    Err(Error::NonInteractive {
-        available: CandidateListDisplay(candidates.to_vec()),
-        example: format!("{target}:{}", first.sequence.get()),
-    })
-}
-
-pub(crate) fn terminal_is_interactive() -> bool {
-    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
-}
-
-pub(crate) fn prompt_for_sequence(
-    candidates: &[SshPrimaryCandidate],
-    ansi: bool,
-) -> Result<CertificateSequence, Error> {
-    let choices: Vec<_> = candidates
+    candidates
         .iter()
-        .cloned()
-        .map(|candidate| CandidateChoice { candidate, ansi })
-        .collect();
-    let choice = inquire::Select::new("Select a primary sequence to connect:", choices)
-        .prompt()
-        .context(sequence_error::PromptSnafu)?;
-    Ok(choice.candidate.sequence)
+        .find(|candidate| candidate.online)
+        .map(|candidate| candidate.sequence)
+        .ok_or_else(|| Error::NoCandidates {
+            target: target.to_string(),
+        })
 }
 
 pub(crate) fn cert_metadata_from_parts(
@@ -314,45 +236,43 @@ mod tests {
     }
 
     #[test]
-    fn offline_display_is_dimmed_when_ansi_enabled() {
-        let choice = CandidateChoice {
-            ansi: true,
-            candidate: SshPrimaryCandidate {
-                sequence: CertificateSequence::from(1u8),
-                online: false,
-                endpoint_count: 0,
-                device_name: Some("ThinkPad".to_string()),
-                cert_status: Some("active".to_string()),
+    fn server_ranked_selection_uses_first_online_candidate() {
+        let mut candidates = vec![
+            SshPrimaryCandidate {
+                sequence: CertificateSequence::from(2u8),
+                online: true,
+                endpoint_count: 1,
+                device_name: None,
+                cert_status: None,
             },
-        };
+            SshPrimaryCandidate {
+                sequence: CertificateSequence::from(1u8),
+                online: true,
+                endpoint_count: 1,
+                device_name: None,
+                cert_status: None,
+            },
+        ];
 
-        let rendered = choice.to_string();
-        assert!(rendered.contains("primary:1"));
-        assert!(rendered.contains("\u{1b}"));
-        assert!(rendered.contains("offline"));
-    }
+        assert_eq!(
+            choose_server_ranked("alice.device", &candidates)
+                .unwrap()
+                .get(),
+            2
+        );
 
-    #[test]
-    fn non_interactive_requires_explicit_sequence_even_for_one_candidate() {
-        let candidates = vec![SshPrimaryCandidate {
-            sequence: CertificateSequence::from(0u8),
-            online: true,
-            endpoint_count: 1,
-            device_name: Some("MacBook Pro".to_string()),
-            cert_status: Some("active".to_string()),
-        }];
-
-        let error = choose_non_interactive("alice.device", &candidates).unwrap_err();
-        let rendered = error.to_string();
-
-        assert!(rendered.contains("Cannot choose a primary sequence without interactive input"));
-        assert!(rendered.contains("primary:0"));
-        assert!(rendered.contains("genmeta ssh alice.device:0"));
+        candidates[0].online = false;
+        assert_eq!(
+            choose_server_ranked("alice.device", &candidates)
+                .unwrap()
+                .get(),
+            1
+        );
     }
 
     #[test]
     fn empty_candidates_reports_no_primary_sequences() {
-        let error = choose_non_interactive("alice.device", &[]).unwrap_err();
+        let error = choose_server_ranked("alice.device", &[]).unwrap_err();
 
         assert!(
             error
