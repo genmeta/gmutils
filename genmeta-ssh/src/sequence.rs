@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt, io::IsTerminal};
+use std::{collections::HashMap, fmt, io::IsTerminal};
 
 use dhttp::{
     certificate::{CertificateChainKind, CertificateSequence},
@@ -26,44 +26,50 @@ pub(crate) fn merge_candidates(
     ddns: EndpointCandidates,
     certs: impl IntoIterator<Item = CertPrimaryMetadata>,
 ) -> Vec<SshPrimaryCandidate> {
-    let mut rows = BTreeMap::<u32, SshPrimaryCandidate>::new();
+    let mut rows = Vec::<SshPrimaryCandidate>::new();
+    let mut sequence_indexes = HashMap::<u32, usize>::new();
 
     for group in ddns.groups {
         if group.chain.kind() != CertificateChainKind::Primary {
             continue;
         }
-        rows.insert(
-            group.chain.sequence().get(),
-            SshPrimaryCandidate {
+        let sequence = group.chain.sequence().get();
+        if let Some(index) = sequence_indexes.get(&sequence).copied() {
+            rows[index].endpoint_count += group.endpoints.len();
+        } else {
+            sequence_indexes.insert(sequence, rows.len());
+            rows.push(SshPrimaryCandidate {
                 sequence: group.chain.sequence(),
                 online: true,
                 endpoint_count: group.endpoints.len(),
                 device_name: None,
                 cert_status: None,
-            },
-        );
+            });
+        }
     }
 
     for cert in certs {
-        rows.entry(cert.sequence.get())
-            .and_modify(|row| {
-                if row.device_name.is_none() {
-                    row.device_name.clone_from(&cert.device_name);
-                }
-                if row.cert_status.is_none() {
-                    row.cert_status.clone_from(&cert.status);
-                }
-            })
-            .or_insert_with(|| SshPrimaryCandidate {
+        if let Some(index) = sequence_indexes.get(&cert.sequence.get()).copied() {
+            let row = &mut rows[index];
+            if row.device_name.is_none() {
+                row.device_name.clone_from(&cert.device_name);
+            }
+            if row.cert_status.is_none() {
+                row.cert_status.clone_from(&cert.status);
+            }
+        } else {
+            sequence_indexes.insert(cert.sequence.get(), rows.len());
+            rows.push(SshPrimaryCandidate {
                 sequence: cert.sequence,
                 online: false,
                 endpoint_count: 0,
                 device_name: cert.device_name,
                 cert_status: cert.status,
             });
+        }
     }
 
-    rows.into_values().collect()
+    rows
 }
 
 #[derive(Debug, Clone)]
@@ -268,31 +274,43 @@ mod tests {
     }
 
     #[test]
-    fn merge_enriches_online_candidate_and_adds_offline_candidate() {
+    fn merge_preserves_online_order_then_appends_offline_certificate_order() {
         let candidates = merge_candidates(
             EndpointCandidates {
-                groups: vec![group(0, 2)],
+                groups: vec![group(2, 2), group(1, 1)],
             },
             [
                 CertPrimaryMetadata {
-                    sequence: CertificateSequence::from(0u8),
+                    sequence: CertificateSequence::from(1u8),
                     device_name: Some("MacBook Pro".to_string()),
                     status: Some("active".to_string()),
                 },
                 CertPrimaryMetadata {
-                    sequence: CertificateSequence::from(1u8),
+                    sequence: CertificateSequence::from(3u8),
                     device_name: Some("ThinkPad".to_string()),
                     status: Some("active".to_string()),
+                },
+                CertPrimaryMetadata {
+                    sequence: CertificateSequence::from(0u8),
+                    device_name: Some("Server".to_string()),
+                    status: Some("expired".to_string()),
                 },
             ],
         );
 
-        assert_eq!(candidates.len(), 2);
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.sequence.get())
+                .collect::<Vec<_>>(),
+            vec![2, 1, 3, 0]
+        );
         assert!(candidates[0].online);
         assert_eq!(candidates[0].endpoint_count, 2);
-        assert_eq!(candidates[0].device_name.as_deref(), Some("MacBook Pro"));
-        assert!(!candidates[1].online);
-        assert_eq!(candidates[1].device_name.as_deref(), Some("ThinkPad"));
+        assert_eq!(candidates[1].device_name.as_deref(), Some("MacBook Pro"));
+        assert!(!candidates[2].online);
+        assert_eq!(candidates[2].device_name.as_deref(), Some("ThinkPad"));
+        assert_eq!(candidates[3].device_name.as_deref(), Some("Server"));
     }
 
     #[test]

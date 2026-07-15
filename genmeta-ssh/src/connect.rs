@@ -1,7 +1,9 @@
-use std::{io::IsTerminal, sync::Arc};
+use std::{io::IsTerminal, num::NonZeroUsize, sync::Arc};
 
 use dhttp::{
-    ddns::resolvers::endpoint_candidates::ResolveEndpointCandidates,
+    ddns::resolvers::endpoint_candidates::{
+        EndpointCandidates, EndpointLookup, ResolveEndpointCandidates,
+    },
     dquic,
     endpoint::Endpoint,
     h3x::{
@@ -73,6 +75,26 @@ fn connect_path(uri: &http::Uri) -> &str {
     uri.path()
 }
 
+fn primary_discovery_lookup() -> EndpointLookup {
+    EndpointLookup::all().with_record_limit(NonZeroUsize::MIN)
+}
+
+fn needs_primary_discovery(authority: &http::uri::Authority) -> bool {
+    crate::config::authority_sequence(authority).is_none()
+}
+
+async fn lookup_primary_candidates<R>(
+    resolver: &R,
+    authority: &str,
+) -> std::io::Result<EndpointCandidates>
+where
+    R: ResolveEndpointCandidates + ?Sized,
+{
+    resolver
+        .lookup_endpoint_candidates(authority, primary_discovery_lookup())
+        .await
+}
+
 pub async fn build_endpoint(config: &Config) -> Result<Arc<Endpoint>, Error> {
     let identity = match &config.id {
         Some(config) => Some(Arc::new(
@@ -108,7 +130,7 @@ async fn selected_uri(endpoint: &Endpoint, config: &Config) -> Result<http::Uri,
         .build()
     })?;
 
-    if crate::config::authority_sequence(authority).is_some() {
+    if !needs_primary_discovery(authority) {
         return Ok(config.uri.clone());
     }
 
@@ -116,16 +138,13 @@ async fn selected_uri(endpoint: &Endpoint, config: &Config) -> Result<http::Uri,
     let any = resolver.as_ref() as &dyn std::any::Any;
     let candidates = if let Some(resolvers) = any.downcast_ref::<dhttp::ddns::resolvers::Resolvers>()
     {
-        resolvers
-            .lookup_endpoint_candidates(authority.as_str())
+        lookup_primary_candidates(resolvers, authority.as_str())
             .await
-            .map_err(std::io::Error::other)
             .context(connect_error::LookupCandidatesSnafu)?
     } else if let Some(deferred) = any.downcast_ref::<
         dhttp::ddns::resolvers::deferred::DeferredResolver<dhttp::ddns::resolvers::Resolvers>,
     >() {
-        deferred
-            .lookup_endpoint_candidates(authority.as_str())
+        lookup_primary_candidates(deferred, authority.as_str())
             .await
             .context(connect_error::LookupCandidatesSnafu)?
     } else {
@@ -197,7 +216,46 @@ pub async fn connect(config: &Config) -> Result<ConnectResult, Error> {
 
 #[cfg(test)]
 mod tests {
+    use std::{fmt, sync::Mutex};
+
+    use dhttp::{
+        ddns::resolvers::endpoint_candidates::{EndpointCandidateFuture, SequenceQuery},
+        dquic::qresolve::{Resolve, ResolveFuture},
+    };
+    use futures::{FutureExt, StreamExt};
+
     use super::*;
+
+    #[derive(Debug, Default)]
+    struct RecordingResolver {
+        requests: Mutex<Vec<(String, EndpointLookup)>>,
+    }
+
+    impl fmt::Display for RecordingResolver {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("recording resolver")
+        }
+    }
+
+    impl Resolve for RecordingResolver {
+        fn lookup<'a>(&'a self, _name: &'a str) -> ResolveFuture<'a> {
+            async { Ok(futures::stream::empty().boxed()) }.boxed()
+        }
+    }
+
+    impl ResolveEndpointCandidates for RecordingResolver {
+        fn lookup_endpoint_candidates<'a>(
+            &'a self,
+            name: &'a str,
+            lookup: EndpointLookup,
+        ) -> EndpointCandidateFuture<'a> {
+            self.requests
+                .lock()
+                .unwrap()
+                .push((name.to_owned(), lookup));
+            async { Ok(EndpointCandidates::default()) }.boxed()
+        }
+    }
 
     #[test]
     fn connection_builder_registers_webtransport_protocol_layer() {
@@ -230,5 +288,27 @@ mod tests {
             .expect("uri should parse");
 
         assert_eq!(connect_path(&uri), "/ssh/yiyue");
+    }
+
+    #[tokio::test]
+    async fn primary_discovery_requests_all_sequences_with_one_record_each() {
+        let resolver = RecordingResolver::default();
+
+        lookup_primary_candidates(&resolver, "alice.device")
+            .await
+            .unwrap();
+
+        let requests = resolver.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].0, "alice.device");
+        assert_eq!(requests[0].1.sequences, SequenceQuery::All);
+        assert_eq!(requests[0].1.record_limit, Some(NonZeroUsize::MIN));
+    }
+
+    #[test]
+    fn explicit_sequence_authority_does_not_need_discovery() {
+        let authority: http::uri::Authority = "alice.device:7".parse().unwrap();
+
+        assert!(!needs_primary_discovery(&authority));
     }
 }
