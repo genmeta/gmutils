@@ -9,7 +9,7 @@ use snafu::{FromString, ResultExt, Snafu, Whatever};
 pub enum Error {
     #[snafu(transparent)]
     Request { source: reqwest::Error },
-    #[snafu(display("{message}"))]
+    #[snafu(display("{message} (error code: {code})"))]
     Api {
         status: reqwest::StatusCode,
         code: String,
@@ -58,6 +58,7 @@ struct ErrorResponse {
 
 #[derive(Debug, Deserialize)]
 struct ErrorEnvelope {
+    #[serde(deserialize_with = "deserialize_error_code")]
     code: String,
     message: String,
 }
@@ -69,9 +70,49 @@ struct DetailedErrorResponse<T> {
 
 #[derive(Debug, Deserialize)]
 struct DetailedErrorEnvelope<T> {
+    #[serde(deserialize_with = "deserialize_error_code")]
     code: String,
     message: String,
     details: T,
+}
+
+fn deserialize_error_code<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum WireErrorCode {
+        Symbol(String),
+        Number(u16),
+    }
+
+    Ok(match WireErrorCode::deserialize(deserializer)? {
+        WireErrorCode::Symbol(code) => code,
+        WireErrorCode::Number(code) => code.to_string(),
+    })
+}
+
+fn normalize_api_code(code: &str) -> &str {
+    match code {
+        "1002" => "unauthorized",
+        "1101" => "email_invalid",
+        "1102" => "verify_code_invalid",
+        "1103" => "verify_code_expired",
+        "1104" => "verify_code_attempt_exceeded",
+        "1105" => "verify_code_too_frequent",
+        "1106" => "verify_code_rate_limited",
+        "1110" => "user_blocked",
+        "1201" => "domain_invalid",
+        "1202" => "domain_not_found",
+        "1203" => "domain_forbidden",
+        "1208" => "domain_conflict",
+        "1211" => "domain_email_not_matched",
+        "1303" => "subdomain_conflict",
+        "1304" => "subdomain_quota_exceeded",
+        "1407" => "cert_sequence_not_found",
+        _ => code,
+    }
 }
 
 fn extract_string_field(value: &Value, keys: &[&str]) -> Option<String> {
@@ -114,7 +155,7 @@ fn parse_subdomain_quota_quote(
     let Ok(parsed) = serde_json::from_slice::<DetailedErrorResponse<Value>>(body) else {
         return Ok(None);
     };
-    if parsed.error.code != "subdomain_quota_exceeded" {
+    if normalize_api_code(&parsed.error.code) != "subdomain_quota_exceeded" {
         return Ok(None);
     }
     let _ = &parsed.error.message;
@@ -927,20 +968,20 @@ impl Error {
 
     pub fn api_code(&self) -> Option<&str> {
         match self {
-            Self::Api { code, .. } => Some(code.as_str()),
+            Self::Api { code, .. } => Some(normalize_api_code(code)),
             _ => None,
         }
     }
 
     pub fn is_api_code(&self, expected: &str) -> bool {
-        matches!(self.api_code(), Some(code) if code == expected)
+        self.api_code() == Some(expected)
     }
 
     pub fn is_api(&self, expected_status: reqwest::StatusCode, expected_code: &str) -> bool {
         matches!(
             self,
-            Self::Api { status, code, .. }
-                if *status == expected_status && code == expected_code
+            Self::Api { status, .. }
+                if *status == expected_status && self.api_code() == Some(expected_code)
         )
     }
 }
@@ -997,7 +1038,44 @@ mod tests {
             message: "domain access is forbidden".to_string(),
         };
 
-        assert_eq!(error.to_string(), "domain access is forbidden");
+        assert_eq!(
+            error.to_string(),
+            "domain access is forbidden (error code: domain_forbidden)"
+        );
+    }
+
+    #[test]
+    fn parses_numeric_v2_error_code_and_preserves_the_wire_value() {
+        let payload = br#"{"error":{"code":1101,"message":"The email address is invalid."}}"#;
+        let error = parse_error_body(reqwest::StatusCode::BAD_REQUEST, payload).unwrap_err();
+
+        assert_eq!(error.api_code(), Some("email_invalid"));
+        assert_eq!(
+            error.to_string(),
+            "The email address is invalid. (error code: 1101)"
+        );
+        match error {
+            Error::Api { code, .. } => assert_eq!(code, "1101"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_numeric_error_code_remains_decimal() {
+        let payload = br#"{"error":{"code":2999,"message":"future problem"}}"#;
+        let error = parse_error_body(reqwest::StatusCode::CONFLICT, payload).unwrap_err();
+
+        assert_eq!(error.api_code(), Some("2999"));
+        assert_eq!(error.to_string(), "future problem (error code: 2999)");
+    }
+
+    #[test]
+    fn malformed_error_code_stays_a_json_response_error() {
+        let payload = br#"{"error":{"code":true,"message":"invalid envelope"}}"#;
+        assert!(matches!(
+            parse_error_body(reqwest::StatusCode::BAD_REQUEST, payload),
+            Err(Error::Json { .. })
+        ));
     }
 
     #[test]
@@ -1045,7 +1123,7 @@ mod tests {
     fn subdomain_quota_error_details_are_parsed() {
         let payload = br#"{
           "error": {
-            "code": "subdomain_quota_exceeded",
+            "code": 1304,
             "message": "subdomain quota exceeded",
             "details": {
               "domain": "phone.alice.smith.dhttp.net",

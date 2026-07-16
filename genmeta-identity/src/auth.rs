@@ -8,17 +8,20 @@ pub(crate) enum AuthAttemptDisposition {
 pub(crate) fn classify_identity_attempt(
     error: &crate::cert_server::Error,
 ) -> AuthAttemptDisposition {
-    match error {
-        crate::cert_server::Error::Api { status, code, .. } => match (*status, code.as_str()) {
-            (reqwest::StatusCode::UNAUTHORIZED, "unauthorized")
-            | (reqwest::StatusCode::FORBIDDEN, "domain_forbidden") => {
+    if let crate::cert_server::Error::Api { status, .. } = error {
+        return match (*status, error.api_code()) {
+            (reqwest::StatusCode::UNAUTHORIZED, Some("unauthorized"))
+            | (reqwest::StatusCode::FORBIDDEN, Some("domain_forbidden")) => {
                 AuthAttemptDisposition::TryNext
             }
-            (reqwest::StatusCode::NOT_FOUND, "domain_not_found") => {
+            (reqwest::StatusCode::NOT_FOUND, Some("domain_not_found")) => {
                 AuthAttemptDisposition::ReplanMissingTarget
             }
             _ => AuthAttemptDisposition::Terminal,
-        },
+        };
+    }
+
+    match error {
         crate::cert_server::Error::DhttpEndpointFromProfile {
             source: dhttp::endpoint::LoadEndpointFromPathError::LoadIdentity { .. },
         } => AuthAttemptDisposition::TryNext,
@@ -31,6 +34,9 @@ pub(crate) fn classify_identity_attempt(
         | crate::cert_server::Error::Whatever { .. }
         | crate::cert_server::Error::DhttpEndpointFromProfile { .. } => {
             AuthAttemptDisposition::Terminal
+        }
+        crate::cert_server::Error::Api { .. } => {
+            unreachable!("API errors returned from the branch above")
         }
     }
 }
@@ -51,6 +57,10 @@ mod tests {
     fn only_explicit_auth_rejection_can_try_the_next_proof() {
         assert_eq!(
             classify_identity_attempt(&api(reqwest::StatusCode::UNAUTHORIZED, "unauthorized")),
+            AuthAttemptDisposition::TryNext
+        );
+        assert_eq!(
+            classify_identity_attempt(&api(reqwest::StatusCode::UNAUTHORIZED, "1002")),
             AuthAttemptDisposition::TryNext
         );
         assert_eq!(
@@ -81,6 +91,10 @@ mod tests {
     fn missing_apply_target_is_replanned_separately() {
         assert_eq!(
             classify_identity_attempt(&api(reqwest::StatusCode::NOT_FOUND, "domain_not_found")),
+            AuthAttemptDisposition::ReplanMissingTarget
+        );
+        assert_eq!(
+            classify_identity_attempt(&api(reqwest::StatusCode::NOT_FOUND, "1202")),
             AuthAttemptDisposition::ReplanMissingTarget
         );
         assert_eq!(

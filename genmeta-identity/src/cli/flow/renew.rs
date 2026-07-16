@@ -419,7 +419,7 @@ mod tests {
         };
         assert_eq!(
             renew_remote_error(error, "alice.smith").to_string(),
-            "certificate chain was not found\nRun `genmeta identity apply alice.smith` to request a new certificate chain."
+            "certificate chain was not found (error code: cert_sequence_not_found)\nRun `genmeta identity apply alice.smith` to request a new certificate chain."
         );
     }
 
@@ -433,7 +433,7 @@ mod tests {
 
         assert_eq!(
             renew_remote_error(error, "alice.smith").to_string(),
-            "internal server error"
+            "internal server error (error code: cert_sequence_not_found)"
         );
     }
 

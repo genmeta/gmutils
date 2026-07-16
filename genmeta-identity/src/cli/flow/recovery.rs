@@ -9,44 +9,30 @@ pub(crate) enum VerificationRecovery {
 pub(crate) fn classify_verify_submit_error(
     error: &crate::cert_server::Error,
 ) -> VerificationRecovery {
-    match error {
-        crate::cert_server::Error::Api {
-            status,
-            code,
-            message,
-        } => match (*status, code.as_str()) {
-            (reqwest::StatusCode::UNAUTHORIZED, "verify_code_invalid") => {
-                VerificationRecovery::RetryCode {
-                    message: message.clone(),
-                }
-            }
-            (reqwest::StatusCode::UNAUTHORIZED, "verify_code_expired") => {
-                VerificationRecovery::OfferResend {
-                    message: message.clone(),
-                }
-            }
-            (reqwest::StatusCode::UNAUTHORIZED, "domain_email_not_matched") => {
-                VerificationRecovery::ChangeEmail {
-                    message: message.clone(),
-                }
-            }
-            (
-                reqwest::StatusCode::TOO_MANY_REQUESTS,
+    let crate::cert_server::Error::Api { status, .. } = error else {
+        return VerificationRecovery::Stop;
+    };
+    let message = error.to_string();
+    match (*status, error.api_code()) {
+        (reqwest::StatusCode::UNAUTHORIZED, Some("verify_code_invalid")) => {
+            VerificationRecovery::RetryCode { message }
+        }
+        (reqwest::StatusCode::UNAUTHORIZED, Some("verify_code_expired")) => {
+            VerificationRecovery::OfferResend { message }
+        }
+        (reqwest::StatusCode::UNAUTHORIZED, Some("domain_email_not_matched")) => {
+            VerificationRecovery::ChangeEmail { message }
+        }
+        (
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            Some(
                 "verify_code_too_frequent"
                 | "verify_code_attempt_exceeded"
                 | "verify_code_rate_limited",
-            )
-            | (reqwest::StatusCode::FORBIDDEN, "user_blocked") => VerificationRecovery::Stop,
-            _ => VerificationRecovery::Stop,
-        },
-        crate::cert_server::Error::Request { .. }
-        | crate::cert_server::Error::DhttpEndpoint { .. }
-        | crate::cert_server::Error::DhttpEndpointFromProfile { .. }
-        | crate::cert_server::Error::DhttpRequest { .. }
-        | crate::cert_server::Error::DhttpRead { .. }
-        | crate::cert_server::Error::IdentityFallbackUnavailable
-        | crate::cert_server::Error::Json { .. }
-        | crate::cert_server::Error::Whatever { .. } => VerificationRecovery::Stop,
+            ),
+        )
+        | (reqwest::StatusCode::FORBIDDEN, Some("user_blocked")) => VerificationRecovery::Stop,
+        _ => VerificationRecovery::Stop,
     }
 }
 
@@ -71,7 +57,8 @@ mod tests {
                 "verification code is incorrect",
             )),
             VerificationRecovery::RetryCode {
-                message: "verification code is incorrect".to_string(),
+                message: "verification code is incorrect (error code: verify_code_invalid)"
+                    .to_string(),
             }
         );
         assert_eq!(
@@ -81,7 +68,7 @@ mod tests {
                 "verification code expired",
             )),
             VerificationRecovery::OfferResend {
-                message: "verification code expired".to_string(),
+                message: "verification code expired (error code: verify_code_expired)".to_string(),
             }
         );
         assert_eq!(
@@ -91,7 +78,33 @@ mod tests {
                 "email does not match this identity",
             )),
             VerificationRecovery::ChangeEmail {
-                message: "email does not match this identity".to_string(),
+                message:
+                    "email does not match this identity (error code: domain_email_not_matched)"
+                        .to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn numeric_codes_select_the_same_recovery_and_keep_the_wire_code_in_copy() {
+        assert_eq!(
+            classify_verify_submit_error(&api(
+                reqwest::StatusCode::UNAUTHORIZED,
+                "1102",
+                "verification code is incorrect",
+            )),
+            VerificationRecovery::RetryCode {
+                message: "verification code is incorrect (error code: 1102)".to_string(),
+            }
+        );
+        assert_eq!(
+            classify_verify_submit_error(&api(
+                reqwest::StatusCode::UNAUTHORIZED,
+                "1103",
+                "verification code expired",
+            )),
+            VerificationRecovery::OfferResend {
+                message: "verification code expired (error code: 1103)".to_string(),
             }
         );
     }
