@@ -530,7 +530,7 @@ mod tests {
             &api,
             &ui,
             EmailLogin::Account,
-            Some("not-an-email"),
+            Some("luffy.a@b"),
             None,
             true,
         )
@@ -740,5 +740,26 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(api.calls(), ["verify-account:a@b.test:000000"]);
+    }
+
+    #[tokio::test]
+    async fn noninteractive_email_rejects_the_same_invalid_shape_before_verifying() {
+        let api = FakeEmailApi::accepting("token");
+        let error = run_email_session(
+            &api,
+            &ScriptedEmailUi::new([]),
+            EmailLogin::Account,
+            Some("luffy.a@b"),
+            Some("000000"),
+            false,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Invalid email address. Please enter a valid email address."
+        );
+        assert!(api.calls().is_empty());
     }
 }
