@@ -3,7 +3,7 @@ use std::{
     io::{self, IsTerminal},
 };
 
-use tracing::{Instrument, info_span};
+use tracing::info_span;
 use tracing_indicatif::span_ext::IndicatifSpanExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +71,7 @@ pub(crate) async fn run<T, E>(
     let span = info_span!("cli_progress", indicatif.pb_show = tracing::field::Empty);
     span.pb_set_message(copy.running);
     span.pb_start();
-    let result = future.instrument(span.clone()).await;
+    let result = future.await;
     if result.is_ok()
         && let Some(success) = copy.completion_message(io::stderr().is_terminal())
     {
@@ -88,10 +88,7 @@ pub(crate) fn run_sync<T, E>(
     let span = info_span!("cli_progress", indicatif.pb_show = tracing::field::Empty);
     span.pb_set_message(copy.running);
     span.pb_start();
-    let result = {
-        let _entered = span.enter();
-        operation()
-    };
+    let result = operation();
     if result.is_ok()
         && let Some(success) = copy.completion_message(io::stderr().is_terminal())
     {
@@ -114,7 +111,7 @@ mod tests {
 
     use super::{
         CHECK_NAME, GENERATE_KEY, RENEW_IDENTITY, REQUEST_CERT, SAVE_DEFAULT, SEND_CODE,
-        VERIFY_EMAIL, WAIT_FOR_PAYMENT, run,
+        VERIFY_EMAIL, WAIT_FOR_PAYMENT, run, run_sync,
     };
 
     #[test]
@@ -194,5 +191,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(seen.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn operations_do_not_inherit_the_ui_progress_span() {
+        let subscriber = tracing_subscriber::registry()
+            .with(CountLayer::default().with_filter(IndicatifFilter::new(false)));
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let async_parent = run(SEND_CODE, async {
+            Ok::<_, std::io::Error>(tracing::Span::current().metadata().map(|meta| meta.name()))
+        })
+        .await
+        .unwrap();
+        assert_ne!(async_parent, Some("cli_progress"));
+
+        let sync_parent = run_sync(SEND_CODE, || {
+            Ok::<_, std::io::Error>(tracing::Span::current().metadata().map(|meta| meta.name()))
+        })
+        .unwrap();
+        assert_ne!(sync_parent, Some("cli_progress"));
     }
 }
