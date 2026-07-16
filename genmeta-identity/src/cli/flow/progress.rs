@@ -7,39 +7,62 @@ use tracing::{Instrument, info_span};
 use tracing_indicatif::span_ext::IndicatifSpanExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompletionPolicy {
+    Clear,
+    RetainOnTty,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProgressCopy {
     pub(crate) running: &'static str,
-    pub(crate) success: &'static str,
+    success: &'static str,
+    completion: CompletionPolicy,
 }
 
 impl ProgressCopy {
-    pub(crate) const fn new(running: &'static str, success: &'static str) -> Self {
-        Self { running, success }
+    const fn clear(running: &'static str) -> Self {
+        Self {
+            running,
+            success: "",
+            completion: CompletionPolicy::Clear,
+        }
+    }
+
+    const fn retain_on_tty(running: &'static str, success: &'static str) -> Self {
+        Self {
+            running,
+            success,
+            completion: CompletionPolicy::RetainOnTty,
+        }
+    }
+
+    fn completion_message(self, is_terminal: bool) -> Option<&'static str> {
+        if !is_terminal {
+            return None;
+        }
+        match self.completion {
+            CompletionPolicy::Clear => None,
+            CompletionPolicy::RetainOnTty => Some(self.success),
+        }
     }
 }
 
-pub(crate) const CHECK_NAME: ProgressCopy = ProgressCopy::new(
-    "Checking the validity of this name...",
-    "Checked the validity of this name.",
-);
-pub(crate) const SEND_CODE: ProgressCopy =
-    ProgressCopy::new("Sending verification code...", "Sent verification code.");
-pub(crate) const VERIFY_EMAIL: ProgressCopy =
-    ProgressCopy::new("Verifying with email...", "Verified with email.");
-pub(crate) const GENERATE_KEY: ProgressCopy = ProgressCopy::new(
+pub(crate) const CHECK_NAME: ProgressCopy =
+    ProgressCopy::clear("Checking the validity of this name...");
+pub(crate) const SEND_CODE: ProgressCopy = ProgressCopy::clear("Sending verification code...");
+pub(crate) const VERIFY_EMAIL: ProgressCopy = ProgressCopy::clear("Verifying with email...");
+pub(crate) const GENERATE_KEY: ProgressCopy = ProgressCopy::retain_on_tty(
     "Generating secp384r1 ECC key pair locally...",
     "Generated secp384r1 ECC key pair locally.",
 );
-pub(crate) const REQUEST_CERT: ProgressCopy = ProgressCopy::new(
+pub(crate) const REQUEST_CERT: ProgressCopy = ProgressCopy::retain_on_tty(
     "Generating CSR and requesting certificate...",
     "Generated CSR and requested certificate.",
 );
 pub(crate) const WAIT_FOR_PAYMENT: ProgressCopy =
-    ProgressCopy::new("Waiting for payment completion...", "Payment completed.");
-pub(crate) const RENEW_IDENTITY: ProgressCopy =
-    ProgressCopy::new("Renewing identity...", "Renewed identity.");
-pub(crate) const SAVE_DEFAULT: ProgressCopy =
-    ProgressCopy::new("Saving default identity...", "Saved default identity.");
+    ProgressCopy::clear("Waiting for payment completion...");
+pub(crate) const RENEW_IDENTITY: ProgressCopy = ProgressCopy::clear("Renewing identity...");
+pub(crate) const SAVE_DEFAULT: ProgressCopy = ProgressCopy::clear("Saving default identity...");
 
 pub(crate) async fn run<T, E>(
     copy: ProgressCopy,
@@ -49,8 +72,10 @@ pub(crate) async fn run<T, E>(
     span.pb_set_message(copy.running);
     span.pb_start();
     let result = future.instrument(span.clone()).await;
-    if result.is_ok() {
-        retain_success(&span, copy.success);
+    if result.is_ok()
+        && let Some(success) = copy.completion_message(io::stderr().is_terminal())
+    {
+        span.pb_set_finish_message(success);
     }
     drop(span);
     result
@@ -67,19 +92,13 @@ pub(crate) fn run_sync<T, E>(
         let _entered = span.enter();
         operation()
     };
-    if result.is_ok() {
-        retain_success(&span, copy.success);
+    if result.is_ok()
+        && let Some(success) = copy.completion_message(io::stderr().is_terminal())
+    {
+        span.pb_set_finish_message(success);
     }
     drop(span);
     result
-}
-
-fn retain_success(span: &tracing::Span, success: &'static str) {
-    if io::stderr().is_terminal() {
-        span.pb_set_finish_message(success);
-    } else {
-        super::transcript::print_line(success);
-    }
 }
 
 #[cfg(test)]
@@ -94,32 +113,47 @@ mod tests {
     use tracing_subscriber::{Layer, layer::SubscriberExt, registry::LookupSpan};
 
     use super::{
-        CHECK_NAME, GENERATE_KEY, ProgressCopy, RENEW_IDENTITY, REQUEST_CERT, SAVE_DEFAULT,
-        SEND_CODE, VERIFY_EMAIL, WAIT_FOR_PAYMENT, run,
+        CHECK_NAME, GENERATE_KEY, RENEW_IDENTITY, REQUEST_CERT, SAVE_DEFAULT, SEND_CODE,
+        VERIFY_EMAIL, WAIT_FOR_PAYMENT, run,
     };
 
     #[test]
-    fn progress_pairs_are_stable() {
+    fn only_key_and_certificate_request_retain_success_on_tty() {
         assert_eq!(
+            GENERATE_KEY.completion_message(true),
+            Some("Generated secp384r1 ECC key pair locally.")
+        );
+        assert_eq!(
+            REQUEST_CERT.completion_message(true),
+            Some("Generated CSR and requested certificate.")
+        );
+
+        for copy in [
             CHECK_NAME,
-            ProgressCopy::new(
-                "Checking the validity of this name...",
-                "Checked the validity of this name.",
-            )
-        );
-        assert_eq!(SEND_CODE.success, "Sent verification code.");
-        assert_eq!(VERIFY_EMAIL.success, "Verified with email.");
-        assert_eq!(
-            GENERATE_KEY.success,
-            "Generated secp384r1 ECC key pair locally."
-        );
-        assert_eq!(
-            REQUEST_CERT.success,
-            "Generated CSR and requested certificate."
-        );
-        assert_eq!(WAIT_FOR_PAYMENT.success, "Payment completed.");
-        assert_eq!(RENEW_IDENTITY.success, "Renewed identity.");
-        assert_eq!(SAVE_DEFAULT.success, "Saved default identity.");
+            SEND_CODE,
+            VERIFY_EMAIL,
+            WAIT_FOR_PAYMENT,
+            RENEW_IDENTITY,
+            SAVE_DEFAULT,
+        ] {
+            assert_eq!(copy.completion_message(true), None, "copy: {copy:?}");
+        }
+    }
+
+    #[test]
+    fn non_tty_progress_has_no_completion_copy() {
+        for copy in [
+            CHECK_NAME,
+            SEND_CODE,
+            VERIFY_EMAIL,
+            GENERATE_KEY,
+            REQUEST_CERT,
+            WAIT_FOR_PAYMENT,
+            RENEW_IDENTITY,
+            SAVE_DEFAULT,
+        ] {
+            assert_eq!(copy.completion_message(false), None, "copy: {copy:?}");
+        }
     }
 
     #[derive(Clone, Default)]
