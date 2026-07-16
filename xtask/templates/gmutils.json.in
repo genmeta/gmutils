@@ -8,9 +8,6 @@
     "genmeta.exe",
     "genmeta-ssh.bat"
   ],
-  "checkver": {
-    "url": "https://download.dhttp.net/scoop/gmutils.json",
-    "re": "\\\"version\\\"\\\\s*:\\\\s*\\\"([^\\\"]+)\\\""
-  },
+  "checkver": {{scoop.checkver.json}},
   "autoupdate": {{scoop.autoupdate.json}}
 }
