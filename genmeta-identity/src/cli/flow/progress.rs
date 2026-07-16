@@ -56,8 +56,8 @@ pub(crate) const GENERATE_KEY: ProgressCopy = ProgressCopy::retain_on_tty(
     "Generated secp384r1 ECC key pair locally.",
 );
 pub(crate) const REQUEST_CERT: ProgressCopy = ProgressCopy::retain_on_tty(
-    "Generating CSR and requesting certificate...",
-    "Generated CSR and requested certificate.",
+    "Generating CSR locally and requesting certificate...",
+    "Generated CSR locally and requested certificate.",
 );
 pub(crate) const WAIT_FOR_PAYMENT: ProgressCopy =
     ProgressCopy::clear("Waiting for payment completion...");
@@ -121,8 +121,12 @@ mod tests {
             Some("Generated secp384r1 ECC key pair locally.")
         );
         assert_eq!(
+            REQUEST_CERT.running,
+            "Generating CSR locally and requesting certificate..."
+        );
+        assert_eq!(
             REQUEST_CERT.completion_message(true),
-            Some("Generated CSR and requested certificate.")
+            Some("Generated CSR locally and requested certificate.")
         );
 
         for copy in [
