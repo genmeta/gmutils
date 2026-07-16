@@ -55,9 +55,11 @@ pub(crate) async fn run(
     let Some(name) = command.name.as_deref() else {
         let name = match configured_default_name.as_ref() {
             Some(name) => name.borrow(),
-            None => whatever!(
-                "No default identity configured. Use `genmeta identity default <name>` to set one."
-            ),
+            None => {
+                whatever!(
+                    "No default identity configured. Use `genmeta identity default <name>` to set one."
+                );
+            }
         };
         let summary =
             local::load_summary_exact(dhttp_home, name, configured_default_name.clone()).await?;

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0-beta.4] - 2026-07-16
+
 ### Added
 
 - `genmeta id` is a visible alias for `genmeta identity`.
@@ -17,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `genmeta ssh` now discovers all online primary sequences, preserves server ranking, and connects through the first online sequence unless an explicit selector is supplied.
 - `genmeta identity apply [name]` is now the single create-or-update flow;
   the former `identity create` command has been removed.
 - Existing identities, new root identities, and new direct sub-identities now
@@ -53,6 +56,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Generated private keys stay in memory until a validated certificate can be
   installed, and local certificate/key replacement rolls back on commit
   failure without deleting service files.
+
+### Fixed
+
+- Identity fallback errors compile cleanly with the release workflow nightly toolchain.
+
+### Dependencies
+
+- Release manifests now target `dhttp` v0.6.0-beta.4, including
+  `dhttp-access` v0.4.0-beta.2, `dhttp-home` v0.5.0-beta.1, and
+  `dhttp-log` v0.1.0-beta.1 through the facade; discovery and transport
+  dependencies target `dyns` v0.7.0-beta.2, `h3x` v0.6.0-beta.4,
+  `dquic` v0.7.0-beta.4, and `dshell` v0.6.0-beta.3.
+
+### Components
+
+- `genmeta` v0.8.0-beta.4
+- `genmeta-curl` v0.7.0-beta.4
+- `genmeta-ssh` v0.7.0-beta.4
+- `genmeta-access` v0.4.0-beta.3
+- `genmeta-identity` v0.4.0-beta.4
+- `genmeta-proxy` v0.4.0-beta.3
+- `genmeta-discover` v0.4.0-beta.3
+- `genmeta-doctor` v0.4.0-beta.3
+- `genmeta-nat` v0.5.0-beta.3
+- `genmeta-nslookup` v0.5.0-beta.3
 
 ## [0.8.0-beta.3] - 2026-07-09
 

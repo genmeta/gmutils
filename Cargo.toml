@@ -35,7 +35,7 @@ indicatif = "0.18"
 whoami = "2"
 
 # network
-h3x = "0.6.0-beta.3"
+h3x = "0.6.0-beta.4"
 http = "1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
@@ -97,19 +97,19 @@ async-compression = { version = "0.4", features = [
 ] }
 
 # workspace
-genmeta-access = { path = "genmeta-access", version = "0.4.0-beta.2" }
-dhttp = "0.5.0-beta.3"
-genmeta-curl = { path = "genmeta-curl", version = "0.7.0-beta.3" }
-genmeta-discover = { path = "genmeta-discover", version = "0.4.0-beta.2" }
-genmeta-doctor = { path = "genmeta-doctor", version = "0.4.0-beta.2" }
-genmeta-identity = { path = "genmeta-identity", version = "0.4.0-beta.3", default-features = false }
-genmeta-nat = { path = "genmeta-nat", version = "0.5.0-beta.2" }
-genmeta-nslookup = { path = "genmeta-nslookup", version = "0.5.0-beta.2" }
-genmeta-ssh = { path = "genmeta-ssh", version = "0.7.0-beta.3" }
-genmeta-proxy = { path = "genmeta-proxy", version = "0.4.0-beta.2" }
+genmeta-access = { path = "genmeta-access", version = "0.4.0-beta.3" }
+dhttp = "0.6.0-beta.4"
+genmeta-curl = { path = "genmeta-curl", version = "0.7.0-beta.4" }
+genmeta-discover = { path = "genmeta-discover", version = "0.4.0-beta.3" }
+genmeta-doctor = { path = "genmeta-doctor", version = "0.4.0-beta.3" }
+genmeta-identity = { path = "genmeta-identity", version = "0.4.0-beta.4", default-features = false }
+genmeta-nat = { path = "genmeta-nat", version = "0.5.0-beta.3" }
+genmeta-nslookup = { path = "genmeta-nslookup", version = "0.5.0-beta.3" }
+genmeta-ssh = { path = "genmeta-ssh", version = "0.7.0-beta.4" }
+genmeta-proxy = { path = "genmeta-proxy", version = "0.4.0-beta.3" }
 
 # DShell
-dshell = { version = "0.6.0-beta.2", features = [
+dshell = { version = "0.6.0-beta.3", features = [
     "config",
 ] }
 

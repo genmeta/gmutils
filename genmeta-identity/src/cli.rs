@@ -157,9 +157,11 @@ async fn resolve_default_target_name(dhttp_home: &DhttpHome) -> Result<Name<'sta
         .and_then(|config| config.settings().default_identity_name().cloned())
     {
         Some(name) => Ok(name),
-        None => whatever!(
-            "No default identity configured. Use `genmeta identity default <name>` to set one."
-        ),
+        None => {
+            whatever!(
+                "No default identity configured. Use `genmeta identity default <name>` to set one."
+            );
+        }
     }
 }
 
@@ -284,9 +286,11 @@ impl Info {
             Some(n) => parse_identity_name(n)?,
             None => match default_name.clone() {
                 Some(n) => n,
-                None => whatever!(
-                    "No default identity configured. Use `genmeta identity default <name>` to set one."
-                ),
+                None => {
+                    whatever!(
+                        "No default identity configured. Use `genmeta identity default <name>` to set one."
+                    );
+                }
             },
         };
         let Some(summary) = flow::local::try_load_summary_exact(
