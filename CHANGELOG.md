@@ -7,20 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0-beta.5] - 2026-07-17
+
 ### Changed
 
 - Identity progress clears transient name, email, payment, renewal, and default
-  operations. Interactive terminals retain only local key generation and locally
-  generated CSR completion; non-interactive execution emits no progress copy.
+  operations. Interactive terminals retain only local key generation and
+  locally generated CSR completion; non-interactive execution emits no progress
+  copy.
+- Scoop package metadata derives its `checkver` URL from the selected stable or
+  preview channel and uses the canonical version-matching expression.
 
 ### Fixed
 
-- Identity email validation now rejects malformed local/domain boundaries before
+- Identity email validation rejects malformed local and domain boundaries before
   contacting certserver and uses the same validation for prompted and explicit
   email input.
 - Certserver errors accept current numeric codes and legacy symbolic codes,
-  preserve the server-provided message, display the wire error code, and use the
-  same normalized recovery decisions for both representations.
+  preserve the server-provided message, display the original wire error code,
+  and use the same normalized recovery decisions for both representations.
+- Identity progress operations no longer inherit the display-only progress span,
+  ensuring completion is finalized before subsequent output and prompts.
+
+### Dependencies
+
+- Release packaging uses `genmeta-xtask-release` v0.2.0-beta.9 for
+  channel-aware Scoop metadata.
+
+### Components
+
+- `genmeta` v0.8.0-beta.5
+- `genmeta-identity` v0.4.0-beta.5
+- All other gmutils workspace member versions are unchanged from v0.8.0-beta.4.
 
 ## [0.8.0-beta.4] - 2026-07-16
 
