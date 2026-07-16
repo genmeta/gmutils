@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Renewal preserves the original certificate-chain kind and sequence, performs
   strict local preflight, installs validated material transactionally, and
   prints a visible success result.
+- Identity progress clears transient name, email, payment, renewal, and default
+  operations. Interactive terminals retain only local key generation and
+  certificate-request success; non-interactive execution emits no progress copy.
 
 ### Fixed
 
@@ -56,6 +59,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Generated private keys stay in memory until a validated certificate can be
   installed, and local certificate/key replacement rolls back on commit
   failure without deleting service files.
+- Identity email validation now rejects malformed local/domain boundaries before
+  contacting certserver and uses the same validation for prompted and explicit
+  email input.
+- Certserver errors accept current numeric codes and legacy symbolic codes,
+  preserve the server-provided message, display the wire error code, and use the
+  same normalized recovery decisions for both representations.
 
 ### Fixed
 
