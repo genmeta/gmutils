@@ -632,7 +632,10 @@ mod tests {
 
         assert_eq!(token, "token");
         assert_eq!(api.send_count(), 1);
-        assert_eq!(ui.printed_messages(), ["verification code is incorrect"]);
+        assert_eq!(
+            ui.printed_messages(),
+            ["verification code is incorrect (error code: verify_code_invalid)"]
+        );
     }
 
     #[tokio::test]
