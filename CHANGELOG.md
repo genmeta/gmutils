@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Identity progress clears transient name, email, payment, renewal, and default
-  operations. Interactive terminals retain only local key generation and
-  certificate-request success; non-interactive execution emits no progress copy.
+  operations. Interactive terminals retain only local key generation and locally
+  generated CSR completion; non-interactive execution emits no progress copy.
 
 ### Fixed
 
