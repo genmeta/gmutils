@@ -9,7 +9,7 @@ use tracing_indicatif::span_ext::IndicatifSpanExt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CompletionPolicy {
     Clear,
-    RetainOnTty,
+    Retain,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,41 +28,55 @@ impl ProgressCopy {
         }
     }
 
-    const fn retain_on_tty(running: &'static str, success: &'static str) -> Self {
+    const fn retain(running: &'static str, success: &'static str) -> Self {
         Self {
             running,
             success,
-            completion: CompletionPolicy::RetainOnTty,
+            completion: CompletionPolicy::Retain,
         }
     }
 
-    fn completion_message(self, is_terminal: bool) -> Option<&'static str> {
-        if !is_terminal {
-            return None;
-        }
+    fn completion_message(self, _is_terminal: bool) -> Option<&'static str> {
         match self.completion {
             CompletionPolicy::Clear => None,
-            CompletionPolicy::RetainOnTty => Some(self.success),
+            CompletionPolicy::Retain => Some(self.success),
         }
     }
 }
+
+const KEY_GENERATED: &str = "✔ Generated secp384r1 ECC key pair locally.";
+const CERTIFICATE_REQUESTED: &str = "✔ Generated CSR locally and requested certificate.";
 
 pub(crate) const CHECK_NAME: ProgressCopy =
     ProgressCopy::clear("Checking the validity of this name...");
 pub(crate) const SEND_CODE: ProgressCopy = ProgressCopy::clear("Sending verification code...");
 pub(crate) const VERIFY_EMAIL: ProgressCopy = ProgressCopy::clear("Verifying with email...");
-pub(crate) const GENERATE_KEY: ProgressCopy = ProgressCopy::retain_on_tty(
+pub(crate) const GENERATE_KEY: ProgressCopy = ProgressCopy::retain(
     "Generating secp384r1 ECC key pair locally...",
-    "Generated secp384r1 ECC key pair locally.",
+    KEY_GENERATED,
 );
-pub(crate) const REQUEST_CERT: ProgressCopy = ProgressCopy::retain_on_tty(
+pub(crate) const REQUEST_CERT: ProgressCopy = ProgressCopy::retain(
     "Generating CSR locally and requesting certificate...",
-    "Generated CSR locally and requested certificate.",
+    CERTIFICATE_REQUESTED,
 );
 pub(crate) const WAIT_FOR_PAYMENT: ProgressCopy =
     ProgressCopy::clear("Waiting for payment completion...");
-pub(crate) const RENEW_IDENTITY: ProgressCopy = ProgressCopy::clear("Renewing identity...");
+pub(crate) const RENEW_IDENTITY: ProgressCopy =
+    ProgressCopy::retain("Renewing identity...", CERTIFICATE_REQUESTED);
 pub(crate) const SAVE_DEFAULT: ProgressCopy = ProgressCopy::clear("Saving default identity...");
+
+fn finish_success(span: &tracing::Span, copy: ProgressCopy) {
+    let is_terminal = io::stderr().is_terminal();
+    let Some(success) = copy.completion_message(is_terminal) else {
+        return;
+    };
+
+    if is_terminal {
+        span.pb_set_finish_message(success);
+    } else {
+        super::transcript::print_line(success);
+    }
+}
 
 pub(crate) async fn run<T, E>(
     copy: ProgressCopy,
@@ -72,10 +86,8 @@ pub(crate) async fn run<T, E>(
     span.pb_set_message(copy.running);
     span.pb_start();
     let result = future.await;
-    if result.is_ok()
-        && let Some(success) = copy.completion_message(io::stderr().is_terminal())
-    {
-        span.pb_set_finish_message(success);
+    if result.is_ok() {
+        finish_success(&span, copy);
     }
     drop(span);
     result
@@ -89,10 +101,8 @@ pub(crate) fn run_sync<T, E>(
     span.pb_set_message(copy.running);
     span.pb_start();
     let result = operation();
-    if result.is_ok()
-        && let Some(success) = copy.completion_message(io::stderr().is_terminal())
-    {
-        span.pb_set_finish_message(success);
+    if result.is_ok() {
+        finish_success(&span, copy);
     }
     drop(span);
     result
@@ -115,45 +125,45 @@ mod tests {
     };
 
     #[test]
-    fn only_key_and_certificate_request_retain_success_on_tty() {
-        assert_eq!(
-            GENERATE_KEY.completion_message(true),
-            Some("Generated secp384r1 ECC key pair locally.")
-        );
+    fn key_and_certificate_completions_are_stable_in_every_output_mode() {
+        for is_terminal in [true, false] {
+            assert_eq!(
+                GENERATE_KEY.completion_message(is_terminal),
+                Some("✔ Generated secp384r1 ECC key pair locally.")
+            );
+            assert_eq!(
+                REQUEST_CERT.completion_message(is_terminal),
+                Some("✔ Generated CSR locally and requested certificate.")
+            );
+            assert_eq!(
+                RENEW_IDENTITY.completion_message(is_terminal),
+                Some("✔ Generated CSR locally and requested certificate.")
+            );
+        }
+
         assert_eq!(
             REQUEST_CERT.running,
             "Generating CSR locally and requesting certificate..."
         );
-        assert_eq!(
-            REQUEST_CERT.completion_message(true),
-            Some("Generated CSR locally and requested certificate.")
-        );
-
-        for copy in [
-            CHECK_NAME,
-            SEND_CODE,
-            VERIFY_EMAIL,
-            WAIT_FOR_PAYMENT,
-            RENEW_IDENTITY,
-            SAVE_DEFAULT,
-        ] {
-            assert_eq!(copy.completion_message(true), None, "copy: {copy:?}");
-        }
+        assert_eq!(RENEW_IDENTITY.running, "Renewing identity...");
     }
 
     #[test]
-    fn non_tty_progress_has_no_completion_copy() {
-        for copy in [
-            CHECK_NAME,
-            SEND_CODE,
-            VERIFY_EMAIL,
-            GENERATE_KEY,
-            REQUEST_CERT,
-            WAIT_FOR_PAYMENT,
-            RENEW_IDENTITY,
-            SAVE_DEFAULT,
-        ] {
-            assert_eq!(copy.completion_message(false), None, "copy: {copy:?}");
+    fn transient_progress_has_no_completion_copy() {
+        for is_terminal in [true, false] {
+            for copy in [
+                CHECK_NAME,
+                SEND_CODE,
+                VERIFY_EMAIL,
+                WAIT_FOR_PAYMENT,
+                SAVE_DEFAULT,
+            ] {
+                assert_eq!(
+                    copy.completion_message(is_terminal),
+                    None,
+                    "copy: {copy:?}, terminal: {is_terminal}"
+                );
+            }
         }
     }
 
