@@ -62,6 +62,12 @@ const SERVER_CONF_TEMPLATE: &str = "server {
 
 const WELCOME_PAGE_PATH: &str = "templates/welcome/index.html";
 
+#[cfg(target_os = "macos")]
+const PISHOO_RELOAD_COMMAND: &str = "sudo brew service reload pishoo";
+
+#[cfg(not(target_os = "macos"))]
+const PISHOO_RELOAD_COMMAND: &str = "sudo systemctl reload pishoo";
+
 pub(crate) async fn maybe_create_welcome_service(
     dhttp_home: &DhttpHome,
     name: DhttpName<'_>,
@@ -116,7 +122,8 @@ pub(crate) async fn maybe_create_welcome_service(
 
 pub(crate) fn format_welcome_service_created(name: &str) -> String {
     format!(
-        "A sample welcome page has been generated. Reload pishoo, then visit it with:\n\
+        "Now, you can reload pishoo and visit the welcome page!\n\n\
+`{PISHOO_RELOAD_COMMAND}`\n\
 `genmeta curl https://{name}~/welcome`"
     )
 }
@@ -452,11 +459,24 @@ mod tests {
         assert!(!SERVER_CONF_TEMPLATE.contains("root templates/welcome;"));
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
-    fn welcome_success_copy_introduces_the_sample_and_copyable_command() {
+    fn welcome_success_copy_includes_systemd_reload_and_created_identity() {
         assert_eq!(
             format_welcome_service_created("alice.smith"),
-            "A sample welcome page has been generated. Reload pishoo, then visit it with:\n\
+            "Now, you can reload pishoo and visit the welcome page!\n\n\
+`sudo systemctl reload pishoo`\n\
+`genmeta curl https://alice.smith~/welcome`"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn welcome_success_copy_includes_brew_reload_and_created_identity() {
+        assert_eq!(
+            format_welcome_service_created("alice.smith"),
+            "Now, you can reload pishoo and visit the welcome page!\n\n\
+`sudo brew service reload pishoo`\n\
 `genmeta curl https://alice.smith~/welcome`"
         );
     }
