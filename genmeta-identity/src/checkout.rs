@@ -61,12 +61,18 @@ fn render_terminal_qr(url: &str) -> Result<String, QrError> {
 }
 
 pub(crate) fn payment_instruction_block(url: &str) -> Result<String, QrError> {
-    let mut block = render_terminal_qr(url)?.trim_end().to_string();
-    block.push_str("\n\n");
+    let qr = render_terminal_qr(url)?;
+    let mut block = String::from(
+        "[!] Please complete your payment within 15 minutes.\n    Open the link, or scan the QR code below\n\n",
+    );
 
-    block.push_str("[!] Please complete your payment within 15 minutes.\n");
-    block.push_str("    Open the link below, or scan the QR code above\n\n");
-    block.push_str("    Link: ");
+    for line in qr.trim_end().lines() {
+        block.push_str("    ");
+        block.push_str(line);
+        block.push('\n');
+    }
+
+    block.push_str("\n    Link: ");
     block.push_str(url);
     Ok(block)
 }
@@ -185,29 +191,43 @@ mod tests {
     }
 
     #[test]
-    fn payment_block_always_keeps_the_qr_above_the_link() {
-        let block = payment_instruction_block("https://pay.example.test/checkout/ckt_123").unwrap();
-
-        assert!(block.contains(['▀', '▄', '█']));
-        assert!(block.contains(
-            "Open the link below, or scan the QR code above\n\n    Link: https://pay.example.test/checkout/ckt_123"
-        ));
-    }
-
-    #[test]
-    fn payment_block_places_compact_qr_before_the_link() {
-        let rendered = payment_instruction_block("https://pay.example.test/checkout").unwrap();
-        let qr = rendered.find('█').unwrap();
+    fn payment_block_keeps_instruction_qr_and_link_in_order() {
+        let rendered =
+            payment_instruction_block("https://pay.example.test/checkout/ckt_123").unwrap();
         let notice = rendered
             .find("[!] Please complete your payment within 15 minutes.")
             .unwrap();
+        let instruction = rendered
+            .find("Open the link, or scan the QR code below")
+            .unwrap();
+        let qr = rendered.find('█').unwrap();
         let link = rendered
-            .find("Link: https://pay.example.test/checkout")
+            .find("Link: https://pay.example.test/checkout/ckt_123")
             .unwrap();
 
-        assert!(qr < notice && notice < link, "{rendered}");
-        assert!(rendered.contains("Open the link below, or scan the QR code above"));
-        assert!(!rendered.contains("Open link:"));
+        assert!(
+            notice < instruction && instruction < qr && qr < link,
+            "{rendered}"
+        );
+        assert!(!rendered.contains("Open the link below, or scan the QR code above"));
+    }
+
+    #[test]
+    fn payment_block_indents_every_qr_row_by_four_spaces() {
+        let rendered = payment_instruction_block("https://pay.example.test/checkout").unwrap();
+        let qr = rendered
+            .split_once("Open the link, or scan the QR code below\n\n")
+            .unwrap()
+            .1
+            .split_once("\n\n    Link: https://pay.example.test/checkout")
+            .unwrap()
+            .0;
+
+        assert!(!qr.is_empty());
+        assert!(
+            qr.lines().all(|line| line.starts_with("    ")),
+            "{rendered}"
+        );
     }
 
     #[test]
