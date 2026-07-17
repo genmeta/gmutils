@@ -115,7 +115,10 @@ pub(crate) async fn maybe_create_welcome_service(
 }
 
 pub(crate) fn format_welcome_service_created(name: &str) -> String {
-    format!("`genmeta curl https://{name}~/welcome`")
+    format!(
+        "A sample welcome page has been generated. Reload pishoo, then visit it with:\n\
+`genmeta curl https://{name}~/welcome`"
+    )
 }
 
 fn render_welcome_page() -> &'static str {
@@ -450,10 +453,11 @@ mod tests {
     }
 
     #[test]
-    fn welcome_success_copy_is_only_the_copyable_command() {
+    fn welcome_success_copy_introduces_the_sample_and_copyable_command() {
         assert_eq!(
             format_welcome_service_created("alice.smith"),
-            "`genmeta curl https://alice.smith~/welcome`"
+            "A sample welcome page has been generated. Reload pishoo, then visit it with:\n\
+`genmeta curl https://alice.smith~/welcome`"
         );
     }
 }

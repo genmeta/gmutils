@@ -44,8 +44,8 @@ impl ProgressCopy {
     }
 }
 
-const KEY_GENERATED: &str = "✔ Generated secp384r1 ECC key pair locally.";
-const CERTIFICATE_REQUESTED: &str = "✔ Generated CSR locally and requested certificate.";
+const KEY_GENERATED: &str = "✔ Generate secp384r1 ECC key pair locally.";
+const CERTIFICATE_REQUESTED: &str = "✔ Generate CSR locally and request certificate.";
 
 pub(crate) const CHECK_NAME: ProgressCopy =
     ProgressCopy::clear("Checking the validity of this name...");
@@ -129,15 +129,15 @@ mod tests {
         for is_terminal in [true, false] {
             assert_eq!(
                 GENERATE_KEY.completion_message(is_terminal),
-                Some("✔ Generated secp384r1 ECC key pair locally.")
+                Some("✔ Generate secp384r1 ECC key pair locally.")
             );
             assert_eq!(
                 REQUEST_CERT.completion_message(is_terminal),
-                Some("✔ Generated CSR locally and requested certificate.")
+                Some("✔ Generate CSR locally and request certificate.")
             );
             assert_eq!(
                 RENEW_IDENTITY.completion_message(is_terminal),
-                Some("✔ Generated CSR locally and requested certificate.")
+                Some("✔ Generate CSR locally and request certificate.")
             );
         }
 

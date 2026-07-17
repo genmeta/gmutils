@@ -516,8 +516,8 @@ async fn install_and_finish(
         .await?;
 
     match welcome {
-        Ok(Some(_)) => super::transcript::print_line(
-            super::welcome::format_welcome_service_created(resolved.target.short_name()),
+        Ok(Some(_)) => super::transcript::print_block(
+            &super::welcome::format_welcome_service_created(resolved.target.short_name()),
         ),
         Ok(None) => {}
         Err(error) => super::transcript::print_warning(&format!(
