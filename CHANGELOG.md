@@ -7,16 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0-beta.6] - 2026-07-17
+
 ### Changed
 
+- Paid identity checkout guidance puts the payment deadline and action before
+  the indented QR code and leaves the copyable payment link last.
 - Identity apply and renew retain checkmarked local key generation, CSR request,
   and committed installation or renewal milestones. Non-interactive execution
-  emits the same successful milestones without progress animation. New welcome
-  services are mounted at `/welcome`, and onboarding follows the default-identity
-  prompt immediately, without blank separator lines. It prints the platform
-  reload command (`sudo brew service reload pishoo` on macOS or `sudo systemctl
-  reload pishoo` elsewhere) and the copyable access command for the newly created
-  identity with four spaces of indentation.
+  emits the same successful milestones without progress animation.
+- New welcome services are mounted at `/welcome`. Immediately after default
+  identity selection, onboarding prints a compact, consistently indented block
+  with the platform-specific pishoo reload command and the copyable `genmeta
+  curl` command for the new identity.
+
+### Components
+
+- `genmeta` v0.8.0-beta.6
+- `genmeta-identity` v0.4.0-beta.6
+- All other gmutils workspace member versions are unchanged from v0.8.0-beta.5.
 
 ## [0.8.0-beta.5] - 2026-07-17
 

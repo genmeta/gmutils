@@ -102,7 +102,7 @@ dhttp = "0.6.0-beta.4"
 genmeta-curl = { path = "genmeta-curl", version = "0.7.0-beta.4" }
 genmeta-discover = { path = "genmeta-discover", version = "0.4.0-beta.3" }
 genmeta-doctor = { path = "genmeta-doctor", version = "0.4.0-beta.3" }
-genmeta-identity = { path = "genmeta-identity", version = "0.4.0-beta.5", default-features = false }
+genmeta-identity = { path = "genmeta-identity", version = "0.4.0-beta.6", default-features = false }
 genmeta-nat = { path = "genmeta-nat", version = "0.5.0-beta.3" }
 genmeta-nslookup = { path = "genmeta-nslookup", version = "0.5.0-beta.3" }
 genmeta-ssh = { path = "genmeta-ssh", version = "0.7.0-beta.4" }
