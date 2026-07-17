@@ -505,13 +505,17 @@ async fn install_and_finish(
         IdentityKind::Primary => super::local::IdentityUsage::BothClientAndServer,
         IdentityKind::Secondary => super::local::IdentityUsage::ClientOnly,
     };
-    match super::welcome::maybe_create_welcome_service(
+    let welcome = super::welcome::maybe_create_welcome_service(
         dhttp_home,
         resolved.target.dhttp_name(),
         usage,
     )
-    .await
-    {
+    .await;
+
+    super::epilogue::run_lifecycle_epilogue(dhttp_home, resolved.target.dhttp_name(), interactive)
+        .await?;
+
+    match welcome {
         Ok(Some(_)) => super::transcript::print_line(
             super::welcome::format_welcome_service_created(resolved.target.short_name()),
         ),
@@ -520,8 +524,7 @@ async fn install_and_finish(
             "The identity was installed, but the sample welcome page could not be created: {error}"
         )),
     }
-    super::epilogue::run_lifecycle_epilogue(dhttp_home, resolved.target.dhttp_name(), interactive)
-        .await
+    Ok(())
 }
 
 pub(crate) async fn run(

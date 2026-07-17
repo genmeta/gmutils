@@ -326,7 +326,10 @@ mod tests {
         assert!(server_conf.contains("location /welcome {"), "{server_conf}");
         assert!(server_conf.contains("root templates;"), "{server_conf}");
         assert!(!server_conf.contains("location / {"), "{server_conf}");
-        assert!(!server_conf.contains("root templates/welcome;"), "{server_conf}");
+        assert!(
+            !server_conf.contains("root templates/welcome;"),
+            "{server_conf}"
+        );
 
         let welcome_page = tokio::fs::read_to_string(&created.welcome_page_path)
             .await
