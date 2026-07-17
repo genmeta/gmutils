@@ -13,9 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and committed installation or renewal milestones. Non-interactive execution
   emits the same successful milestones without progress animation. New welcome
   services are mounted at `/welcome`, and onboarding follows the default-identity
-  prompt with the platform reload command (`sudo brew service reload pishoo` on
-  macOS or `sudo systemctl reload pishoo` elsewhere) and a copyable access command
-  containing the newly created identity.
+  prompt immediately, without blank separator lines. It prints the platform
+  reload command (`sudo brew service reload pishoo` on macOS or `sudo systemctl
+  reload pishoo` elsewhere) and the copyable access command for the newly created
+  identity with four spaces of indentation.
 
 ## [0.8.0-beta.5] - 2026-07-17
 

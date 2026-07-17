@@ -122,9 +122,7 @@ pub(crate) async fn maybe_create_welcome_service(
 
 pub(crate) fn format_welcome_service_created(name: &str) -> String {
     format!(
-        "Now, you can reload pishoo and visit the welcome page!\n\n\
-`{PISHOO_RELOAD_COMMAND}`\n\
-`genmeta curl https://{name}~/welcome`"
+        "Now, you can reload pishoo and visit the welcome page!\n    `{PISHOO_RELOAD_COMMAND}`\n    `genmeta curl https://{name}~/welcome`"
     )
 }
 
@@ -464,9 +462,11 @@ mod tests {
     fn welcome_success_copy_includes_systemd_reload_and_created_identity() {
         assert_eq!(
             format_welcome_service_created("alice.smith"),
-            "Now, you can reload pishoo and visit the welcome page!\n\n\
-`sudo systemctl reload pishoo`\n\
-`genmeta curl https://alice.smith~/welcome`"
+            concat!(
+                "Now, you can reload pishoo and visit the welcome page!\n",
+                "    `sudo systemctl reload pishoo`\n",
+                "    `genmeta curl https://alice.smith~/welcome`",
+            )
         );
     }
 
@@ -475,9 +475,11 @@ mod tests {
     fn welcome_success_copy_includes_brew_reload_and_created_identity() {
         assert_eq!(
             format_welcome_service_created("alice.smith"),
-            "Now, you can reload pishoo and visit the welcome page!\n\n\
-`sudo brew service reload pishoo`\n\
-`genmeta curl https://alice.smith~/welcome`"
+            concat!(
+                "Now, you can reload pishoo and visit the welcome page!\n",
+                "    `sudo brew service reload pishoo`\n",
+                "    `genmeta curl https://alice.smith~/welcome`",
+            )
         );
     }
 }
