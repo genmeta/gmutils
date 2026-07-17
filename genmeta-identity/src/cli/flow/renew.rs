@@ -12,7 +12,7 @@ use crate::{
     cli::{Error, Renew},
 };
 
-const RENEWED: &str = "Identity successfully renewed on this device.";
+const RENEWED: &str = "✔ Identity successfully renewed on this device.";
 
 fn renew_not_saved_root_message(short_name: &str) -> String {
     format!("Failed to renew: {short_name} not found!")
@@ -468,7 +468,7 @@ mod tests {
     fn renewed_success_copy_is_visible_and_stable() {
         assert_eq!(
             super::RENEWED,
-            "Identity successfully renewed on this device."
+            "✔ Identity successfully renewed on this device."
         );
     }
 }

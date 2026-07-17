@@ -18,7 +18,7 @@ use crate::{
 };
 
 const APPLY_OPENING: &str = "Applying identity, generating ECC key pair locally, then requesting and deploying certificate.";
-const INSTALLED: &str = "Identity successfully installed on this device.";
+const INSTALLED: &str = "✔ Identity successfully installed on this device.";
 const NEW_NAME_FREE: &str = "This new name is yours now.";
 
 fn interactive_name_unavailable_message() -> &'static str {
@@ -635,7 +635,10 @@ mod tests {
             "Applying identity, generating ECC key pair locally, then requesting and deploying certificate."
         );
         assert_eq!(NEW_NAME_FREE, "This new name is yours now.");
-        assert_eq!(INSTALLED, "Identity successfully installed on this device.");
+        assert_eq!(
+            INSTALLED,
+            "✔ Identity successfully installed on this device."
+        );
     }
 
     #[test]
