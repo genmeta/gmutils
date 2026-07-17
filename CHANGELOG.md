@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Identity apply and renew retain checkmarked local key generation, CSR request,
+  and committed installation or renewal milestones. Non-interactive execution
+  emits the same successful milestones without progress animation. New welcome
+  services are mounted at `/welcome`, and onboarding leaves one copyable access
+  command after the default-identity prompt without reload instructions.
+
 ## [0.8.0-beta.5] - 2026-07-17
 
 ### Changed
