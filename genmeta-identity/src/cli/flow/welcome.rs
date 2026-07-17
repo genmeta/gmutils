@@ -53,8 +53,8 @@ pub enum WelcomeServiceError {
 const SERVER_CONF_TEMPLATE: &str = "server {
     listen all 0;
 
-    location / {
-        root templates/welcome;
+    location /welcome {
+        root templates;
         index index.html;
     }
 }
@@ -115,9 +115,7 @@ pub(crate) async fn maybe_create_welcome_service(
 }
 
 pub(crate) fn format_welcome_service_created(name: &str) -> String {
-    format!(
-        "A sample welcome page has been created. After starting the service, access it with `genmeta curl https://{name}/`."
-    )
+    format!("`genmeta curl https://{name}~/welcome`")
 }
 
 fn render_welcome_page() -> &'static str {
@@ -256,7 +254,9 @@ mod tests {
 
     use dhttp::{home::DhttpHome, name::DhttpName};
 
-    use super::{format_welcome_service_created, maybe_create_welcome_service};
+    use super::{
+        SERVER_CONF_TEMPLATE, format_welcome_service_created, maybe_create_welcome_service,
+    };
     use crate::cli::flow::local::IdentityUsage;
 
     fn unique_test_home_path(label: &str) -> PathBuf {
@@ -323,10 +323,10 @@ mod tests {
         let server_conf = tokio::fs::read_to_string(&created.server_conf_path)
             .await
             .unwrap();
-        assert!(
-            server_conf.contains("root templates/welcome;"),
-            "{server_conf}"
-        );
+        assert!(server_conf.contains("location /welcome {"), "{server_conf}");
+        assert!(server_conf.contains("root templates;"), "{server_conf}");
+        assert!(!server_conf.contains("location / {"), "{server_conf}");
+        assert!(!server_conf.contains("root templates/welcome;"), "{server_conf}");
 
         let welcome_page = tokio::fs::read_to_string(&created.welcome_page_path)
             .await
@@ -438,10 +438,19 @@ mod tests {
     }
 
     #[test]
-    fn welcome_success_copy_is_one_line() {
+    fn welcome_service_is_mounted_at_welcome() {
+        assert!(SERVER_CONF_TEMPLATE.contains("location /welcome {"));
+        assert!(SERVER_CONF_TEMPLATE.contains("root templates;"));
+        assert!(SERVER_CONF_TEMPLATE.contains("index index.html;"));
+        assert!(!SERVER_CONF_TEMPLATE.contains("location / {"));
+        assert!(!SERVER_CONF_TEMPLATE.contains("root templates/welcome;"));
+    }
+
+    #[test]
+    fn welcome_success_copy_is_only_the_copyable_command() {
         assert_eq!(
             format_welcome_service_created("alice.smith"),
-            "A sample welcome page has been created. After starting the service, access it with `genmeta curl https://alice.smith/`."
+            "`genmeta curl https://alice.smith~/welcome`"
         );
     }
 }
