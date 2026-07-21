@@ -1,7 +1,4 @@
-use std::{
-    future::Future,
-    io::{self, IsTerminal},
-};
+use std::future::Future;
 
 use tracing::info_span;
 use tracing_indicatif::span_ext::IndicatifSpanExt;
@@ -36,7 +33,7 @@ impl ProgressCopy {
         }
     }
 
-    fn completion_message(self, _is_terminal: bool) -> Option<&'static str> {
+    fn completion_message(self) -> Option<&'static str> {
         match self.completion {
             CompletionPolicy::Clear => None,
             CompletionPolicy::Retain => Some(self.success),
@@ -65,17 +62,16 @@ pub(crate) const RENEW_IDENTITY: ProgressCopy =
     ProgressCopy::retain("Renewing identity...", CERTIFICATE_REQUESTED);
 pub(crate) const SAVE_DEFAULT: ProgressCopy = ProgressCopy::clear("Saving default identity...");
 
-fn finish_success(span: &tracing::Span, copy: ProgressCopy) {
-    let is_terminal = io::stderr().is_terminal();
-    let Some(success) = copy.completion_message(is_terminal) else {
+fn finish_success(copy: ProgressCopy) {
+    let Some(success) = copy.completion_message() else {
         return;
     };
 
-    if is_terminal {
-        span.pb_set_finish_message(success);
-    } else {
-        super::transcript::print_line(success);
-    }
+    // Do not rely on `pb_set_finish_message` to keep the completed line: a finished
+    // progress bar can still be erased by later terminal redraws. Print the
+    // completion as a permanent transcript line instead; the progress bar itself
+    // is cleared when the span is dropped.
+    super::transcript::print_line(success);
 }
 
 pub(crate) async fn run<T, E>(
@@ -87,7 +83,7 @@ pub(crate) async fn run<T, E>(
     span.pb_start();
     let result = future.await;
     if result.is_ok() {
-        finish_success(&span, copy);
+        finish_success(copy);
     }
     drop(span);
     result
@@ -102,7 +98,7 @@ pub(crate) fn run_sync<T, E>(
     span.pb_start();
     let result = operation();
     if result.is_ok() {
-        finish_success(&span, copy);
+        finish_success(copy);
     }
     drop(span);
     result
@@ -125,21 +121,19 @@ mod tests {
     };
 
     #[test]
-    fn key_and_certificate_completions_are_stable_in_every_output_mode() {
-        for is_terminal in [true, false] {
-            assert_eq!(
-                GENERATE_KEY.completion_message(is_terminal),
-                Some("✔ Generate secp384r1 ECC key pair locally.")
-            );
-            assert_eq!(
-                REQUEST_CERT.completion_message(is_terminal),
-                Some("✔ Generate CSR locally and request certificate.")
-            );
-            assert_eq!(
-                RENEW_IDENTITY.completion_message(is_terminal),
-                Some("✔ Generate CSR locally and request certificate.")
-            );
-        }
+    fn key_and_certificate_completions_are_stable() {
+        assert_eq!(
+            GENERATE_KEY.completion_message(),
+            Some("✔ Generate secp384r1 ECC key pair locally.")
+        );
+        assert_eq!(
+            REQUEST_CERT.completion_message(),
+            Some("✔ Generate CSR locally and request certificate.")
+        );
+        assert_eq!(
+            RENEW_IDENTITY.completion_message(),
+            Some("✔ Generate CSR locally and request certificate.")
+        );
 
         assert_eq!(
             REQUEST_CERT.running,
@@ -150,20 +144,14 @@ mod tests {
 
     #[test]
     fn transient_progress_has_no_completion_copy() {
-        for is_terminal in [true, false] {
-            for copy in [
-                CHECK_NAME,
-                SEND_CODE,
-                VERIFY_EMAIL,
-                WAIT_FOR_PAYMENT,
-                SAVE_DEFAULT,
-            ] {
-                assert_eq!(
-                    copy.completion_message(is_terminal),
-                    None,
-                    "copy: {copy:?}, terminal: {is_terminal}"
-                );
-            }
+        for copy in [
+            CHECK_NAME,
+            SEND_CODE,
+            VERIFY_EMAIL,
+            WAIT_FOR_PAYMENT,
+            SAVE_DEFAULT,
+        ] {
+            assert_eq!(copy.completion_message(), None, "copy: {copy:?}");
         }
     }
 

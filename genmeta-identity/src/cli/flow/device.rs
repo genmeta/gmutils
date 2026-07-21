@@ -92,6 +92,7 @@ pub(crate) fn format_generated_device_name(
     truncate_to_device_name_limit(generated)
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn linux_os_release_name(content: &str) -> Option<String> {
     content.lines().find_map(|line| {
         let value = line.trim().strip_prefix("NAME=")?.trim();
@@ -148,10 +149,9 @@ pub(crate) fn resolve_device_name(explicit: Option<&str>, home_scope: HomeScope)
 mod tests {
     use dhttp::home::HomeScope;
 
-    use super::{
-        format_generated_device_name, linux_os_release_name, normalize_explicit_device_name,
-        select_host_label,
-    };
+    #[cfg(target_os = "linux")]
+    use super::linux_os_release_name;
+    use super::{format_generated_device_name, normalize_explicit_device_name, select_host_label};
 
     #[test]
     fn explicit_device_name_is_only_trimmed() {
@@ -232,6 +232,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn linux_os_release_name_reads_name_not_pretty_name() {
         let content = r#"PRETTY_NAME="Ubuntu 24.04.2 LTS"
@@ -241,6 +242,7 @@ VERSION_ID="24.04"
         assert_eq!(linux_os_release_name(content).as_deref(), Some("Ubuntu"));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn linux_os_release_name_accepts_unquoted_name() {
         let content = "ID=arch\nNAME=Arch Linux\n";
@@ -250,6 +252,7 @@ VERSION_ID="24.04"
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn linux_os_release_name_ignores_empty_name() {
         assert_eq!(linux_os_release_name("NAME=\"\"\n"), None);

@@ -63,10 +63,10 @@ const SERVER_CONF_TEMPLATE: &str = "server {
 const WELCOME_PAGE_PATH: &str = "templates/welcome/index.html";
 
 #[cfg(target_os = "macos")]
-const PISHOO_RELOAD_COMMAND: &str = "sudo brew service reload pishoo";
+const PISHOO_RELOAD_COMMAND: &str = "Don't forget to add $USER to the _www group!\n    `sudo dseditgroup -o edit -a $USER -t user _www`\n    `sudo brew service reload pishoo`";
 
 #[cfg(not(target_os = "macos"))]
-const PISHOO_RELOAD_COMMAND: &str = "sudo systemctl reload pishoo";
+const PISHOO_RELOAD_COMMAND: &str = "Don't forget to add $USER to the dhttp group!\n    `sudo usermod -aG dhttp $USER`\n    `sudo systemctl reload pishoo`";
 
 pub(crate) async fn maybe_create_welcome_service(
     dhttp_home: &DhttpHome,
@@ -122,7 +122,7 @@ pub(crate) async fn maybe_create_welcome_service(
 
 pub(crate) fn format_welcome_service_created(name: &str) -> String {
     format!(
-        "Now, you can reload pishoo and visit the welcome page!\n    `{PISHOO_RELOAD_COMMAND}`\n    `genmeta curl https://{name}~/welcome`"
+        "Now, you can reload pishoo and visit the welcome page!\n{PISHOO_RELOAD_COMMAND}\n    `genmeta curl https://{name}~/welcome`"
     )
 }
 
@@ -464,6 +464,8 @@ mod tests {
             format_welcome_service_created("alice.smith"),
             concat!(
                 "Now, you can reload pishoo and visit the welcome page!\n",
+                "Don't forget to add $USER to the dhttp group!\n",
+                "    `sudo usermod -aG dhttp $USER`\n",
                 "    `sudo systemctl reload pishoo`\n",
                 "    `genmeta curl https://alice.smith~/welcome`",
             )
@@ -477,6 +479,8 @@ mod tests {
             format_welcome_service_created("alice.smith"),
             concat!(
                 "Now, you can reload pishoo and visit the welcome page!\n",
+                "Don't forget to add $USER to the _www group!\n",
+                "    `sudo dseditgroup -o edit -a $USER -t user _www`\n",
                 "    `sudo brew service reload pishoo`\n",
                 "    `genmeta curl https://alice.smith~/welcome`",
             )

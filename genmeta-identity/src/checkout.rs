@@ -66,7 +66,11 @@ pub(crate) fn payment_instruction_block(url: &str) -> Result<String, QrError> {
         "[!] Please complete your payment within 15 minutes.\n    Open the link, or scan the QR code below\n\n",
     );
 
-    for line in qr.trim_end().lines() {
+    for line in qr
+        .trim_end()
+        .lines()
+        .skip_while(|line| line.trim().is_empty())
+    {
         block.push_str("    ");
         block.push_str(line);
         block.push('\n');
@@ -228,6 +232,20 @@ mod tests {
             qr.lines().all(|line| line.starts_with("    ")),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn payment_block_drops_the_blank_quiet_zone_rows_above_the_qr() {
+        let rendered = payment_instruction_block("https://pay.example.test/checkout").unwrap();
+        let first_qr_row = rendered
+            .split_once("Open the link, or scan the QR code below\n\n")
+            .unwrap()
+            .1
+            .lines()
+            .next()
+            .unwrap();
+
+        assert!(first_qr_row.contains(['▀', '▄', '█']), "{rendered}");
     }
 
     #[test]
