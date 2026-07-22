@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0-beta.7] - 2026-07-22
+
+### Fixed
+
+- Retained successful local key-generation and certificate-request milestones
+  in the identity transcript so later terminal redraws cannot erase them.
+- Removed blank QR-code quiet-zone rows above identity payment instructions.
+- Welcome-service guidance now tells users to add themselves to the required
+  local service group before reloading pishoo: `dhttp` on Linux and `_www` on
+  macOS.
+- Scoped Linux-only device-name parsing to Linux builds, avoiding unused-code
+  warnings on other platforms.
+
+### Components
+
+- `genmeta` v0.8.0-beta.7
+- `genmeta-identity` v0.4.0-beta.7
+- All other gmutils workspace member versions are unchanged from v0.8.0-beta.6.
+
 ## [0.8.0-beta.6] - 2026-07-17
 
 ### Changed
