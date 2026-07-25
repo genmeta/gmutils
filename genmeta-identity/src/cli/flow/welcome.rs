@@ -63,7 +63,7 @@ const SERVER_CONF_TEMPLATE: &str = "server {
 const WELCOME_PAGE_PATH: &str = "templates/welcome/index.html";
 
 #[cfg(target_os = "macos")]
-const PISHOO_RELOAD_COMMAND: &str = "Don't forget to add $USER to the _www group!\n    `sudo dseditgroup -o edit -a $USER -t user _www`\n    `sudo brew service reload pishoo`";
+const PISHOO_RELOAD_COMMAND: &str = "Don't forget to add $USER to the _www group!\n    `sudo dseditgroup -o edit -a $USER -t user _www`\n    `sudo brew services reload pishoo`";
 
 #[cfg(not(target_os = "macos"))]
 const PISHOO_RELOAD_COMMAND: &str = "Don't forget to add $USER to the dhttp group!\n    `sudo usermod -aG dhttp $USER`\n    `sudo systemctl reload pishoo`";
@@ -481,7 +481,7 @@ mod tests {
                 "Now, you can reload pishoo and visit the welcome page!\n",
                 "Don't forget to add $USER to the _www group!\n",
                 "    `sudo dseditgroup -o edit -a $USER -t user _www`\n",
-                "    `sudo brew service reload pishoo`\n",
+                "    `sudo brew services reload pishoo`\n",
                 "    `genmeta curl https://alice.smith~/welcome`",
             )
         );
