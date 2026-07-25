@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0-beta.8] - 2026-07-26
+
+### Added
+
+- `genmeta access` accepts `--id` as a visible alias for `--identity`.
+
+### Changed
+
+- Identity renewal is skipped when the current certificate is still valid for
+  15 days or more; the command reports the remaining validity instead, and
+  `--force` still renews immediately.
+
+### Fixed
+
+- Access commands explicitly close the SQLite connection pool before the
+  runtime shuts down, so WAL `-shm`/`-wal` files are no longer left behind.
+- Welcome guidance on macOS prints the correct
+  `sudo brew services reload pishoo` command.
+
+### Dependencies
+
+- Release manifests now target `dhttp` v0.6.0-beta.5.
+
+### Components
+
+- `genmeta` v0.8.0-beta.8
+- `genmeta-access` v0.4.0-beta.4
+- `genmeta-identity` v0.4.0-beta.8
+- All other gmutils workspace member versions are unchanged from v0.8.0-beta.7.
+
 ## [0.8.0-beta.7] - 2026-07-22
 
 ### Fixed
