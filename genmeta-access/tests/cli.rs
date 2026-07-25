@@ -117,6 +117,14 @@ async fn inline_default_identity_auto_init_creates_store() {
     assert!(identity_access_db_path(&identity_profile).is_file());
 }
 
+#[test]
+fn identity_accepts_id_alias() {
+    let options = Options::try_parse_from(["access", "--id", "alice.pilot", "list"])
+        .expect("--id alias should parse");
+    let debug = format!("{options:?}");
+    assert!(debug.contains("alice.pilot"), "{debug}");
+}
+
 #[tokio::test]
 async fn invalid_identity_input_error() {
     let error =
