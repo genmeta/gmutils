@@ -29,9 +29,7 @@ fn renewal_is_due(expires_at: Option<i64>, now: i64) -> bool {
 fn renew_not_due_message(short_name: &str, expires_at: i64, now: i64) -> String {
     let days_left = expires_at.saturating_sub(now) / (24 * 60 * 60);
     let day_label = if days_left == 1 { "day" } else { "days" };
-    format!(
-        "Renewal skipped: {short_name} is valid for {days_left} more {day_label}."
-    )
+    format!("Renewal skipped: {short_name} is valid for {days_left} more {day_label}.")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
