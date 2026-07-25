@@ -137,7 +137,14 @@ pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, 
             .await
             .context(error::InitDatabaseSnafu)?
     };
-    run_with(command, &db).await
+    let result = run_with(command, &db).await;
+    // Explicitly close the pool: dropping it only spawns an async close task
+    // that never runs before the tokio runtime shuts down, which would leave
+    // the SQLite WAL `-shm`/`-wal` files behind.
+    if let Err(error) = db.close().await {
+        tracing::warn!(?error, "failed to close access database");
+    }
+    result
 }
 
 async fn resolve_identity(
