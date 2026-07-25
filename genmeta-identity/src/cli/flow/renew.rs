@@ -13,9 +13,25 @@ use crate::{
 };
 
 const RENEWED: &str = "✔ Identity successfully renewed on this device.";
+const RENEWAL_THRESHOLD_SECONDS: i64 = 15 * 24 * 60 * 60;
 
 fn renew_not_saved_root_message(short_name: &str) -> String {
     format!("Failed to renew: {short_name} not found!")
+}
+
+fn renewal_is_due(expires_at: Option<i64>, now: i64) -> bool {
+    match expires_at {
+        Some(expires_at) => expires_at.saturating_sub(now) < RENEWAL_THRESHOLD_SECONDS,
+        None => true,
+    }
+}
+
+fn renew_not_due_message(short_name: &str, expires_at: i64, now: i64) -> String {
+    let days_left = expires_at.saturating_sub(now) / (24 * 60 * 60);
+    let day_label = if days_left == 1 { "day" } else { "days" };
+    format!(
+        "Renewal skipped: {short_name} is valid for {days_left} more {day_label}."
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,7 +109,7 @@ impl RenewPreflight {
 async fn resolve_preflight(
     command: &Renew,
     dhttp_home: &DhttpHome,
-) -> Result<RenewPreflight, Error> {
+) -> Result<(RenewPreflight, Option<i64>), Error> {
     let domain = match command.name.as_deref() {
         Some(name) => crate::cli::parse_identity_name(name)?,
         None => crate::cli::resolve_default_target_name(dhttp_home).await?,
@@ -105,7 +121,7 @@ async fn resolve_preflight(
     let preflight = RenewPreflight::from_summary(&summary, command.force)?;
     let assessment = local::assess_profile_exact(dhttp_home, domain.borrow()).await?;
     preflight.validate_assessment(&assessment)?;
-    Ok(preflight)
+    Ok((preflight, summary.expires_at))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -271,7 +287,16 @@ pub(crate) async fn run(
     cert_server: &CertServer,
 ) -> Result<(), Error> {
     let interactive = std::io::stdin().is_terminal();
-    let preflight = resolve_preflight(command, dhttp_home).await?;
+    let (preflight, expires_at) = resolve_preflight(command, dhttp_home).await?;
+    let now = local::now_unix_timestamp();
+    if !command.force && !renewal_is_due(expires_at, now) {
+        super::transcript::print_line(renew_not_due_message(
+            preflight.target.short_name(),
+            expires_at.expect("renewal is not due only when expiry is known"),
+            now,
+        ));
+        return Ok(());
+    }
     let device_name =
         super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
     let mut key_material =
@@ -314,7 +339,10 @@ mod tests {
 
     use dhttp::home::{DhttpHome, HomeScope};
 
-    use super::{RenewPreflight, renew_not_saved_root_message, renew_remote_error};
+    use super::{
+        RenewPreflight, renew_not_due_message, renew_not_saved_root_message, renew_remote_error,
+        renewal_is_due,
+    };
     use crate::cli::{
         Renew,
         flow::{
@@ -350,6 +378,33 @@ mod tests {
             dir: PathBuf::from("/tmp/alice.smith"),
             is_default: false,
         }
+    }
+
+    #[test]
+    fn renewal_is_due_only_within_fifteen_days_or_when_expiry_is_unknown() {
+        const DAY: i64 = 24 * 60 * 60;
+        let now = 1_800_000_000;
+
+        assert!(renewal_is_due(None, now));
+        assert!(renewal_is_due(Some(now - 1), now));
+        assert!(renewal_is_due(Some(now + 15 * DAY - 1), now));
+        assert!(!renewal_is_due(Some(now + 15 * DAY), now));
+        assert!(!renewal_is_due(Some(now + 30 * DAY), now));
+    }
+
+    #[test]
+    fn not_due_message_reports_remaining_days_and_force_hint() {
+        const DAY: i64 = 24 * 60 * 60;
+        let now = 1_800_000_000;
+
+        assert_eq!(
+            renew_not_due_message("alice.smith", now + 20 * DAY, now),
+            "Renewal skipped: alice.smith is valid for 20 more days."
+        );
+        assert_eq!(
+            renew_not_due_message("alice.smith", now + 15 * DAY, now),
+            "Renewal skipped: alice.smith is valid for 15 more days."
+        );
     }
 
     #[test]
