@@ -56,6 +56,7 @@ pub struct Options {
 
     #[arg(
         long,
+        visible_alias = "id",
         value_name = "NAME",
         help = "identity to manage; defaults to `genmeta identity default`"
     )]
