@@ -16,7 +16,7 @@ pub mod local_identity;
 
 pub const DEFAULT_DEVICE_NAME: &str = "local device";
 
-pub const DEFAULT_CERT_SERVER_BASE_URL: &str = "https://license.genmeta.net";
+pub const DEFAULT_CERT_SERVER_BASE_URL: &str = "https://api.genmeta.net:4433";
 pub const CERT_SERVER_URL_ENV: &str = "DHTTP_CERT_SERVER_URL";
 pub const CERT_SERVER_BASE_URL: &str = bootstrap::DHTTP_CERT_SERVER_URL;
 
@@ -33,7 +33,7 @@ mod tests {
             .expect("DHTTP root CA should be valid PEM");
 
         _ = rustls::crypto::ring::default_provider().install_default();
-        CertServer::new("https://license.genmeta.net")
+        CertServer::new(DEFAULT_CERT_SERVER_BASE_URL)
             .expect("cert server client should build with DHTTP root CA");
     }
 
@@ -43,7 +43,7 @@ mod tests {
     }
 
     #[test]
-    fn cert_server_base_url_defaults_to_license_server() {
+    fn cert_server_base_url_defaults_to_genmeta_production_server() {
         if option_env!("DHTTP_CERT_SERVER_URL").is_none() {
             assert_eq!(CERT_SERVER_BASE_URL, DEFAULT_CERT_SERVER_BASE_URL);
         }
