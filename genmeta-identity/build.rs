@@ -1,7 +1,7 @@
 use std::{env, fs, path::PathBuf};
 
 const CERT_SERVER_URL_ENV: &str = "DHTTP_CERT_SERVER_URL";
-const DEFAULT_CERT_SERVER_BASE_URL: &str = "https://license.genmeta.net";
+const DEFAULT_CERT_SERVER_BASE_URL: &str = "https://api.genmeta.net:4433";
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by cargo"));
@@ -26,7 +26,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn missing_env_uses_license_server() {
+    fn missing_env_uses_genmeta_production_server() {
         let name = format!(
             "__GENMETA_IDENTITY_MISSING_BOOTSTRAP_{}",
             std::process::id()
@@ -34,7 +34,7 @@ mod tests {
 
         assert_eq!(
             env_or_default(&name, DEFAULT_CERT_SERVER_BASE_URL),
-            "https://license.genmeta.net"
+            "https://api.genmeta.net:4433"
         );
     }
 }
