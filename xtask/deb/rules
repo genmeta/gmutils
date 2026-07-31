@@ -55,7 +55,7 @@ endif
 override_dh_auto_install:
 ifdef TRIPLE
 	mkdir -p debian/gmutils/usr/bin
-	cp $(SOURCE_ROOT)/target/$(TRIPLE)/$(BUILD_PROFILE)/genmeta debian/gmutils/usr/bin/
+	cp --sparse=never $(SOURCE_ROOT)/target/$(TRIPLE)/$(BUILD_PROFILE)/genmeta debian/gmutils/usr/bin/
 	cp $(SOURCE_ROOT)/genmeta-ssh.sh debian/gmutils/usr/bin/
 	chmod 755 debian/gmutils/usr/bin/*
 endif
