@@ -1,5 +1,6 @@
 use clap::Parser;
 use genmeta_proxy::{Options, run};
+#[cfg(unix)]
 use snafu::ResultExt;
 
 #[allow(clippy::result_large_err)]

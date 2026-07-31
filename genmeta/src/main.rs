@@ -26,8 +26,6 @@ enum Error {
     #[snafu(transparent)]
     Curl { source: genmeta_curl::Error },
     #[snafu(transparent)]
-    Discover { source: genmeta_discover::Error },
-    #[snafu(transparent)]
     Doctor { source: genmeta_doctor::Error },
     #[snafu(transparent)]
     Identity { source: genmeta_identity::Error },
@@ -115,7 +113,7 @@ async fn run(options: Options) -> Result<(), Error> {
     match options {
         Options::Access(options) => genmeta_access::run(options).await?,
         Options::Curl(options) => genmeta_curl::run(options).await?,
-        Options::Discover(options) => genmeta_discover::run(options).await?,
+        Options::Discover(options) => genmeta_discover::run(options).await,
         Options::Doctor { options } => genmeta_doctor::run(options).await?,
         Options::Identity(options) => genmeta_identity::run(options).await?,
         Options::Nslookup(options) => genmeta_nslookup::run(options).await?,
