@@ -585,11 +585,13 @@ mod tests {
 
     use dhttp::{home::DhttpHome, name::DhttpName};
 
+    #[cfg(not(windows))]
+    use super::try_load_summary_exact;
     use super::{
         IdentityUsage, InteractiveInventoryChoice, LocalIdentityAssessment,
         LocalIdentityMaterialState, LocalIdentityStatus, LocalIdentitySummary, LocalInventoryRoot,
         build_default_inventory_choices, build_inventory, build_renew_inventory_choices,
-        classify_status, is_near_expiry, try_load_summary_exact,
+        classify_status, is_near_expiry,
     };
     use crate::cli::flow::target::IdentityTarget;
 
@@ -648,6 +650,7 @@ mod tests {
         assert_eq!(super::trust_check_timestamp(1_001, 1_000, 1_001), None);
     }
 
+    #[cfg(not(windows))]
     #[tokio::test]
     async fn exact_summary_never_falls_back_to_a_wildcard_profile() {
         let home_path = unique_test_home_path("exact-only");

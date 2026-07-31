@@ -225,6 +225,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
 #[derive(Debug, Clone, Copy)]
 enum ShutdownSignal {
     Interrupt,
+    #[cfg(unix)]
     Terminate,
 }
 
@@ -232,6 +233,7 @@ impl ShutdownSignal {
     fn as_str(self) -> &'static str {
         match self {
             Self::Interrupt => "interrupt",
+            #[cfg(unix)]
             Self::Terminate => "terminate",
         }
     }

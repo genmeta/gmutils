@@ -25,9 +25,6 @@ pub struct Options {
     binds: Vec<BindPattern>,
 }
 
-#[derive(Debug, snafu::Snafu)]
-pub enum Error {}
-
 fn domain_with_default_mdns_service(domain: &str) -> String {
     if domain.is_empty()
         || domain == DHTTP_MDNS_SERVICE
@@ -62,7 +59,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     guard
 }
 
-pub async fn run(options: Options) -> Result<(), Error> {
+pub async fn run(options: Options) {
     let _guard = init_tracing();
 
     let network = Network::builder().build();
@@ -111,8 +108,6 @@ pub async fn run(options: Options) -> Result<(), Error> {
             }
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
