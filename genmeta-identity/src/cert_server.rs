@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use reqwest::header;
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use snafu::{FromString, ResultExt, Snafu, Whatever};
 
@@ -74,6 +74,33 @@ struct DetailedErrorEnvelope<T> {
     code: String,
     message: String,
     details: T,
+}
+
+#[derive(Debug, Serialize)]
+struct CreateDomainRequest<'a> {
+    domain: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verify_code: Option<&'a str>,
+    auto_renew: bool,
+    redirect_mode: &'static str,
+    terms_accepted: bool,
+    terms_version: &'static str,
+}
+
+impl<'a> CreateDomainRequest<'a> {
+    fn new(domain: &'a str, email: Option<&'a str>, verify_code: Option<&'a str>) -> Self {
+        Self {
+            domain,
+            email,
+            verify_code,
+            auto_renew: false,
+            redirect_mode: "payment_required",
+            terms_accepted: true,
+            terms_version: "v1",
+        }
+    }
 }
 
 fn deserialize_error_code<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -605,14 +632,11 @@ impl CertServer {
         let response = self
             .http_client
             .post(format!("{}/v2/domain", self.base_url))
-            .json(&json!({
-                "domain": domain,
-                "email": email,
-                "verify_code": verify_code,
-                "redirect_mode": "payment_required",
-                "terms_accepted": true,
-                "terms_version": "v1",
-            }))
+            .json(&CreateDomainRequest::new(
+                domain,
+                Some(email),
+                Some(verify_code),
+            ))
             .send()
             .await?;
         parse_create_domain_response(response).await
@@ -627,12 +651,7 @@ impl CertServer {
             .http_client
             .post(format!("{}/v2/domain", self.base_url))
             .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
-            .json(&json!({
-                "domain": domain,
-                "redirect_mode": "payment_required",
-                "terms_accepted": true,
-                "terms_version": "v1",
-            }))
+            .json(&CreateDomainRequest::new(domain, None, None))
             .send()
             .await?;
         parse_create_domain_response(response).await
@@ -1098,6 +1117,29 @@ mod tests {
         assert_eq!(response.monthly_amount(), Some(500));
         assert_eq!(response.yearly_amount(), Some(3000));
         assert!(!response.is_free());
+    }
+
+    #[test]
+    fn domain_registration_requests_disable_implicit_auto_renewal() {
+        let token_request = serde_json::to_value(CreateDomainRequest::new(
+            "alice.smith.dhttp.net",
+            None,
+            None,
+        ))
+        .unwrap();
+        let email_request = serde_json::to_value(CreateDomainRequest::new(
+            "alice.smith.dhttp.net",
+            Some("alice@example.test"),
+            Some("123456"),
+        ))
+        .unwrap();
+
+        assert_eq!(token_request["auto_renew"], false);
+        assert!(token_request.get("email").is_none());
+        assert!(token_request.get("verify_code").is_none());
+        assert_eq!(email_request["auto_renew"], false);
+        assert_eq!(email_request["email"], "alice@example.test");
+        assert_eq!(email_request["verify_code"], "123456");
     }
 
     #[test]
