@@ -12,14 +12,9 @@
 </p>
 
 
-gmutils is the Genmeta command-line tool family for DHttp networking. It gives
-an endpoint the tools it needs to create and use a Unified Identity, publish or
-reach services, control access, diagnose connectivity, and manage DHttp-based
-remote sessions.
+gmutils is the Genmeta command-line tool family for DHttp networking. It gives an endpoint the tools it needs to create and use a Unified Identity, publish or reach services, control access, diagnose connectivity, and manage DHttp-based remote sessions.
 
-The `genmeta` launcher installs the suite behind a consistent command surface:
-`genmeta <tool> [options]`. Each utility is also published as an individual
-crate for users who only need one command.
+The `genmeta` launcher exposes the suite behind a consistent command surface: `genmeta <tool> [options]`. Most utilities are also published as individual crates for users who only need one command.
 
 ## Utils
 
@@ -31,22 +26,20 @@ Available commands:
 | `genmeta access` | Manage DHttp API access-control rules. |
 | `genmeta curl` | Send DHttp requests with a curl-like interface. |
 | `genmeta ssh` | Administer remote endpoints over DHttp with SSH-compatible syntax. |
-| `genmeta proxy` | Run a local forward proxy for DHttp requests. |
+| `genmeta proxy` | Run a local forward proxy that forwards HTTP requests to DHttp endpoints. |
 | `genmeta nslookup` | Resolve DDns names and discover reachable DHttp addresses. |
 | `genmeta discover` | Discover nearby DHttp endpoints over mDNS. |
-| `genmeta doctor` | Diagnose network, configuration, and identity connectivity problems. |
+| `genmeta doctor` | Diagnose NAT and network connectivity. |
 
-See the [DHttp utilities documentation](https://docs.dhttp.net/en/docs/core-components/utils)
-for detailed usage and examples.
+See the [DHttp utilities documentation](https://docs.dhttp.net/en/docs/core-components/utils) for detailed usage and examples.
 
 ## Install
 
-Use the official package repository for a system installation. Both methods
-install the `gmutils` package, which provides the `genmeta` command.
+Use the official package repository for a system installation. Both methods install the `gmutils` package, which provides the `genmeta` command.
 
 ### Linux (Debian/Ubuntu)
 
-The following follows the official DHttp APT repository setup:
+Use the following official DHttp APT repository setup:
 
 ```bash
 # Add the package-signing key.
@@ -64,10 +57,7 @@ sudo apt update
 sudo apt install gmutils
 ```
 
-Install `pishoo` as well when this machine will expose local services through
-DHttp: `sudo apt install pishoo gmutils`. Refer to the
-[Linux guide](https://docs.dhttp.net/en/docs/getting-started/linux) for group,
-service, and gateway configuration.
+Install `pishoo` as well when this machine will expose local services through DHttp: `sudo apt install pishoo gmutils`. Refer to the [Linux guide](https://docs.dhttp.net/en/docs/getting-started/linux) for group, service, and gateway configuration.
 
 ### macOS
 
@@ -78,9 +68,7 @@ brew update
 brew install gmutils
 ```
 
-For a DHttp gateway, install `pishoo` alongside gmutils:
-`brew install pishoo gmutils`. The [macOS guide](https://docs.dhttp.net/en/docs/getting-started/macos)
-covers service management and configuration locations.
+For a DHttp gateway, install `pishoo` alongside gmutils: `brew install pishoo gmutils`. The [macOS guide](https://docs.dhttp.net/en/docs/getting-started/macos) covers service management and configuration locations.
 
 ### Build from source
 
@@ -92,14 +80,11 @@ cargo install --path genmeta
 
 ## Quick start
 
-Create or apply an identity through the interactive flow, then inspect the
-available commands:
+Create or apply an identity through the interactive flow, then inspect the available commands:
 
 ```bash
 genmeta identity apply
 genmeta --help
 ```
 
-Identities are stored under the current user's `~/.dhttp` directory by default.
-Most client commands use the default identity automatically; pass `--id` to
-select another identity when a command supports it.
+Identities are stored under the current user's `~/.dhttp` directory by default. Most client commands use the default identity automatically; pass `--id` to select another identity when a command supports it.
