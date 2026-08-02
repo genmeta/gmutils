@@ -166,6 +166,7 @@ async fn request_certificate(
     proof: CertificateProof<'_>,
     target: &IdentityTarget,
     kind: IdentityKind,
+    sequence: Option<u32>,
     device_name: &str,
     key_material: &mut super::key_material::LazyKeyMaterial,
 ) -> Result<CertificateDetail, RequestFailure> {
@@ -175,8 +176,20 @@ async fn request_certificate(
             .csr_pem()
             .map_err(RequestFailure::Local)?
             .to_string();
-        let result = match proof {
-            CertificateProof::AccessToken(token) => {
+        let result = match (proof, sequence) {
+            (CertificateProof::AccessToken(token), Some(sequence)) => {
+                cert_server
+                    .renew_cert(
+                        token,
+                        target.full_name(),
+                        kind.as_str(),
+                        sequence,
+                        Some(device_name),
+                        &csr_pem,
+                    )
+                    .await
+            }
+            (CertificateProof::AccessToken(token), None) => {
                 cert_server
                     .issue_cert(
                         token,
@@ -188,7 +201,19 @@ async fn request_certificate(
                     )
                     .await
             }
-            CertificateProof::IdentityProfile(profile_dir) => {
+            (CertificateProof::IdentityProfile(profile_dir), Some(sequence)) => {
+                cert_server
+                    .renew_cert_with_identity_profile(
+                        profile_dir,
+                        target.full_name(),
+                        kind.as_str(),
+                        sequence,
+                        Some(device_name),
+                        &csr_pem,
+                    )
+                    .await
+            }
+            (CertificateProof::IdentityProfile(profile_dir), None) => {
                 cert_server
                     .issue_cert_with_identity_profile(
                         profile_dir,
@@ -310,6 +335,10 @@ fn should_register_with_email(remote: RemoteTargetState) -> bool {
     )
 }
 
+fn replacement_sequence(resolved: &ResolvedApplyTarget) -> Option<u32> {
+    resolved.local.as_ref().and_then(|local| local.sequence)
+}
+
 #[derive(Debug)]
 enum ApplyAttempt {
     Certificate(Box<CertificateDetail>),
@@ -376,6 +405,7 @@ async fn attempt_apply_with_candidates(
                     CertificateProof::IdentityProfile(&profile_dir),
                     &resolved.target,
                     kind,
+                    replacement_sequence(resolved),
                     device_name,
                     key_material,
                 )
@@ -423,6 +453,7 @@ async fn attempt_apply_with_candidates(
                     CertificateProof::AccessToken(&token),
                     &resolved.target,
                     kind,
+                    replacement_sequence(resolved),
                     device_name,
                     key_material,
                 )
@@ -444,6 +475,7 @@ async fn attempt_apply_with_candidates(
                             CertificateProof::AccessToken(&token),
                             &resolved.target,
                             kind,
+                            replacement_sequence(resolved),
                             device_name,
                             key_material,
                         )
@@ -492,7 +524,7 @@ async fn install_and_finish(
         detail,
         &super::install::InstallExpectation {
             target: resolved.target.dhttp_name(),
-            kind: kind.into(),
+            kind,
             sequence: None,
         },
         key_pem,
@@ -628,6 +660,17 @@ mod tests {
                 expires_at: 1_900_000_000,
             }))),
             dhttp::log::cert::CertificateAction::Replace,
+        );
+    }
+
+    #[test]
+    fn replacement_reuses_local_certificate_sequence() {
+        assert_eq!(replacement_sequence(&resolved_with(None)), None);
+        assert_eq!(
+            replacement_sequence(&resolved_with(Some(LocalIdentityStatus::Incomplete {
+                detail: "private key is missing".to_string(),
+            }))),
+            Some(0),
         );
     }
 

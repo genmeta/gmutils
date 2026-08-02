@@ -484,11 +484,12 @@ async fn assess_profile(
 
     match extract_dhttp_subject_key_identifier(&certs) {
         Ok(ski) => {
-            assessment.usage = Some(match ski.chain().kind() {
-                dhttp::certificate::CertificateChainKind::Primary => {
-                    IdentityUsage::BothClientAndServer
-                }
-                dhttp::certificate::CertificateChainKind::Secondary => IdentityUsage::ClientOnly,
+            assessment.usage = super::kind::IdentityKind::from_ski_flag(
+                ski.chain().usage().kind_flag(),
+            )
+            .map(|kind| match kind {
+                super::kind::IdentityKind::Primary => IdentityUsage::BothClientAndServer,
+                super::kind::IdentityKind::Secondary => IdentityUsage::ClientOnly,
             });
             assessment.sequence = Some(ski.chain().sequence().get());
         }

@@ -1,9 +1,6 @@
 use std::{io::IsTerminal, path::Path};
 
-use dhttp::{
-    certificate::CertificateChainKind,
-    home::{DhttpHome, HomeScope},
-};
+use dhttp::home::{DhttpHome, HomeScope};
 use snafu::{FromString, whatever};
 
 use super::{auth_plan::CandidateEvent, local};
@@ -35,7 +32,7 @@ fn renew_not_due_message(short_name: &str, expires_at: i64, now: i64) -> String 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RenewPreflight {
     target: super::target::IdentityTarget,
-    kind: CertificateChainKind,
+    kind: super::kind::IdentityKind,
     sequence: u32,
 }
 
@@ -62,8 +59,8 @@ impl RenewPreflight {
         }
 
         let kind = match summary.usage {
-            Some(local::IdentityUsage::BothClientAndServer) => CertificateChainKind::Primary,
-            Some(local::IdentityUsage::ClientOnly) => CertificateChainKind::Secondary,
+            Some(local::IdentityUsage::BothClientAndServer) => super::kind::IdentityKind::Primary,
+            Some(local::IdentityUsage::ClientOnly) => super::kind::IdentityKind::Secondary,
             None => {
                 return Err(Self::unrecoverable(&summary.target));
             }
@@ -83,8 +80,8 @@ impl RenewPreflight {
         assessment: &local::LocalIdentityAssessment,
     ) -> Result<(), Error> {
         let actual_kind = match assessment.usage {
-            Some(local::IdentityUsage::BothClientAndServer) => CertificateChainKind::Primary,
-            Some(local::IdentityUsage::ClientOnly) => CertificateChainKind::Secondary,
+            Some(local::IdentityUsage::BothClientAndServer) => super::kind::IdentityKind::Primary,
+            Some(local::IdentityUsage::ClientOnly) => super::kind::IdentityKind::Secondary,
             None => return Err(Self::unrecoverable(&self.target)),
         };
         if assessment.certificate_target_matches != Some(true)
@@ -94,6 +91,10 @@ impl RenewPreflight {
             return Err(Self::unrecoverable(&self.target));
         }
         Ok(())
+    }
+
+    fn certificate_kind(&self) -> &'static str {
+        self.kind.as_str()
     }
 
     fn unrecoverable(target: &super::target::IdentityTarget) -> Error {
@@ -153,7 +154,7 @@ async fn request_renewal(
                     .renew_cert(
                         token,
                         preflight.target.full_name(),
-                        preflight.kind.as_str(),
+                        preflight.certificate_kind(),
                         preflight.sequence,
                         Some(device_name),
                         &csr_pem,
@@ -165,7 +166,7 @@ async fn request_renewal(
                     .renew_cert_with_identity_profile(
                         profile_dir,
                         preflight.target.full_name(),
-                        preflight.kind.as_str(),
+                        preflight.certificate_kind(),
                         preflight.sequence,
                         Some(device_name),
                         &csr_pem,
@@ -430,10 +431,35 @@ mod tests {
             let preflight = RenewPreflight::from_summary(&summary, false).unwrap();
             assert_eq!(
                 preflight.kind,
-                dhttp::certificate::CertificateChainKind::Secondary
+                crate::cli::flow::kind::IdentityKind::Secondary
             );
             assert_eq!(preflight.sequence, 2);
         }
+    }
+
+    #[test]
+    fn renew_maps_certificate_usage_to_server_kind() {
+        let mut primary = summary(
+            LocalIdentityStatus::Ready {
+                expires_at: 1_900_000_000,
+            },
+            true,
+        );
+        primary.usage = Some(IdentityUsage::BothClientAndServer);
+        let primary = RenewPreflight::from_summary(&primary, false).unwrap();
+        assert_eq!(primary.certificate_kind(), "primary");
+
+        let secondary = RenewPreflight::from_summary(
+            &summary(
+                LocalIdentityStatus::Ready {
+                    expires_at: 1_900_000_000,
+                },
+                true,
+            ),
+            false,
+        )
+        .unwrap();
+        assert_eq!(secondary.certificate_kind(), "secondary");
     }
 
     #[test]
