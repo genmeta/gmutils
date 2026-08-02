@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
 use dhttp::{
-    certificate::{CertificateChainKind, CertificateSequence},
-    ddns::resolvers::endpoint_candidates::EndpointCandidates,
+    certificate::CertificateSequence, ddns::resolvers::endpoint_candidates::EndpointCandidates,
 };
 use snafu::prelude::*;
 
@@ -30,7 +29,7 @@ pub(crate) fn merge_candidates(
     let mut sequence_indexes = HashMap::<u32, usize>::new();
 
     for group in ddns.groups {
-        if group.chain.kind() != CertificateChainKind::Primary {
+        if group.chain.usage().kind_flag() != "0" {
             continue;
         }
         let sequence = group.chain.sequence().get();
@@ -172,7 +171,7 @@ pub(crate) async fn fetch_cert_metadata(
 #[cfg(test)]
 mod tests {
     use dhttp::{
-        certificate::{CertificateChainKey, CertificateChainKind, CertificateSequence},
+        certificate::{CertificateChainKey, CertificateSequence, CertificateUsage},
         ddns::resolvers::endpoint_candidates::{EndpointCandidateGroup, EndpointCandidates},
         dquic::qresolve::Source,
     };
@@ -183,7 +182,7 @@ mod tests {
         EndpointCandidateGroup {
             chain: CertificateChainKey::new(
                 CertificateSequence::from(sequence),
-                CertificateChainKind::Primary,
+                CertificateUsage::ClientOnly,
             ),
             endpoints: vec![
                 dhttp::dquic::qbase::net::addr::EndpointAddr::direct(

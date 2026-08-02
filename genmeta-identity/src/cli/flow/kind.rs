@@ -1,6 +1,5 @@
 use std::{fmt, str::FromStr};
 
-use dhttp::certificate::CertificateChainKind;
 use snafu::Snafu;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +24,21 @@ impl IdentityKind {
             Self::Secondary => "client only",
         }
     }
+
+    pub(crate) fn ski_flag(self) -> &'static str {
+        match self {
+            Self::Primary => "0",
+            Self::Secondary => "1",
+        }
+    }
+
+    pub(crate) fn from_ski_flag(flag: &str) -> Option<Self> {
+        match flag {
+            "0" => Some(Self::Primary),
+            "1" => Some(Self::Secondary),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for IdentityKind {
@@ -44,15 +58,6 @@ impl FromStr for IdentityKind {
                 value: other.to_string(),
             }
             .fail(),
-        }
-    }
-}
-
-impl From<IdentityKind> for CertificateChainKind {
-    fn from(value: IdentityKind) -> Self {
-        match value {
-            IdentityKind::Primary => Self::Primary,
-            IdentityKind::Secondary => Self::Secondary,
         }
     }
 }
@@ -90,5 +95,16 @@ mod tests {
             "both client and server"
         );
         assert_eq!(IdentityKind::Secondary.usage_label(), "client only");
+        assert_eq!(IdentityKind::Primary.ski_flag(), "0");
+        assert_eq!(IdentityKind::Secondary.ski_flag(), "1");
+        assert_eq!(
+            IdentityKind::from_ski_flag("0"),
+            Some(IdentityKind::Primary)
+        );
+        assert_eq!(
+            IdentityKind::from_ski_flag("1"),
+            Some(IdentityKind::Secondary)
+        );
+        assert_eq!(IdentityKind::from_ski_flag("2"), None);
     }
 }

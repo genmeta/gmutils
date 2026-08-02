@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use dhttp::{
-    certificate::{CertificateChainKind, DhttpSubjectKeyIdentifier},
-    name::DhttpName,
-};
+use dhttp::{certificate::DhttpSubjectKeyIdentifier, name::DhttpName};
 use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, UnixTime, pem::PemObject},
     server::danger::ClientCertVerifier,
@@ -14,12 +11,13 @@ use x509_parser::{
     prelude::{FromDer, X509Certificate},
 };
 
+use super::kind::IdentityKind;
 use crate::cert_server::CertificateDetail;
 
 #[derive(Debug, Clone)]
 pub(crate) struct InstallExpectation<'a> {
     pub(crate) target: DhttpName<'a>,
-    pub(crate) kind: CertificateChainKind,
+    pub(crate) kind: IdentityKind,
     pub(crate) sequence: Option<u32>,
 }
 
@@ -90,12 +88,8 @@ pub enum Error {
     },
 }
 
-fn parse_kind(kind: &str) -> Option<CertificateChainKind> {
-    match kind {
-        "primary" => Some(CertificateChainKind::Primary),
-        "secondary" => Some(CertificateChainKind::Secondary),
-        _ => None,
-    }
+fn parse_kind(kind: &str) -> Option<IdentityKind> {
+    kind.parse().ok()
 }
 
 pub(crate) fn validate_install(
@@ -186,7 +180,7 @@ fn validate_install_with_verifier(
         error::ResponseMetadataMismatchSnafu
     );
     ensure!(
-        leaf_ski.chain().kind() == detail_kind,
+        leaf_ski.chain().usage().kind_flag() == detail_kind.ski_flag(),
         error::LeafMetadataUsageSnafu
     );
     ensure!(
@@ -269,7 +263,7 @@ mod tests {
     fn expectation<'a>(name: DhttpName<'a>) -> InstallExpectation<'a> {
         InstallExpectation {
             target: name,
-            kind: CertificateChainKind::Primary,
+            kind: IdentityKind::Primary,
             sequence: Some(7),
         }
     }
@@ -328,7 +322,7 @@ mod tests {
         other_kind.kind = "secondary".to_string();
         assert_validation_error(&other_kind, &expected, KEY, "usage");
         let secondary_expected = InstallExpectation {
-            kind: CertificateChainKind::Secondary,
+            kind: IdentityKind::Secondary,
             ..expected.clone()
         };
         assert_validation_error(&other_kind, &secondary_expected, KEY, "usage");

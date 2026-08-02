@@ -546,12 +546,8 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(
-            chain_key.kind(),
-            dhttp::certificate::CertificateChainKind::Primary
-        );
+        assert_eq!(chain_key.usage().kind_flag(), "0");
         assert_eq!(chain_key.sequence().get(), 0);
-        assert_eq!(chain_key.to_string(), "primary:0");
     }
 
     #[test]
