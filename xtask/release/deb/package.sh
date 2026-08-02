@@ -50,9 +50,10 @@ product_source="$src/product-source"
 prepare_product_source "$product_source"
 
 export HOME=/tmp
-export RUSTUP_HOME=/opt/rustup
-export CARGO_HOME=/opt/cargo
-export PATH=/opt/cargo/bin:/usr/local/zig:$PATH
+: "${RUSTUP_HOME:=/usr/local/rustup}"
+: "${CARGO_HOME:=/usr/local/cargo}"
+export RUSTUP_HOME CARGO_HOME
+export PATH="$CARGO_HOME/bin:/usr/local/zig:$PATH"
 export TRIPLE=${XTASK_RELEASE_TARGET}
 export ZIG_TARGET=${XTASK_RELEASE_TARGET}
 export BUILD_PROFILE=$profile
