@@ -35,7 +35,7 @@ indicatif = "0.18"
 whoami = "2"
 
 # network
-h3x = { git = "https://github.com/genmeta/h3x.git", branch = "fix/h3x-reliability" }
+h3x = "0.6.0-beta.4"
 http = "1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
@@ -84,7 +84,7 @@ bytes = "1"
 chrono = "0.4"
 crossterm = { version = "0.29" }
 dirs = { version = "6" }
-sea-orm = { version = "1", features = ["runtime-tokio-rustls"] }
+sea-orm = { version = "2", features = ["runtime-tokio-rustls"] }
 snafu = "0.9"
 socket2 = "0.6"
 nix = { version = "0.31", default-features = false, features = ["user"] }
@@ -98,7 +98,7 @@ async-compression = { version = "0.4", features = [
 
 # workspace
 genmeta-access = { path = "genmeta-access", version = "0.4.0-beta.4" }
-dhttp = { git = "https://github.com/genmeta/dhttp.git", branch = "fix/dhttp-bootstrap" }
+dhttp = "0.6.0-beta.5"
 genmeta-curl = { path = "genmeta-curl", version = "0.7.0-beta.4" }
 genmeta-discover = { path = "genmeta-discover", version = "0.4.0-beta.3" }
 genmeta-doctor = { path = "genmeta-doctor", version = "0.4.0-beta.3" }
