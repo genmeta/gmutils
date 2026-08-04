@@ -335,8 +335,19 @@ fn should_register_with_email(remote: RemoteTargetState) -> bool {
     )
 }
 
-fn replacement_sequence(resolved: &ResolvedApplyTarget) -> Option<u32> {
-    resolved.local.as_ref().and_then(|local| local.sequence)
+fn replacement_sequence(
+    resolved: &ResolvedApplyTarget,
+    requested_kind: IdentityKind,
+) -> Option<u32> {
+    let local = resolved.local.as_ref()?;
+    let local_kind = match local.usage? {
+        super::local::IdentityUsage::BothClientAndServer => IdentityKind::Primary,
+        super::local::IdentityUsage::ClientOnly => IdentityKind::Secondary,
+    };
+
+    (local_kind == requested_kind)
+        .then_some(local.sequence)
+        .flatten()
 }
 
 #[derive(Debug)]
@@ -405,7 +416,7 @@ async fn attempt_apply_with_candidates(
                     CertificateProof::IdentityProfile(&profile_dir),
                     &resolved.target,
                     kind,
-                    replacement_sequence(resolved),
+                    replacement_sequence(resolved, kind),
                     device_name,
                     key_material,
                 )
@@ -453,7 +464,7 @@ async fn attempt_apply_with_candidates(
                     CertificateProof::AccessToken(&token),
                     &resolved.target,
                     kind,
-                    replacement_sequence(resolved),
+                    replacement_sequence(resolved, kind),
                     device_name,
                     key_material,
                 )
@@ -475,7 +486,7 @@ async fn attempt_apply_with_candidates(
                             CertificateProof::AccessToken(&token),
                             &resolved.target,
                             kind,
-                            replacement_sequence(resolved),
+                            replacement_sequence(resolved, kind),
                             device_name,
                             key_material,
                         )
@@ -525,7 +536,7 @@ async fn install_and_finish(
         &super::install::InstallExpectation {
             target: resolved.target.dhttp_name(),
             kind,
-            sequence: None,
+            sequence: replacement_sequence(resolved, kind),
         },
         key_pem,
         certificate_action(resolved),
@@ -664,14 +675,46 @@ mod tests {
     }
 
     #[test]
-    fn replacement_reuses_local_certificate_sequence() {
-        assert_eq!(replacement_sequence(&resolved_with(None)), None);
+    fn replacement_reuses_sequence_only_for_the_same_certificate_kind() {
         assert_eq!(
-            replacement_sequence(&resolved_with(Some(LocalIdentityStatus::Incomplete {
-                detail: "private key is missing".to_string(),
-            }))),
+            replacement_sequence(&resolved_with(None), IdentityKind::Primary),
+            None
+        );
+        let resolved = resolved_with(Some(LocalIdentityStatus::Incomplete {
+            detail: "private key is missing".to_string(),
+        }));
+        assert_eq!(
+            replacement_sequence(&resolved, IdentityKind::Primary),
             Some(0),
         );
+        assert_eq!(
+            replacement_sequence(&resolved, IdentityKind::Secondary),
+            None,
+        );
+
+        let mut secondary = resolved;
+        secondary.local.as_mut().unwrap().usage = Some(IdentityUsage::ClientOnly);
+        assert_eq!(
+            replacement_sequence(&secondary, IdentityKind::Secondary),
+            Some(0),
+        );
+        assert_eq!(
+            replacement_sequence(&secondary, IdentityKind::Primary),
+            None,
+        );
+    }
+
+    #[test]
+    fn replacement_without_local_usage_or_sequence_requests_a_new_chain() {
+        let mut resolved = resolved_with(Some(LocalIdentityStatus::Invalid {
+            detail: "certificate metadata is incomplete".to_string(),
+        }));
+        resolved.local.as_mut().unwrap().usage = None;
+        assert_eq!(replacement_sequence(&resolved, IdentityKind::Primary), None,);
+
+        resolved.local.as_mut().unwrap().usage = Some(IdentityUsage::BothClientAndServer);
+        resolved.local.as_mut().unwrap().sequence = None;
+        assert_eq!(replacement_sequence(&resolved, IdentityKind::Primary), None,);
     }
 
     #[test]
