@@ -179,11 +179,16 @@ mod tests {
     use super::*;
 
     fn group(sequence: u8, endpoints: usize) -> EndpointCandidateGroup {
+        group_with_usage(sequence, endpoints, CertificateUsage::ClientAndServer)
+    }
+
+    fn group_with_usage(
+        sequence: u8,
+        endpoints: usize,
+        usage: CertificateUsage,
+    ) -> EndpointCandidateGroup {
         EndpointCandidateGroup {
-            chain: CertificateChainKey::new(
-                CertificateSequence::from(sequence),
-                CertificateUsage::ClientOnly,
-            ),
+            chain: CertificateChainKey::new(CertificateSequence::from(sequence), usage),
             endpoints: vec![
                 dhttp::dquic::qbase::net::addr::EndpointAddr::direct(
                     "192.0.2.10:4433".parse().unwrap(),
@@ -192,6 +197,18 @@ mod tests {
             ],
             sources: vec![Source::Dht],
         }
+    }
+
+    #[test]
+    fn merge_ignores_secondary_client_only_endpoint_groups() {
+        let candidates = merge_candidates(
+            EndpointCandidates {
+                groups: vec![group_with_usage(4, 1, CertificateUsage::ClientOnly)],
+            },
+            [],
+        );
+
+        assert!(candidates.is_empty());
     }
 
     #[test]
