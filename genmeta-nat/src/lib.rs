@@ -16,7 +16,7 @@ use dhttp::{
         qtraversal::{
             self,
             nat::client::{
-                DetectNatTypeError, DetectOuterAddrError, StunClientsComponent, StunProbeError,
+                DetectNatTypeError, DetectOuterAddrError, StunClientComponent, StunProbeError,
             },
         },
     },
@@ -386,10 +386,10 @@ fn observe_interfaces(interfaces: impl IntoIterator<Item = BindInterface>) -> Na
 
 fn observe_interface(iface: BindInterface) -> NatReportStream {
     let bind_uri = iface.bind_uri();
-    let clients = iface.with_components(|components, _iface| {
-        components.with(|clients: &StunClientsComponent| clients.clone())
+    let stun_client = iface.with_components(|components, _iface| {
+        components.with(|component: &StunClientComponent| component.clone())
     });
-    let Some(clients) = clients else {
+    let Some(stun_client) = stun_client else {
         return futures::stream::FuturesUnordered::from_iter([ready_report(
             NatReportError::NoStunClients { bind_uri },
         )]);
@@ -398,14 +398,8 @@ fn observe_interface(iface: BindInterface) -> NatReportStream {
     futures::stream::FuturesUnordered::from_iter([Box::pin(async move {
         let deadline = Instant::now() + STUN_AGENT_DISCOVERY_TIMEOUT;
         let client = loop {
-            let mut clients =
-                clients.with_clients(|clients| clients.values().cloned().collect::<Vec<_>>());
-            if !clients.is_empty() {
-                clients.sort_by_key(|client| client.agent_addr());
-                break clients
-                    .into_iter()
-                    .next()
-                    .expect("client list was checked as non-empty");
+            if let Some(client) = stun_client.with_client(|client| client.cloned()) {
+                break client;
             }
             if Instant::now() >= deadline {
                 return Err(NatReportError::NoStunAgent { bind_uri });
