@@ -1204,7 +1204,7 @@ dependencies = [
 
 [[package]]
 name = "dhttp"
-version = "0.6.0-beta.5"
+version = "0.6.0"
 dependencies = [
  "bon",
  "bytes",
@@ -1228,7 +1228,7 @@ dependencies = [
 
 [[package]]
 name = "dhttp-access"
-version = "0.4.0-beta.2"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "clap",
@@ -1250,7 +1250,7 @@ dependencies = [
 
 [[package]]
 name = "dhttp-home"
-version = "0.5.0-beta.1"
+version = "0.5.0"
 dependencies = [
  "dhttp-identity",
  "dirs",
@@ -1265,7 +1265,7 @@ dependencies = [
 
 [[package]]
 name = "dhttp-identity"
-version = "0.3.0-beta.2"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "futures",
@@ -1279,7 +1279,7 @@ dependencies = [
 
 [[package]]
 name = "dhttp-log"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "chrono",
  "dhttp-identity",
@@ -1383,7 +1383,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "dquic"
-version = "0.7.0-beta.6"
+version = "0.7.0"
 dependencies = [
  "arc-swap",
  "dashmap",
@@ -1399,9 +1399,7 @@ dependencies = [
 
 [[package]]
 name = "dshell"
-version = "0.6.0-beta.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "218694a1b4424c69b9b3b5c7416cfceb6c39e35b20968caef61bf9b3c953f921"
+version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1427,7 +1425,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "dyns"
-version = "0.7.0-beta.2"
+version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
  "bitfield-struct",
@@ -1773,7 +1771,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta"
-version = "0.8.0-beta.8"
+version = "0.8.0"
 dependencies = [
  "clap",
  "genmeta-access",
@@ -1792,7 +1790,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-access"
-version = "0.4.0-beta.4"
+version = "0.4.0"
 dependencies = [
  "clap",
  "dhttp",
@@ -1806,7 +1804,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-curl"
-version = "0.7.0-beta.4"
+version = "0.7.0"
 dependencies = [
  "async-compression",
  "bytes",
@@ -1825,7 +1823,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-discover"
-version = "0.4.0-beta.3"
+version = "0.4.0"
 dependencies = [
  "clap",
  "dhttp",
@@ -1839,7 +1837,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-doctor"
-version = "0.4.0-beta.3"
+version = "0.4.0"
 dependencies = [
  "clap",
  "genmeta-nat",
@@ -1850,7 +1848,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-identity"
-version = "0.4.0-beta.8"
+version = "0.4.0"
 dependencies = [
  "base64 0.23.0",
  "bytes",
@@ -1884,7 +1882,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nat"
-version = "0.5.0-beta.3"
+version = "0.5.0"
 dependencies = [
  "clap",
  "dhttp",
@@ -1898,7 +1896,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nslookup"
-version = "0.5.0-beta.3"
+version = "0.5.0"
 dependencies = [
  "clap",
  "dhttp",
@@ -1912,7 +1910,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-proxy"
-version = "0.4.0-beta.3"
+version = "0.4.0"
 dependencies = [
  "bytes",
  "clap",
@@ -1932,7 +1930,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-ssh"
-version = "0.7.0-beta.4"
+version = "0.7.0"
 dependencies = [
  "clap",
  "crossterm",
@@ -2039,7 +2037,7 @@ dependencies = [
 
 [[package]]
 name = "h3x"
-version = "0.6.0-beta.4"
+version = "0.6.0"
 dependencies = [
  "arc-swap",
  "async-channel",
@@ -3456,7 +3454,7 @@ dependencies = [
 
 [[package]]
 name = "qconnection"
-version = "0.8.0-beta.3"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3509,7 +3507,7 @@ dependencies = [
 
 [[package]]
 name = "qinterface"
-version = "0.7.0-beta.4"
+version = "0.7.0"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3559,7 +3557,7 @@ dependencies = [
 
 [[package]]
 name = "qresolve"
-version = "0.7.0-beta.1"
+version = "0.7.0"
 dependencies = [
  "futures",
  "qbase",
@@ -3568,7 +3566,7 @@ dependencies = [
 
 [[package]]
 name = "qtraversal"
-version = "0.7.0-beta.6"
+version = "0.7.0"
 dependencies = [
  "bon",
  "bytes",
@@ -3590,7 +3588,7 @@ dependencies = [
 
 [[package]]
 name = "qudp"
-version = "0.7.0-beta.1"
+version = "0.7.0"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -3717,7 +3715,7 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rankey"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "crypto-bigint",
  "der",

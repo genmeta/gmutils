@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-04
+
+### Changed
+
+- Promote genmeta and all gmutils workspace components to stable releases.
+- Align runtime dependencies with dhttp 0.6.0, h3x 0.6.0, dshell 0.6.0,
+  and rankey 0.2.2.
+- Adapt NAT diagnostics to one STUN client per interface.
+
+### Components
+
+- `genmeta` v0.8.0
+- `genmeta-access` v0.4.0
+- `genmeta-curl` v0.7.0
+- `genmeta-discover` v0.4.0
+- `genmeta-doctor` v0.4.0
+- `genmeta-identity` v0.4.0
+- `genmeta-nat` v0.5.0
+- `genmeta-nslookup` v0.5.0
+- `genmeta-proxy` v0.4.0
+- `genmeta-ssh` v0.7.0
+
 ## [0.8.0-beta.8] - 2026-07-26
 
 ### Added
