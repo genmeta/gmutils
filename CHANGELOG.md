@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1-beta.1] - 2026-08-05
+
+### Fixed
+
+- Split ordinary HTTPS and H3 certificate-server endpoints so configured H3
+  ports are retained while ordinary HTTPS uses the default port.
+- Access rule additions are idempotent, and access listings use `~` shorthand
+  for canonical `.dhttp.net` client names.
+
+### Dependencies
+
+- Release manifests target `dhttp` v0.6.1-beta.1.
+
+### Components
+
+- `genmeta` v0.8.1-beta.1
+- `genmeta-access` v0.4.1-beta.1
+- `genmeta-curl` v0.7.1-beta.1
+- `genmeta-discover` v0.4.1-beta.1
+- `genmeta-doctor` v0.4.1-beta.1
+- `genmeta-identity` v0.4.1-beta.1
+- `genmeta-nat` v0.5.1-beta.1
+- `genmeta-nslookup` v0.5.1-beta.1
+- `genmeta-proxy` v0.4.1-beta.1
+- `genmeta-ssh` v0.7.1-beta.1
+
 ## [0.8.0] - 2026-08-04
 
 ### Changed
