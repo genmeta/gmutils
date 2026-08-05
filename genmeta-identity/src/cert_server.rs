@@ -497,6 +497,14 @@ impl CertServer {
     }
 
     pub fn new(base_url: impl Into<Arc<str>>) -> Result<Self, Whatever> {
+        let base_url = base_url.into();
+        let base_url =
+            reqwest::Url::parse(&base_url).whatever_context("failed to parse cert server URL")?;
+        let mut http_url = base_url.clone();
+        http_url.set_port(None).map_err(|()| {
+            Whatever::without_source("failed to remove port from cert server URL".to_string())
+        })?;
+
         let root_cert = reqwest::Certificate::from_pem(dhttp::trust::DHTTP_ROOT_CA)
             .whatever_context("failed to parse DHTTP root certificate")?;
         let http_client = reqwest::Client::builder()
@@ -506,9 +514,21 @@ impl CertServer {
             .build()
             .whatever_context("failed to build HTTP client")?;
         Ok(Self {
-            base_url: base_url.into(),
+            base_url: Arc::from(base_url.as_str().trim_end_matches('/')),
             http_client,
         })
+    }
+
+    fn http_url(&self, path: &str) -> String {
+        let mut url = reqwest::Url::parse(&self.base_url)
+            .expect("cert server base URL was validated during construction");
+        url.set_port(None)
+            .expect("cert server base URL should support HTTP routing");
+        format!("{}{path}", url.as_str().trim_end_matches('/'))
+    }
+
+    fn h3_url(&self, path: &str) -> String {
+        format!("{}{path}", self.base_url)
     }
 
     async fn send_identity_json<T: DeserializeOwned>(
@@ -519,7 +539,7 @@ impl CertServer {
         body: serde_json::Value,
     ) -> Result<T, Error> {
         let endpoint = Self::identity_endpoint(identity_domain).await?;
-        let uri = format!("{}{}", self.base_url, path);
+        let uri = self.h3_url(path);
         let response = endpoint
             .new_request()
             .method(method)
@@ -542,7 +562,7 @@ impl CertServer {
         body: serde_json::Value,
     ) -> Result<T, Error> {
         let endpoint = Self::identity_endpoint_from_profile(profile_dir).await?;
-        let uri = format!("{}{}", self.base_url, path);
+        let uri = self.h3_url(path);
         let response = endpoint
             .new_request()
             .method(method)
@@ -563,7 +583,7 @@ impl CertServer {
         path_and_query: &str,
     ) -> Result<T, Error> {
         let endpoint = Self::identity_endpoint(identity_domain).await?;
-        let uri = format!("{}{}", self.base_url, path_and_query);
+        let uri = self.h3_url(path_and_query);
         let response = endpoint.get(uri).await.context(DhttpRequestSnafu)?;
         parse_dhttp_response(response).await
     }
@@ -571,7 +591,7 @@ impl CertServer {
     pub async fn send_email_verification(&self, email: &str) -> Result<EmailVerifyResponse, Error> {
         let response = self
             .http_client
-            .post(format!("{}/v2/email/verify", self.base_url))
+            .post(self.http_url("/v2/email/verify"))
             .json(&json!({ "email": email }))
             .send()
             .await?;
@@ -584,7 +604,7 @@ impl CertServer {
     ) -> Result<DomainAvailabilityResponse, Error> {
         let response = self
             .http_client
-            .get(format!("{}/v2/pricing", self.base_url))
+            .get(self.http_url("/v2/pricing"))
             .query(&[("domain", domain)])
             .send()
             .await?;
@@ -594,7 +614,7 @@ impl CertServer {
     pub async fn login(&self, email: &str, verify_code: &str) -> Result<LoginResponse, Error> {
         let response = self
             .http_client
-            .post(format!("{}/v2/user/login", self.base_url))
+            .post(self.http_url("/v2/user/login"))
             .json(&json!({
                 "email": email,
                 "verify_code": verify_code,
@@ -612,7 +632,7 @@ impl CertServer {
     ) -> Result<DomainLoginResponse, Error> {
         let response = self
             .http_client
-            .post(format!("{}/v2/user/domain-login", self.base_url))
+            .post(self.http_url("/v2/user/domain-login"))
             .json(&json!({
                 "domain": domain,
                 "email": email,
@@ -631,7 +651,7 @@ impl CertServer {
     ) -> Result<CreateDomainResponse, Error> {
         let response = self
             .http_client
-            .post(format!("{}/v2/domain", self.base_url))
+            .post(self.http_url("/v2/domain"))
             .json(&CreateDomainRequest::new(
                 domain,
                 Some(email),
@@ -649,7 +669,7 @@ impl CertServer {
     ) -> Result<CreateDomainResponse, Error> {
         let response = self
             .http_client
-            .post(format!("{}/v2/domain", self.base_url))
+            .post(self.http_url("/v2/domain"))
             .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
             .json(&CreateDomainRequest::new(domain, None, None))
             .send()
@@ -660,7 +680,7 @@ impl CertServer {
     pub async fn get_checkout(&self, checkout_token: &str) -> Result<CreateDomainResponse, Error> {
         let response = self
             .http_client
-            .get(format!("{}/v2/checkout", self.base_url))
+            .get(self.http_url("/v2/checkout"))
             .query(&[("token", checkout_token)])
             .send()
             .await?;
@@ -698,7 +718,7 @@ impl CertServer {
     ) -> Result<CreateSubdomainAttempt, Error> {
         let response = self
             .http_client
-            .post(format!("{}/v2/subdomain", self.base_url))
+            .post(self.http_url("/v2/subdomain"))
             .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
             .json(&json!({
                 "parent": parent,
@@ -761,7 +781,7 @@ impl CertServer {
     ) -> Result<CertificateDetail, Error> {
         let response = self
             .http_client
-            .post(format!("{}/v2/cert", self.base_url))
+            .post(self.http_url("/v2/cert"))
             .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
             .json(&json!({
                 "domain": domain,
@@ -782,7 +802,7 @@ impl CertServer {
     ) -> Result<InvoiceDetail, Error> {
         let response = self
             .http_client
-            .get(format!("{}/v2/invoice", self.base_url))
+            .get(self.http_url("/v2/invoice"))
             .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
             .query(&[("no", invoice_no)])
             .send()
@@ -849,7 +869,7 @@ impl CertServer {
     ) -> Result<CertificateDetail, Error> {
         let response = self
             .http_client
-            .post(format!("{}/v2/cert/renew", self.base_url))
+            .post(self.http_url("/v2/cert/renew"))
             .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
             .json(&json!({
                 "domain": domain,
@@ -920,7 +940,7 @@ impl CertServer {
     ) -> Result<CertificateListPage, Error> {
         let mut request = self
             .http_client
-            .get(format!("{}/v2/cert", self.base_url))
+            .get(self.http_url("/v2/cert"))
             .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
             .query(&[("domain", domain)]);
         if let Some(kind) = kind {
@@ -959,7 +979,7 @@ impl CertServer {
     ) -> Result<CertificateDetail, Error> {
         let response = self
             .http_client
-            .get(format!("{}/v2/cert", self.base_url))
+            .get(self.http_url("/v2/cert"))
             .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
             .query(&[("serial_number", serial_number)])
             .send()
@@ -1008,6 +1028,39 @@ impl Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preserves_configured_h3_port_and_uses_https_default_port_for_tcp() {
+        let configured = CertServer::new("https://api.genmeta.net:4433").unwrap();
+        assert_eq!(
+            configured.http_url("/v2/cert"),
+            "https://api.genmeta.net/v2/cert"
+        );
+        assert_eq!(
+            configured.h3_url("/v2/cert"),
+            "https://api.genmeta.net:4433/v2/cert"
+        );
+
+        let custom_port = CertServer::new("https://api.example.test:8443").unwrap();
+        assert_eq!(
+            custom_port.http_url("/v2/cert"),
+            "https://api.example.test/v2/cert"
+        );
+        assert_eq!(
+            custom_port.h3_url("/v2/cert"),
+            "https://api.example.test:8443/v2/cert"
+        );
+
+        let no_port = CertServer::new("https://api.example.test").unwrap();
+        assert_eq!(
+            no_port.http_url("/v2/cert"),
+            "https://api.example.test/v2/cert"
+        );
+        assert_eq!(
+            no_port.h3_url("/v2/cert"),
+            "https://api.example.test/v2/cert"
+        );
+    }
 
     #[test]
     fn parses_v2_error_envelope() {
