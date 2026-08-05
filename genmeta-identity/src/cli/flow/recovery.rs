@@ -57,8 +57,7 @@ mod tests {
                 "verification code is incorrect",
             )),
             VerificationRecovery::RetryCode {
-                message: "verification code is incorrect (error code: verify_code_invalid)"
-                    .to_string(),
+                message: "verification code is incorrect".to_string(),
             }
         );
         assert_eq!(
@@ -68,7 +67,7 @@ mod tests {
                 "verification code expired",
             )),
             VerificationRecovery::OfferResend {
-                message: "verification code expired (error code: verify_code_expired)".to_string(),
+                message: "verification code expired".to_string(),
             }
         );
         assert_eq!(
@@ -78,15 +77,13 @@ mod tests {
                 "email does not match this identity",
             )),
             VerificationRecovery::ChangeEmail {
-                message:
-                    "email does not match this identity (error code: domain_email_not_matched)"
-                        .to_string(),
+                message: "email does not match this identity".to_string(),
             }
         );
     }
 
     #[test]
-    fn numeric_codes_select_the_same_recovery_and_keep_the_wire_code_in_copy() {
+    fn numeric_codes_select_the_same_recovery_without_exposing_the_wire_code() {
         assert_eq!(
             classify_verify_submit_error(&api(
                 reqwest::StatusCode::UNAUTHORIZED,
@@ -94,7 +91,7 @@ mod tests {
                 "verification code is incorrect",
             )),
             VerificationRecovery::RetryCode {
-                message: "verification code is incorrect (error code: 1102)".to_string(),
+                message: "verification code is incorrect".to_string(),
             }
         );
         assert_eq!(
@@ -104,7 +101,7 @@ mod tests {
                 "verification code expired",
             )),
             VerificationRecovery::OfferResend {
-                message: "verification code expired (error code: 1103)".to_string(),
+                message: "verification code expired".to_string(),
             }
         );
     }

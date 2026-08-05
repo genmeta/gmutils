@@ -9,7 +9,7 @@ use snafu::{FromString, ResultExt, Snafu, Whatever};
 pub enum Error {
     #[snafu(transparent)]
     Request { source: reqwest::Error },
-    #[snafu(display("{message} (error code: {code})"))]
+    #[snafu(display("{message}"))]
     Api {
         status: reqwest::StatusCode,
         code: String,
@@ -142,6 +142,16 @@ fn normalize_api_code(code: &str) -> &str {
     }
 }
 
+const SUBDOMAIN_QUOTA_MESSAGE: &str = "The parent identity has reached its sub-identity seat limit. Update your subscription plan to add more seats, then try again.";
+
+fn user_facing_api_message(code: &str, server_message: &str) -> String {
+    if normalize_api_code(code) == "subdomain_quota_exceeded" {
+        SUBDOMAIN_QUOTA_MESSAGE.to_string()
+    } else {
+        server_message.to_string()
+    }
+}
+
 fn extract_string_field(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
         .find_map(|key| value.get(*key)?.as_str().map(ToOwned::to_owned))
@@ -192,10 +202,11 @@ fn parse_subdomain_quota_quote(
 
 pub fn parse_error_body(status: reqwest::StatusCode, body: &[u8]) -> Result<(), Error> {
     let parsed = serde_json::from_slice::<ErrorResponse>(body).context(JsonSnafu {})?;
+    let ErrorEnvelope { code, message } = parsed.error;
     ApiSnafu {
         status,
-        code: parsed.error.code,
-        message: parsed.error.message,
+        message: user_facing_api_message(&code, &message),
+        code,
     }
     .fail()
 }
@@ -464,7 +475,11 @@ async fn parse_dhttp_response<T: DeserializeOwned>(
     mut response: dhttp::endpoint::client::Response,
 ) -> Result<T, Error> {
     let status = response.status();
-    let body = response.read_to_bytes().await.context(DhttpReadSnafu)?;
+    let body = response.read_to_bytes().await;
+    // Explicitly finish the response stream before dropping it. This avoids
+    // noisy dquic drop diagnostics when the server has already sent a body.
+    _ = response.stop(dhttp::h3x::error::Code::H3_NO_ERROR).await;
+    let body = body.context(DhttpReadSnafu)?;
     if !status.is_success() {
         return parse_error_body(status, &body).and_then(|()| unreachable!());
     }
@@ -699,13 +714,11 @@ impl CertServer {
             .await?
         {
             CreateSubdomainAttempt::Created(response) => Ok(response),
-            CreateSubdomainAttempt::QuotaExceeded(quote) => Err(Whatever::without_source(
-                format!(
-                    "creating {} requires interactive checkout to add one more sub-identity slot under {} ({})",
-                    quote.domain, parent, quote.currency
-                ),
-            )
-            .into()),
+            CreateSubdomainAttempt::QuotaExceeded(_) => Err(Error::Api {
+                status: reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+                code: "1304".to_string(),
+                message: user_facing_api_message("1304", "subdomain quota exceeded"),
+            }),
         }
     }
 
@@ -1110,10 +1123,7 @@ mod tests {
             message: "domain access is forbidden".to_string(),
         };
 
-        assert_eq!(
-            error.to_string(),
-            "domain access is forbidden (error code: domain_forbidden)"
-        );
+        assert_eq!(error.to_string(), "domain access is forbidden");
     }
 
     #[test]
@@ -1122,10 +1132,7 @@ mod tests {
         let error = parse_error_body(reqwest::StatusCode::BAD_REQUEST, payload).unwrap_err();
 
         assert_eq!(error.api_code(), Some("email_invalid"));
-        assert_eq!(
-            error.to_string(),
-            "The email address is invalid. (error code: 1101)"
-        );
+        assert_eq!(error.to_string(), "The email address is invalid.");
         match error {
             Error::Api { code, .. } => assert_eq!(code, "1101"),
             other => panic!("unexpected error: {other:?}"),
@@ -1138,7 +1145,19 @@ mod tests {
         let error = parse_error_body(reqwest::StatusCode::CONFLICT, payload).unwrap_err();
 
         assert_eq!(error.api_code(), Some("2999"));
-        assert_eq!(error.to_string(), "future problem (error code: 2999)");
+        assert_eq!(error.to_string(), "future problem");
+    }
+
+    #[test]
+    fn subdomain_quota_error_explains_how_to_add_seats() {
+        let payload = br#"{"error":{"code":1304,"message":"The parent name has no available sub-identity slots."}}"#;
+        let error =
+            parse_error_body(reqwest::StatusCode::UNPROCESSABLE_ENTITY, payload).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "The parent identity has reached its sub-identity seat limit. Update your subscription plan to add more seats, then try again."
+        );
     }
 
     #[test]

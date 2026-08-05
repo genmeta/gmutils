@@ -30,7 +30,7 @@ use tracing_indicatif::{
     filter::{IndicatifFilter, hide_indicatif_span_fields},
 };
 use tracing_subscriber::{
-    EnvFilter, filter::LevelFilter, fmt::format::DefaultFields, prelude::*, util::SubscriberInitExt,
+    filter::LevelFilter, fmt::format::DefaultFields, prelude::*, util::SubscriberInitExt,
 };
 
 use crate::{
@@ -390,19 +390,10 @@ fn init_tracing() {
             tracing_subscriber::fmt::layer()
                 .with_ansi(std::io::stderr().is_terminal())
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
-                .with_writer(indicatif_layer.get_stderr_writer()),
+                .with_writer(indicatif_layer.get_stderr_writer())
+                .with_filter(LevelFilter::OFF),
         )
         .with(indicatif_layer.with_filter(IndicatifFilter::new(false)))
-        .with(
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy()
-                .add_directive(
-                    "netlink_packet_route=error"
-                        .parse()
-                        .expect("BUG: static tracing directive is valid"),
-                ),
-        )
         .init();
 }
 
