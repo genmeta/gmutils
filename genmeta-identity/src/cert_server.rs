@@ -1044,6 +1044,7 @@ mod tests {
 
     #[test]
     fn preserves_configured_h3_port_and_uses_https_default_port_for_tcp() {
+        _ = rustls::crypto::ring::default_provider().install_default();
         let configured = CertServer::new("https://api.genmeta.net:4433").unwrap();
         assert_eq!(
             configured.http_url("/v2/cert"),

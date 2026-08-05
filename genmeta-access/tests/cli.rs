@@ -218,7 +218,7 @@ async fn inline_expr_preserves_quoted_and_hyphen_prefixed_values() {
 }
 
 #[tokio::test]
-async fn inline_access_name_shorthand_is_stored_as_full_name() {
+async fn inline_access_name_shorthand_is_displayed() {
     let test_home = TestHome::new("name-shorthand");
     let home = test_home.home();
     set_default_identity(&home, "alice.pilot").await.unwrap();
@@ -226,13 +226,10 @@ async fn inline_access_name_shorthand_is_stored_as_full_name() {
     run_cli(&home, "/api allow bob.pilot~").await;
 
     let listed = run_cli(&home, "/api list").await;
+    assert!(listed.contains("bob.pilot~"), "listed rules: {listed}");
     assert!(
-        listed.contains("bob.pilot.dhttp.net"),
-        "listed rules: {listed}"
-    );
-    assert!(
-        !listed.contains("bob.pilot~"),
-        "listed rules should be canonical: {listed}"
+        !listed.contains("bob.pilot.dhttp.net"),
+        "listed rules should use shorthand: {listed}"
     );
 }
 

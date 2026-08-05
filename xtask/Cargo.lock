@@ -2643,11 +2643,11 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[patch.unused]]
 name = "dhttp"
-version = "0.6.0"
+version = "0.6.1-beta.1"
 
 [[patch.unused]]
 name = "dhttp-access"
-version = "0.4.0"
+version = "0.4.1-beta.1"
 
 [[patch.unused]]
 name = "dhttp-home"
