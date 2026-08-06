@@ -583,8 +583,10 @@ impl CertServer {
     fn http_url(&self, path: &str) -> String {
         let mut url = reqwest::Url::parse(&self.base_url)
             .expect("cert server base URL was validated during construction");
-        url.set_port(None)
-            .expect("cert server base URL should support HTTP routing");
+        if url.scheme() == "https" {
+            url.set_port(None)
+                .expect("cert server base URL should support HTTP routing");
+        }
         format!("{}{path}", url.as_str().trim_end_matches('/'))
     }
 
@@ -1160,6 +1162,9 @@ mod tests {
             no_port.h3_url("/v2/cert"),
             "https://api.example.test/v2/cert"
         );
+
+        let local = CertServer::new("http://127.0.0.1:38080").unwrap();
+        assert_eq!(local.http_url("/v2/cert"), "http://127.0.0.1:38080/v2/cert");
     }
 
     #[test]
