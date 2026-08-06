@@ -1,5 +1,7 @@
 pub(crate) mod apply;
 pub(crate) mod auth_plan;
+#[cfg(unix)]
+pub(crate) mod auto_renew;
 pub(crate) mod default_identity;
 pub(crate) mod device;
 pub(crate) mod email;

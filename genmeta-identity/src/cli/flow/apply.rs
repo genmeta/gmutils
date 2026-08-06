@@ -21,6 +21,10 @@ const APPLY_OPENING: &str = "Applying identity, generating ECC key pair locally,
 const INSTALLED: &str = "✔ Identity successfully installed on this device.";
 const NEW_NAME_FREE: &str = "This new name is yours now.";
 
+fn auto_renew_enabled_message(identity: &str) -> String {
+    format!("✔ Automatic certificate renewal enabled for {identity}.")
+}
+
 fn interactive_name_unavailable_message() -> &'static str {
     "Sorry, this name is not available. Please try another one."
 }
@@ -549,15 +553,29 @@ fn certificate_action(resolved: &ResolvedApplyTarget) -> dhttp::log::cert::Certi
     }
 }
 
-async fn install_and_finish(
-    dhttp_home: &DhttpHome,
-    resolved: &ResolvedApplyTarget,
+struct InstallFinishContext<'a> {
+    dhttp_home: &'a DhttpHome,
+    home_scope: HomeScope,
+    resolved: &'a ResolvedApplyTarget,
     kind: IdentityKind,
     interactive: bool,
+}
+
+async fn install_and_finish(
+    context: InstallFinishContext<'_>,
     key_material: &super::key_material::LazyKeyMaterial,
     detail: &CertificateDetail,
     pending_renewal: Option<&super::key_material::PendingRenewal>,
 ) -> Result<(), Error> {
+    let InstallFinishContext {
+        dhttp_home,
+        home_scope,
+        resolved,
+        kind,
+        interactive,
+    } = context;
+    #[cfg(not(unix))]
+    let _ = home_scope;
     let key_pem = key_material
         .key_pem()
         .expect("a certificate response requires the request key");
@@ -585,6 +603,16 @@ async fn install_and_finish(
         );
     }
     super::transcript::print_line(INSTALLED);
+
+    #[cfg(unix)]
+    match super::auto_renew::ensure(resolved.target.short_name(), home_scope).await {
+        Ok(()) => {
+            super::transcript::print_line(auto_renew_enabled_message(resolved.target.short_name()))
+        }
+        Err(error) => super::transcript::print_warning(&format!(
+            "The identity was installed, but automatic certificate renewal could not be scheduled: {error}"
+        )),
+    }
 
     let usage = match kind {
         IdentityKind::Primary => super::local::IdentityUsage::BothClientAndServer,
@@ -684,10 +712,13 @@ pub(crate) async fn run(
         {
             ApplyAttempt::Certificate(detail) => {
                 return install_and_finish(
-                    dhttp_home,
-                    &resolved,
-                    kind,
-                    interactive,
+                    InstallFinishContext {
+                        dhttp_home,
+                        home_scope,
+                        resolved: &resolved,
+                        kind,
+                        interactive,
+                    },
                     &key_material,
                     &detail,
                     pending_renewal.as_ref(),
@@ -717,6 +748,14 @@ mod tests {
             email: None,
             verify_code: None,
         }
+    }
+
+    #[test]
+    fn auto_renew_enabled_copy_includes_the_identity_name() {
+        assert_eq!(
+            auto_renew_enabled_message("alice.smith"),
+            "✔ Automatic certificate renewal enabled for alice.smith."
+        );
     }
 
     fn resolved_with(status: Option<LocalIdentityStatus>) -> ResolvedApplyTarget {

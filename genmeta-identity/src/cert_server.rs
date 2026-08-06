@@ -135,6 +135,8 @@ fn normalize_api_code(code: &str) -> &str {
         "1203" => "domain_forbidden",
         "1208" => "domain_conflict",
         "1211" => "domain_email_not_matched",
+        "1212" => "domain_expired",
+        "1213" => "domain_revoked",
         "1303" => "subdomain_conflict",
         "1304" => "subdomain_quota_exceeded",
         "1407" => "cert_sequence_not_found",
