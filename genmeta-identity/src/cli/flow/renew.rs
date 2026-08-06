@@ -185,6 +185,28 @@ fn renew_remote_error(error: crate::cert_server::Error, target: &str) -> Error {
     error.into()
 }
 
+fn stops_automatic_renewal(error: &crate::cert_server::Error) -> bool {
+    matches!(error.api_code(), Some("domain_expired" | "domain_revoked"))
+}
+
+async fn handle_renew_remote_error(
+    error: crate::cert_server::Error,
+    target: &str,
+    home_scope: HomeScope,
+) -> Error {
+    #[cfg(not(unix))]
+    let _ = home_scope;
+    #[cfg(unix)]
+    if stops_automatic_renewal(&error)
+        && let Err(remove_error) = super::auto_renew::remove(target, home_scope).await
+    {
+        super::transcript::print_warning(&format!(
+            "Automatic certificate renewal could not be disabled for {target}: {remove_error}"
+        ));
+    }
+    renew_remote_error(error, target)
+}
+
 fn print_auth_rejection(name: &str, error: &crate::cert_server::Error) {
     super::transcript::print_warning(&format!(
         "Cannot authenticate with {name}: {error}; trying the next authentication method"
@@ -198,6 +220,7 @@ async fn request_with_candidates(
     preflight: &RenewPreflight,
     interactive: bool,
     pending: &super::key_material::PendingRenewal,
+    home_scope: HomeScope,
 ) -> Result<CertificateDetail, Error> {
     let specs = super::auth_plan::candidate_specs(
         &preflight.target,
@@ -231,7 +254,12 @@ async fn request_with_candidates(
                     last_rejection = Some(error);
                 }
                 Err(RequestFailure::Remote(error)) => {
-                    return Err(renew_remote_error(error, preflight.target.short_name()));
+                    return Err(handle_renew_remote_error(
+                        error,
+                        preflight.target.short_name(),
+                        home_scope,
+                    )
+                    .await);
                 }
             },
             CandidateEvent::Email => {
@@ -252,9 +280,12 @@ async fn request_with_candidates(
                 .await
                 {
                     Ok(detail) => Ok(detail),
-                    Err(RequestFailure::Remote(error)) => {
-                        Err(renew_remote_error(error, preflight.target.short_name()))
-                    }
+                    Err(RequestFailure::Remote(error)) => Err(handle_renew_remote_error(
+                        error,
+                        preflight.target.short_name(),
+                        home_scope,
+                    )
+                    .await),
                 };
             }
             CandidateEvent::Exhausted => {
@@ -313,6 +344,7 @@ pub(crate) async fn run(
         &preflight,
         interactive,
         &pending,
+        home_scope,
     )
     .await?;
     super::install::validate_and_save(
@@ -352,7 +384,7 @@ mod tests {
 
     use super::{
         RenewPreflight, renew_not_due_message, renew_not_saved_root_message, renew_remote_error,
-        renewal_is_due,
+        renewal_is_due, stops_automatic_renewal,
     };
     use crate::cli::{
         Renew,
@@ -526,6 +558,25 @@ mod tests {
             renew_remote_error(error, "alice.smith").to_string(),
             "internal server error"
         );
+    }
+
+    #[test]
+    fn expired_and_revoked_domains_stop_automatic_renewal() {
+        for code in ["domain_expired", "domain_revoked", "1212", "1213"] {
+            let error = crate::cert_server::Error::Api {
+                status: reqwest::StatusCode::CONFLICT,
+                code: code.to_string(),
+                message: "terminal domain state".to_string(),
+            };
+            assert!(stops_automatic_renewal(&error), "code {code}");
+        }
+
+        let retryable = crate::cert_server::Error::Api {
+            status: reqwest::StatusCode::CONFLICT,
+            code: "certificate_renewal_not_due".to_string(),
+            message: "renewal is not due".to_string(),
+        };
+        assert!(!stops_automatic_renewal(&retryable));
     }
 
     #[test]
