@@ -13,7 +13,7 @@ use super::{
     },
 };
 use crate::{
-    cert_server::{CertServer, CertificateDetail},
+    cert_server::{CertServer, CertificateDetail, CertificateRenewalRequest},
     cli::{Apply, Error, prompt::InquireResultExt},
 };
 
@@ -161,15 +161,28 @@ enum RequestFailure {
     Remote(crate::cert_server::Error),
 }
 
+#[derive(Clone, Copy)]
+struct CertificateRequest<'a> {
+    target: &'a IdentityTarget,
+    kind: IdentityKind,
+    sequence: Option<u32>,
+    device_name: &'a str,
+    renewal_operation_key: Option<&'a str>,
+}
+
 async fn request_certificate(
     cert_server: &CertServer,
     proof: CertificateProof<'_>,
-    target: &IdentityTarget,
-    kind: IdentityKind,
-    sequence: Option<u32>,
-    device_name: &str,
+    request: CertificateRequest<'_>,
     key_material: &mut super::key_material::LazyKeyMaterial,
 ) -> Result<CertificateDetail, RequestFailure> {
+    let CertificateRequest {
+        target,
+        kind,
+        sequence,
+        device_name,
+        renewal_operation_key,
+    } = request;
     key_material.ensure_key().map_err(RequestFailure::Local)?;
     super::progress::run(super::progress::REQUEST_CERT, async {
         let csr_pem = key_material
@@ -178,16 +191,18 @@ async fn request_certificate(
             .to_string();
         let result = match (proof, sequence) {
             (CertificateProof::AccessToken(token), Some(sequence)) => {
-                cert_server
-                    .renew_cert(
-                        token,
-                        target.full_name(),
-                        kind.as_str(),
-                        sequence,
-                        Some(device_name),
-                        &csr_pem,
-                    )
-                    .await
+                let request = CertificateRenewalRequest::new(
+                    target.full_name(),
+                    kind.as_str(),
+                    sequence,
+                    Some(device_name),
+                    &csr_pem,
+                )
+                .with_idempotency_key(
+                    renewal_operation_key
+                        .expect("an existing sequence requires a renewal operation key"),
+                );
+                cert_server.renew_cert_request(token, request).await
             }
             (CertificateProof::AccessToken(token), None) => {
                 cert_server
@@ -202,15 +217,19 @@ async fn request_certificate(
                     .await
             }
             (CertificateProof::IdentityProfile(profile_dir), Some(sequence)) => {
+                let request = CertificateRenewalRequest::new(
+                    target.full_name(),
+                    kind.as_str(),
+                    sequence,
+                    Some(device_name),
+                    &csr_pem,
+                )
+                .with_idempotency_key(
+                    renewal_operation_key
+                        .expect("an existing sequence requires a renewal operation key"),
+                );
                 cert_server
-                    .renew_cert_with_identity_profile(
-                        profile_dir,
-                        target.full_name(),
-                        kind.as_str(),
-                        sequence,
-                        Some(device_name),
-                        &csr_pem,
-                    )
+                    .renew_cert_with_identity_profile_request(profile_dir, request)
                     .await
             }
             (CertificateProof::IdentityProfile(profile_dir), None) => {
@@ -364,6 +383,7 @@ struct ApplyAttemptContext<'a> {
     device_name: &'a str,
     interactive: bool,
     key_material: &'a mut super::key_material::LazyKeyMaterial,
+    renewal_operation_key: Option<&'a str>,
 }
 
 async fn attempt_apply_with_candidates(
@@ -378,6 +398,7 @@ async fn attempt_apply_with_candidates(
         device_name,
         interactive,
         key_material,
+        renewal_operation_key,
     } = context;
     let specs = super::auth_plan::candidate_specs(&resolved.target, resolved.remote);
     let loader = super::auth_plan::HomeExactIdentityLoader::new(dhttp_home);
@@ -414,10 +435,13 @@ async fn attempt_apply_with_candidates(
                 match request_certificate(
                     cert_server,
                     CertificateProof::IdentityProfile(&profile_dir),
-                    &resolved.target,
-                    kind,
-                    replacement_sequence(resolved, kind),
-                    device_name,
+                    CertificateRequest {
+                        target: &resolved.target,
+                        kind,
+                        sequence: replacement_sequence(resolved, kind),
+                        device_name,
+                        renewal_operation_key,
+                    },
                     key_material,
                 )
                 .await
@@ -462,10 +486,13 @@ async fn attempt_apply_with_candidates(
                 let first = request_certificate(
                     cert_server,
                     CertificateProof::AccessToken(&token),
-                    &resolved.target,
-                    kind,
-                    replacement_sequence(resolved, kind),
-                    device_name,
+                    CertificateRequest {
+                        target: &resolved.target,
+                        kind,
+                        sequence: replacement_sequence(resolved, kind),
+                        device_name,
+                        renewal_operation_key,
+                    },
                     key_material,
                 )
                 .await;
@@ -484,10 +511,13 @@ async fn attempt_apply_with_candidates(
                         match request_certificate(
                             cert_server,
                             CertificateProof::AccessToken(&token),
-                            &resolved.target,
-                            kind,
-                            replacement_sequence(resolved, kind),
-                            device_name,
+                            CertificateRequest {
+                                target: &resolved.target,
+                                kind,
+                                sequence: replacement_sequence(resolved, kind),
+                                device_name,
+                                renewal_operation_key,
+                            },
                             key_material,
                         )
                         .await
@@ -526,6 +556,7 @@ async fn install_and_finish(
     interactive: bool,
     key_material: &super::key_material::LazyKeyMaterial,
     detail: &CertificateDetail,
+    pending_renewal: Option<&super::key_material::PendingRenewal>,
 ) -> Result<(), Error> {
     let key_pem = key_material
         .key_pem()
@@ -542,6 +573,17 @@ async fn install_and_finish(
         certificate_action(resolved),
     )
     .await?;
+    if let Some(pending_renewal) = pending_renewal
+        && let Err(error) = pending_renewal
+            .remove(dhttp_home, resolved.target.dhttp_name())
+            .await
+    {
+        tracing::warn!(
+            identity = %resolved.target.full_name(),
+            error = %snafu::Report::from_error(&error),
+            "failed to remove installed renewal material"
+        );
+    }
     super::transcript::print_line(INSTALLED);
 
     let usage = match kind {
@@ -583,8 +625,46 @@ pub(crate) async fn run(
     let kind = resolve_kind(command).await?;
     let device_name =
         super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
-    let mut key_material =
-        super::key_material::LazyKeyMaterial::for_name(resolved.target.dhttp_name());
+    let replacement_sequence = replacement_sequence(&resolved, kind);
+    let pending_renewal = match replacement_sequence {
+        Some(sequence) => match super::key_material::PendingRenewal::load(
+            dhttp_home,
+            resolved.target.dhttp_name(),
+            kind.as_str(),
+            sequence,
+        )
+        .await?
+        {
+            Some(pending) => Some(pending),
+            None => Some(
+                super::key_material::PendingRenewal::create(
+                    dhttp_home,
+                    resolved.target.dhttp_name(),
+                    kind.as_str(),
+                    sequence,
+                    &device_name,
+                )
+                .await?,
+            ),
+        },
+        None => None,
+    };
+    let request_device_name = pending_renewal
+        .as_ref()
+        .map(|pending| pending.device_name())
+        .unwrap_or(&device_name)
+        .to_string();
+    let mut key_material = match pending_renewal.as_ref() {
+        Some(pending) => super::key_material::LazyKeyMaterial::from_existing(
+            resolved.target.dhttp_name(),
+            pending.key_pem().to_string(),
+            pending.csr_pem().to_string(),
+        ),
+        None => super::key_material::LazyKeyMaterial::for_name(resolved.target.dhttp_name()),
+    };
+    let renewal_operation_key = pending_renewal
+        .as_ref()
+        .map(|pending| pending.operation_key());
 
     loop {
         match attempt_apply_with_candidates(
@@ -594,9 +674,10 @@ pub(crate) async fn run(
                 dhttp_home,
                 cert_server,
                 kind,
-                device_name: &device_name,
+                device_name: &request_device_name,
                 interactive,
                 key_material: &mut key_material,
+                renewal_operation_key,
             },
         )
         .await?
@@ -609,6 +690,7 @@ pub(crate) async fn run(
                     interactive,
                     &key_material,
                     &detail,
+                    pending_renewal.as_ref(),
                 )
                 .await;
             }
