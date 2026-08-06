@@ -387,6 +387,50 @@ pub struct CertificateDetail {
     pub created_at: i64,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct CertificateRenewalRequest<'a> {
+    domain: &'a str,
+    kind: &'a str,
+    sequence: u32,
+    device_name: Option<&'a str>,
+    csr_pem: &'a str,
+    idempotency_key: Option<&'a str>,
+}
+
+impl<'a> CertificateRenewalRequest<'a> {
+    pub fn new(
+        domain: &'a str,
+        kind: &'a str,
+        sequence: u32,
+        device_name: Option<&'a str>,
+        csr_pem: &'a str,
+    ) -> Self {
+        Self {
+            domain,
+            kind,
+            sequence,
+            device_name,
+            csr_pem,
+            idempotency_key: None,
+        }
+    }
+
+    pub fn with_idempotency_key(mut self, idempotency_key: &'a str) -> Self {
+        self.idempotency_key = Some(idempotency_key);
+        self
+    }
+
+    fn body(self) -> Value {
+        json!({
+            "domain": self.domain,
+            "kind": self.kind,
+            "sequence": self.sequence,
+            "device_name": self.device_name,
+            "csr": self.csr_pem,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct InvoiceDetail {
     pub invoice_no: String,
@@ -553,16 +597,32 @@ impl CertServer {
         path: &str,
         body: serde_json::Value,
     ) -> Result<T, Error> {
+        self.send_identity_json_with_idempotency(identity_domain, method, path, body, None)
+            .await
+    }
+
+    async fn send_identity_json_with_idempotency<T: DeserializeOwned>(
+        &self,
+        identity_domain: &str,
+        method: http::Method,
+        path: &str,
+        body: serde_json::Value,
+        idempotency_key: Option<&str>,
+    ) -> Result<T, Error> {
         let endpoint = Self::identity_endpoint(identity_domain).await?;
         let uri = self.h3_url(path);
-        let response = endpoint
-            .new_request()
-            .method(method)
-            .uri(uri)
-            .header(
-                http::header::CONTENT_TYPE,
-                http::HeaderValue::from_static("application/json"),
-            )
+        let mut request = endpoint.new_request().method(method).uri(uri).header(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        );
+        if let Some(idempotency_key) = idempotency_key {
+            request = request.header(
+                "idempotency-key",
+                http::HeaderValue::from_str(idempotency_key)
+                    .expect("validated idempotency key is a valid HTTP header value"),
+            );
+        }
+        let response = request
             .body(body.to_string())
             .await
             .context(DhttpRequestSnafu)?;
@@ -576,16 +636,32 @@ impl CertServer {
         path: &str,
         body: serde_json::Value,
     ) -> Result<T, Error> {
+        self.send_identity_profile_json_with_idempotency(profile_dir, method, path, body, None)
+            .await
+    }
+
+    async fn send_identity_profile_json_with_idempotency<T: DeserializeOwned>(
+        &self,
+        profile_dir: &Path,
+        method: http::Method,
+        path: &str,
+        body: serde_json::Value,
+        idempotency_key: Option<&str>,
+    ) -> Result<T, Error> {
         let endpoint = Self::identity_endpoint_from_profile(profile_dir).await?;
         let uri = self.h3_url(path);
-        let response = endpoint
-            .new_request()
-            .method(method)
-            .uri(uri)
-            .header(
-                http::header::CONTENT_TYPE,
-                http::HeaderValue::from_static("application/json"),
-            )
+        let mut request = endpoint.new_request().method(method).uri(uri).header(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        );
+        if let Some(idempotency_key) = idempotency_key {
+            request = request.header(
+                "idempotency-key",
+                http::HeaderValue::from_str(idempotency_key)
+                    .expect("validated idempotency key is a valid HTTP header value"),
+            );
+        }
+        let response = request
             .body(body.to_string())
             .await
             .context(DhttpRequestSnafu)?;
@@ -880,20 +956,26 @@ impl CertServer {
         device_name: Option<&str>,
         csr_pem: &str,
     ) -> Result<CertificateDetail, Error> {
-        let response = self
+        self.renew_cert_request(
+            access_token,
+            CertificateRenewalRequest::new(domain, kind, sequence, device_name, csr_pem),
+        )
+        .await
+    }
+
+    pub async fn renew_cert_request(
+        &self,
+        access_token: &str,
+        request: CertificateRenewalRequest<'_>,
+    ) -> Result<CertificateDetail, Error> {
+        let mut builder = self
             .http_client
             .post(self.http_url("/v2/cert/renew"))
-            .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
-            .json(&json!({
-                "domain": domain,
-                "kind": kind,
-                "sequence": sequence,
-                "device_name": device_name,
-                "csr": csr_pem,
-            }))
-            .send()
-            .await?;
-        parse_response(response).await
+            .header(header::AUTHORIZATION, format!("Bearer {access_token}"));
+        if let Some(idempotency_key) = request.idempotency_key {
+            builder = builder.header("idempotency-key", idempotency_key);
+        }
+        parse_response(builder.json(&request.body()).send().await?).await
     }
 
     pub async fn renew_cert_with_identity(
@@ -905,41 +987,43 @@ impl CertServer {
         device_name: Option<&str>,
         csr_pem: &str,
     ) -> Result<CertificateDetail, Error> {
-        self.send_identity_json(
+        self.renew_cert_with_identity_request(
             identity_domain,
-            http::Method::POST,
-            "/v2/cert/renew",
-            json!({
-                "domain": domain,
-                "kind": kind,
-                "sequence": sequence,
-                "device_name": device_name,
-                "csr": csr_pem,
-            }),
+            CertificateRenewalRequest::new(domain, kind, sequence, device_name, csr_pem),
         )
         .await
     }
 
-    pub(crate) async fn renew_cert_with_identity_profile(
+    pub async fn renew_cert_with_identity_request(
+        &self,
+        identity_domain: &str,
+        request: CertificateRenewalRequest<'_>,
+    ) -> Result<CertificateDetail, Error> {
+        let idempotency_key = request.idempotency_key;
+        let body = request.body();
+        self.send_identity_json_with_idempotency(
+            identity_domain,
+            http::Method::POST,
+            "/v2/cert/renew",
+            body,
+            idempotency_key,
+        )
+        .await
+    }
+
+    pub(crate) async fn renew_cert_with_identity_profile_request(
         &self,
         profile_dir: &Path,
-        domain: &str,
-        kind: &str,
-        sequence: u32,
-        device_name: Option<&str>,
-        csr_pem: &str,
+        request: CertificateRenewalRequest<'_>,
     ) -> Result<CertificateDetail, Error> {
-        self.send_identity_profile_json(
+        let idempotency_key = request.idempotency_key;
+        let body = request.body();
+        self.send_identity_profile_json_with_idempotency(
             profile_dir,
             http::Method::POST,
             "/v2/cert/renew",
-            json!({
-                "domain": domain,
-                "kind": kind,
-                "sequence": sequence,
-                "device_name": device_name,
-                "csr": csr_pem,
-            }),
+            body,
+            idempotency_key,
         )
         .await
     }

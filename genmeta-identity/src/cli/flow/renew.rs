@@ -5,7 +5,7 @@ use snafu::{FromString, whatever};
 
 use super::{auth_plan::CandidateEvent, local};
 use crate::{
-    cert_server::{CertServer, CertificateDetail},
+    cert_server::{CertServer, CertificateDetail, CertificateRenewalRequest},
     cli::{Error, Renew},
 };
 
@@ -131,7 +131,6 @@ enum RenewProof<'a> {
 
 #[derive(Debug)]
 enum RequestFailure {
-    Local(Error),
     Remote(crate::cert_server::Error),
 }
 
@@ -139,38 +138,32 @@ async fn request_renewal(
     cert_server: &CertServer,
     proof: RenewProof<'_>,
     preflight: &RenewPreflight,
-    device_name: &str,
-    key_material: &mut super::key_material::LazyKeyMaterial,
+    pending: &super::key_material::PendingRenewal,
 ) -> Result<CertificateDetail, RequestFailure> {
-    key_material.ensure_key().map_err(RequestFailure::Local)?;
     super::progress::run(super::progress::RENEW_IDENTITY, async {
-        let csr_pem = key_material
-            .csr_pem()
-            .map_err(RequestFailure::Local)?
-            .to_string();
         let result = match proof {
             RenewProof::AccessToken(token) => {
-                cert_server
-                    .renew_cert(
-                        token,
-                        preflight.target.full_name(),
-                        preflight.certificate_kind(),
-                        preflight.sequence,
-                        Some(device_name),
-                        &csr_pem,
-                    )
-                    .await
+                let request = CertificateRenewalRequest::new(
+                    preflight.target.full_name(),
+                    preflight.certificate_kind(),
+                    preflight.sequence,
+                    Some(pending.device_name()),
+                    pending.csr_pem(),
+                )
+                .with_idempotency_key(pending.operation_key());
+                cert_server.renew_cert_request(token, request).await
             }
             RenewProof::IdentityProfile(profile_dir) => {
+                let request = CertificateRenewalRequest::new(
+                    preflight.target.full_name(),
+                    preflight.certificate_kind(),
+                    preflight.sequence,
+                    Some(pending.device_name()),
+                    pending.csr_pem(),
+                )
+                .with_idempotency_key(pending.operation_key());
                 cert_server
-                    .renew_cert_with_identity_profile(
-                        profile_dir,
-                        preflight.target.full_name(),
-                        preflight.certificate_kind(),
-                        preflight.sequence,
-                        Some(device_name),
-                        &csr_pem,
-                    )
+                    .renew_cert_with_identity_profile_request(profile_dir, request)
                     .await
             }
         };
@@ -203,9 +196,8 @@ async fn request_with_candidates(
     dhttp_home: &DhttpHome,
     cert_server: &CertServer,
     preflight: &RenewPreflight,
-    device_name: &str,
     interactive: bool,
-    key_material: &mut super::key_material::LazyKeyMaterial,
+    pending: &super::key_material::PendingRenewal,
 ) -> Result<CertificateDetail, Error> {
     let specs = super::auth_plan::candidate_specs(
         &preflight.target,
@@ -226,13 +218,11 @@ async fn request_with_candidates(
                 cert_server,
                 RenewProof::IdentityProfile(&profile_dir),
                 preflight,
-                device_name,
-                key_material,
+                pending,
             )
             .await
             {
                 Ok(detail) => return Ok(detail),
-                Err(RequestFailure::Local(error)) => return Err(error),
                 Err(RequestFailure::Remote(error))
                     if crate::auth::classify_identity_attempt(&error)
                         == crate::auth::AuthAttemptDisposition::TryNext =>
@@ -257,13 +247,11 @@ async fn request_with_candidates(
                     cert_server,
                     RenewProof::AccessToken(&token),
                     preflight,
-                    device_name,
-                    key_material,
+                    pending,
                 )
                 .await
                 {
                     Ok(detail) => Ok(detail),
-                    Err(RequestFailure::Local(error)) => Err(error),
                     Err(RequestFailure::Remote(error)) => {
                         Err(renew_remote_error(error, preflight.target.short_name()))
                     }
@@ -288,7 +276,14 @@ pub(crate) async fn run(
     let interactive = std::io::stdin().is_terminal();
     let (preflight, expires_at) = resolve_preflight(command, dhttp_home).await?;
     let now = local::now_unix_timestamp();
-    if !command.force && !renewal_is_due(expires_at, now) {
+    let existing_pending = super::key_material::PendingRenewal::load(
+        dhttp_home,
+        preflight.target.dhttp_name(),
+        preflight.certificate_kind(),
+        preflight.sequence,
+    )
+    .await?;
+    if existing_pending.is_none() && !command.force && !renewal_is_due(expires_at, now) {
         super::transcript::print_line(renew_not_due_message(
             preflight.target.short_name(),
             expires_at.expect("renewal is not due only when expiry is known"),
@@ -298,21 +293,28 @@ pub(crate) async fn run(
     }
     let device_name =
         super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
-    let mut key_material =
-        super::key_material::LazyKeyMaterial::for_name(preflight.target.dhttp_name());
+    let pending = match existing_pending {
+        Some(pending) => pending,
+        None => {
+            super::key_material::PendingRenewal::create(
+                dhttp_home,
+                preflight.target.dhttp_name(),
+                preflight.certificate_kind(),
+                preflight.sequence,
+                &device_name,
+            )
+            .await?
+        }
+    };
     let detail = request_with_candidates(
         command,
         dhttp_home,
         cert_server,
         &preflight,
-        &device_name,
         interactive,
-        &mut key_material,
+        &pending,
     )
     .await?;
-    let key_pem = key_material
-        .key_pem()
-        .expect("a renewal response requires the request key");
     super::install::validate_and_save(
         dhttp_home,
         &detail,
@@ -321,10 +323,20 @@ pub(crate) async fn run(
             kind: preflight.kind,
             sequence: Some(preflight.sequence),
         },
-        key_pem,
+        pending.key_pem(),
         dhttp::log::cert::CertificateAction::Renew,
     )
     .await?;
+    if let Err(error) = pending
+        .remove(dhttp_home, preflight.target.dhttp_name())
+        .await
+    {
+        tracing::warn!(
+            identity = %preflight.target.full_name(),
+            error = %snafu::Report::from_error(&error),
+            "failed to remove installed renewal material"
+        );
+    }
     super::transcript::print_line(RENEWED);
     Ok(())
 }
