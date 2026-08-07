@@ -565,7 +565,6 @@ async fn install_and_finish(
     context: InstallFinishContext<'_>,
     key_material: &super::key_material::LazyKeyMaterial,
     detail: &CertificateDetail,
-    pending_renewal: Option<&super::key_material::PendingRenewal>,
 ) -> Result<(), Error> {
     let InstallFinishContext {
         dhttp_home,
@@ -591,10 +590,11 @@ async fn install_and_finish(
         certificate_action(resolved),
     )
     .await?;
-    if let Some(pending_renewal) = pending_renewal
-        && let Err(error) = pending_renewal
-            .remove(dhttp_home, resolved.target.dhttp_name())
-            .await
+    if let Err(error) = super::key_material::PendingRenewal::remove_for_name(
+        dhttp_home,
+        resolved.target.dhttp_name(),
+    )
+    .await
     {
         tracing::warn!(
             identity = %resolved.target.full_name(),
@@ -721,7 +721,6 @@ pub(crate) async fn run(
                     },
                     &key_material,
                     &detail,
-                    pending_renewal.as_ref(),
                 )
                 .await;
             }

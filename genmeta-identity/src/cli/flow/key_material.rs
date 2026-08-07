@@ -205,11 +205,24 @@ impl PendingRenewal {
 
         match tokio::fs::hard_link(&temp_path, &path).await {
             Ok(()) => {
-                let _ = tokio::fs::remove_file(&temp_path).await;
+                sync_parent_directory(&path).await?;
+                tokio::fs::remove_file(&temp_path).await.map_err(|error| {
+                    pending_error(format!(
+                        "failed to remove temporary renewal material at {}: {error}",
+                        temp_path.display()
+                    ))
+                })?;
+                sync_parent_directory(&path).await?;
                 Ok(pending)
             }
             Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-                let _ = tokio::fs::remove_file(&temp_path).await;
+                tokio::fs::remove_file(&temp_path).await.map_err(|error| {
+                    pending_error(format!(
+                        "failed to remove temporary renewal material at {}: {error}",
+                        temp_path.display()
+                    ))
+                })?;
+                sync_parent_directory(&path).await?;
                 Self::load(dhttp_home, name, kind, sequence)
                     .await?
                     .ok_or_else(|| pending_error("pending renewal material disappeared"))
@@ -229,9 +242,16 @@ impl PendingRenewal {
         dhttp_home: &DhttpHome,
         name: DhttpName<'_>,
     ) -> Result<(), Error> {
+        Self::remove_for_name(dhttp_home, name).await
+    }
+
+    pub(crate) async fn remove_for_name(
+        dhttp_home: &DhttpHome,
+        name: DhttpName<'_>,
+    ) -> Result<(), Error> {
         let path = pending_path(dhttp_home, name);
         match tokio::fs::remove_file(&path).await {
-            Ok(()) => Ok(()),
+            Ok(()) => sync_parent_directory(&path).await,
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
             Err(error) => Err(pending_error(format!(
                 "failed to remove pending renewal material at {}: {error}",
@@ -313,6 +333,33 @@ async fn ensure_restricted_permissions(path: &std::path::Path) -> Result<(), Err
 
 #[cfg(not(unix))]
 async fn ensure_restricted_permissions(_path: &std::path::Path) -> Result<(), Error> {
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn sync_parent_directory(path: &std::path::Path) -> Result<(), Error> {
+    let parent = path.parent().ok_or_else(|| {
+        pending_error(format!(
+            "pending renewal path {} has no parent directory",
+            path.display()
+        ))
+    })?;
+    let directory = tokio::fs::File::open(parent).await.map_err(|error| {
+        pending_error(format!(
+            "failed to open pending renewal directory {}: {error}",
+            parent.display()
+        ))
+    })?;
+    directory.sync_all().await.map_err(|error| {
+        pending_error(format!(
+            "failed to sync pending renewal directory {}: {error}",
+            parent.display()
+        ))
+    })
+}
+
+#[cfg(not(unix))]
+async fn sync_parent_directory(_path: &std::path::Path) -> Result<(), Error> {
     Ok(())
 }
 
@@ -434,6 +481,38 @@ mod tests {
         loaded.remove(&home, name.borrow()).await.unwrap();
         assert!(
             PendingRenewal::load(&home, name.borrow(), "primary", 7)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        tokio::fs::remove_dir_all(home_path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn pending_renewal_can_be_cleared_before_installing_another_chain() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos();
+        let home_path = std::env::temp_dir().join(format!(
+            "genmeta-pending-renewal-clear-{}-{nonce}",
+            std::process::id()
+        ));
+        let home = DhttpHome::new(home_path.clone());
+        let name = DhttpName::try_from("alice.smith").unwrap();
+        tokio::fs::create_dir_all(home.identity_profile(name.borrow()).path())
+            .await
+            .unwrap();
+
+        PendingRenewal::create(&home, name.borrow(), "primary", 7, "test laptop")
+            .await
+            .unwrap();
+        PendingRenewal::remove_for_name(&home, name.borrow())
+            .await
+            .unwrap();
+
+        assert!(
+            PendingRenewal::load(&home, name.borrow(), "secondary", 0)
                 .await
                 .unwrap()
                 .is_none()

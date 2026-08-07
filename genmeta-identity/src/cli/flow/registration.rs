@@ -6,6 +6,7 @@ use super::target::IdentityTarget;
 use crate::{
     cert_server::{
         CertServer, CreateDomainResponse, CreateSubdomainResponse, DomainAvailabilityResponse,
+        DomainQuotes,
     },
     cli::{
         Error,
@@ -41,6 +42,7 @@ pub(crate) enum RegistrationProof<'a> {
 pub(crate) trait RegistrationApi {
     async fn pricing(
         &self,
+        token: &str,
         target: &IdentityTarget,
     ) -> Result<DomainAvailabilityResponse, RegistrationError>;
 
@@ -61,10 +63,16 @@ pub(crate) trait RegistrationApi {
         token: &str,
         expires_at: i64,
     ) -> Result<CreateDomainResponse, RegistrationError>;
+
+    async fn cancel_reservation(
+        &self,
+        token: &str,
+        reservation_no: &str,
+    ) -> Result<(), RegistrationError>;
 }
 
 pub(crate) trait RegistrationUi {
-    async fn confirm_paid_root(&self) -> Result<bool, RegistrationError>;
+    async fn confirm_paid_root(&self, message: &str) -> Result<bool, RegistrationError>;
     fn print_payment(&self, url: &str) -> Result<(), RegistrationError>;
 }
 
@@ -97,8 +105,11 @@ pub(crate) enum RegistrationError {
     #[snafu(display("{target} is not available to register"))]
     TargetUnavailable { target: String },
 
-    #[snafu(display("cert server unexpectedly returned a checkout for a free identity"))]
-    UnexpectedFreeCheckout,
+    #[snafu(display("cert server requested payment without returning a paid price"))]
+    MissingCheckoutPricing,
+
+    #[snafu(display("cert server requested payment without returning a checkout reservation"))]
+    MissingCheckoutReservation,
 
     #[snafu(display("checkout did not complete successfully"))]
     CheckoutNotCompleted,
@@ -133,11 +144,12 @@ impl<'a> CertServerRegistrationApi<'a> {
 impl RegistrationApi for CertServerRegistrationApi<'_> {
     async fn pricing(
         &self,
+        token: &str,
         target: &IdentityTarget,
     ) -> Result<DomainAvailabilityResponse, RegistrationError> {
         Ok(self
             .cert_server
-            .inspect_domain_availability(target.full_name())
+            .inspect_domain_availability_with_token(token, target.full_name())
             .await?)
     }
 
@@ -203,21 +215,28 @@ impl RegistrationApi for CertServerRegistrationApi<'_> {
             .await?,
         )
     }
+
+    async fn cancel_reservation(
+        &self,
+        token: &str,
+        reservation_no: &str,
+    ) -> Result<(), RegistrationError> {
+        Ok(self
+            .cert_server
+            .cancel_reservation(token, reservation_no)
+            .await?)
+    }
 }
 
 pub(crate) struct InquireRegistrationUi;
 
 impl RegistrationUi for InquireRegistrationUi {
-    async fn confirm_paid_root(&self) -> Result<bool, RegistrationError> {
-        let answer = prompt::sync(|| {
-            inquire::Confirm::new(
-                "This new name is nice, it costs $5/mon or $30/yr, would you like to subscribe to own it exclusively?",
-            )
-            .with_default(true)
-            .prompt()
-        })
-        .await
-        .require_interactive("an interactive terminal to confirm payment")?;
+    async fn confirm_paid_root(&self, message: &str) -> Result<bool, RegistrationError> {
+        let message = message.to_string();
+        let answer =
+            prompt::sync(move || inquire::Confirm::new(&message).with_default(true).prompt())
+                .await
+                .require_interactive("an interactive terminal to confirm payment")?;
         Ok(answer)
     }
 
@@ -231,13 +250,55 @@ impl RegistrationUi for InquireRegistrationUi {
 pub(crate) struct NoRegistrationUi;
 
 impl RegistrationUi for NoRegistrationUi {
-    async fn confirm_paid_root(&self) -> Result<bool, RegistrationError> {
+    async fn confirm_paid_root(&self, _message: &str) -> Result<bool, RegistrationError> {
         Err(RegistrationError::PaymentRequiresInteractive)
     }
 
     fn print_payment(&self, _url: &str) -> Result<(), RegistrationError> {
         Err(RegistrationError::PaymentRequiresInteractive)
     }
+}
+
+fn format_price(currency: &str, amount: i64) -> String {
+    format!(
+        "{currency} {}.{:02}",
+        amount.div_euclid(100),
+        amount.rem_euclid(100)
+    )
+}
+
+fn paid_root_confirmation_message(
+    target: &IdentityTarget,
+    quotes: &DomainQuotes,
+    free_quota_used: bool,
+) -> String {
+    let mut price = format!(
+        "{}: {}/month or {}/year",
+        target.short_name(),
+        format_price(&quotes.currency, quotes.monthly),
+        format_price(&quotes.currency, quotes.yearly)
+    );
+    if let Some(percent_off) = quotes.promotion_percent_off() {
+        price.push_str(&format!(" ({percent_off}% off)"));
+    }
+    if free_quota_used {
+        format!("Free quota used. {price}. Continue?")
+    } else {
+        format!("{price}. Continue to checkout?")
+    }
+}
+
+async fn cancel_created_reservation(
+    api: &impl RegistrationApi,
+    token: &str,
+    created: &CreateDomainResponse,
+) -> Result<(), RegistrationError> {
+    let reservation = created
+        .reservation
+        .as_ref()
+        .ok_or(RegistrationError::MissingCheckoutReservation)?;
+    api.cancel_reservation(token, &reservation.reservation_no)
+        .await
 }
 
 pub(crate) async fn register_missing_root(
@@ -247,7 +308,7 @@ pub(crate) async fn register_missing_root(
     token: &str,
     interactive: bool,
 ) -> Result<RegistrationOutcome, RegistrationError> {
-    let pricing = api.pricing(target).await?;
+    let pricing = api.pricing(token, target).await?;
     match pricing.availability.as_str() {
         "conflict" => return Ok(RegistrationOutcome::Existing),
         "available" => {}
@@ -264,14 +325,9 @@ pub(crate) async fn register_missing_root(
         });
     }
 
-    let paid = !pricing.is_free();
-    if paid {
-        if !interactive {
-            return Err(RegistrationError::PaymentRequiresInteractive);
-        }
-        if !ui.confirm_paid_root().await? {
-            return Err(RegistrationError::Declined);
-        }
+    let quoted_free = pricing.is_free();
+    if !quoted_free && !interactive {
+        return Err(RegistrationError::PaymentRequiresInteractive);
     }
 
     let created = match api.create_root(token, target).await {
@@ -286,11 +342,31 @@ pub(crate) async fn register_missing_root(
         return Ok(RegistrationOutcome::CreatedFree);
     };
 
-    if !paid {
-        return Err(RegistrationError::UnexpectedFreeCheckout);
+    if created.quotes.monthly == 0 && created.quotes.yearly == 0 {
+        cancel_created_reservation(api, token, &created).await?;
+        return Err(RegistrationError::MissingCheckoutPricing);
+    }
+    if !interactive {
+        cancel_created_reservation(api, token, &created).await?;
+        return Err(RegistrationError::PaymentRequiresInteractive);
+    }
+    let message = paid_root_confirmation_message(target, &created.quotes, quoted_free);
+    let confirmed = match ui.confirm_paid_root(&message).await {
+        Ok(confirmed) => confirmed,
+        Err(error) => {
+            cancel_created_reservation(api, token, &created).await?;
+            return Err(error);
+        }
+    };
+    if !confirmed {
+        cancel_created_reservation(api, token, &created).await?;
+        return Err(RegistrationError::Declined);
     }
 
-    ui.print_payment(&payment_entry.url)?;
+    if let Err(error) = ui.print_payment(&payment_entry.url) {
+        cancel_created_reservation(api, token, &created).await?;
+        return Err(error);
+    }
     let completed = api
         .checkout(&payment_entry.checkout_token, payment_entry.expires_at)
         .await?;
@@ -353,6 +429,32 @@ mod tests {
             Self::new(500, 3000, Some("https://pay.example.test/checkout"))
         }
 
+        fn free_then_paid() -> Self {
+            let mut api = Self::new(0, 0, Some("https://pay.example.test/checkout"));
+            api.created.quotes.monthly = 100;
+            api.created.quotes.yearly = 600;
+            api.created.quotes.options = serde_json::from_value(serde_json::json!([
+                {
+                    "billing_cycle": "monthly",
+                    "price_code": "root_pro_monthly",
+                    "list_amount": 500,
+                    "discount_amount": 400,
+                    "payable_amount": 100,
+                    "benefit": {"type": "promotion", "percent_off": 80}
+                },
+                {
+                    "billing_cycle": "yearly",
+                    "price_code": "root_pro_yearly",
+                    "list_amount": 3000,
+                    "discount_amount": 2400,
+                    "payable_amount": 600,
+                    "benefit": {"type": "promotion", "percent_off": 80}
+                }
+            ]))
+            .unwrap();
+            api
+        }
+
         fn new(monthly: i64, yearly: i64, payment_url: Option<&str>) -> Self {
             let pricing = serde_json::from_value(serde_json::json!({
                 "domain": "alice.smith.dhttp.net",
@@ -375,6 +477,11 @@ mod tests {
                 "next_action": if payment_url.is_some() { "payment" } else { "completed" }
             });
             if let Some(url) = payment_url {
+                created["reservation"] = serde_json::json!({
+                    "reservation_no": "RSV_test",
+                    "status": "reserved",
+                    "expires_at": 1_900_000_000_i64
+                });
                 created["payment_entry"] = serde_json::json!({
                     "url": url,
                     "checkout_token": "ckt_test",
@@ -396,6 +503,7 @@ mod tests {
     impl RegistrationApi for FakeRegistrationApi {
         async fn pricing(
             &self,
+            _token: &str,
             _target: &IdentityTarget,
         ) -> Result<DomainAvailabilityResponse, RegistrationError> {
             self.calls.lock().unwrap().push("pricing");
@@ -442,12 +550,22 @@ mod tests {
             completed.next_action = "completed".to_string();
             Ok(completed)
         }
+
+        async fn cancel_reservation(
+            &self,
+            _token: &str,
+            reservation_no: &str,
+        ) -> Result<(), RegistrationError> {
+            assert_eq!(reservation_no, "RSV_test");
+            self.calls.lock().unwrap().push("cancel");
+            Ok(())
+        }
     }
 
     struct NoUi;
 
     impl RegistrationUi for NoUi {
-        async fn confirm_paid_root(&self) -> Result<bool, RegistrationError> {
+        async fn confirm_paid_root(&self, _message: &str) -> Result<bool, RegistrationError> {
             Err(RegistrationError::PaymentRequiresInteractive)
         }
 
@@ -459,7 +577,7 @@ mod tests {
     struct DecliningUi;
 
     impl RegistrationUi for DecliningUi {
-        async fn confirm_paid_root(&self) -> Result<bool, RegistrationError> {
+        async fn confirm_paid_root(&self, _message: &str) -> Result<bool, RegistrationError> {
             Ok(false)
         }
 
@@ -471,10 +589,12 @@ mod tests {
     #[derive(Default)]
     struct AcceptingUi {
         printed: Mutex<Vec<String>>,
+        confirmations: Mutex<Vec<String>>,
     }
 
     impl RegistrationUi for AcceptingUi {
-        async fn confirm_paid_root(&self) -> Result<bool, RegistrationError> {
+        async fn confirm_paid_root(&self, message: &str) -> Result<bool, RegistrationError> {
+            self.confirmations.lock().unwrap().push(message.to_string());
             Ok(true)
         }
 
@@ -500,12 +620,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn paid_registration_requires_confirmation_before_create_request() {
+    async fn paid_registration_decline_leaves_checkout_unopened() {
         let api = FakeRegistrationApi::paid();
         let result = register_missing_root(&api, &DecliningUi, &target(), "token", true).await;
 
         assert!(matches!(result, Err(RegistrationError::Declined)));
-        assert_eq!(api.calls(), ["pricing"]);
+        assert_eq!(api.calls(), ["pricing", "register-root", "cancel"]);
     }
 
     #[tokio::test]
@@ -535,6 +655,52 @@ mod tests {
             *ui.printed.lock().unwrap(),
             ["https://pay.example.test/checkout"]
         );
+        assert_eq!(
+            *ui.confirmations.lock().unwrap(),
+            ["alice.smith: USD 5.00/month or USD 30.00/year. Continue to checkout?"]
+        );
+    }
+
+    #[tokio::test]
+    async fn exhausted_free_quota_confirms_final_server_price_then_checks_out() {
+        let api = FakeRegistrationApi::free_then_paid();
+        let ui = AcceptingUi::default();
+
+        let outcome = register_missing_root(&api, &ui, &target(), "token", true)
+            .await
+            .unwrap();
+
+        assert_eq!(outcome, RegistrationOutcome::CreatedPaid);
+        assert_eq!(api.calls(), ["pricing", "register-root", "checkout"]);
+        assert_eq!(
+            *ui.confirmations.lock().unwrap(),
+            ["Free quota used. alice.smith: USD 1.00/month or USD 6.00/year (80% off). Continue?"]
+        );
+        assert_eq!(
+            *ui.printed.lock().unwrap(),
+            ["https://pay.example.test/checkout"]
+        );
+    }
+
+    #[tokio::test]
+    async fn exhausted_free_quota_can_decline_before_checkout() {
+        let api = FakeRegistrationApi::free_then_paid();
+        let result = register_missing_root(&api, &DecliningUi, &target(), "token", true).await;
+
+        assert!(matches!(result, Err(RegistrationError::Declined)));
+        assert_eq!(api.calls(), ["pricing", "register-root", "cancel"]);
+    }
+
+    #[tokio::test]
+    async fn exhausted_free_quota_requires_an_interactive_checkout_confirmation() {
+        let api = FakeRegistrationApi::free_then_paid();
+        let result = register_missing_root(&api, &NoUi, &target(), "token", false).await;
+
+        assert!(matches!(
+            result,
+            Err(RegistrationError::PaymentRequiresInteractive)
+        ));
+        assert_eq!(api.calls(), ["pricing", "register-root", "cancel"]);
     }
 
     #[tokio::test]

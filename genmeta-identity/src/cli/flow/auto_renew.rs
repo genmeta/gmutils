@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsStr,
     path::{Path, PathBuf},
     process::Stdio,
 };
@@ -55,6 +56,48 @@ fn is_standalone_identity_binary(executable: &Path) -> bool {
         .file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name == "genmeta-identity")
+}
+
+fn points_to_current_executable(candidate: &Path, current_executable: &Path) -> bool {
+    candidate
+        .canonicalize()
+        .ok()
+        .zip(current_executable.canonicalize().ok())
+        .is_some_and(|(candidate, current)| candidate == current)
+}
+
+fn scheduled_executable(
+    current_executable: &Path,
+    invoked_as: Option<&OsStr>,
+    search_path: Option<&OsStr>,
+    current_dir: Option<&Path>,
+) -> PathBuf {
+    let Some(invoked_as) = invoked_as else {
+        return current_executable.to_path_buf();
+    };
+    let invoked_path = Path::new(invoked_as);
+
+    if invoked_path.is_absolute() {
+        if points_to_current_executable(invoked_path, current_executable) {
+            return invoked_path.to_path_buf();
+        }
+    } else if invoked_path.components().count() > 1 {
+        if let Some(current_dir) = current_dir {
+            let candidate = current_dir.join(invoked_path);
+            if points_to_current_executable(&candidate, current_executable) {
+                return candidate;
+            }
+        }
+    } else if let Some(search_path) = search_path {
+        for directory in std::env::split_paths(search_path) {
+            let candidate = directory.join(invoked_path);
+            if points_to_current_executable(&candidate, current_executable) {
+                return candidate;
+            }
+        }
+    }
+
+    current_executable.to_path_buf()
 }
 
 fn build_entry(
@@ -216,7 +259,16 @@ async fn remove_with(crontab: &Path, identity: &str, home_scope: HomeScope) -> R
 }
 
 pub(crate) async fn ensure(identity: &str, home_scope: HomeScope) -> Result<(), Error> {
-    let executable = std::env::current_exe().context(CurrentExecutableSnafu)?;
+    let current_executable = std::env::current_exe().context(CurrentExecutableSnafu)?;
+    let invoked_as = std::env::args_os().next();
+    let search_path = std::env::var_os("PATH");
+    let current_dir = std::env::current_dir().ok();
+    let executable = scheduled_executable(
+        &current_executable,
+        invoked_as.as_deref(),
+        search_path.as_deref(),
+        current_dir.as_deref(),
+    );
     ensure_with(Path::new("crontab"), &executable, identity, home_scope).await
 }
 
@@ -234,7 +286,10 @@ mod tests {
 
     use dhttp::home::HomeScope;
 
-    use super::{build_entry, ensure_with, remove_with, removed_crontab, updated_crontab};
+    use super::{
+        build_entry, ensure_with, remove_with, removed_crontab, scheduled_executable,
+        updated_crontab,
+    };
 
     fn unique_test_dir() -> PathBuf {
         let nonce = SystemTime::now()
@@ -242,6 +297,29 @@ mod tests {
             .expect("system clock should be after unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("genmeta-auto-renew-{}-{nonce}", std::process::id()))
+    }
+
+    #[test]
+    fn preserves_a_stable_symlink_from_the_invocation_path() {
+        let test_dir = unique_test_dir();
+        let cellar_dir = test_dir.join("Cellar/gmutils/0.5.0/bin");
+        let stable_bin_dir = test_dir.join("bin");
+        std::fs::create_dir_all(&cellar_dir).unwrap();
+        std::fs::create_dir_all(&stable_bin_dir).unwrap();
+        let versioned_executable = cellar_dir.join("genmeta");
+        std::fs::write(&versioned_executable, b"test executable").unwrap();
+        let stable_executable = stable_bin_dir.join("genmeta");
+        std::os::unix::fs::symlink(&versioned_executable, &stable_executable).unwrap();
+
+        let resolved = scheduled_executable(
+            &versioned_executable,
+            Some(std::ffi::OsStr::new("genmeta")),
+            Some(stable_bin_dir.as_os_str()),
+            None,
+        );
+
+        assert_eq!(resolved, stable_executable);
+        std::fs::remove_dir_all(test_dir).unwrap();
     }
 
     #[test]
