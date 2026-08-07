@@ -288,6 +288,34 @@ pub struct DomainQuotes {
     pub monthly: i64,
     pub yearly: i64,
     pub default_billing_cycle: String,
+    #[serde(default)]
+    pub options: Vec<DomainQuoteOption>,
+}
+
+impl DomainQuotes {
+    pub fn promotion_percent_off(&self) -> Option<i32> {
+        self.options.iter().find_map(|option| match option.benefit {
+            Some(DomainQuoteBenefit::Promotion { percent_off }) => Some(percent_off),
+            _ => None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DomainQuoteOption {
+    pub billing_cycle: String,
+    pub price_code: String,
+    pub list_amount: i64,
+    pub discount_amount: i64,
+    pub payable_amount: i64,
+    pub benefit: Option<DomainQuoteBenefit>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DomainQuoteBenefit {
+    Promotion { percent_off: i32 },
+    StarterEntitlement,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -706,6 +734,21 @@ impl CertServer {
         parse_response(response).await
     }
 
+    pub async fn inspect_domain_availability_with_token(
+        &self,
+        access_token: &str,
+        domain: &str,
+    ) -> Result<DomainAvailabilityResponse, Error> {
+        let response = self
+            .http_client
+            .get(self.http_url("/v2/pricing"))
+            .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
+            .query(&[("domain", domain)])
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
     pub async fn login(&self, email: &str, verify_code: &str) -> Result<LoginResponse, Error> {
         let response = self
             .http_client
@@ -901,6 +944,22 @@ impl CertServer {
             .send()
             .await?;
         parse_response(response).await
+    }
+
+    pub async fn cancel_reservation(
+        &self,
+        access_token: &str,
+        reservation_no: &str,
+    ) -> Result<(), Error> {
+        let response = self
+            .http_client
+            .post(self.http_url("/v2/invoice/cancel"))
+            .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
+            .json(&json!({ "reservation_no": reservation_no }))
+            .send()
+            .await?;
+        let _: Value = parse_response(response).await?;
+        Ok(())
     }
 
     pub async fn issue_cert_with_identity(
