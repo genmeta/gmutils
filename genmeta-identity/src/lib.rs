@@ -16,7 +16,7 @@ pub mod local_identity;
 
 pub const DEFAULT_DEVICE_NAME: &str = "local device";
 
-pub const DEFAULT_CERT_SERVER_BASE_URL: &str = "https://api.genmeta.net:4433";
+pub const DEFAULT_CERT_SERVER_BASE_URL: &str = "https://api.genmeta.net";
 pub const CERT_SERVER_URL_ENV: &str = "DHTTP_CERT_SERVER_URL";
 pub const CERT_SERVER_BASE_URL: &str = bootstrap::DHTTP_CERT_SERVER_URL;
 

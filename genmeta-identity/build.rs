@@ -1,7 +1,7 @@
 use std::{env, fs, path::PathBuf};
 
 const CERT_SERVER_URL_ENV: &str = "DHTTP_CERT_SERVER_URL";
-const DEFAULT_CERT_SERVER_BASE_URL: &str = "https://api.genmeta.net:4433";
+const DEFAULT_CERT_SERVER_BASE_URL: &str = "https://api.genmeta.net";
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by cargo"));
@@ -34,7 +34,7 @@ mod tests {
 
         assert_eq!(
             env_or_default(&name, DEFAULT_CERT_SERVER_BASE_URL),
-            "https://api.genmeta.net:4433"
+            "https://api.genmeta.net"
         );
     }
 }
