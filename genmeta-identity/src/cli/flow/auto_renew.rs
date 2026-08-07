@@ -91,8 +91,15 @@ fn scheduled_executable(
     } else if let Some(search_path) = search_path {
         for directory in std::env::split_paths(search_path) {
             let candidate = directory.join(invoked_path);
-            if points_to_current_executable(&candidate, current_executable) {
-                return candidate;
+            let comparison_candidate = if candidate.is_absolute() {
+                candidate.clone()
+            } else if let Some(current_dir) = current_dir {
+                current_dir.join(&candidate)
+            } else {
+                continue;
+            };
+            if points_to_current_executable(&comparison_candidate, current_executable) {
+                return comparison_candidate;
             }
         }
     }
@@ -319,6 +326,30 @@ mod tests {
         );
 
         assert_eq!(resolved, stable_executable);
+        std::fs::remove_dir_all(test_dir).unwrap();
+    }
+
+    #[test]
+    fn absolutizes_a_stable_symlink_found_through_a_relative_path_entry() {
+        let test_dir = unique_test_dir();
+        let versioned_dir = test_dir.join("Cellar/gmutils/0.5.0/bin");
+        let stable_dir = test_dir.join("bin");
+        std::fs::create_dir_all(&versioned_dir).unwrap();
+        std::fs::create_dir_all(&stable_dir).unwrap();
+        let versioned_executable = versioned_dir.join("genmeta");
+        std::fs::write(&versioned_executable, b"test executable").unwrap();
+        let stable_executable = stable_dir.join("genmeta");
+        std::os::unix::fs::symlink(&versioned_executable, &stable_executable).unwrap();
+
+        let resolved = scheduled_executable(
+            &versioned_executable,
+            Some(std::ffi::OsStr::new("genmeta")),
+            Some(std::ffi::OsStr::new("bin")),
+            Some(&test_dir),
+        );
+
+        assert_eq!(resolved, stable_executable);
+        assert!(resolved.is_absolute());
         std::fs::remove_dir_all(test_dir).unwrap();
     }
 

@@ -144,6 +144,11 @@ fn normalize_api_code(code: &str) -> &str {
     }
 }
 
+fn idempotency_header(value: &str) -> Result<http::HeaderValue, Error> {
+    http::HeaderValue::from_str(value)
+        .map_err(|error| Error::without_source(format!("invalid idempotency key: {error}")))
+}
+
 const SUBDOMAIN_QUOTA_MESSAGE: &str = "The parent identity has reached its sub-identity seat limit. Update your subscription plan to add more seats, then try again.";
 
 fn user_facing_api_message(code: &str, server_message: &str) -> String {
@@ -648,11 +653,7 @@ impl CertServer {
             http::HeaderValue::from_static("application/json"),
         );
         if let Some(idempotency_key) = idempotency_key {
-            request = request.header(
-                "idempotency-key",
-                http::HeaderValue::from_str(idempotency_key)
-                    .expect("validated idempotency key is a valid HTTP header value"),
-            );
+            request = request.header("idempotency-key", idempotency_header(idempotency_key)?);
         }
         let response = request
             .body(body.to_string())
@@ -687,11 +688,7 @@ impl CertServer {
             http::HeaderValue::from_static("application/json"),
         );
         if let Some(idempotency_key) = idempotency_key {
-            request = request.header(
-                "idempotency-key",
-                http::HeaderValue::from_str(idempotency_key)
-                    .expect("validated idempotency key is a valid HTTP header value"),
-            );
+            request = request.header("idempotency-key", idempotency_header(idempotency_key)?);
         }
         let response = request
             .body(body.to_string())
@@ -1036,7 +1033,7 @@ impl CertServer {
             .post(self.http_url("/v2/cert/renew"))
             .header(header::AUTHORIZATION, format!("Bearer {access_token}"));
         if let Some(idempotency_key) = request.idempotency_key {
-            builder = builder.header("idempotency-key", idempotency_key);
+            builder = builder.header("idempotency-key", idempotency_header(idempotency_key)?);
         }
         parse_response(builder.json(&request.body()).send().await?).await
     }
@@ -1264,6 +1261,12 @@ mod tests {
             reqwest::StatusCode::INTERNAL_SERVER_ERROR,
             "starter_domain_limit_reached"
         ));
+    }
+
+    #[test]
+    fn invalid_idempotency_key_is_rejected_without_panicking() {
+        let error = idempotency_header("renew-v1\ninvalid").unwrap_err();
+        assert!(error.to_string().starts_with("invalid idempotency key:"));
     }
 
     #[test]

@@ -21,6 +21,7 @@ const APPLY_OPENING: &str = "Applying identity, generating ECC key pair locally,
 const INSTALLED: &str = "✔ Identity successfully installed on this device.";
 const NEW_NAME_FREE: &str = "This new name is yours now.";
 
+#[cfg(any(unix, test))]
 fn auto_renew_enabled_message(identity: &str) -> String {
     format!("✔ Automatic certificate renewal enabled for {identity}.")
 }
