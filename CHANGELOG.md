@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1-beta.2] - 2026-08-07
+
+### Added
+
+- Persist certificate-renewal operations and schedule automatic renewal for
+  user and global identity scopes.
+
+### Changed
+
+- Identity apply and renew flows retain renewal state and preserve the active
+  certificate-server ports while renewal work is in progress.
+- DHTTP service names and default endpoints now use the current deployment
+  variables.
+
+### Fixed
+
+- Renewal edge cases are handled without leaving stale renewal records or
+  legacy service-port routing behind.
+
+### Dependencies
+
+- Release manifests target `dhttp` v0.6.1-beta.2 and `h3x` v0.6.1-beta.1.
+
+### Components
+
+- `genmeta` v0.8.1-beta.2
+- `genmeta-identity` v0.4.1-beta.2
+- All other gmutils workspace member versions are unchanged from v0.8.1-beta.1.
+
 ## [0.8.1-beta.1] - 2026-08-05
 
 ### Fixed
