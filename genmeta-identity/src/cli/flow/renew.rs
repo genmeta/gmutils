@@ -185,6 +185,7 @@ fn renew_remote_error(error: crate::cert_server::Error, target: &str) -> Error {
     error.into()
 }
 
+#[cfg(any(unix, test))]
 fn stops_automatic_renewal(error: &crate::cert_server::Error) -> bool {
     matches!(error.api_code(), Some("domain_expired" | "domain_revoked"))
 }

@@ -292,6 +292,7 @@ impl PendingRenewal {
         if self.operation_key.len() < 8
             || self.operation_key.len() > 200
             || !self.operation_key.is_ascii()
+            || http::HeaderValue::from_str(&self.operation_key).is_err()
             || self.key_pem.is_empty()
             || self.csr_pem.is_empty()
         {
@@ -486,6 +487,30 @@ mod tests {
                 .is_none()
         );
         tokio::fs::remove_dir_all(home_path).await.unwrap();
+    }
+
+    #[test]
+    fn pending_renewal_rejects_an_operation_key_that_is_not_a_header_value() {
+        let pending = PendingRenewal {
+            target: "alice.smith".to_string(),
+            kind: "primary".to_string(),
+            sequence: 7,
+            device_name: "test laptop".to_string(),
+            operation_key: "renew-v1\ninvalid".to_string(),
+            key_pem: "test-key".to_string(),
+            csr_pem: "test-csr".to_string(),
+        };
+
+        let error = pending
+            .validate(
+                "alice.smith",
+                "primary",
+                7,
+                std::path::Path::new(".renew-pending.json"),
+            )
+            .unwrap_err();
+
+        assert!(error.to_string().contains("is incomplete"));
     }
 
     #[tokio::test]
