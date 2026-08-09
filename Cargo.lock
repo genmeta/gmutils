@@ -1241,9 +1241,9 @@ dependencies = [
 
 [[package]]
 name = "dhttp"
-version = "0.6.1-beta.2"
+version = "0.6.1-beta.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e56be49acafefd26a6e30078e5ee2da380243f183849dbf4fc05bddd6aabf0b"
+checksum = "91921d8a7e7865b1e6d7ffefe8aa76feeb952c22c5c4b161b3637fbd41ad6d73"
 dependencies = [
  "bon",
  "bytes",
@@ -1476,9 +1476,9 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "dyns"
-version = "0.7.1-beta.1"
+version = "0.7.1-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3db584a53a6957ace2dc39782cc1636e433eecbd4dfa38a375d64f50907b2e37"
+checksum = "edbd845f95a495c3d4a645c33e5fa65d6861e853f901f8f228d998321bc54897"
 dependencies = [
  "base64 0.22.1",
  "bitfield-struct",
@@ -1823,7 +1823,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta"
-version = "0.8.1-beta.2"
+version = "0.8.1-beta.3"
 dependencies = [
  "clap",
  "genmeta-access",
@@ -1856,7 +1856,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-curl"
-version = "0.7.1-beta.1"
+version = "0.7.1-beta.2"
 dependencies = [
  "async-compression",
  "bytes",
@@ -1962,7 +1962,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-proxy"
-version = "0.4.1-beta.1"
+version = "0.4.1-beta.2"
 dependencies = [
  "bytes",
  "clap",
@@ -1982,7 +1982,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-ssh"
-version = "0.7.1-beta.2"
+version = "0.7.1-beta.3"
 dependencies = [
  "clap",
  "crossterm",
@@ -2089,9 +2089,9 @@ dependencies = [
 
 [[package]]
 name = "h3x"
-version = "0.6.1-beta.1"
+version = "0.6.1-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d445c8f0cc3a61f412e0e73c2103e929cba60b98d7f6f7473de6eab785c2e73"
+checksum = "76ed18f18175fd607d6589d712116d235394ada0620c2bbe4be8f9134eeb1edb"
 dependencies = [
  "arc-swap",
  "async-channel",

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1-beta.3] - 2026-08-10
+
+### Fixed
+
+- Preserve `.dhttp.net` logical names and numeric certificate sequence
+  selectors when opening DHTTP/3 connections.
+- Apply HTTP and HTTPS default ports to conventional DNS targets before they
+  reach the system resolver.
+
+### Dependencies
+
+- Release manifests target `dhttp` v0.6.1-beta.3 and `h3x` v0.6.1-beta.2.
+
+### Components
+
+- `genmeta` v0.8.1-beta.3
+- `genmeta-curl` v0.7.1-beta.2
+- `genmeta-proxy` v0.4.1-beta.2
+- `genmeta-ssh` v0.7.1-beta.3
+- All other gmutils workspace member versions are unchanged from v0.8.1-beta.2.
+
 ## [0.8.1-beta.2] - 2026-08-07
 
 ### Added
