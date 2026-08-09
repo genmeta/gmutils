@@ -109,7 +109,7 @@ genmeta-ssh = { path = "genmeta-ssh", version = "0.7.1-beta.1" }
 genmeta-proxy = { path = "genmeta-proxy", version = "0.4.1-beta.1" }
 
 # DShell
-dshell = { version = "0.6.0", features = [
+dshell = { version = "0.6.1-beta.1", features = [
     "config",
 ] }
 
