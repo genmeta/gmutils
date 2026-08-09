@@ -105,7 +105,7 @@ genmeta-doctor = { path = "genmeta-doctor", version = "0.4.1-beta.1" }
 genmeta-identity = { path = "genmeta-identity", version = "0.4.1-beta.1", default-features = false }
 genmeta-nat = { path = "genmeta-nat", version = "0.5.1-beta.1" }
 genmeta-nslookup = { path = "genmeta-nslookup", version = "0.5.1-beta.1" }
-genmeta-ssh = { path = "genmeta-ssh", version = "0.7.1-beta.1" }
+genmeta-ssh = { path = "genmeta-ssh", version = "0.7.1-beta.2" }
 genmeta-proxy = { path = "genmeta-proxy", version = "0.4.1-beta.1" }
 
 # DShell

@@ -1982,7 +1982,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-ssh"
-version = "0.7.1-beta.1"
+version = "0.7.1-beta.2"
 dependencies = [
  "clap",
  "crossterm",
