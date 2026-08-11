@@ -173,7 +173,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let resolver = endpoint.resolver();
 
     let mut lookup = resolver
-        .lookup(options.name.as_full())
+        .lookup(options.name.as_full(), "443", None)
         .await
         .context(error::LookUpSnafu {
             name: options.name.to_owned(),
