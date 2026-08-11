@@ -215,7 +215,7 @@ mod tests {
 
     use dhttp::{
         ddns::resolvers::endpoint_candidates::{EndpointCandidateFuture, SequenceQuery},
-        dquic::qresolve::{Resolve, ResolveFuture},
+        dquic::qresolve::{Family, Resolve, ResolveFuture},
     };
     use futures::{FutureExt, StreamExt};
 
@@ -233,7 +233,12 @@ mod tests {
     }
 
     impl Resolve for RecordingResolver {
-        fn lookup<'a>(&'a self, _name: &'a str) -> ResolveFuture<'a> {
+        fn lookup<'a>(
+            &'a self,
+            _hostname: &'a str,
+            _servname: &'a str,
+            _family: Option<Family>,
+        ) -> ResolveFuture<'a> {
             async { Ok(futures::stream::empty().boxed()) }.boxed()
         }
     }
