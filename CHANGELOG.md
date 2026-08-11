@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1-beta.4] - 2026-08-11
+
+### Fixed
+
+- Adapt `genmeta nslookup` to the latest `qresolve` contract without changing
+  its CLI: use the default QUIC/DHTTP service and request all address families.
+- Update local resolver implementations to the latest `qresolve` contract.
+
+### Dependencies
+
+- Release manifests and the binary lockfile target `dhttp` v0.6.1, `h3x`
+  v0.6.1, `dquic` v0.7.1, and `qresolve` v0.8.0.
+
+### Components
+
+- `genmeta` v0.8.1-beta.4
+- `genmeta-nslookup` v0.5.1-beta.2
+- All other gmutils workspace member versions are unchanged from v0.8.1-beta.3.
+
 ## [0.8.1-beta.3] - 2026-08-10
 
 ### Fixed
