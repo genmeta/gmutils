@@ -1460,11 +1460,11 @@ dependencies = [
 
 [[package]]
 name = "dshell"
-version = "0.6.1-beta.1"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4113df64b3265498b115484ba83563955a46110f7352777553f19136b68d9e7c"
+checksum = "100a22eb90aedae7c68bb50999158b4708c6007ffbe47d46a14b67f7fee5036d"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "futures",
  "h3x",
