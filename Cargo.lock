@@ -1835,7 +1835,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta"
-version = "0.8.1-beta.4"
+version = "0.8.1"
 dependencies = [
  "clap",
  "genmeta-access",
@@ -1854,7 +1854,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-access"
-version = "0.4.1-beta.1"
+version = "0.4.1"
 dependencies = [
  "clap",
  "dhttp",
@@ -1868,7 +1868,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-curl"
-version = "0.7.1-beta.2"
+version = "0.7.1"
 dependencies = [
  "async-compression",
  "bytes",
@@ -1887,7 +1887,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-discover"
-version = "0.4.1-beta.1"
+version = "0.4.1"
 dependencies = [
  "clap",
  "dhttp",
@@ -1901,7 +1901,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-doctor"
-version = "0.4.1-beta.1"
+version = "0.4.1"
 dependencies = [
  "clap",
  "genmeta-nat",
@@ -1912,7 +1912,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-identity"
-version = "0.4.1-beta.2"
+version = "0.4.1"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -1946,7 +1946,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nat"
-version = "0.5.1-beta.1"
+version = "0.5.1"
 dependencies = [
  "clap",
  "dhttp",
@@ -1960,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nslookup"
-version = "0.5.1-beta.2"
+version = "0.5.1"
 dependencies = [
  "clap",
  "dhttp",
@@ -1974,7 +1974,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-proxy"
-version = "0.4.1-beta.2"
+version = "0.4.1"
 dependencies = [
  "bytes",
  "clap",
@@ -1994,7 +1994,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-ssh"
-version = "0.7.1-beta.3"
+version = "0.7.1"
 dependencies = [
  "clap",
  "crossterm",

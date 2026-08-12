@@ -97,16 +97,16 @@ async-compression = { version = "0.4", features = [
 ] }
 
 # workspace
-genmeta-access = { path = "genmeta-access", version = "0.4.1-beta.1" }
+genmeta-access = { path = "genmeta-access", version = "0.4.1" }
 dhttp = "0.6.1"
-genmeta-curl = { path = "genmeta-curl", version = "0.7.1-beta.2" }
-genmeta-discover = { path = "genmeta-discover", version = "0.4.1-beta.1" }
-genmeta-doctor = { path = "genmeta-doctor", version = "0.4.1-beta.1" }
-genmeta-identity = { path = "genmeta-identity", version = "0.4.1-beta.1", default-features = false }
-genmeta-nat = { path = "genmeta-nat", version = "0.5.1-beta.1" }
-genmeta-nslookup = { path = "genmeta-nslookup", version = "0.5.1-beta.2" }
-genmeta-ssh = { path = "genmeta-ssh", version = "0.7.1-beta.3" }
-genmeta-proxy = { path = "genmeta-proxy", version = "0.4.1-beta.2" }
+genmeta-curl = { path = "genmeta-curl", version = "0.7.1" }
+genmeta-discover = { path = "genmeta-discover", version = "0.4.1" }
+genmeta-doctor = { path = "genmeta-doctor", version = "0.4.1" }
+genmeta-identity = { path = "genmeta-identity", version = "0.4.1", default-features = false }
+genmeta-nat = { path = "genmeta-nat", version = "0.5.1" }
+genmeta-nslookup = { path = "genmeta-nslookup", version = "0.5.1" }
+genmeta-ssh = { path = "genmeta-ssh", version = "0.7.1" }
+genmeta-proxy = { path = "genmeta-proxy", version = "0.4.1" }
 
 # DShell
 dshell = { version = "0.6.1-beta.1", features = [
