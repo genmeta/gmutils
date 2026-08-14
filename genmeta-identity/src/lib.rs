@@ -25,8 +25,8 @@ mod tests {
 
     #[test]
     fn cert_server_client_builds_with_dhttp_root_ca() {
-        reqwest::Certificate::from_pem(dhttp::trust::DHTTP_ROOT_CA_PEM)
-            .expect("DHTTP root CA should be valid PEM");
+        reqwest::Certificate::from_der(dhttp::trust::DHTTP_ROOT_CA_DER)
+            .expect("DHTTP root CA should be valid DER");
 
         _ = rustls::crypto::ring::default_provider().install_default();
         CertServer::new(DEFAULT_DHTTP_CA_SERVICE)

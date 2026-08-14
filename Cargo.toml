@@ -98,7 +98,7 @@ async-compression = { version = "0.4", features = [
 
 # workspace
 genmeta-access = { path = "genmeta-access", version = "0.4.1" }
-dhttp = "0.6.1"
+dhttp = { git = "https://github.com/genmeta/dhttp.git", rev = "52c6c00d59234c616ac055ed3ee8b52333031dcf" }
 genmeta-curl = { path = "genmeta-curl", version = "0.7.1" }
 genmeta-discover = { path = "genmeta-discover", version = "0.4.1" }
 genmeta-doctor = { path = "genmeta-doctor", version = "0.4.1" }
