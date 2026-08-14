@@ -130,7 +130,7 @@ pub(crate) async fn fetch_cert_metadata(
     }
 
     let cert_server = match genmeta_identity::cert_server::CertServer::new(
-        genmeta_identity::CERT_SERVER_BASE_URL,
+        genmeta_identity::DHTTP_CA_SERVICE,
     ) {
         Ok(client) => client,
         Err(error) => {

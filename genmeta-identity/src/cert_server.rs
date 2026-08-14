@@ -595,7 +595,7 @@ impl CertServer {
         let base_url =
             reqwest::Url::parse(&base_url).whatever_context("failed to parse cert server URL")?;
 
-        let root_cert = reqwest::Certificate::from_pem(dhttp::trust::DHTTP_ROOT_CA)
+        let root_cert = reqwest::Certificate::from_pem(dhttp::trust::DHTTP_ROOT_CA_PEM)
             .whatever_context("failed to parse DHTTP root certificate")?;
         let http_client = reqwest::Client::builder()
             .tls_certs_merge([root_cert])

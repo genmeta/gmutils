@@ -34,7 +34,7 @@ use tracing_subscriber::{
 };
 
 use crate::{
-    CERT_SERVER_BASE_URL,
+    DHTTP_CA_SERVICE,
     cert_server::{self, CertServer},
 };
 
@@ -398,7 +398,7 @@ fn init_tracing() {
 }
 
 fn cert_server_base_url() -> &'static str {
-    CERT_SERVER_BASE_URL
+    DHTTP_CA_SERVICE
 }
 
 pub async fn run(options: Cli) -> Result<(), Error> {
@@ -442,7 +442,7 @@ mod tests {
         Apply, Cli, Default, Info, Options, cert_server_base_url,
         certificate_chain_key_from_identity,
     };
-    use crate::CERT_SERVER_BASE_URL;
+    use crate::DHTTP_CA_SERVICE;
 
     fn unique_test_home_path(test_name: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -458,7 +458,7 @@ mod tests {
     #[test]
     fn cert_server_base_url_uses_compile_time_bootstrap_url() {
         let url = cert_server_base_url();
-        assert_eq!(url, CERT_SERVER_BASE_URL);
+        assert_eq!(url, DHTTP_CA_SERVICE);
     }
 
     #[test]

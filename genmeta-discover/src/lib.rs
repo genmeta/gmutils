@@ -6,7 +6,9 @@ use std::{
 
 use clap::Parser;
 use dhttp::{
-    ddns::{core::parser::record::RData, mdns::MdnsResolvers, resolvers::DHTTP_MDNS_SERVICE},
+    ddns::{
+        core::parser::record::RData, mdns::MdnsResolvers, resolvers::DHTTP_MDNS_SERVICE_DOMAIN,
+    },
     dquic::{Network, binds::BindPattern},
 };
 use futures::StreamExt;
@@ -27,12 +29,12 @@ pub struct Options {
 
 fn domain_with_default_mdns_service(domain: &str) -> String {
     if domain.is_empty()
-        || domain == DHTTP_MDNS_SERVICE
-        || domain.ends_with(&format!(".{DHTTP_MDNS_SERVICE}"))
+        || domain == DHTTP_MDNS_SERVICE_DOMAIN
+        || domain.ends_with(&format!(".{DHTTP_MDNS_SERVICE_DOMAIN}"))
     {
         domain.to_owned()
     } else {
-        format!("{domain}.{DHTTP_MDNS_SERVICE}")
+        format!("{domain}.{DHTTP_MDNS_SERVICE_DOMAIN}")
     }
 }
 
@@ -63,8 +65,12 @@ pub async fn run(options: Options) {
     let _guard = init_tracing();
 
     let network = Network::builder().build();
-    let resolvers =
-        MdnsResolvers::bind(network, Arc::new(options.binds.clone()), DHTTP_MDNS_SERVICE).await;
+    let resolvers = MdnsResolvers::bind(
+        network,
+        Arc::new(options.binds.clone()),
+        DHTTP_MDNS_SERVICE_DOMAIN,
+    )
+    .await;
 
     let with_suffix = domain_with_default_mdns_service(&options.domain);
 
@@ -112,13 +118,13 @@ pub async fn run(options: Options) {
 
 #[cfg(test)]
 mod tests {
-    use super::{DHTTP_MDNS_SERVICE, domain_with_default_mdns_service};
+    use super::{DHTTP_MDNS_SERVICE_DOMAIN, domain_with_default_mdns_service};
 
     #[test]
     fn domain_with_default_mdns_service_appends_configured_service_suffix() {
         assert_eq!(
             domain_with_default_mdns_service("reimu.pilot"),
-            format!("reimu.pilot.{DHTTP_MDNS_SERVICE}")
+            format!("reimu.pilot.{DHTTP_MDNS_SERVICE_DOMAIN}")
         );
     }
 
@@ -126,10 +132,10 @@ mod tests {
     fn domain_with_default_mdns_service_keeps_empty_and_full_names() {
         assert_eq!(domain_with_default_mdns_service(""), "");
         assert_eq!(
-            domain_with_default_mdns_service(DHTTP_MDNS_SERVICE),
-            DHTTP_MDNS_SERVICE
+            domain_with_default_mdns_service(DHTTP_MDNS_SERVICE_DOMAIN),
+            DHTTP_MDNS_SERVICE_DOMAIN
         );
-        let full_name = format!("reimu.pilot.{DHTTP_MDNS_SERVICE}");
+        let full_name = format!("reimu.pilot.{DHTTP_MDNS_SERVICE_DOMAIN}");
         assert_eq!(domain_with_default_mdns_service(&full_name), full_name);
     }
 }

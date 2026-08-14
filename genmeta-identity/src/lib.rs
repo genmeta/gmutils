@@ -16,43 +16,34 @@ pub mod local_identity;
 
 pub const DEFAULT_DEVICE_NAME: &str = "local device";
 
-pub const DEFAULT_CERT_SERVER_BASE_URL: &str = "https://api.genmeta.net";
-pub const CERT_SERVER_URL_ENV: &str = "DHTTP_CERT_SERVER_URL";
-pub const CERT_SERVER_BASE_URL: &str = bootstrap::DHTTP_CERT_SERVER_URL;
+pub const DEFAULT_DHTTP_CA_SERVICE: &str = "https://api.genmeta.net";
+pub const DHTTP_CA_SERVICE: &str = bootstrap::DHTTP_CA_SERVICE;
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        CERT_SERVER_BASE_URL, CERT_SERVER_URL_ENV, DEFAULT_CERT_SERVER_BASE_URL,
-        cert_server::CertServer,
-    };
+    use super::{DEFAULT_DHTTP_CA_SERVICE, DHTTP_CA_SERVICE, cert_server::CertServer};
 
     #[test]
     fn cert_server_client_builds_with_dhttp_root_ca() {
-        reqwest::Certificate::from_pem(dhttp::trust::DHTTP_ROOT_CA)
+        reqwest::Certificate::from_pem(dhttp::trust::DHTTP_ROOT_CA_PEM)
             .expect("DHTTP root CA should be valid PEM");
 
         _ = rustls::crypto::ring::default_provider().install_default();
-        CertServer::new(DEFAULT_CERT_SERVER_BASE_URL)
+        CertServer::new(DEFAULT_DHTTP_CA_SERVICE)
             .expect("cert server client should build with DHTTP root CA");
     }
 
     #[test]
-    fn cert_server_url_env_uses_dhttp_bootstrap_namespace() {
-        assert_eq!(CERT_SERVER_URL_ENV, "DHTTP_CERT_SERVER_URL");
-    }
-
-    #[test]
     fn cert_server_base_url_defaults_to_genmeta_production_server() {
-        if option_env!("DHTTP_CERT_SERVER_URL").is_none() {
-            assert_eq!(CERT_SERVER_BASE_URL, DEFAULT_CERT_SERVER_BASE_URL);
+        if option_env!("DHTTP_CA_SERVICE").is_none() {
+            assert_eq!(DHTTP_CA_SERVICE, DEFAULT_DHTTP_CA_SERVICE);
         }
     }
 
     #[test]
     fn cert_server_base_url_uses_compile_time_environment() {
-        if let Some(expected) = option_env!("DHTTP_CERT_SERVER_URL") {
-            assert_eq!(CERT_SERVER_BASE_URL, expected);
+        if let Some(expected) = option_env!("DHTTP_CA_SERVICE") {
+            assert_eq!(DHTTP_CA_SERVICE, expected);
         }
     }
 }
