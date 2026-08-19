@@ -8,7 +8,7 @@ use dhttp::{
         action::RequestAction,
         db::{
             identity::Name,
-            identity_access_db_path, init_access_database_for, open_access_database,
+            identity_access_db_path, init_access_database_for,
             service::{
                 error::{
                     AppendRuleError, ListAllRulesError, ListRuleSetsError, ListRulesError,
@@ -124,19 +124,17 @@ pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, 
         );
     }
 
-    let db = if db_exists {
-        open_access_database(&identity_profile)
-            .await
-            .context(error::OpenDatabaseSnafu)?
-    } else {
+    if !db_exists {
         tracing::warn!(
             "access store not found, initializing at `{}`",
             db_path.display()
         );
-        init_access_database_for(&identity_profile)
-            .await
-            .context(error::InitDatabaseSnafu)?
-    };
+    }
+    // Initialization is idempotent and applies pending migrations to an
+    // existing store before any rule is read or changed.
+    let db = init_access_database_for(&identity_profile)
+        .await
+        .context(error::InitDatabaseSnafu)?;
     let result = run_with(command, &db).await;
     // Explicitly close the pool: dropping it only spawns an async close task
     // that never runs before the tokio runtime shuts down, which would leave

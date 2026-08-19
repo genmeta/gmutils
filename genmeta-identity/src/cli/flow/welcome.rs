@@ -6,7 +6,7 @@ use tokio::{fs, io::AsyncWriteExt};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WelcomeServiceCreated {
-    pub(crate) server_conf_path: PathBuf,
+    pub(crate) server_conf_backup_path: PathBuf,
     pub(crate) welcome_page_path: PathBuf,
 }
 
@@ -62,26 +62,19 @@ const SERVER_CONF_TEMPLATE: &str = "server {
 
 const WELCOME_PAGE_PATH: &str = "templates/welcome/index.html";
 
-#[cfg(target_os = "macos")]
-const PISHOO_RELOAD_COMMAND: &str = "Don't forget to add $USER to the _www group!\n    `sudo dseditgroup -o edit -a $USER -t user _www`\n    `sudo brew services reload pishoo`";
-
-#[cfg(not(target_os = "macos"))]
-const PISHOO_RELOAD_COMMAND: &str = "Don't forget to add $USER to the dhttp group!\n    `sudo usermod -aG dhttp $USER`\n    `sudo systemctl reload pishoo`";
-
 pub(crate) async fn maybe_create_welcome_service(
     dhttp_home: &DhttpHome,
     name: DhttpName<'_>,
-    usage: super::local::IdentityUsage,
 ) -> Result<Option<WelcomeServiceCreated>, WelcomeServiceError> {
-    if usage == super::local::IdentityUsage::ClientOnly {
-        return Ok(None);
-    }
-
     let profile = dhttp_home.identity_profile(name.borrow());
     let server_conf_path = profile.server_conf_path();
+    let server_conf_backup_path = profile.join(super::site::SERVER_CONF_BACKUP_FILE);
     let welcome_page_path = profile.join(WELCOME_PAGE_PATH);
 
-    if path_exists(&server_conf_path).await? || path_exists(&welcome_page_path).await? {
+    if path_exists(&server_conf_path).await?
+        || path_exists(&server_conf_backup_path).await?
+        || path_exists(&welcome_page_path).await?
+    {
         return Ok(None);
     }
 
@@ -100,14 +93,14 @@ pub(crate) async fn maybe_create_welcome_service(
         },
     )?;
 
-    write_new_file(&server_conf_path, SERVER_CONF_TEMPLATE.as_bytes()).await?;
+    write_new_file(&server_conf_backup_path, SERVER_CONF_TEMPLATE.as_bytes()).await?;
 
     let welcome_page = render_welcome_page();
 
     if let Err(error) = write_new_file(&welcome_page_path, welcome_page.as_bytes()).await {
-        if let Err(source) = fs::remove_file(&server_conf_path).await {
+        if let Err(source) = fs::remove_file(&server_conf_backup_path).await {
             return Err(welcome_service_error::RollbackDeleteSnafu {
-                path: server_conf_path.clone(),
+                path: server_conf_backup_path.clone(),
             }
             .into_error(source));
         }
@@ -115,15 +108,13 @@ pub(crate) async fn maybe_create_welcome_service(
     }
 
     Ok(Some(WelcomeServiceCreated {
-        server_conf_path,
+        server_conf_backup_path,
         welcome_page_path,
     }))
 }
 
 pub(crate) fn format_welcome_service_created(name: &str) -> String {
-    format!(
-        "Now, you can reload pishoo and visit the welcome page!\n{PISHOO_RELOAD_COMMAND}\n    `genmeta curl https://{name}~/welcome`"
-    )
+    format!("Sample server configuration created for {name}.")
 }
 
 fn render_welcome_page() -> &'static str {
@@ -265,7 +256,6 @@ mod tests {
     use super::{
         SERVER_CONF_TEMPLATE, format_welcome_service_created, maybe_create_welcome_service,
     };
-    use crate::cli::flow::local::IdentityUsage;
 
     fn unique_test_home_path(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -283,29 +273,13 @@ mod tests {
         let home = DhttpHome::new(unique_test_home_path("user-scope-new-identity"));
         let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
 
-        let created =
-            maybe_create_welcome_service(&home, name.borrow(), IdentityUsage::BothClientAndServer)
-                .await
-                .unwrap();
-
-        let created = created.expect("new user identity should create welcome files");
-        assert!(created.server_conf_path.exists());
-        assert!(created.welcome_page_path.exists());
-    }
-
-    #[tokio::test]
-    async fn skips_welcome_onboarding_for_client_only_usage() {
-        let home = DhttpHome::new(unique_test_home_path("client-only"));
-        let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
-
-        let created = maybe_create_welcome_service(&home, name.borrow(), IdentityUsage::ClientOnly)
+        let created = maybe_create_welcome_service(&home, name.borrow())
             .await
             .unwrap();
 
-        assert!(created.is_none());
-        let profile = home.identity_profile(name.borrow());
-        assert!(!profile.server_conf_path().exists());
-        assert!(!profile.join("templates/welcome/index.html").exists());
+        let created = created.expect("new user identity should create welcome files");
+        assert!(created.server_conf_backup_path.exists());
+        assert!(created.welcome_page_path.exists());
     }
 
     #[tokio::test]
@@ -313,14 +287,18 @@ mod tests {
         let home = DhttpHome::new(unique_test_home_path("new-identity"));
         let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
 
-        let created =
-            maybe_create_welcome_service(&home, name.borrow(), IdentityUsage::BothClientAndServer)
-                .await
-                .unwrap();
+        let created = maybe_create_welcome_service(&home, name.borrow())
+            .await
+            .unwrap();
 
         let created = created.expect("new identity should create welcome files");
         let profile = home.identity_profile(name.borrow());
-        assert!(created.server_conf_path.exists());
+        assert!(created.server_conf_backup_path.exists());
+        assert_eq!(
+            created.server_conf_backup_path,
+            profile.join(crate::cli::flow::site::SERVER_CONF_BACKUP_FILE)
+        );
+        assert!(!profile.server_conf_path().exists());
         assert!(created.welcome_page_path.exists());
         assert_eq!(
             created.welcome_page_path,
@@ -328,7 +306,7 @@ mod tests {
         );
         assert!(!profile.join("index.html").exists());
 
-        let server_conf = tokio::fs::read_to_string(&created.server_conf_path)
+        let server_conf = tokio::fs::read_to_string(&created.server_conf_backup_path)
             .await
             .unwrap();
         assert!(server_conf.contains("location /welcome {"), "{server_conf}");
@@ -370,12 +348,35 @@ mod tests {
             .await
             .unwrap();
 
-        let created =
-            maybe_create_welcome_service(&home, name.borrow(), IdentityUsage::BothClientAndServer)
-                .await
-                .unwrap();
+        let created = maybe_create_welcome_service(&home, name.borrow())
+            .await
+            .unwrap();
 
         assert!(created.is_none());
+        assert!(!profile.join("templates/welcome/index.html").exists());
+    }
+
+    #[tokio::test]
+    async fn skips_pair_creation_when_server_conf_backup_already_exists() {
+        let home = DhttpHome::new(unique_test_home_path("server-conf-backup-exists"));
+        let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
+        let profile = home.identity_profile(name.borrow());
+        let backup = profile.join(crate::cli::flow::site::SERVER_CONF_BACKUP_FILE);
+        tokio::fs::create_dir_all(profile.path()).await.unwrap();
+        tokio::fs::write(&backup, "edited server config")
+            .await
+            .unwrap();
+
+        let created = maybe_create_welcome_service(&home, name.borrow())
+            .await
+            .unwrap();
+
+        assert!(created.is_none());
+        assert_eq!(
+            tokio::fs::read_to_string(&backup).await.unwrap(),
+            "edited server config"
+        );
+        assert!(!profile.server_conf_path().exists());
         assert!(!profile.join("templates/welcome/index.html").exists());
     }
 
@@ -392,10 +393,9 @@ mod tests {
             .await
             .unwrap();
 
-        let created =
-            maybe_create_welcome_service(&home, name.borrow(), IdentityUsage::BothClientAndServer)
-                .await
-                .unwrap();
+        let created = maybe_create_welcome_service(&home, name.borrow())
+            .await
+            .unwrap();
 
         assert!(created.is_none());
         assert!(!profile.server_conf_path().exists());
@@ -419,14 +419,18 @@ mod tests {
         )
         .unwrap();
 
-        let error =
-            maybe_create_welcome_service(&home, name.borrow(), IdentityUsage::BothClientAndServer)
-                .await
-                .expect_err("index.html directory should make file creation fail");
+        let error = maybe_create_welcome_service(&home, name.borrow())
+            .await
+            .expect_err("index.html directory should make file creation fail");
 
         let rendered = error.to_string();
         assert!(rendered.contains("welcome service"), "{rendered}");
         assert!(!profile.server_conf_path().exists());
+        assert!(
+            !profile
+                .join(crate::cli::flow::site::SERVER_CONF_BACKUP_FILE)
+                .exists()
+        );
     }
 
     #[tokio::test]
@@ -457,33 +461,11 @@ mod tests {
         assert!(!SERVER_CONF_TEMPLATE.contains("root templates/welcome;"));
     }
 
-    #[cfg(not(target_os = "macos"))]
     #[test]
-    fn welcome_success_copy_includes_systemd_reload_and_created_identity() {
+    fn welcome_success_copy_reports_created_identity() {
         assert_eq!(
             format_welcome_service_created("alice.smith"),
-            concat!(
-                "Now, you can reload pishoo and visit the welcome page!\n",
-                "Don't forget to add $USER to the dhttp group!\n",
-                "    `sudo usermod -aG dhttp $USER`\n",
-                "    `sudo systemctl reload pishoo`\n",
-                "    `genmeta curl https://alice.smith~/welcome`",
-            )
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn welcome_success_copy_includes_brew_reload_and_created_identity() {
-        assert_eq!(
-            format_welcome_service_created("alice.smith"),
-            concat!(
-                "Now, you can reload pishoo and visit the welcome page!\n",
-                "Don't forget to add $USER to the _www group!\n",
-                "    `sudo dseditgroup -o edit -a $USER -t user _www`\n",
-                "    `sudo brew services reload pishoo`\n",
-                "    `genmeta curl https://alice.smith~/welcome`",
-            )
+            "Sample server configuration created for alice.smith."
         );
     }
 }

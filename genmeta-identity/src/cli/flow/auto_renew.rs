@@ -4,12 +4,16 @@ use std::{
     process::Stdio,
 };
 
-use dhttp::home::HomeScope;
+use dhttp::{
+    home::{DhttpHome, HomeScope},
+    name::DhttpName,
+};
 use snafu::{ResultExt, Snafu};
 use tokio::{io::AsyncWriteExt, process::Command};
 
 const SCHEDULE: &str = "0 3 * * *";
 const MARKER_PREFIX: &str = "# genmeta-auto-renew";
+const DISABLED_FILE: &str = ".auto-renew-disabled";
 
 #[derive(Debug, Snafu)]
 pub(crate) enum Error {
@@ -31,6 +35,21 @@ pub(crate) enum Error {
     WaitForCrontab { source: std::io::Error },
     #[snafu(display("crontab update failed with {status}: {stderr}"))]
     UpdateCrontab { status: String, stderr: String },
+    #[snafu(display("failed to inspect automatic renewal state at {}", path.display()))]
+    InspectRenewalState {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[snafu(display("failed to disable automatic renewal at {}", path.display()))]
+    DisableRenewal {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[snafu(display("failed to enable automatic renewal at {}", path.display()))]
+    EnableRenewal {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 fn scope_name(home_scope: HomeScope) -> &'static str {
@@ -40,8 +59,8 @@ fn scope_name(home_scope: HomeScope) -> &'static str {
     }
 }
 
-fn marker(identity: &str, home_scope: HomeScope) -> String {
-    format!("{MARKER_PREFIX}:{}:{identity}", scope_name(home_scope))
+fn marker(home_scope: HomeScope) -> String {
+    format!("{MARKER_PREFIX}:{}", scope_name(home_scope))
 }
 
 fn shell_quote(value: &str) -> String {
@@ -107,17 +126,13 @@ fn scheduled_executable(
     current_executable.to_path_buf()
 }
 
-fn build_entry(
-    executable: &Path,
-    identity: &str,
-    home_scope: HomeScope,
-) -> Result<(String, String), Error> {
+fn build_entry(executable: &Path, home_scope: HomeScope) -> Result<(String, String), Error> {
     let executable = executable
         .to_str()
         .ok_or_else(|| Error::NonUtf8Executable {
             path: executable.to_path_buf(),
         })?;
-    let marker = marker(identity, home_scope);
+    let marker = marker(home_scope);
     let mut arguments = Vec::new();
     if !is_standalone_identity_binary(Path::new(executable)) {
         arguments.push("identity");
@@ -125,7 +140,7 @@ fn build_entry(
     if matches!(home_scope, HomeScope::Global) {
         arguments.push("--global");
     }
-    arguments.extend(["renew", identity]);
+    arguments.extend(["renew", "--all"]);
     let command = std::iter::once(shell_quote(executable))
         .chain(arguments.into_iter().map(shell_quote))
         .collect::<Vec<_>>()
@@ -164,27 +179,6 @@ fn updated_crontab(existing: &str, entry: &str, marker: &str) -> Option<String> 
 
     let mut updated = lines.join("\n");
     updated.push('\n');
-    Some(updated)
-}
-
-fn removed_crontab(existing: &str, marker: &str) -> Option<String> {
-    let mut removed = false;
-    let lines = existing
-        .lines()
-        .filter(|line| {
-            let matches = line.trim_end().ends_with(marker);
-            removed |= matches;
-            !matches
-        })
-        .collect::<Vec<_>>();
-    if !removed {
-        return None;
-    }
-
-    let mut updated = lines.join("\n");
-    if !updated.is_empty() {
-        updated.push('\n');
-    }
     Some(updated)
 }
 
@@ -245,10 +239,9 @@ async fn install_crontab(crontab: &Path, contents: &str) -> Result<(), Error> {
 async fn ensure_with(
     crontab: &Path,
     executable: &Path,
-    identity: &str,
     home_scope: HomeScope,
 ) -> Result<(), Error> {
-    let (entry, marker) = build_entry(executable, identity, home_scope)?;
+    let (entry, marker) = build_entry(executable, home_scope)?;
     let existing = read_crontab(crontab).await?;
     if let Some(updated) = updated_crontab(&existing, &entry, &marker) {
         install_crontab(crontab, &updated).await?;
@@ -256,16 +249,7 @@ async fn ensure_with(
     Ok(())
 }
 
-async fn remove_with(crontab: &Path, identity: &str, home_scope: HomeScope) -> Result<(), Error> {
-    let marker = marker(identity, home_scope);
-    let existing = read_crontab(crontab).await?;
-    if let Some(updated) = removed_crontab(&existing, &marker) {
-        install_crontab(crontab, &updated).await?;
-    }
-    Ok(())
-}
-
-pub(crate) async fn ensure(identity: &str, home_scope: HomeScope) -> Result<(), Error> {
+pub(crate) async fn ensure_schedule(home_scope: HomeScope) -> Result<(), Error> {
     let current_executable = std::env::current_exe().context(CurrentExecutableSnafu)?;
     let invoked_as = std::env::args_os().next();
     let search_path = std::env::var_os("PATH");
@@ -276,11 +260,61 @@ pub(crate) async fn ensure(identity: &str, home_scope: HomeScope) -> Result<(), 
         search_path.as_deref(),
         current_dir.as_deref(),
     );
-    ensure_with(Path::new("crontab"), &executable, identity, home_scope).await
+    ensure_with(Path::new("crontab"), &executable, home_scope).await
 }
 
-pub(crate) async fn remove(identity: &str, home_scope: HomeScope) -> Result<(), Error> {
-    remove_with(Path::new("crontab"), identity, home_scope).await
+fn disabled_path(dhttp_home: &DhttpHome, identity: DhttpName<'_>) -> PathBuf {
+    dhttp_home.identity_profile(identity).join(DISABLED_FILE)
+}
+
+pub(crate) async fn is_identity_enabled(
+    dhttp_home: &DhttpHome,
+    identity: DhttpName<'_>,
+) -> Result<bool, Error> {
+    let path = disabled_path(dhttp_home, identity);
+    match tokio::fs::symlink_metadata(&path).await {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(source) => Err(Error::InspectRenewalState { path, source }),
+    }
+}
+
+pub(crate) async fn disable_identity(
+    dhttp_home: &DhttpHome,
+    identity: DhttpName<'_>,
+    reason: &str,
+) -> Result<(), Error> {
+    let path = disabled_path(dhttp_home, identity);
+    let mut options = tokio::fs::OpenOptions::new();
+    options
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .custom_flags(nix::libc::O_NOFOLLOW);
+    let mut file = options
+        .open(&path)
+        .await
+        .context(DisableRenewalSnafu { path: &path })?;
+    file.write_all(format!("{reason}\n").as_bytes())
+        .await
+        .context(DisableRenewalSnafu { path: &path })?;
+    file.sync_all()
+        .await
+        .context(DisableRenewalSnafu { path: &path })?;
+    Ok(())
+}
+
+pub(crate) async fn enable_identity(
+    dhttp_home: &DhttpHome,
+    identity: DhttpName<'_>,
+) -> Result<(), Error> {
+    let path = disabled_path(dhttp_home, identity);
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(Error::EnableRenewal { path, source }),
+    }
 }
 
 #[cfg(test)]
@@ -291,11 +325,14 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use dhttp::home::HomeScope;
+    use dhttp::{
+        home::{DhttpHome, HomeScope},
+        name::DhttpName,
+    };
 
     use super::{
-        build_entry, ensure_with, remove_with, removed_crontab, scheduled_executable,
-        updated_crontab,
+        build_entry, disable_identity, enable_identity, ensure_with, is_identity_enabled,
+        scheduled_executable, updated_crontab,
     };
 
     fn unique_test_dir() -> PathBuf {
@@ -355,52 +392,37 @@ mod tests {
 
     #[test]
     fn builds_scope_aware_commands_for_launcher_and_standalone_binaries() {
-        let (user_entry, _) = build_entry(
-            Path::new("/opt/Genmeta Tools/genmeta"),
-            "alice.smith",
-            HomeScope::User,
-        )
-        .unwrap();
+        let (user_entry, _) =
+            build_entry(Path::new("/opt/Genmeta Tools/genmeta"), HomeScope::User).unwrap();
         let (global_entry, _) = build_entry(
             Path::new("/usr/local/bin/genmeta-identity"),
-            "alice.smith",
             HomeScope::Global,
         )
         .unwrap();
 
         assert_eq!(
             user_entry,
-            "0 3 * * * '/opt/Genmeta Tools/genmeta' 'identity' 'renew' 'alice.smith' >/dev/null 2>&1 # genmeta-auto-renew:user:alice.smith"
+            "0 3 * * * '/opt/Genmeta Tools/genmeta' 'identity' 'renew' '--all' >/dev/null 2>&1 # genmeta-auto-renew:user"
         );
         assert_eq!(
             global_entry,
-            "0 3 * * * '/usr/local/bin/genmeta-identity' '--global' 'renew' 'alice.smith' >/dev/null 2>&1 # genmeta-auto-renew:global:alice.smith"
+            "0 3 * * * '/usr/local/bin/genmeta-identity' '--global' 'renew' '--all' >/dev/null 2>&1 # genmeta-auto-renew:global"
         );
     }
 
     #[test]
     fn repeated_registration_does_not_rewrite_or_duplicate_the_entry() {
-        let (entry, marker) = build_entry(
-            Path::new("/usr/bin/genmeta"),
-            "alice.smith",
-            HomeScope::User,
-        )
-        .unwrap();
+        let (entry, marker) = build_entry(Path::new("/usr/bin/genmeta"), HomeScope::User).unwrap();
         let existing = format!("MAILTO=ops@example.test\n{entry}\n");
 
         assert_eq!(updated_crontab(&existing, &entry, &marker), None);
     }
 
     #[test]
-    fn stale_and_duplicate_managed_entries_collapse_to_one() {
-        let (entry, marker) = build_entry(
-            Path::new("/usr/bin/genmeta"),
-            "alice.smith",
-            HomeScope::User,
-        )
-        .unwrap();
+    fn stale_and_duplicate_aggregate_entries_collapse_to_one() {
+        let (entry, marker) = build_entry(Path::new("/usr/bin/genmeta"), HomeScope::User).unwrap();
         let existing = format!(
-            "15 1 * * * /usr/bin/backup\n0 2 * * * /old/genmeta identity renew alice.smith {marker}\n{entry}\n{entry}\n"
+            "15 1 * * * /usr/bin/backup\n0 2 * * * /old/genmeta identity renew --all {marker}\n{entry}\n{entry}\n"
         );
 
         let updated = updated_crontab(&existing, &entry, &marker).unwrap();
@@ -410,42 +432,21 @@ mod tests {
     }
 
     #[test]
-    fn different_identities_and_scopes_are_preserved() {
-        let (entry, marker) = build_entry(
-            Path::new("/usr/bin/genmeta"),
-            "alice.smith",
-            HomeScope::User,
-        )
-        .unwrap();
-        let other = "0 3 * * * /usr/bin/genmeta identity renew bob.smith # genmeta-auto-renew:user:bob.smith";
-        let global = "0 3 * * * /usr/bin/genmeta identity --global renew alice.smith # genmeta-auto-renew:global:alice.smith";
-        let existing = format!("{other}\n{global}\n");
+    fn other_scope_and_unmanaged_entries_are_preserved() {
+        let (entry, marker) = build_entry(Path::new("/usr/bin/genmeta"), HomeScope::User).unwrap();
+        let unmanaged = "0 3 * * * /usr/bin/backup";
+        let global =
+            "0 3 * * * /usr/bin/genmeta identity --global renew --all # genmeta-auto-renew:global";
+        let existing = format!("{unmanaged}\n{global}\n");
 
         let updated = updated_crontab(&existing, &entry, &marker).unwrap();
-        assert!(updated.contains(other));
+        assert!(updated.contains(unmanaged));
         assert!(updated.contains(global));
-        assert_eq!(updated.matches("genmeta-auto-renew").count(), 3);
-    }
-
-    #[test]
-    fn removing_an_identity_preserves_other_entries_and_scopes() {
-        let marker = super::marker("alice.smith", HomeScope::User);
-        let same_identity_global = "0 3 * * * /usr/bin/genmeta identity --global renew alice.smith # genmeta-auto-renew:global:alice.smith";
-        let other_identity = "0 3 * * * /usr/bin/genmeta identity renew bob.smith # genmeta-auto-renew:user:bob.smith";
-        let existing = format!(
-            "MAILTO=ops@example.test\n0 3 * * * /usr/bin/genmeta identity renew alice.smith {marker}\n{same_identity_global}\n{other_identity}\n"
-        );
-
-        let updated = removed_crontab(&existing, &marker).unwrap();
-        assert!(!updated.contains(&marker));
-        assert!(updated.contains("MAILTO=ops@example.test"));
-        assert!(updated.contains(same_identity_global));
-        assert!(updated.contains(other_identity));
-        assert_eq!(removed_crontab(&updated, &marker), None);
+        assert_eq!(updated.matches("genmeta-auto-renew").count(), 2);
     }
 
     #[tokio::test]
-    async fn command_round_trip_installs_and_removes_through_crontab_interface() {
+    async fn command_round_trip_installs_idempotently_through_crontab_interface() {
         let test_dir = unique_test_dir();
         let crontab = test_dir.join("crontab");
         let state = test_dir.join("state");
@@ -466,35 +467,56 @@ mod tests {
             .unwrap();
 
         for _ in 0..2 {
-            ensure_with(
-                &crontab,
-                Path::new("/usr/bin/genmeta"),
-                "alice.smith",
-                HomeScope::User,
-            )
-            .await
-            .unwrap();
+            ensure_with(&crontab, Path::new("/usr/bin/genmeta"), HomeScope::User)
+                .await
+                .unwrap();
         }
 
         let installed = tokio::fs::read_to_string(&state).await.unwrap();
         assert_eq!(installed.matches("genmeta-auto-renew").count(), 1);
         assert_eq!(tokio::fs::read_to_string(&update_count).await.unwrap(), "x");
+        tokio::fs::remove_dir_all(test_dir).await.unwrap();
+    }
 
-        remove_with(&crontab, "alice.smith", HomeScope::User)
+    #[tokio::test]
+    async fn identity_disable_state_round_trips_with_the_terminal_reason() {
+        let test_dir = unique_test_dir();
+        let dhttp_home = DhttpHome::new(test_dir.clone());
+        let identity = DhttpName::try_from("alice.smith").unwrap();
+        tokio::fs::create_dir_all(dhttp_home.identity_profile(identity.borrow()).path())
             .await
             .unwrap();
-        assert_eq!(tokio::fs::read_to_string(&state).await.unwrap(), "");
+
+        assert!(
+            is_identity_enabled(&dhttp_home, identity.borrow())
+                .await
+                .unwrap()
+        );
+        disable_identity(&dhttp_home, identity.borrow(), "domain_expired")
+            .await
+            .unwrap();
+        assert!(
+            !is_identity_enabled(&dhttp_home, identity.borrow())
+                .await
+                .unwrap()
+        );
         assert_eq!(
-            tokio::fs::read_to_string(&update_count).await.unwrap(),
-            "xx"
+            tokio::fs::read_to_string(test_dir.join("alice.smith/.auto-renew-disabled"))
+                .await
+                .unwrap(),
+            "domain_expired\n"
         );
 
-        remove_with(&crontab, "alice.smith", HomeScope::User)
+        enable_identity(&dhttp_home, identity.borrow())
             .await
             .unwrap();
-        assert_eq!(
-            tokio::fs::read_to_string(&update_count).await.unwrap(),
-            "xx"
+        enable_identity(&dhttp_home, identity.borrow())
+            .await
+            .unwrap();
+        assert!(
+            is_identity_enabled(&dhttp_home, identity.borrow())
+                .await
+                .unwrap()
         );
         tokio::fs::remove_dir_all(test_dir).await.unwrap();
     }

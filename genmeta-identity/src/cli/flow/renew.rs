@@ -108,8 +108,9 @@ impl RenewPreflight {
 async fn resolve_preflight(
     command: &Renew,
     dhttp_home: &DhttpHome,
+    identity: Option<&str>,
 ) -> Result<(RenewPreflight, Option<i64>), Error> {
-    let domain = match command.name.as_deref() {
+    let domain = match identity {
         Some(name) => crate::cli::parse_identity_name(name)?,
         None => crate::cli::resolve_default_target_name(dhttp_home).await?,
     };
@@ -192,20 +193,26 @@ fn stops_automatic_renewal(error: &crate::cert_server::Error) -> bool {
 
 async fn handle_renew_remote_error(
     error: crate::cert_server::Error,
-    target: &str,
-    home_scope: HomeScope,
+    preflight: &RenewPreflight,
+    dhttp_home: &DhttpHome,
 ) -> Error {
     #[cfg(not(unix))]
-    let _ = home_scope;
+    let _ = dhttp_home;
     #[cfg(unix)]
     if stops_automatic_renewal(&error)
-        && let Err(remove_error) = super::auto_renew::remove(target, home_scope).await
+        && let Err(disable_error) = super::auto_renew::disable_identity(
+            dhttp_home,
+            preflight.target.dhttp_name(),
+            error.api_code().unwrap_or("terminal-domain-state"),
+        )
+        .await
     {
         super::transcript::print_warning(&format!(
-            "Automatic certificate renewal could not be disabled for {target}: {remove_error}"
+            "Automatic certificate renewal could not be disabled for {}: {disable_error}",
+            preflight.target.short_name()
         ));
     }
-    renew_remote_error(error, target)
+    renew_remote_error(error, preflight.target.short_name())
 }
 
 fn print_auth_rejection(name: &str, error: &crate::cert_server::Error) {
@@ -221,7 +228,6 @@ async fn request_with_candidates(
     preflight: &RenewPreflight,
     interactive: bool,
     pending: &super::key_material::PendingRenewal,
-    home_scope: HomeScope,
 ) -> Result<CertificateDetail, Error> {
     let specs = super::auth_plan::candidate_specs(
         &preflight.target,
@@ -255,12 +261,7 @@ async fn request_with_candidates(
                     last_rejection = Some(error);
                 }
                 Err(RequestFailure::Remote(error)) => {
-                    return Err(handle_renew_remote_error(
-                        error,
-                        preflight.target.short_name(),
-                        home_scope,
-                    )
-                    .await);
+                    return Err(handle_renew_remote_error(error, preflight, dhttp_home).await);
                 }
             },
             CandidateEvent::Email => {
@@ -281,12 +282,9 @@ async fn request_with_candidates(
                 .await
                 {
                     Ok(detail) => Ok(detail),
-                    Err(RequestFailure::Remote(error)) => Err(handle_renew_remote_error(
-                        error,
-                        preflight.target.short_name(),
-                        home_scope,
-                    )
-                    .await),
+                    Err(RequestFailure::Remote(error)) => {
+                        Err(handle_renew_remote_error(error, preflight, dhttp_home).await)
+                    }
                 };
             }
             CandidateEvent::Exhausted => {
@@ -299,14 +297,40 @@ async fn request_with_candidates(
     }
 }
 
-pub(crate) async fn run(
+async fn ensure_automatic_renewal(home_scope: HomeScope) {
+    #[cfg(all(unix, not(test)))]
+    if let Err(error) = super::auto_renew::ensure_schedule(home_scope).await {
+        super::transcript::print_warning(&format!(
+            "Automatic certificate renewal could not be scheduled: {error}"
+        ));
+    }
+    #[cfg(any(not(unix), test))]
+    let _ = home_scope;
+}
+
+async fn enable_automatic_renewal(dhttp_home: &DhttpHome, preflight: &RenewPreflight) {
+    #[cfg(unix)]
+    if let Err(error) =
+        super::auto_renew::enable_identity(dhttp_home, preflight.target.dhttp_name()).await
+    {
+        super::transcript::print_warning(&format!(
+            "Automatic certificate renewal could not be enabled for {}: {error}",
+            preflight.target.short_name()
+        ));
+    }
+    #[cfg(not(unix))]
+    let _ = (dhttp_home, preflight);
+}
+
+async fn renew_one(
     command: &Renew,
     dhttp_home: &DhttpHome,
     home_scope: HomeScope,
     cert_server: &CertServer,
+    preflight: RenewPreflight,
+    expires_at: Option<i64>,
+    interactive: bool,
 ) -> Result<(), Error> {
-    let interactive = std::io::stdin().is_terminal();
-    let (preflight, expires_at) = resolve_preflight(command, dhttp_home).await?;
     let now = local::now_unix_timestamp();
     let existing_pending = super::key_material::PendingRenewal::load(
         dhttp_home,
@@ -321,6 +345,7 @@ pub(crate) async fn run(
             expires_at.expect("renewal is not due only when expiry is known"),
             now,
         ));
+        enable_automatic_renewal(dhttp_home, &preflight).await;
         return Ok(());
     }
     let device_name =
@@ -345,7 +370,6 @@ pub(crate) async fn run(
         &preflight,
         interactive,
         &pending,
-        home_scope,
     )
     .await?;
     super::install::validate_and_save(
@@ -370,8 +394,115 @@ pub(crate) async fn run(
             "failed to remove installed renewal material"
         );
     }
+    enable_automatic_renewal(dhttp_home, &preflight).await;
     super::transcript::print_line(RENEWED);
     Ok(())
+}
+
+fn inventory_targets(inventory: local::LocalInventory) -> Vec<super::target::IdentityTarget> {
+    let mut targets = Vec::new();
+    for group in inventory.groups {
+        if let local::LocalInventoryRoot::Saved(summary) = group.root {
+            targets.push(summary.target);
+        }
+        targets.extend(group.children.into_iter().map(|summary| summary.target));
+    }
+    targets
+}
+
+async fn renew_all(
+    command: &Renew,
+    dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
+    cert_server: &CertServer,
+) -> Result<(), Error> {
+    let inventory = local::load_inventory(dhttp_home, None).await?;
+    let targets = inventory_targets(inventory);
+    if targets.is_empty() {
+        super::transcript::print_line("No identities found here");
+        return Ok(());
+    }
+
+    ensure_automatic_renewal(home_scope).await;
+    let interactive = std::io::stdin().is_terminal();
+    let total = targets.len();
+    let mut failures = 0;
+
+    for target in targets {
+        #[cfg(unix)]
+        match super::auto_renew::is_identity_enabled(dhttp_home, target.dhttp_name()).await {
+            Ok(false) => {
+                super::transcript::print_line(format!(
+                    "Renewal skipped: automatic renewal is disabled for {}.",
+                    target.short_name()
+                ));
+                continue;
+            }
+            Ok(true) => {}
+            Err(error) => {
+                failures += 1;
+                super::transcript::print_warning(&format!(
+                    "Could not inspect automatic renewal state for {}: {error}",
+                    target.short_name()
+                ));
+                continue;
+            }
+        }
+
+        let result = async {
+            let (preflight, expires_at) =
+                resolve_preflight(command, dhttp_home, Some(target.short_name())).await?;
+            renew_one(
+                command,
+                dhttp_home,
+                home_scope,
+                cert_server,
+                preflight,
+                expires_at,
+                interactive,
+            )
+            .await
+        }
+        .await;
+        if let Err(error) = result {
+            failures += 1;
+            super::transcript::print_warning(&format!(
+                "Renewal failed for {}: {error}",
+                target.short_name()
+            ));
+        }
+    }
+
+    if failures > 0 {
+        return Err(Error::without_source(format!(
+            "Failed to renew {failures} of {total} identities."
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) async fn run(
+    command: &Renew,
+    dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
+    cert_server: &CertServer,
+) -> Result<(), Error> {
+    if command.all {
+        return renew_all(command, dhttp_home, home_scope, cert_server).await;
+    }
+    let (preflight, expires_at) =
+        resolve_preflight(command, dhttp_home, command.name.as_deref()).await?;
+    ensure_automatic_renewal(home_scope).await;
+    renew_one(
+        command,
+        dhttp_home,
+        home_scope,
+        cert_server,
+        preflight,
+        expires_at,
+        std::io::stdin().is_terminal(),
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -384,8 +515,8 @@ mod tests {
     use dhttp::home::{DhttpHome, HomeScope};
 
     use super::{
-        RenewPreflight, renew_not_due_message, renew_not_saved_root_message, renew_remote_error,
-        renewal_is_due, stops_automatic_renewal,
+        RenewPreflight, inventory_targets, renew_not_due_message, renew_not_saved_root_message,
+        renew_remote_error, renewal_is_due, stops_automatic_renewal,
     };
     use crate::cli::{
         Renew,
@@ -434,6 +565,25 @@ mod tests {
         assert!(renewal_is_due(Some(now + 15 * DAY - 1), now));
         assert!(!renewal_is_due(Some(now + 15 * DAY), now));
         assert!(!renewal_is_due(Some(now + 30 * DAY), now));
+    }
+
+    #[test]
+    fn batch_targets_follow_the_deterministic_inventory_order() {
+        let alice = summary(
+            LocalIdentityStatus::Ready {
+                expires_at: 1_900_000_000,
+            },
+            true,
+        );
+        let mut bob = alice.clone();
+        bob.target = IdentityTarget::parse("bob.smith").unwrap();
+        let inventory = crate::cli::flow::local::build_inventory(vec![bob, alice]);
+
+        let names = inventory_targets(inventory)
+            .into_iter()
+            .map(|target| target.short_name().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["alice.smith", "bob.smith"]);
     }
 
     #[test]
@@ -594,6 +744,7 @@ mod tests {
         let dhttp_home = DhttpHome::new(home_path);
         let command = Renew {
             name: Some("alice.smith".to_string()),
+            all: false,
             force: false,
             device_name: None,
             email: None,

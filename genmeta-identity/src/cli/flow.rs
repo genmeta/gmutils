@@ -15,6 +15,7 @@ pub(crate) mod progress;
 pub(crate) mod recovery;
 pub(crate) mod registration;
 pub(crate) mod renew;
+pub(crate) mod site;
 pub(crate) mod target;
 pub(crate) mod transcript;
 pub(crate) mod welcome;
@@ -23,7 +24,7 @@ use dhttp::home::{DhttpHome, HomeScope};
 
 use crate::{
     cert_server::CertServer,
-    cli::{Apply, Default, Error, Info, List, Renew},
+    cli::{Apply, Default, Error, Info, List, Renew, SiteCommand},
 };
 
 pub(crate) async fn run_apply(
@@ -33,6 +34,17 @@ pub(crate) async fn run_apply(
     cert_server: &CertServer,
 ) -> Result<(), Error> {
     apply::run(command, dhttp_home, home_scope, cert_server).await
+}
+
+pub(crate) async fn run_ensite(command: &SiteCommand, dhttp_home: &DhttpHome) -> Result<(), Error> {
+    site::run_ensite(command, dhttp_home).await
+}
+
+pub(crate) async fn run_dissite(
+    command: &SiteCommand,
+    dhttp_home: &DhttpHome,
+) -> Result<(), Error> {
+    site::run_dissite(command, dhttp_home).await
 }
 
 pub(crate) async fn run_renew(

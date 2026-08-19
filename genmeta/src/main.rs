@@ -155,6 +155,35 @@ mod tests {
     }
 
     #[test]
+    fn launcher_accepts_scheduled_identity_renewal_for_both_scopes() {
+        let user = Options::try_parse_from(["genmeta", "identity", "renew", "--all"]);
+        let global = Options::try_parse_from(["genmeta", "identity", "--global", "renew", "--all"]);
+
+        assert!(user.is_ok(), "{user:?}");
+        assert!(global.is_ok(), "{global:?}");
+    }
+
+    #[test]
+    fn launcher_accepts_identity_site_commands() {
+        let enable =
+            Options::try_parse_from(["genmeta", "identity", "ensite", "--id", "alice.smith"]);
+        let disable =
+            Options::try_parse_from(["genmeta", "identity", "dissite", "--id", "alice.smith"]);
+        let global = Options::try_parse_from([
+            "genmeta",
+            "identity",
+            "--global",
+            "ensite",
+            "--id",
+            "alice.smith",
+        ]);
+
+        assert!(enable.is_ok(), "{enable:?}");
+        assert!(disable.is_ok(), "{disable:?}");
+        assert!(global.is_ok(), "{global:?}");
+    }
+
+    #[test]
     fn launcher_help_exposes_identity_alias() {
         let help = Options::command().render_long_help().to_string();
         assert!(help.contains("identity"), "{help}");
