@@ -20,6 +20,7 @@ use crate::{
 const APPLY_OPENING: &str = "Applying identity, generating ECC key pair locally, then requesting and deploying certificate.";
 const INSTALLED: &str = "✔ Identity successfully installed on this device.";
 const NEW_NAME_FREE: &str = "This new name is yours now.";
+const APPLY_CERTIFICATE_KIND: IdentityKind = IdentityKind::Primary;
 
 #[cfg(any(unix, test))]
 fn auto_renew_enabled_message(identity: &str) -> String {
@@ -143,15 +144,6 @@ async fn authorize_local_replacement(
         whatever!("apply was cancelled");
     }
     Ok(())
-}
-
-async fn resolve_kind(command: &Apply) -> Result<IdentityKind, Error> {
-    match command.kind.as_deref() {
-        Some(kind) => Ok(kind.parse::<IdentityKind>()?),
-        None => Ok(crate::cli::prompt::prompt_kind()
-            .await
-            .require_interactive("--kind")?),
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -554,11 +546,61 @@ fn certificate_action(resolved: &ResolvedApplyTarget) -> dhttp::log::cert::Certi
     }
 }
 
+async fn offer_server_activation(
+    dhttp_home: &DhttpHome,
+    target: &IdentityTarget,
+    interactive: bool,
+) -> Result<(), Error> {
+    let server_error = |source| Error::InstalledServerConfiguration { source };
+    let profile = dhttp_home
+        .resolve_identity_profile_exactly(target.dhttp_name())
+        .await
+        .map_err(super::site::Error::from)
+        .map_err(server_error)?;
+    let server = super::site::ServerConfig::for_profile(&profile);
+
+    match server.state().await.map_err(server_error)? {
+        super::site::ServerConfigState::Enabled => {
+            super::transcript::print_line("Server is already enabled for this name.");
+        }
+        super::site::ServerConfigState::Disabled if !interactive => {
+            print_server_disabled_hint(target.short_name());
+        }
+        super::site::ServerConfigState::Disabled => {
+            let enabled = crate::cli::prompt::prompt_enable_server()
+                .await
+                .require_interactive("`genmeta identity ensite --id IDENTITY`")
+                .map_err(|source| Error::ServerActivationPrompt { source })?;
+            if enabled {
+                let change = server.enable().await.map_err(server_error)?;
+                super::site::print_enable_result(target.short_name(), change);
+                super::transcript::print_line(format!(
+                    "After reloading pishoo, visit `genmeta curl https://{}~/welcome`.",
+                    target.short_name()
+                ));
+            } else {
+                print_server_disabled_hint(target.short_name());
+            }
+        }
+        super::site::ServerConfigState::Missing => {
+            super::transcript::print_warning(
+                "The identity was installed, but no server configuration was found.",
+            );
+        }
+    }
+    Ok(())
+}
+
+fn print_server_disabled_hint(identity: &str) {
+    super::transcript::print_line(format!(
+        "Server configuration remains disabled. Enable it with `genmeta identity ensite --id {identity}`."
+    ));
+}
+
 struct InstallFinishContext<'a> {
     dhttp_home: &'a DhttpHome,
     home_scope: HomeScope,
     resolved: &'a ResolvedApplyTarget,
-    kind: IdentityKind,
     interactive: bool,
 }
 
@@ -571,7 +613,6 @@ async fn install_and_finish(
         dhttp_home,
         home_scope,
         resolved,
-        kind,
         interactive,
     } = context;
     #[cfg(not(unix))]
@@ -584,8 +625,8 @@ async fn install_and_finish(
         detail,
         &super::install::InstallExpectation {
             target: resolved.target.dhttp_name(),
-            kind,
-            sequence: replacement_sequence(resolved, kind),
+            kind: APPLY_CERTIFICATE_KIND,
+            sequence: replacement_sequence(resolved, APPLY_CERTIFICATE_KIND),
         },
         key_pem,
         certificate_action(resolved),
@@ -606,29 +647,35 @@ async fn install_and_finish(
     super::transcript::print_line(INSTALLED);
 
     #[cfg(unix)]
-    match super::auto_renew::ensure(resolved.target.short_name(), home_scope).await {
-        Ok(()) => {
-            super::transcript::print_line(auto_renew_enabled_message(resolved.target.short_name()))
+    {
+        let identity_enabled = match super::auto_renew::enable_identity(
+            dhttp_home,
+            resolved.target.dhttp_name(),
+        )
+        .await
+        {
+            Ok(()) => true,
+            Err(error) => {
+                super::transcript::print_warning(&format!(
+                    "The identity was installed, but automatic certificate renewal could not be enabled: {error}"
+                ));
+                false
+            }
+        };
+        match super::auto_renew::ensure_schedule(home_scope).await {
+            Ok(()) if identity_enabled => super::transcript::print_line(
+                auto_renew_enabled_message(resolved.target.short_name()),
+            ),
+            Ok(()) => {}
+            Err(error) => super::transcript::print_warning(&format!(
+                "The identity was installed, but automatic certificate renewal could not be scheduled: {error}"
+            )),
         }
-        Err(error) => super::transcript::print_warning(&format!(
-            "The identity was installed, but automatic certificate renewal could not be scheduled: {error}"
-        )),
     }
 
-    let usage = match kind {
-        IdentityKind::Primary => super::local::IdentityUsage::BothClientAndServer,
-        IdentityKind::Secondary => super::local::IdentityUsage::ClientOnly,
-    };
-    let welcome = super::welcome::maybe_create_welcome_service(
-        dhttp_home,
-        resolved.target.dhttp_name(),
-        usage,
-    )
-    .await;
-
-    super::epilogue::run_lifecycle_epilogue(dhttp_home, resolved.target.dhttp_name(), interactive)
-        .await?;
-
+    let welcome =
+        super::welcome::maybe_create_welcome_service(dhttp_home, resolved.target.dhttp_name())
+            .await;
     match welcome {
         Ok(Some(_)) => super::transcript::print_block(
             &super::welcome::format_welcome_service_created(resolved.target.short_name()),
@@ -638,6 +685,10 @@ async fn install_and_finish(
             "The identity was installed, but the sample welcome page could not be created: {error}"
         )),
     }
+    offer_server_activation(dhttp_home, &resolved.target, interactive).await?;
+
+    super::epilogue::run_lifecycle_epilogue(dhttp_home, resolved.target.dhttp_name(), interactive)
+        .await?;
     Ok(())
 }
 
@@ -651,7 +702,7 @@ pub(crate) async fn run(
     let interactive = std::io::stdin().is_terminal();
     let mut resolved = resolve_apply_target(command, dhttp_home, cert_server, interactive).await?;
     authorize_local_replacement(&resolved, command.force, interactive).await?;
-    let kind = resolve_kind(command).await?;
+    let kind = APPLY_CERTIFICATE_KIND;
     let device_name =
         super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
     let replacement_sequence = replacement_sequence(&resolved, kind);
@@ -717,7 +768,6 @@ pub(crate) async fn run(
                         dhttp_home,
                         home_scope,
                         resolved: &resolved,
-                        kind,
                         interactive,
                     },
                     &key_material,
@@ -734,15 +784,52 @@ pub(crate) async fn run(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::*;
     use crate::cli::flow::local::{IdentityUsage, LocalIdentityStatus, LocalIdentitySummary};
 
+    struct ServerFixture {
+        root: PathBuf,
+        home: DhttpHome,
+        target: IdentityTarget,
+    }
+
+    impl ServerFixture {
+        async fn new(label: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!(
+                "genmeta-identity-apply-server-{label}-{}-{nonce}",
+                std::process::id()
+            ));
+            let home = DhttpHome::new(root.clone());
+            let target = IdentityTarget::parse("alice.smith").unwrap();
+            tokio::fs::create_dir_all(home.identity_profile(target.dhttp_name()).path())
+                .await
+                .unwrap();
+            Self { root, home, target }
+        }
+
+        fn profile(&self) -> dhttp::home::identity::IdentityProfile {
+            self.home.identity_profile(self.target.dhttp_name())
+        }
+    }
+
+    impl Drop for ServerFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
     fn command(name: Option<&str>) -> Apply {
         Apply {
             name: name.map(ToOwned::to_owned),
-            kind: Some("primary".to_string()),
             force: false,
             device_name: None,
             email: None,
@@ -848,6 +935,53 @@ mod tests {
         assert_eq!(
             INSTALLED,
             "✔ Identity successfully installed on this device."
+        );
+    }
+
+    #[test]
+    fn apply_always_requests_a_client_and_server_certificate() {
+        assert_eq!(APPLY_CERTIFICATE_KIND, IdentityKind::Primary);
+        assert_eq!(APPLY_CERTIFICATE_KIND.as_str(), "primary");
+    }
+
+    #[tokio::test]
+    async fn noninteractive_apply_keeps_a_disabled_server_configuration() {
+        let fixture = ServerFixture::new("disabled").await;
+        let profile = fixture.profile();
+        let backup = profile.join(super::super::site::SERVER_CONF_BACKUP_FILE);
+        tokio::fs::write(&backup, "edited config").await.unwrap();
+
+        offer_server_activation(&fixture.home, &fixture.target, false)
+            .await
+            .unwrap();
+
+        assert!(!profile.server_conf_path().exists());
+        assert_eq!(
+            tokio::fs::read_to_string(&backup).await.unwrap(),
+            "edited config"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_treats_active_configuration_as_enabled_when_backup_also_exists() {
+        let fixture = ServerFixture::new("active-with-backup").await;
+        let profile = fixture.profile();
+        let active = profile.server_conf_path();
+        let backup = profile.join(super::super::site::SERVER_CONF_BACKUP_FILE);
+        tokio::fs::write(&active, "active config").await.unwrap();
+        tokio::fs::write(&backup, "backup config").await.unwrap();
+
+        offer_server_activation(&fixture.home, &fixture.target, true)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            tokio::fs::read_to_string(&active).await.unwrap(),
+            "active config"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(&backup).await.unwrap(),
+            "backup config"
         );
     }
 

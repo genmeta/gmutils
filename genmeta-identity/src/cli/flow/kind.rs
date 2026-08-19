@@ -9,19 +9,10 @@ pub(crate) enum IdentityKind {
 }
 
 impl IdentityKind {
-    pub(crate) const SELECT_PROMPT: &str = "Select usage for this name:";
-
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Primary => "primary",
             Self::Secondary => "secondary",
-        }
-    }
-
-    pub(crate) fn usage_label(self) -> &'static str {
-        match self {
-            Self::Primary => "both client and server",
-            Self::Secondary => "client only",
         }
     }
 
@@ -89,12 +80,6 @@ mod tests {
     fn keeps_wire_labels_separate_from_user_facing_usage_copy() {
         assert_eq!(IdentityKind::Primary.to_string(), "primary");
         assert_eq!(IdentityKind::Secondary.to_string(), "secondary");
-        assert_eq!(IdentityKind::SELECT_PROMPT, "Select usage for this name:");
-        assert_eq!(
-            IdentityKind::Primary.usage_label(),
-            "both client and server"
-        );
-        assert_eq!(IdentityKind::Secondary.usage_label(), "client only");
         assert_eq!(IdentityKind::Primary.ski_flag(), "0");
         assert_eq!(IdentityKind::Secondary.ski_flag(), "1");
         assert_eq!(

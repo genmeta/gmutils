@@ -1,6 +1,6 @@
 use std::{borrow::Cow, fmt::Display};
 
-use crate::cli::{flow::kind::IdentityKind, validator};
+use crate::cli::validator;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TextPromptResult {
@@ -132,6 +132,18 @@ pub(crate) async fn prompt_local_replacement() -> Result<bool, inquire::InquireE
     )
 }
 
+pub(crate) fn enable_server_prompt_message() -> &'static str {
+    "Enable server for this name?"
+}
+
+pub(crate) async fn prompt_enable_server() -> Result<bool, inquire::InquireError> {
+    sync!(
+        inquire::Confirm::new(enable_server_prompt_message())
+            .with_default(true)
+            .prompt()
+    )
+}
+
 pub(crate) async fn prompt_email_with_default(
     default: Option<&str>,
 ) -> Result<String, inquire::InquireError> {
@@ -187,36 +199,6 @@ pub(crate) async fn prompt_select_string(
     options: Vec<String>,
 ) -> Result<String, inquire::InquireError> {
     prompt_select_string_with_cursor(message, options, None).await
-}
-
-pub(crate) async fn prompt_kind() -> Result<IdentityKind, inquire::InquireError> {
-    prompt_kind_with_cursor(None).await
-}
-
-pub(crate) async fn prompt_kind_with_cursor(
-    selected_kind: Option<IdentityKind>,
-) -> Result<IdentityKind, inquire::InquireError> {
-    let starting_cursor = match selected_kind {
-        Some(IdentityKind::Primary) => Some(0),
-        Some(IdentityKind::Secondary) => Some(1),
-        None => None,
-    };
-    let selected = sync!(
-        inquire::Select::new(
-            IdentityKind::SELECT_PROMPT,
-            vec![
-                IdentityKind::Primary.usage_label(),
-                IdentityKind::Secondary.usage_label()
-            ]
-        )
-        .with_starting_cursor(starting_cursor.unwrap_or(0))
-        .prompt()
-    )?;
-    Ok(match selected {
-        "both client and server" => IdentityKind::Primary,
-        "client only" => IdentityKind::Secondary,
-        _ => unreachable!("inquire returned an option that was not provided"),
-    })
 }
 
 fn text_prompt_result(answer: String) -> TextPromptResult {
@@ -277,9 +259,9 @@ mod tests {
     use inquire::validator::{StringValidator, Validation};
 
     use super::{
-        MoreOptionsFriendlyValidator, email_prompt_message, identity_name_help_message,
-        identity_name_prompt_message, local_replacement_prompt_message, more_options_help_message,
-        verify_code_prompt_message,
+        MoreOptionsFriendlyValidator, email_prompt_message, enable_server_prompt_message,
+        identity_name_help_message, identity_name_prompt_message, local_replacement_prompt_message,
+        more_options_help_message, verify_code_prompt_message,
     };
 
     #[test]
@@ -292,6 +274,10 @@ mod tests {
         assert_eq!(email_prompt_message(), "Enter your email:");
         assert_eq!(verify_code_prompt_message(), "Enter verification code:");
         assert_eq!(more_options_help_message(), "Type ? for more options.");
+        assert_eq!(
+            enable_server_prompt_message(),
+            "Enable server for this name?"
+        );
         assert_eq!(
             local_replacement_prompt_message(),
             "This identity already exists locally. Continue and replace it?"

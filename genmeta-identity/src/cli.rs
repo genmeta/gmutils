@@ -79,6 +79,12 @@ pub enum Error {
     },
     #[snafu(transparent)]
     Install { source: InstallError },
+    #[snafu(transparent)]
+    Site { source: flow::site::Error },
+    #[snafu(display("identity was installed, but server configuration failed: {source}"))]
+    InstalledServerConfiguration { source: flow::site::Error },
+    #[snafu(display("identity was installed, but server activation was not confirmed: {source}"))]
+    ServerActivationPrompt { source: prompt::Error },
 
     #[snafu(display("failed to generate private key"))]
     GenerateKey {
@@ -174,8 +180,6 @@ fn parse_identity_name(identity: &str) -> Result<Name<'static>, Error> {
 pub struct Apply {
     #[arg(value_name = "IDENTITY")]
     pub name: Option<String>,
-    #[arg(long)]
-    pub kind: Option<String>,
     #[arg(short, long)]
     pub force: bool,
     #[arg(long)]
@@ -186,11 +190,22 @@ pub struct Apply {
     pub verify_code: Option<String>,
 }
 
+/// Change an identity server configuration
+#[derive(Parser, Debug, Clone)]
+pub struct SiteCommand {
+    /// Identity whose server configuration should be changed
+    #[arg(long, value_name = "IDENTITY")]
+    pub id: String,
+}
+
 /// Renew identities
 #[derive(Parser, Debug, Clone)]
 pub struct Renew {
-    #[arg(value_name = "IDENTITY")]
+    #[arg(value_name = "IDENTITY", conflicts_with = "all")]
     pub name: Option<String>,
+    /// Renew all local identities in the selected home
+    #[arg(long)]
+    pub all: bool,
     #[arg(short, long)]
     pub force: bool,
     #[arg(long)]
@@ -346,6 +361,10 @@ pub enum Options {
     Apply(Apply),
     Renew(Renew),
     Default(Default),
+    #[command(about = "Enable an identity server configuration")]
+    Ensite(SiteCommand),
+    #[command(about = "Disable an identity server configuration")]
+    Dissite(SiteCommand),
     Info(Info),
     List(List),
     Version {},
@@ -353,7 +372,10 @@ pub enum Options {
 
 impl Options {
     pub fn writes_home(&self) -> bool {
-        matches!(self, Self::Apply(_) | Self::Renew(_) | Self::Default(_))
+        matches!(
+            self,
+            Self::Apply(_) | Self::Renew(_) | Self::Default(_) | Self::Ensite(_) | Self::Dissite(_)
+        )
     }
 
     pub async fn run(
@@ -368,6 +390,8 @@ impl Options {
             Options::Default(cmd) => {
                 flow::run_default(cmd, dhttp_home, home_scope, cert_server).await
             }
+            Options::Ensite(cmd) => flow::run_ensite(cmd, dhttp_home).await,
+            Options::Dissite(cmd) => flow::run_dissite(cmd, dhttp_home).await,
             Options::Info(cmd) => flow::run_info(cmd, dhttp_home, cert_server).await,
             Options::List(cmd) => flow::run_list(cmd, dhttp_home, cert_server).await,
             Options::Version {} => {
@@ -504,14 +528,58 @@ mod tests {
                 "genmeta",
                 "apply",
                 "alice.smith",
-                "--kind",
-                "primary",
                 "--email",
                 "alice@example.test",
                 "--verify-code",
                 "000000",
             ])
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn apply_rejects_removed_kind_option() {
+        let help = Apply::command().render_long_help().to_string();
+        assert!(!help.contains("--kind"), "{help}");
+        for value in ["primary", "secondary"] {
+            let error =
+                Options::try_parse_from(["genmeta", "apply", "alice.smith", "--kind", value])
+                    .unwrap_err();
+            assert!(error.to_string().contains("--kind"), "{error}");
+        }
+    }
+
+    #[test]
+    fn site_commands_require_id() {
+        assert!(Options::try_parse_from(["genmeta", "ensite", "--id", "alice.smith"]).is_ok());
+        assert!(Options::try_parse_from(["genmeta", "dissite", "--id", "alice.smith"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["genmeta", "--global", "ensite", "--id", "alice.smith"]).is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(["genmeta", "dissite", "--global", "--id", "alice.smith"]).is_ok()
+        );
+        assert!(Options::try_parse_from(["genmeta", "ensite"]).is_err());
+        assert!(Options::try_parse_from(["genmeta", "dissite"]).is_err());
+        assert!(Options::try_parse_from(["genmeta", "ensite", "alice.smith"]).is_err());
+        assert!(Options::try_parse_from(["genmeta", "dissite", "alice.smith"]).is_err());
+
+        let command = Options::command();
+        assert_eq!(
+            command
+                .find_subcommand("ensite")
+                .and_then(clap::Command::get_about)
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("Enable an identity server configuration")
+        );
+        assert_eq!(
+            command
+                .find_subcommand("dissite")
+                .and_then(clap::Command::get_about)
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("Disable an identity server configuration")
         );
     }
 
@@ -550,8 +618,6 @@ mod tests {
             "genmeta",
             "apply",
             "phone.alice.smith",
-            "--kind",
-            "primary",
             "--register-if-missing",
         ])
         .unwrap_err();
@@ -569,6 +635,8 @@ mod tests {
     fn renew_uses_optional_positional_identity_without_default_flag() {
         assert!(Options::try_parse_from(["genmeta", "renew"]).is_ok());
         assert!(Options::try_parse_from(["genmeta", "renew", "alice.smith"]).is_ok());
+        assert!(Options::try_parse_from(["genmeta", "renew", "--all"]).is_ok());
+        assert!(Options::try_parse_from(["genmeta", "renew", "alice.smith", "--all"]).is_err());
         assert!(Options::try_parse_from(["genmeta", "renew", "--default"]).is_err());
     }
 
@@ -600,25 +668,15 @@ mod tests {
 
     #[test]
     fn apply_rejects_sequence_flag() {
-        let error = Options::try_parse_from([
-            "genmeta",
-            "apply",
-            "alice.smith",
-            "--kind",
-            "primary",
-            "--sequence",
-            "1",
-        ])
-        .unwrap_err();
+        let error = Options::try_parse_from(["genmeta", "apply", "alice.smith", "--sequence", "1"])
+            .unwrap_err();
         let rendered = error.to_string();
         assert!(rendered.contains("--sequence"), "{rendered}");
     }
 
     #[test]
     fn apply_and_renew_reject_default_flag() {
-        let apply_error =
-            Options::try_parse_from(["genmeta", "apply", "--default", "--kind", "primary"])
-                .unwrap_err();
+        let apply_error = Options::try_parse_from(["genmeta", "apply", "--default"]).unwrap_err();
         assert!(apply_error.to_string().contains("--default"));
 
         assert!(Options::try_parse_from(["genmeta", "renew", "--default"]).is_err());
@@ -726,11 +784,22 @@ mod tests {
     }
 
     #[test]
+    fn cli_accepts_scheduled_all_renewal_for_both_scopes() {
+        let user = Cli::try_parse_from(["genmeta-identity", "renew", "--all"]);
+        let global = Cli::try_parse_from(["genmeta-identity", "--global", "renew", "--all"]);
+
+        assert!(user.is_ok(), "{user:?}");
+        assert!(global.is_ok(), "{global:?}");
+    }
+
+    #[test]
     fn write_commands_are_marked_for_global_warning() {
         for argv in [
-            ["genmeta", "apply", "alice.smith", "--kind", "primary"].as_slice(),
+            ["genmeta", "apply", "alice.smith"].as_slice(),
             ["genmeta", "renew", "alice.smith"].as_slice(),
             ["genmeta", "default", "alice.smith"].as_slice(),
+            ["genmeta", "ensite", "--id", "alice.smith"].as_slice(),
+            ["genmeta", "dissite", "--id", "alice.smith"].as_slice(),
         ] {
             let cli = Cli::try_parse_from(argv).unwrap();
             assert!(cli.options.writes_home());

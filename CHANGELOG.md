@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2-beta.1] - 2026-08-19
+
+### Added
+
+- Add aggregate automatic certificate renewal with `identity renew --all`.
+- Add local `ensite` and `dissite` server configuration management.
+
+### Changed
+
+- Request certificates for both client and server use during apply, and create
+  server configurations disabled by default.
+- Migrate existing access-rule stores while preserving rule priority.
+
+### Dependencies
+
+- Restore crates.io dependencies on `dhttp` v0.6.2 and `dshell` v0.6.2.
+
+### Components
+
+- `genmeta` v0.8.2-beta.1
+- `genmeta-access` v0.4.2-beta.1
+- `genmeta-discover` v0.4.2-beta.1
+- `genmeta-identity` v0.4.2-beta.1
+- `genmeta-ssh` v0.7.2-beta.1
+- All other gmutils workspace member versions are unchanged from v0.8.1.
+
 ## [0.8.1-beta.4] - 2026-08-11
 
 ### Fixed

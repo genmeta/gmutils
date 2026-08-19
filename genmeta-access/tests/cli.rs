@@ -2,10 +2,13 @@ use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser};
 use dhttp::{
-    access::db::{identity::Name, identity_access_db_path},
+    access::db::{
+        identity::Name, identity_access_db_path, init_access_database_for, open_access_database,
+    },
     home::{DhttpHome, identity::settings::SaveDhttpSettingsError},
 };
 use genmeta_access::{Options, run_for_home};
+use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 use snafu::Report;
 
 #[test]
@@ -115,6 +118,40 @@ async fn inline_default_identity_auto_init_creates_store() {
     set_default_identity(&home, "alice.pilot").await.unwrap();
     run_cli(&home, "list").await;
     assert!(identity_access_db_path(&identity_profile).is_file());
+}
+
+#[tokio::test]
+async fn existing_store_applies_pending_migrations() {
+    let test_home = TestHome::new("existing-store-migration");
+    let home = test_home.home();
+    let identity: Name<'static> = "alice.pilot".parse().unwrap();
+    let identity_profile = home.identity_profile(identity.borrow());
+    let db = init_access_database_for(&identity_profile).await.unwrap();
+    db.execute_unprepared("DROP INDEX idx_location_rules_logical_unique")
+        .await
+        .unwrap();
+    db.execute_unprepared(
+        "DELETE FROM migration WHERE version = 'm20260807_120000_unique_location_rules'",
+    )
+    .await
+    .unwrap();
+    db.close().await.unwrap();
+
+    run_cli(&home, "--identity alice.pilot list").await;
+
+    let db = open_access_database(&identity_profile).await.unwrap();
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT COUNT(*) AS count FROM sqlite_master \
+             WHERE type = 'index' AND name = 'idx_location_rules_logical_unique'"
+                .to_owned(),
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.try_get::<i64>("", "count").unwrap(), 1);
+    db.close().await.unwrap();
 }
 
 #[test]
