@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2-beta.2] - 2026-08-24
+
+### Changed
+
+- Let `genmeta ssh` use the ordinary DDNS default when no certificate sequence
+  is supplied, matching `genmeta nslookup` behavior.
+- Derive the conversation authority from the connected peer certificate after
+  the QUIC handshake while preserving an explicitly supplied sequence.
+- Use `/shell/<username>` as the default SSH path and remove the previous
+  certserver candidate-ranking flow.
+
+### Dependencies
+
+- Require stable `dhttp` v0.6.2, `dshell` v0.6.2, and `h3x` v0.6.2.
+
+### Components
+
+- `genmeta` v0.8.2-beta.2
+- `genmeta-ssh` v0.7.2
+- All other gmutils workspace member versions are unchanged from v0.8.2-beta.1.
+
 ## [0.8.2-beta.1] - 2026-08-19
 
 ### Added
