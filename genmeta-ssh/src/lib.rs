@@ -7,7 +7,6 @@ use std::{
 mod config;
 mod connect;
 pub mod forward;
-mod sequence;
 pub mod ssh_config;
 
 use clap::Parser;
@@ -25,7 +24,7 @@ the HostName and User of the matched Host will be used. \
 Otherwise the argument will be parsed as a URI. URIs follow these rules: \
 Only `https` scheme is accepted. If not present, `https` is used. \
 Username is optional, if not present, use current user. \
-Path is optional, if not present, use `/ssh` as default.";
+Path is optional, if not present, use `/shell` as default.";
 
 const OPTIONS_LONG_HELP: &str =
     "Set options for the SSH connection, currently all options are ignored.";

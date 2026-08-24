@@ -1,16 +1,16 @@
-use std::{num::NonZeroUsize, sync::Arc};
+use std::sync::Arc;
 
 use dhttp::{
-    ddns::resolvers::endpoint_candidates::{
-        EndpointCandidates, EndpointLookup, ResolveEndpointCandidates,
-    },
+    certificate::CertificateSequence,
     dquic,
     endpoint::Endpoint,
     h3x::{
         connection::{Connection, ConnectionBuilder},
         dhttp::{settings::Settings, webtransport::settings::WebTransportSupport},
     },
+    identity::RemoteAuthorityCertificateExt as _,
 };
+use http::uri::Authority;
 use snafu::prelude::*;
 
 use crate::config::Config;
@@ -42,16 +42,21 @@ pub enum Error {
     },
     #[snafu(display("missing authority in URI `{uri}`"))]
     MissingAuthority { uri: http::Uri },
-    #[snafu(display("failed to choose primary sequence"))]
-    ChooseSequence { source: crate::sequence::Error },
-    #[snafu(display("endpoint resolver does not support primary sequence discovery"))]
-    UnsupportedCandidateLookup,
-    #[snafu(display("failed to lookup primary sequence candidates"))]
-    LookupCandidates { source: std::io::Error },
-    #[snafu(display("failed to rewrite target URI with selected primary sequence"))]
-    RewriteSequence { source: crate::config::Error },
-    #[snafu(display("failed to construct selected target URI"))]
-    ConstructSelectedUri { source: http::uri::InvalidUriParts },
+    #[snafu(display("failed to read the connected server identity"))]
+    RemoteAuthority {
+        source: dhttp::h3x::quic::ConnectionError,
+    },
+    #[snafu(display("connected server did not provide a certificate identity"))]
+    MissingRemoteAuthority,
+    #[snafu(display("failed to read the primary sequence from the server certificate"))]
+    PeerSequence {
+        source: dhttp::identity::ExtractDhttpSubjectKeyIdentifierError,
+    },
+    #[snafu(display("failed to apply the server certificate sequence to `{authority}`"))]
+    ApplyPeerSequence {
+        authority: Authority,
+        source: http::uri::InvalidUri,
+    },
 }
 
 pub struct ConnectResult {
@@ -75,24 +80,36 @@ fn connect_path(uri: &http::Uri) -> &str {
     uri.path()
 }
 
-fn primary_discovery_lookup() -> EndpointLookup {
-    EndpointLookup::all().with_record_limit(NonZeroUsize::MIN)
+fn authority_with_sequence(
+    authority: &Authority,
+    sequence: CertificateSequence,
+) -> Result<Authority, Error> {
+    let authority_text = format!("{}:{}", authority.host(), sequence.get());
+    authority_text
+        .parse()
+        .context(connect_error::ApplyPeerSequenceSnafu {
+            authority: authority.clone(),
+        })
 }
 
-fn needs_primary_discovery(authority: &http::uri::Authority) -> bool {
-    crate::config::authority_sequence(authority).is_none()
-}
+async fn conversation_authority(
+    connection: &Connection<DquicConnection>,
+    requested: &Authority,
+) -> Result<Authority, Error> {
+    if requested.port().is_some() {
+        return Ok(requested.clone());
+    }
 
-async fn lookup_primary_candidates<R>(
-    resolver: &R,
-    authority: &str,
-) -> std::io::Result<EndpointCandidates>
-where
-    R: ResolveEndpointCandidates + ?Sized,
-{
-    resolver
-        .lookup_endpoint_candidates(authority, primary_discovery_lookup())
+    let remote = connection
+        .remote_authority()
         .await
+        .context(connect_error::RemoteAuthoritySnafu)?
+        .context(connect_error::MissingRemoteAuthoritySnafu)?;
+    let ski = remote
+        .dhttp_subject_key_identifier()
+        .context(connect_error::PeerSequenceSnafu)?;
+
+    authority_with_sequence(requested, ski.chain().sequence())
 }
 
 pub async fn build_endpoint(config: &Config) -> Result<Arc<Endpoint>, Error> {
@@ -122,47 +139,6 @@ pub async fn build_endpoint(config: &Config) -> Result<Arc<Endpoint>, Error> {
     Ok(endpoint)
 }
 
-async fn selected_uri(endpoint: &Endpoint, config: &Config) -> Result<http::Uri, Error> {
-    let authority = config.uri.authority().ok_or_else(|| {
-        connect_error::MissingAuthoritySnafu {
-            uri: config.uri.clone(),
-        }
-        .build()
-    })?;
-
-    if !needs_primary_discovery(authority) {
-        return Ok(config.uri.clone());
-    }
-
-    let resolver = endpoint.resolver();
-    let any = resolver.as_ref() as &dyn std::any::Any;
-    let candidates = if let Some(resolvers) = any.downcast_ref::<dhttp::ddns::resolvers::Resolvers>()
-    {
-        lookup_primary_candidates(resolvers, authority.as_str())
-            .await
-            .context(connect_error::LookupCandidatesSnafu)?
-    } else if let Some(deferred) = any.downcast_ref::<
-        dhttp::ddns::resolvers::deferred::DeferredResolver<dhttp::ddns::resolvers::Resolvers>,
-    >() {
-        lookup_primary_candidates(deferred, authority.as_str())
-            .await
-            .context(connect_error::LookupCandidatesSnafu)?
-    } else {
-        return connect_error::UnsupportedCandidateLookupSnafu.fail();
-    };
-
-    let certs = crate::sequence::fetch_cert_metadata(authority.host(), config.id.as_ref()).await;
-    let rows = crate::sequence::merge_candidates(candidates, certs);
-    let sequence = crate::sequence::choose_server_ranked(authority.host(), &rows)
-        .context(connect_error::ChooseSequenceSnafu)?;
-
-    let rewritten = crate::config::authority_with_sequence(authority, sequence)
-        .context(connect_error::RewriteSequenceSnafu)?;
-    let mut parts = config.uri.clone().into_parts();
-    parts.authority = Some(rewritten);
-    http::Uri::from_parts(parts).context(connect_error::ConstructSelectedUriSnafu)
-}
-
 async fn connect_with_endpoint(
     endpoint: Arc<Endpoint>,
     uri: &http::Uri,
@@ -179,10 +155,16 @@ async fn connect_with_endpoint(
         .peer_settings()
         .await
         .context(connect_error::PeerSettingsSnafu)?;
+    let conversation_server = conversation_authority(&connection, server).await?;
+    tracing::debug!(
+        requested_server = %server,
+        conversation_server = %conversation_server,
+        "resolved SSH conversation authority from connected peer"
+    );
 
     let conversation = dshell::webtransport::open_client_conversation(
         &connection,
-        server,
+        &conversation_server,
         connect_path(uri),
         None,
     )
@@ -190,7 +172,8 @@ async fn connect_with_endpoint(
     .context(connect_error::OpenConversationSnafu)?;
 
     tracing::debug!(
-        server = %server,
+        requested_server = %server,
+        conversation_server = %conversation_server,
         conversation_id = %conversation.id(),
         version = %conversation.peer_version(),
         "dshell webtransport connection established"
@@ -205,57 +188,12 @@ async fn connect_with_endpoint(
 
 pub async fn connect(config: &Config) -> Result<ConnectResult, Error> {
     let endpoint = build_endpoint(config).await?;
-    let uri = selected_uri(&endpoint, config).await?;
-    connect_with_endpoint(endpoint, &uri).await
+    connect_with_endpoint(endpoint, &config.uri).await
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{fmt, sync::Mutex};
-
-    use dhttp::{
-        ddns::resolvers::endpoint_candidates::{EndpointCandidateFuture, SequenceQuery},
-        dquic::qresolve::{Family, Resolve, ResolveFuture},
-    };
-    use futures::{FutureExt, StreamExt};
-
     use super::*;
-
-    #[derive(Debug, Default)]
-    struct RecordingResolver {
-        requests: Mutex<Vec<(String, EndpointLookup)>>,
-    }
-
-    impl fmt::Display for RecordingResolver {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.write_str("recording resolver")
-        }
-    }
-
-    impl Resolve for RecordingResolver {
-        fn lookup<'a>(
-            &'a self,
-            _hostname: &'a str,
-            _servname: &'a str,
-            _family: Option<Family>,
-        ) -> ResolveFuture<'a> {
-            async { Ok(futures::stream::empty().boxed()) }.boxed()
-        }
-    }
-
-    impl ResolveEndpointCandidates for RecordingResolver {
-        fn lookup_endpoint_candidates<'a>(
-            &'a self,
-            name: &'a str,
-            lookup: EndpointLookup,
-        ) -> EndpointCandidateFuture<'a> {
-            self.requests
-                .lock()
-                .unwrap()
-                .push((name.to_owned(), lookup));
-            async { Ok(EndpointCandidates::default()) }.boxed()
-        }
-    }
 
     #[test]
     fn connection_builder_registers_webtransport_protocol_layer() {
@@ -283,32 +221,20 @@ mod tests {
 
     #[test]
     fn connect_path_uses_uri_path_without_query() {
-        let uri: http::Uri = "https://example.test/ssh/yiyue?debug=true"
+        let uri: http::Uri = "https://example.test/shell/yiyue?debug=true"
             .parse()
             .expect("uri should parse");
 
-        assert_eq!(connect_path(&uri), "/ssh/yiyue");
-    }
-
-    #[tokio::test]
-    async fn primary_discovery_requests_all_sequences_with_one_record_each() {
-        let resolver = RecordingResolver::default();
-
-        lookup_primary_candidates(&resolver, "alice.device")
-            .await
-            .unwrap();
-
-        let requests = resolver.requests.lock().unwrap();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].0, "alice.device");
-        assert_eq!(requests[0].1.sequences, SequenceQuery::All);
-        assert_eq!(requests[0].1.record_limit, Some(NonZeroUsize::MIN));
+        assert_eq!(connect_path(&uri), "/shell/yiyue");
     }
 
     #[test]
-    fn explicit_sequence_authority_does_not_need_discovery() {
-        let authority: http::uri::Authority = "alice.device:7".parse().unwrap();
+    fn authority_with_sequence_applies_ddns_selected_peer_sequence() {
+        let authority: Authority = "alice.device.dhttp.net".parse().unwrap();
 
-        assert!(!needs_primary_discovery(&authority));
+        let selected = authority_with_sequence(&authority, CertificateSequence::from(2u8))
+            .expect("peer sequence applies");
+
+        assert_eq!(selected.as_str(), "alice.device.dhttp.net:2");
     }
 }
