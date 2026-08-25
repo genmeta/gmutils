@@ -19,7 +19,7 @@ use tracing_subscriber::prelude::*;
 #[command(version, about)]
 pub struct Options {
     /// Proxy listen address patterns
-    #[arg(long = "listen", value_name = "bind", default_values = ["127.0.0.1:16080", "[::1]:16080"])]
+    #[arg(long = "listen", visible_alias = "bind", value_name = "bind", default_values = ["127.0.0.1:16080", "[::1]:16080"])]
     pub listens: Vec<BindPattern>,
 
     /// Client identity for DHTTP/3 connections
@@ -47,7 +47,7 @@ pub struct Options {
     pub verbose: bool,
 
     /// Run as daemon (background process)
-    #[arg(long)]
+    #[arg(short = 'd', long)]
     pub daemon: bool,
 
     /// Log file path (write tracing output to this file instead of stderr)
@@ -475,5 +475,13 @@ mod tests {
         let options = Options::try_parse_from(["genmeta-proxy", "--global"]).unwrap();
 
         assert_eq!(options.home_scope(), dhttp::home::HomeScope::Global);
+    }
+
+    #[test]
+    fn options_accept_legacy_bind_and_daemon_aliases() {
+        let options =
+            Options::try_parse_from(["genmeta-proxy", "--bind", "127.0.0.1:16081", "-d"]).unwrap();
+
+        assert!(options.daemon);
     }
 }
