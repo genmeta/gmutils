@@ -284,24 +284,24 @@ mod tests {
     #[test]
     fn complete_uri_preserves_missing_primary_sequence() {
         let uri: Uri = "alice.device".parse().expect("uri parses");
-        let completed = complete_uri(uri, "yiyue").expect("uri completes");
+        let completed = complete_uri(uri, "test-user").expect("uri completes");
 
         assert_eq!(
             completed.authority().unwrap().as_str(),
             "alice.device.dhttp.net"
         );
-        assert_eq!(completed.path(), "/shell/yiyue");
+        assert_eq!(completed.path(), "/shell/test-user");
     }
 
     #[test]
     fn complete_uri_preserves_primary_sequence_suffix() {
         let uri: Uri = "alice.device:1".parse().expect("uri parses");
-        let completed = complete_uri(uri, "yiyue").expect("uri completes");
+        let completed = complete_uri(uri, "test-user").expect("uri completes");
 
         assert_eq!(
             completed.authority().unwrap().as_str(),
             "alice.device.dhttp.net:1"
         );
-        assert_eq!(completed.path(), "/shell/yiyue");
+        assert_eq!(completed.path(), "/shell/test-user");
     }
 }
