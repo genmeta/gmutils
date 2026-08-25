@@ -53,6 +53,8 @@ pub enum WelcomeServiceError {
 const SERVER_CONF_TEMPLATE: &str = "server {
     listen all 0;
 
+    sshd on;
+
     location /welcome {
         root templates;
         index index.html;
@@ -309,6 +311,7 @@ mod tests {
         let server_conf = tokio::fs::read_to_string(&created.server_conf_backup_path)
             .await
             .unwrap();
+        assert!(server_conf.contains("sshd on;"), "{server_conf}");
         assert!(server_conf.contains("location /welcome {"), "{server_conf}");
         assert!(server_conf.contains("root templates;"), "{server_conf}");
         assert!(!server_conf.contains("location / {"), "{server_conf}");
@@ -454,6 +457,7 @@ mod tests {
 
     #[test]
     fn welcome_service_is_mounted_at_welcome() {
+        assert!(SERVER_CONF_TEMPLATE.contains("sshd on;"));
         assert!(SERVER_CONF_TEMPLATE.contains("location /welcome {"));
         assert!(SERVER_CONF_TEMPLATE.contains("root templates;"));
         assert!(SERVER_CONF_TEMPLATE.contains("index index.html;"));

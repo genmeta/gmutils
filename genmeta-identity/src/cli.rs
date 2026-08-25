@@ -335,6 +335,7 @@ impl Info {
 #[command(version, about, disable_help_flag = true, disable_version_flag = true)]
 pub struct Cli {
     #[arg(
+        short = 'g',
         long,
         global = true,
         help = "use the global dhttp home instead of the default user home"
@@ -358,6 +359,7 @@ impl Cli {
 #[derive(Parser, Debug, Clone)]
 #[command(about, disable_help_flag = true, disable_version_flag = true)]
 pub enum Options {
+    #[command(visible_alias = "create")]
     Apply(Apply),
     Renew(Renew),
     Default(Default),
@@ -625,10 +627,13 @@ mod tests {
     }
 
     #[test]
-    fn create_subcommand_is_removed() {
-        let error = Options::try_parse_from(["genmeta", "create", "alice.smith"])
-            .expect_err("create must no longer parse");
-        assert!(error.to_string().contains("unrecognized subcommand"));
+    fn create_subcommand_aliases_apply() {
+        assert!(Options::try_parse_from(["genmeta", "create", "alice.smith"]).is_ok());
+    }
+
+    #[test]
+    fn global_flag_accepts_short_alias() {
+        assert!(Cli::try_parse_from(["genmeta", "-g", "list"]).is_ok());
     }
 
     #[test]
