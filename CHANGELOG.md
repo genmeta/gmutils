@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the QUIC handshake while preserving an explicitly supplied sequence.
 - Use `/shell/<username>` as the default SSH path and remove the previous
   certserver candidate-ranking flow.
+- Use a two-minute QUIC idle timeout for `genmeta ssh` connections.
 
 ### Dependencies
 

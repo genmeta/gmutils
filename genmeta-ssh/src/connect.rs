@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use dhttp::{
     certificate::CertificateSequence,
@@ -16,6 +16,7 @@ use snafu::prelude::*;
 use crate::config::Config;
 
 type DquicConnection = dquic::connection::Connection;
+const SSH_IDLE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
 #[derive(Debug, Snafu)]
 #[snafu(module(connect_error))]
@@ -76,6 +77,18 @@ fn connection_builder() -> Arc<ConnectionBuilder<DquicConnection>> {
     )
 }
 
+fn ssh_client_quic_config() -> dquic::client::ClientQuicConfig {
+    let mut config = dhttp::trust::default_client_quic_config();
+    config
+        .parameters
+        .set(
+            dquic::qbase::param::ParameterId::MaxIdleTimeout,
+            SSH_IDLE_TIMEOUT,
+        )
+        .expect("SSH idle timeout is a valid QUIC transport parameter");
+    config
+}
+
 fn connect_path(uri: &http::Uri) -> &str {
     uri.path()
 }
@@ -126,6 +139,7 @@ pub async fn build_endpoint(config: &Config) -> Result<Arc<Endpoint>, Error> {
     let mut builder = Endpoint::builder()
         .bind(Arc::new(config.binds.clone()))
         .maybe_identity(identity)
+        .client(ssh_client_quic_config())
         .connection_builder(connection_builder());
     for scheme in config.dns.iter().copied() {
         builder = builder.dns(scheme);
@@ -220,12 +234,24 @@ mod tests {
     }
 
     #[test]
+    fn ssh_client_uses_two_minute_idle_timeout() {
+        let config = ssh_client_quic_config();
+
+        assert_eq!(
+            config
+                .parameters
+                .get::<Duration>(dquic::qbase::param::ParameterId::MaxIdleTimeout),
+            Some(SSH_IDLE_TIMEOUT)
+        );
+    }
+
+    #[test]
     fn connect_path_uses_uri_path_without_query() {
-        let uri: http::Uri = "https://example.test/shell/yiyue?debug=true"
+        let uri: http::Uri = "https://example.test/shell/test-user?debug=true"
             .parse()
             .expect("uri should parse");
 
-        assert_eq!(connect_path(&uri), "/shell/yiyue");
+        assert_eq!(connect_path(&uri), "/shell/test-user");
     }
 
     #[test]
