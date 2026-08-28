@@ -16,7 +16,9 @@ use snafu::prelude::*;
 use crate::config::Config;
 
 type DquicConnection = dquic::connection::Connection;
-const SSH_IDLE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+const SSH_KEEP_ALIVE_DURATION: Duration = Duration::from_secs(2 * 60);
+const SSH_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
+const SSH_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Snafu)]
 #[snafu(module(connect_error))]
@@ -78,12 +80,13 @@ fn connection_builder() -> Arc<ConnectionBuilder<DquicConnection>> {
 }
 
 fn ssh_client_quic_config() -> dquic::client::ClientQuicConfig {
-    let mut config = dhttp::trust::default_client_quic_config();
+    let mut config = dhttp::trust::default_client_quic_config()
+        .keep_alive(SSH_KEEP_ALIVE_DURATION, SSH_HEARTBEAT_INTERVAL);
     config
         .parameters
         .set(
             dquic::qbase::param::ParameterId::MaxIdleTimeout,
-            SSH_IDLE_TIMEOUT,
+            SSH_MAX_IDLE_TIMEOUT,
         )
         .expect("SSH idle timeout is a valid QUIC transport parameter");
     config
@@ -234,14 +237,16 @@ mod tests {
     }
 
     #[test]
-    fn ssh_client_uses_two_minute_idle_timeout() {
+    fn ssh_client_uses_two_minute_keep_alive_with_safe_idle_margin() {
         let config = ssh_client_quic_config();
 
+        assert_eq!(config.defer_idle_timeout, SSH_KEEP_ALIVE_DURATION);
+        assert_eq!(config.heartbeat_interval, SSH_HEARTBEAT_INTERVAL);
         assert_eq!(
             config
                 .parameters
                 .get::<Duration>(dquic::qbase::param::ParameterId::MaxIdleTimeout),
-            Some(SSH_IDLE_TIMEOUT)
+            Some(SSH_MAX_IDLE_TIMEOUT)
         );
     }
 

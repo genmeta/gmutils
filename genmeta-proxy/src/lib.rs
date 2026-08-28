@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use std::{io::IsTerminal, net::SocketAddr, sync::Arc, time::Duration};
 
 use clap::Parser;
