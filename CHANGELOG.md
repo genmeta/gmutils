@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-08-31
+
+### Added
+
+- Add aggregate automatic certificate renewal with `identity renew --all`.
+- Add local `ensite` and `dissite` server configuration management.
+
+### Changed
+
+- Promote `genmeta`, `genmeta-access`, `genmeta-discover`, and
+  `genmeta-identity` to stable releases.
+- Request certificates for both client and server use during apply, and create
+  server configurations disabled by default.
+- Let `genmeta ssh` use the ordinary DDNS default when no certificate sequence
+  is supplied, derive the authority from the connected peer certificate, and
+  use `/shell/<username>` as its default path.
+- Keep `genmeta ssh` connections alive for two minutes after effective traffic,
+  using 20-second heartbeat PINGs and a 60-second QUIC idle timeout.
+
+### Fixed
+
+- Migrate existing access-rule stores while preserving rule priority.
+
+### Dependencies
+
+- Require stable `dhttp` v0.6.2, `dshell` v0.6.2, and `h3x` v0.6.2.
+
+### Components
+
+- `genmeta` v0.8.2
+- `genmeta-access` v0.4.2
+- `genmeta-curl` v0.7.1
+- `genmeta-discover` v0.4.2
+- `genmeta-doctor` v0.4.1
+- `genmeta-identity` v0.4.2
+- `genmeta-nat` v0.5.1
+- `genmeta-nslookup` v0.5.1
+- `genmeta-proxy` v0.4.1
+- `genmeta-ssh` v0.7.2
+
 ## [0.8.2-beta.2] - 2026-08-24
 
 ### Changed
