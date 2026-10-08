@@ -97,6 +97,11 @@ and local Cargo patches are not required. The older `dhttp-home` file-management
 helpers are retained only for CLI settings and atomic identity installation;
 all network traffic uses the new runtime.
 
+If a parent directory has Cargo patches for adjacent development repositories,
+use `bash scripts/cargo-pinned.sh build --workspace` to build with this project's
+pinned graph. This runs Cargo from a temporary directory while explicitly
+loading the project manifest and configuration, without changing other projects.
+
 SSH is temporarily removed from the launcher, workspace and release packages.
 The process-wide runtime manages all network interfaces. Curl, proxy and
 nslookup accept the default `--interface '*'`; other outbound interface
