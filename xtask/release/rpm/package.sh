@@ -76,12 +76,11 @@ License:        Apache-2.0
 URL:            https://www.dhttp.net
 Vendor:         Genmeta Tech Limited
 Source0:        genmeta
-Source1:        genmeta-ssh.sh
 AutoReqProv:    no
 Requires:       glibc
 
 %description
-Genmeta command-line tools for DHTTP/3, DShell, DNS, and identity management.
+Genmeta command-line tools for DHTTP/3, DNS, and identity management.
 
 %prep
 # nothing to do: binary already built by cargo-zigbuild
@@ -92,11 +91,9 @@ Genmeta command-line tools for DHTTP/3, DShell, DNS, and identity management.
 %install
 rm -rf %{buildroot}
 install -D -m 0755 %{SOURCE0} %{buildroot}/usr/bin/genmeta
-install -D -m 0755 %{SOURCE1} %{buildroot}/usr/bin/genmeta-ssh.sh
 
 %files
 /usr/bin/genmeta
-/usr/bin/genmeta-ssh.sh
 
 %changelog
 * %(date '+%a %b %d %Y') Genmeta Tech Limited <developer@genmeta.net> - ${RPM_VERSION}-${RPM_RELEASE}
@@ -141,7 +138,6 @@ mkdir -p "$topdir"/{SPECS,BUILD,BUILDROOT,SOURCES,SRPMS,RPMS}
 spec="$topdir/SPECS/gmutils.spec"
 write_spec "$spec"
 cp "$release_dir/genmeta" "$topdir/SOURCES/genmeta"
-cp "$product_source/genmeta-ssh.sh" "$topdir/SOURCES/genmeta-ssh.sh"
 
 rpmbuild -bb \
     --target="$arch" \

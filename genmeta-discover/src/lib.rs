@@ -1,17 +1,21 @@
 use std::{
     collections::{HashMap, HashSet},
     io::IsTerminal,
-    sync::Arc,
 };
 
 use clap::Parser;
-use dhttp::{
+use genmeta_network::{
+    BindPattern,
     ddns::{
-        core::parser::record::RData, mdns::MdnsResolvers, resolvers::DHTTP_MDNS_SERVICE_DOMAIN,
+        core::parser::{
+            packet::{Packet, be_packet},
+            record::RData,
+        },
+        resolvers::DHTTP_MDNS_SERVICE_DOMAIN,
     },
-    dquic::{Network, binds::BindPattern},
 };
-use futures::StreamExt;
+use socket2::{Domain, Socket, Type};
+use tokio::net::UdpSocket;
 use tracing_subscriber::prelude::*;
 
 #[derive(Parser, Debug, Clone)]
@@ -64,14 +68,49 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
 pub async fn run(options: Options) {
     let _guard = init_tracing();
 
-    let network = Network::builder().build();
-    let resolvers = MdnsResolvers::bind(
-        network,
-        Arc::new(options.binds.clone()),
-        DHTTP_MDNS_SERVICE_DOMAIN,
-    )
-    .await;
-
+    if let Err(error) = genmeta_network::init(&[], &["*".into()]).await {
+        tracing::error!(%error, "failed to initialize interfaces");
+        return;
+    }
+    let mut sockets = Vec::new();
+    for (bound, device) in dhttp::AddressBook::global().inner_bindings() {
+        if !options
+            .binds
+            .iter()
+            .any(|p| p == "*" || p == device.name() || p == &bound.ip().to_string())
+        {
+            continue;
+        }
+        match discovery_socket(bound.ip(), device.index().get()) {
+            Ok(socket) => sockets.push(socket),
+            Err(error) => {
+                tracing::warn!(%error, device = device.name(), "failed to bind mDNS discovery")
+            }
+        }
+    }
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
+    let mut tasks = tokio::task::JoinSet::new();
+    let query = Packet::query(DHTTP_MDNS_SERVICE_DOMAIN.to_owned()).to_bytes();
+    for (socket, target) in sockets {
+        let sender = sender.clone();
+        let query = query.clone();
+        tasks.spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            let mut buffer = [0u8; 9001];
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => { if let Err(error) = socket.send_to(&query, target).await { tracing::warn!(%error, "mDNS discovery query failed"); } }
+                    received = socket.recv_from(&mut buffer) => {
+                        let (size, source) = match received { Ok(result) => result, Err(_) => break };
+                        if size > 9000 { continue; }
+                        if let Ok((_, packet)) = be_packet(&buffer[..size])
+                            && !packet.answers.is_empty() && sender.send((source, packet)).await.is_err() { break; }
+                    }
+                }
+            }
+        });
+    }
+    drop(sender);
     let with_suffix = domain_with_default_mdns_service(&options.domain);
 
     let matches_domain = |name: &str, domain: &str| {
@@ -83,9 +122,8 @@ pub async fn run(options: Options) {
     };
 
     let mut domain_set = HashSet::new();
-    let mut stream = resolvers.discover();
 
-    while let Some((_source, packet)) = stream.next().await {
+    while let Some((_source, packet)) = receiver.recv().await {
         let records: HashMap<_, HashSet<_>> = packet
             .answers
             .iter()
@@ -114,6 +152,46 @@ pub async fn run(options: Options) {
             }
         }
     }
+}
+
+fn discovery_socket(
+    ip: std::net::IpAddr,
+    index: u32,
+) -> std::io::Result<(UdpSocket, std::net::SocketAddr)> {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
+    let socket = Socket::new(
+        if ip.is_ipv4() {
+            Domain::IPV4
+        } else {
+            Domain::IPV6
+        },
+        Type::DGRAM,
+        None,
+    )?;
+    socket.set_nonblocking(true)?;
+    socket.set_reuse_address(true)?;
+    #[cfg(not(target_os = "windows"))]
+    socket.set_reuse_port(true)?;
+    let target = match ip {
+        IpAddr::V4(ip) => {
+            socket.bind(&SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 5353).into())?;
+            let group = Ipv4Addr::new(224, 0, 0, 251);
+            socket.join_multicast_v4(&group, &ip)?;
+            socket.set_multicast_if_v4(&ip)?;
+            socket.set_multicast_loop_v4(true)?;
+            SocketAddr::new(group.into(), 5353)
+        }
+        IpAddr::V6(_) => {
+            socket.set_only_v6(true)?;
+            socket.bind(&SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 5353).into())?;
+            let group = "ff02::fb".parse::<Ipv6Addr>().unwrap();
+            socket.join_multicast_v6(&group, index)?;
+            socket.set_multicast_if_v6(index)?;
+            socket.set_multicast_loop_v6(true)?;
+            SocketAddrV6::new(group, 5353, 0, index).into()
+        }
+    };
+    Ok((UdpSocket::from_std(socket.into())?, target))
 }
 
 #[cfg(test)]

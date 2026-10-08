@@ -11,6 +11,7 @@ keywords = ["genmeta", "dhttp", "dns", "resolver", "cli"]
 categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
+genmeta-network.workspace = true
 clap = { workspace = true }
 futures = { workspace = true }
 dhttp = { workspace = true }

@@ -1,24 +1,24 @@
+use genmeta_network::{
+    home::{DhttpHome, LoadDhttpHomeError, identity::settings::LoadDhttpSettingsError},
+    name::DhttpName as Name,
+};
 mod cli;
 
 use std::io::IsTerminal;
 
 pub use cli::{Options, ParseCommandError, ReportFromStr};
-use dhttp::{
-    access::{
-        action::RequestAction,
-        db::{
-            identity::Name,
-            identity_access_db_path, init_access_database_for,
-            service::{
-                error::{
-                    AppendRuleError, ListAllRulesError, ListRuleSetsError, ListRulesError,
-                    RemoveRuleSetError, RemoveRulesError,
-                },
-                location_service::LocationService,
+use genmeta_network::access::{
+    action::RequestAction,
+    db::{
+        identity_access_db_path, init_access_database_for,
+        service::{
+            error::{
+                AppendRuleError, ListAllRulesError, ListRuleSetsError, ListRulesError,
+                RemoveRuleSetError, RemoveRulesError,
             },
+            location_service::LocationService,
         },
     },
-    home::{DhttpHome, LoadDhttpHomeError, identity::settings::LoadDhttpSettingsError},
 };
 use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
@@ -106,7 +106,10 @@ pub async fn run(options: Options) -> Result<(), Error> {
 }
 
 pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, Error> {
-    let global = matches!(options.home_scope(), dhttp::home::HomeScope::Global);
+    let global = matches!(
+        options.home_scope(),
+        genmeta_network::home::HomeScope::Global
+    );
     let (identity, command) = options.into_parts()?;
     if let Command::Print { output } = command {
         return Ok(output);
@@ -114,7 +117,7 @@ pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, 
 
     let identity = resolve_identity(home, identity).await?;
     let identity_profile = home.identity_profile(identity.borrow());
-    let db_path = identity_access_db_path(&identity_profile);
+    let db_path = identity_access_db_path(&genmeta_network::runtime_profile(&identity_profile));
     let db_exists = db_path.is_file();
 
     if global && command.writes_store(db_exists) {
@@ -132,7 +135,7 @@ pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, 
     }
     // Initialization is idempotent and applies pending migrations to an
     // existing store before any rule is read or changed.
-    let db = init_access_database_for(&identity_profile)
+    let db = init_access_database_for(&genmeta_network::runtime_profile(&identity_profile))
         .await
         .context(error::InitDatabaseSnafu)?;
     let result = run_with(command, &db).await;

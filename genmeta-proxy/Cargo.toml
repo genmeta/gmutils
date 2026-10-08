@@ -11,6 +11,7 @@ keywords = ["genmeta", "dhttp", "proxy", "http3", "cli"]
 categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
+genmeta-network.workspace = true
 clap = { workspace = true }
 dhttp = { workspace = true }
 http = { workspace = true }

@@ -23,7 +23,7 @@ pub(crate) fn classify_identity_attempt(
 
     match error {
         crate::cert_server::Error::DhttpEndpointFromProfile {
-            source: dhttp::endpoint::LoadEndpointFromPathError::LoadIdentity { .. },
+            source: dhttp::Error::Home { .. } | dhttp::Error::Credentials { .. },
         } => AuthAttemptDisposition::TryNext,
         crate::cert_server::Error::Request { .. }
         | crate::cert_server::Error::DhttpEndpoint { .. }
@@ -119,7 +119,7 @@ mod tests {
             "genmeta-auth-missing-profile-{}",
             std::process::id()
         ));
-        let source = match dhttp::endpoint::Endpoint::load_from(missing).await {
+        let source = match genmeta_network::Client::load_profile(&missing).await {
             Ok(_) => panic!("missing identity profile unexpectedly loaded"),
             Err(source) => source,
         };

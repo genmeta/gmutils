@@ -1,8 +1,6 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
-use dhttp::{
-    endpoint::Endpoint,
-    h3x::dhttp::message::{MessageReader, MessageWriter},
+use genmeta_network::{
     home::{DhttpHome, identity::IdentityProfile},
     message::IntoUri,
 };
@@ -12,12 +10,11 @@ use snafu::{IntoError, ResultExt, ensure};
 use crate::{
     cli::Options,
     error::{self, Error},
-    timing::Timing,
 };
 
 #[allow(dead_code)]
 pub(crate) struct ClientSession {
-    pub(crate) endpoint: Arc<Endpoint>,
+    pub(crate) endpoint: genmeta_network::Client,
     pub(crate) identity_profile: Option<IdentityProfile>,
     pub(crate) connect_timeout: Duration,
 }
@@ -65,7 +62,7 @@ async fn load_identity_profile(options: &Options) -> Result<Option<IdentityProfi
 
 pub(crate) fn normalize_cli_uri(
     uri: Uri,
-    self_name: Option<&dhttp::name::DhttpName<'_>>,
+    self_name: Option<&genmeta_network::name::DhttpName<'_>>,
 ) -> Result<Uri, Error> {
     let uri = uri.into_uri(self_name).context(error::NormalizeUriSnafu)?;
 
@@ -91,31 +88,15 @@ pub(crate) async fn setup_client(options: &mut Options) -> Result<ClientSession,
         error::MissingAuthoritySnafu
     );
 
-    // TODO(-4/-6): the previous address-family filter here (applied post-
-    // expansion on `BindUri`s) was a no-op in practice — it restricted the
-    // watcher's "initial known set" but not the actual bindings, and it
-    // silently rejected all `iface://` URIs because the predicate only
-    // considered `inet://` addresses. Reintroduce this feature at the
-    // `Bind` pattern level (e.g. drop binds whose explicit family tag
-    // mismatches the requested `-4`/`-6`) rather than post-expansion when
-    // it's needed again.
-    let identity = match &identity_profile {
-        Some(profile) => Some(Arc::new(
-            profile
-                .load_identity()
-                .await
-                .context(error::LoadIdentitySslSnafu)?,
-        )),
-        None => None,
+    genmeta_network::init(&options.dns, &options.binds)
+        .await
+        .context(error::BuildEndpointSnafu)?;
+    let endpoint = match &identity_profile {
+        Some(profile) => genmeta_network::Client::load_profile(profile.path())
+            .await
+            .context(error::BuildEndpointSnafu)?,
+        None => genmeta_network::Client::anonymous(),
     };
-
-    let mut builder = Endpoint::builder()
-        .bind(Arc::new(options.binds.clone()))
-        .maybe_identity(identity);
-    for scheme in options.dns.iter().copied() {
-        builder = builder.dns(scheme);
-    }
-    let endpoint = Arc::new(builder.build().await.context(error::BuildEndpointSnafu)?);
 
     let connect_timeout = connect_timeout_from_secs(options.connect_timeout);
 
@@ -132,31 +113,4 @@ pub(crate) fn connect_timeout_from_secs(seconds: u64) -> Duration {
     } else {
         Duration::from_secs(seconds)
     }
-}
-
-pub(crate) async fn connect_and_open_streams(
-    session: &ClientSession,
-    uri: &Uri,
-    timing: &mut Timing,
-) -> Result<(MessageReader, MessageWriter), Error> {
-    let connect_fut = async {
-        session
-            .endpoint
-            .connect(
-                uri.authority()
-                    .expect("BUG: URI authority already validated")
-                    .clone(),
-            )
-            .await
-            .context(error::ConnectSnafu)
-    };
-    let connection = match tokio::time::timeout(session.connect_timeout, connect_fut).await {
-        Ok(result) => result?,
-        Err(_) => return error::TimedoutSnafu.fail(),
-    };
-    timing.mark_connected();
-    connection
-        .initial_message_stream()
-        .await
-        .context(error::InitialMessageStreamSnafu)
 }

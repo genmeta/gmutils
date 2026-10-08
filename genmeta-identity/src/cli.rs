@@ -6,9 +6,10 @@ mod certificate_log;
 use std::io::IsTerminal;
 
 use clap::Parser;
+pub use flow::{install::Error as InstallError, welcome::WelcomeServiceError};
 #[cfg(test)]
-use dhttp::certificate::CertificateChainKey;
-use dhttp::{
+use genmeta_network::certificate::CertificateChainKey;
+use genmeta_network::{
     home::{
         DhttpHome, HomeScope, LoadDhttpHomeError,
         identity::{
@@ -21,7 +22,6 @@ use dhttp::{
     },
     name::DhttpName as Name,
 };
-pub use flow::{install::Error as InstallError, welcome::WelcomeServiceError};
 use indicatif::ProgressStyle;
 use snafu::{ResultExt, Snafu, Whatever, whatever};
 use tokio::io;
@@ -122,7 +122,7 @@ impl snafu::FromString for Error {
 
 #[cfg(test)]
 fn certificate_chain_key_from_identity(
-    identity: &dhttp::identity::Identity,
+    identity: &genmeta_network::identity::Identity,
 ) -> Result<Option<CertificateChainKey>, Error> {
     match identity.dhttp_subject_key_identifier() {
         Ok(ski) => Ok(Some(ski.chain().clone())),
@@ -457,7 +457,7 @@ mod tests {
     };
 
     use clap::{CommandFactory, Parser};
-    use dhttp::{
+    use genmeta_network::{
         home::{DhttpHome, HomeScope},
         identity::Identity,
         name::{DhttpName, Name},
@@ -784,8 +784,11 @@ mod tests {
         let before = Cli::try_parse_from(["genmeta", "--global", "list"]).unwrap();
         let after = Cli::try_parse_from(["genmeta", "list", "--global"]).unwrap();
 
-        assert_eq!(before.home_scope(), dhttp::home::HomeScope::Global);
-        assert_eq!(after.home_scope(), dhttp::home::HomeScope::Global);
+        assert_eq!(
+            before.home_scope(),
+            genmeta_network::home::HomeScope::Global
+        );
+        assert_eq!(after.home_scope(), genmeta_network::home::HomeScope::Global);
     }
 
     #[test]

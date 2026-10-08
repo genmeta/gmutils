@@ -1,14 +1,8 @@
-use dhttp::{
-    endpoint::Endpoint,
-    h3x::dhttp::message::{MessageStreamError, MessageWriter},
-};
 use http::uri::{self, Uri};
-use hyper::{
-    Request, Response,
-    body::{Body, Incoming},
-    header,
-};
+use http_body_util::BodyExt;
+use hyper::{Request, Response, body::Incoming, header};
 use snafu::ResultExt;
+use tokio::io::AsyncWriteExt;
 
 use crate::Error;
 
@@ -47,74 +41,155 @@ fn rewrite_request_for_h3(mut req: Request<Incoming>) -> Request<Incoming> {
     req
 }
 
-/// Close the write stream after request is fully sent.
-///
-/// Failure to close is non-fatal — the response may already be readable.
-async fn close_write_stream(mut write_stream: MessageWriter) {
-    if let Err(e) = write_stream.close().await {
-        tracing::warn!(error = %snafu::Report::from_error(&e), "failed to close h3 request stream");
+/// Forward a request while polling the upstream response concurrently with upload.
+pub async fn forward_h3(
+    req: Request<Incoming>,
+    client: &genmeta_network::Client,
+) -> Result<Response<ForwardBody>, Error> {
+    let req = rewrite_request_for_h3(req);
+    let (mut parts, mut body) = req.into_parts();
+    parts.version = http::Version::HTTP_3;
+    let request = Request::from_parts(parts, dhttp::WndBuf::new(64 * 1024));
+    let (mut writer, response) = client
+        .from_request(request)
+        .await
+        .whatever_context::<_, Error>("failed to open DHTTP request")?;
+    let mut upload = tokio::spawn(async move {
+        while let Some(frame) = body.frame().await {
+            let frame = frame.whatever_context::<_, Error>("failed to read proxy request body")?;
+            match frame.into_data() {
+                Ok(data) => writer
+                    .write_all(&data)
+                    .await
+                    .whatever_context::<_, Error>("failed to upload proxy request body")?,
+                Err(frame) => {
+                    if let Ok(trailers) = frame.into_trailers() {
+                        for (name, value) in &trailers {
+                            writer
+                                .append_trailer(name.clone(), value.clone())
+                                .whatever_context::<_, Error>(
+                                    "failed to set proxy request trailer",
+                                )?;
+                        }
+                    }
+                }
+            }
+        }
+        writer
+            .shutdown()
+            .await
+            .whatever_context::<_, Error>("failed to finish proxy request body")
+    });
+    let mut response = std::pin::pin!(response);
+    let (response_result, upload_pending) = tokio::select! {
+        biased;
+        response = &mut response => (response.whatever_context::<_, Error>("failed to receive DHTTP response"), true),
+        uploaded = &mut upload => {
+            let result = match uploaded {
+                Ok(Ok(())) => response.await.whatever_context::<_, Error>("failed to receive DHTTP response"),
+                Ok(Err(error)) => Err(error),
+                Err(error) => Err(<Error as snafu::FromString>::without_source(format!("DHTTP upload task failed: {error}"))),
+            };
+            (result, false)
+        }
+    };
+    let response = match response_result {
+        Ok(response) => response,
+        Err(error) => {
+            upload.abort();
+            return Err(error);
+        }
+    };
+    let require_upload = response.status().is_success();
+    let mut response = response.map(|body| ForwardBody {
+        body,
+        upload: upload_pending.then_some(upload),
+        require_upload,
+    });
+    *response.version_mut() = http::Version::HTTP_11;
+    Ok(response)
+}
+
+/// Keep uploading while hyper drains the response; dropping the response cancels upload.
+pub struct ForwardBody {
+    body: dhttp::Body,
+    upload: Option<tokio::task::JoinHandle<Result<(), Error>>>,
+    require_upload: bool,
+}
+impl Drop for ForwardBody {
+    fn drop(&mut self) {
+        if let Some(upload) = &self.upload {
+            upload.abort();
+        }
+    }
+}
+impl hyper::body::Body for ForwardBody {
+    type Data = bytes::Bytes;
+    type Error = dhttp::BoxError;
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        use std::{future::Future, task::Poll};
+        if let Some(upload) = &mut self.upload
+            && let Poll::Ready(result) = std::pin::Pin::new(upload).poll(cx)
+        {
+            self.upload = None;
+            let failure = match result {
+                Ok(Ok(())) => None,
+                Ok(Err(error)) => Some(std::io::Error::other(error.to_string())),
+                Err(error) => Some(std::io::Error::other(error)),
+            };
+            if let Some(error) = failure {
+                if self.require_upload {
+                    return Poll::Ready(Some(Err(Box::new(error))));
+                }
+                tracing::debug!(%error, "upstream rejected proxy upload");
+            }
+        }
+        std::pin::Pin::new(&mut self.body).poll_frame(cx)
+    }
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
+    }
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.body.size_hint()
     }
 }
 
-/// Forward a plain HTTP request to a DHTTP identity domain via DHTTP/3.
-pub async fn forward_h3(
-    req: Request<Incoming>,
-    client: &Endpoint,
-) -> Result<Response<impl Body<Data = bytes::Bytes, Error = MessageStreamError> + use<>>, Error> {
-    let authority = req
-        .uri()
-        .authority()
-        .ok_or_else(|| {
-            <Error as snafu::FromString>::without_source(
-                "missing authority in dhttp/3 request uri".to_string(),
-            )
-        })?
-        .clone();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let connection = client
-        .connect(authority.clone())
-        .await
-        .whatever_context::<_, Error>(format!(
-            "failed to connect to dhttp/3 server `{authority}`"
-        ))?;
-
-    let (mut read_stream, mut write_stream) = connection
-        .initial_message_stream()
-        .await
-        .whatever_context::<_, Error>("failed to open h3 message stream")?;
-
-    let req = rewrite_request_for_h3(req);
-
-    write_stream
-        .send_hyper_request(req)
-        .await
-        .whatever_context::<_, Error>("failed to send h3 request")?;
-
-    // Read response headers and close write stream concurrently.
-    // tokio::join! polls the first future first (biased toward response).
-    let (response_result, _) = tokio::join!(
-        async {
-            let mut parts = read_stream
-                .read_hyper_response_parts()
-                .await
-                .whatever_context::<_, Error>("failed to read h3 response")?;
-            while parts.status.is_informational() {
-                tracing::debug!(status = %parts.status, "skipping informational response");
-                parts = read_stream
-                    .read_hyper_response_parts()
-                    .await
-                    .whatever_context::<_, Error>("failed to read h3 response")?;
+    #[tokio::test]
+    async fn dropping_response_cancels_blocked_proxy_upload() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
+        struct Guard(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                if let Some(sender) = self.0.take() {
+                    let _ = sender.send(());
+                }
             }
-            Ok::<_, Error>(parts)
-        },
-        close_write_stream(write_stream),
-    );
-
-    let response_parts = response_result?;
-    let body = read_stream.into_hyper_body();
-    let mut resp = Response::from_parts(response_parts, body);
-    // Rewrite version: HTTP/3 responses cannot be sent over an HTTP/1.1
-    // connection — hyper's HTTP/1 codec panics on unknown versions.
-    *resp.version_mut() = http::Version::HTTP_11;
-    Ok(resp)
+        }
+        let upload = tokio::spawn(async move {
+            let _guard = Guard(Some(dropped_tx));
+            let _ = started_tx.send(());
+            std::future::pending::<Result<(), Error>>().await
+        });
+        started_rx.await.unwrap();
+        let body = http_body_util::Empty::new()
+            .map_err(|never| match never {})
+            .boxed_unsync();
+        drop(ForwardBody {
+            body,
+            upload: Some(upload),
+            require_upload: true,
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), dropped_rx)
+            .await
+            .unwrap()
+            .unwrap();
+    }
 }

@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, path::PathBuf};
 
-use dhttp::{home::DhttpHome, name::DhttpName};
+use genmeta_network::{home::DhttpHome, name::DhttpName};
 
 use super::{
     local::{self, LocalIdentityStatus, LocalIdentitySummary},
@@ -89,9 +89,11 @@ impl ExactIdentityLoader for HomeExactIdentityLoader<'_> {
 
         let profile = match self.home.resolve_identity_profile_exactly(name).await {
             Ok(profile) => profile,
-            Err(dhttp::home::identity::ssl::ResolveIdentityProfileError::ExactNotFound {
-                ..
-            }) => return Ok(None),
+            Err(
+                genmeta_network::home::identity::ssl::ResolveIdentityProfileError::ExactNotFound {
+                    ..
+                },
+            ) => return Ok(None),
             Err(error) => return Err(error.into()),
         };
         if let Err(error) = profile.load_identity().await {

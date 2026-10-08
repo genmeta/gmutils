@@ -1,4 +1,4 @@
-use dhttp::{home::DhttpHome, name::DhttpName};
+use genmeta_network::{home::DhttpHome, name::DhttpName};
 use snafu::FromString;
 
 use crate::cli::{self, Error, prompt::InquireResultExt};
@@ -85,7 +85,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use dhttp::{home::DhttpHome, name::DhttpName};
+    use genmeta_network::{home::DhttpHome, name::DhttpName};
     use tokio::fs;
 
     use super::{DefaultSuggestion, suggest_default_change};

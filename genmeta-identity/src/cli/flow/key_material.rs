@@ -1,7 +1,7 @@
 use std::{io::ErrorKind, path::PathBuf};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use dhttp::{home::DhttpHome, name::DhttpName};
+use genmeta_network::{home::DhttpHome, name::DhttpName};
 use p384::pkcs8::{DecodePrivateKey, EncodePublicKey};
 use rankey::EncodePem;
 use serde::{Deserialize, Serialize};

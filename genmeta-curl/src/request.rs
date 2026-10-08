@@ -1,9 +1,6 @@
-use std::{
-    path::{Path, PathBuf},
-    pin::pin,
-};
+use std::path::{Path, PathBuf};
 
-use dhttp::h3x::dhttp::message::MessageWriter;
+use dhttp::RequestWriter;
 use http::{HeaderName, HeaderValue, Method, Request, Uri, header::USER_AGENT};
 use snafu::ResultExt;
 use tokio::{
@@ -139,46 +136,21 @@ impl RequestPlan {
 
 pub(crate) async fn send_request_body<W: LineWriter>(
     plan: &RequestPlan,
-    request_stream: &mut MessageWriter,
+    request_stream: &mut RequestWriter,
     verbose: &CurlVerbose<W>,
     progress_mode: ProgressMode,
 ) -> Result<u64, Error> {
-    match &plan.body {
-        RequestBody::Empty => {
-            let request = plan
-                .request_builder()
-                .body(String::new())
-                .context(error::BuildRequestSnafu)?;
-            request_stream
-                .send_hyper_request(request)
-                .await
-                .context(error::SendRequestSnafu)?;
-            request_stream
-                .close()
-                .await
-                .context(error::CloseRequestStreamSnafu)?;
-            Ok(0)
-        }
+    let n = match &plan.body {
+        RequestBody::Empty => 0,
         RequestBody::Data(data) => {
             verbose
                 .upload_data_marker(data.len() as u64)
                 .context(error::WriteVerboseSnafu)?;
-            let request = plan
-                .request_builder()
-                .body(data.clone())
-                .context(error::BuildRequestSnafu)?;
             request_stream
-                .send_hyper_request(request)
+                .write_all(data.as_bytes())
                 .await
                 .context(error::SendRequestSnafu)?;
-            request_stream
-                .close()
-                .await
-                .context(error::CloseRequestStreamSnafu)?;
-            verbose
-                .upload_complete(data.len() as u64)
-                .context(error::WriteVerboseSnafu)?;
-            Ok(data.len() as u64)
+            data.len() as u64
         }
         RequestBody::UploadFile(path) => {
             let len = fs::metadata(path).await.ok().map(|metadata| metadata.len());
@@ -186,44 +158,24 @@ pub(crate) async fn send_request_body<W: LineWriter>(
             let mut file = fs::File::open(path)
                 .await
                 .context(error::OpenUploadFileSnafu { path: path.clone() })?;
-            let request = plan
-                .request_builder()
-                .body(())
-                .context(error::BuildRequestSnafu)?;
-            let (parts, ()) = request.into_parts();
-            request_stream
-                .send_hyper_request_parts(parts)
-                .await
-                .context(error::SendRequestSnafu)?;
-            let n = {
-                let mut stream_writer = pin!(request_stream.as_writer());
-                let n = copy_upload_file(
-                    &mut file,
-                    &mut stream_writer,
-                    path,
-                    verbose,
-                    progress.as_ref(),
-                )
+            let n = copy_upload_file(&mut file, request_stream, path, verbose, progress.as_ref())
                 .await?;
-                stream_writer
-                    .flush()
-                    .await
-                    .context(error::UploadFileSnafu { path: path.clone() })?;
-                n
-            };
             if let Some(pb) = progress {
                 pb.finish();
             }
-            request_stream
-                .close()
-                .await
-                .context(error::CloseRequestStreamSnafu)?;
-            verbose
-                .upload_complete(n)
-                .context(error::WriteVerboseSnafu)?;
-            Ok(n)
+            n
         }
+    };
+    request_stream
+        .shutdown()
+        .await
+        .context(error::CloseRequestStreamSnafu)?;
+    if n > 0 {
+        verbose
+            .upload_complete(n)
+            .context(error::WriteVerboseSnafu)?;
     }
+    Ok(n)
 }
 
 async fn copy_upload_file<W, O>(

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use dhttp::home::{
+use genmeta_network::home::{
     DhttpHome,
     identity::{IdentityProfile, ssl::ResolveIdentityProfileError},
 };
@@ -207,7 +207,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use dhttp::{home::DhttpHome, name::DhttpName};
+    use genmeta_network::{home::DhttpHome, name::DhttpName};
     use tokio::fs;
 
     use super::{
@@ -238,7 +238,7 @@ mod tests {
             Self { root, home, name }
         }
 
-        fn profile(&self) -> dhttp::home::identity::IdentityProfile {
+        fn profile(&self) -> genmeta_network::home::identity::IdentityProfile {
             self.home.identity_profile(self.name.borrow())
         }
 

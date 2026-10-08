@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use dhttp::{home::DhttpHome, name::DhttpName};
+use genmeta_network::{home::DhttpHome, name::DhttpName};
 use snafu::{IntoError, ResultExt, Snafu};
 use tokio::{fs, io::AsyncWriteExt};
 
@@ -253,7 +253,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use dhttp::{home::DhttpHome, name::DhttpName};
+    use genmeta_network::{home::DhttpHome, name::DhttpName};
 
     use super::{
         SERVER_CONF_TEMPLATE, format_welcome_service_created, maybe_create_welcome_service,

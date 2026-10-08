@@ -1,12 +1,9 @@
 #![recursion_limit = "256"]
-
 use std::{io::IsTerminal, net::SocketAddr, sync::Arc, time::Duration};
 
 use clap::Parser;
-use dhttp::{
-    ddns::resolvers::DnsScheme,
-    dquic::binds::BindPattern,
-    endpoint::Endpoint,
+use genmeta_network::{
+    BindPattern, DnsScheme,
     home::{self, DhttpHome, identity::IdentityProfile},
     message::IntoUri,
     name::DhttpName as Name,
@@ -72,7 +69,7 @@ impl Options {
 pub enum Error {
     #[snafu(display("failed to normalize dhttp uri"))]
     NormalizeUri {
-        source: dhttp::message::IntoUriError,
+        source: genmeta_network::message::IntoUriError,
     },
 
     #[snafu(display("failed to load dhttp home"))]
@@ -81,18 +78,16 @@ pub enum Error {
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
         name: Name<'static>,
-        source: dhttp::home::identity::ssl::ResolveIdentityProfileError,
+        source: genmeta_network::home::identity::ssl::ResolveIdentityProfileError,
     },
 
     #[snafu(display("failed to load identity certificate and key"))]
     LoadIdentitySsl {
-        source: dhttp::home::identity::ssl::LoadIdentityError,
+        source: genmeta_network::home::identity::ssl::LoadIdentityError,
     },
 
     #[snafu(display("failed to build dhttp endpoint"))]
-    BuildEndpoint {
-        source: dhttp::endpoint::BuildEndpointError,
-    },
+    BuildEndpoint { source: dhttp::Error },
 
     #[snafu(display("failed to bind proxy listener"))]
     BindListener { source: std::io::Error },
@@ -174,7 +169,7 @@ where
 
 async fn handle_request(
     req: hyper::Request<hyper::body::Incoming>,
-    client: &Endpoint,
+    client: &genmeta_network::Client,
     router: &route::Router,
 ) -> Result<hyper::Response<BoxBody>, hyper::Error> {
     let route = router.classify(&req);
@@ -279,13 +274,11 @@ fn init_tracing(options: &Options) -> Result<tracing_appender::non_blocking::Wor
 async fn bind_listeners(options: &Options) -> Result<Vec<TcpListener>, Error> {
     let mut listeners = Vec::new();
     for bind in &options.listens {
-        let ip = bind.host.as_ip_addr().ok_or_else(|| {
+        let addr: SocketAddr = bind.parse().map_err(|error| {
             <Error as snafu::FromString>::without_source(format!(
-                "listen bind `{}` must be a concrete ip address",
-                bind.host
+                "invalid proxy listen address `{bind}`: {error}"
             ))
         })?;
-        let addr = SocketAddr::new(ip, bind.effective_port());
         let listener = TcpListener::bind(addr).await.context(BindListenerSnafu)?;
         tracing::info!(%addr, "proxy listening");
         listeners.push(listener);
@@ -338,23 +331,15 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let _guard = init_tracing(&options)?;
 
     let identity_profile = load_identity_profile(&options).await?;
-    let identity = match &identity_profile {
-        Some(profile) => Some(Arc::new(
-            profile
-                .load_identity()
-                .await
-                .context(LoadIdentitySslSnafu)?,
-        )),
-        None => None,
-    };
-
-    let mut builder = Endpoint::builder()
-        .bind(Arc::new(options.binds.clone()))
-        .maybe_identity(identity);
-    for scheme in options.dns.iter().copied() {
-        builder = builder.dns(scheme);
-    }
-    let client = Arc::new(builder.build().await.context(BuildEndpointSnafu)?);
+    genmeta_network::init(&options.dns, &options.binds)
+        .await
+        .context(BuildEndpointSnafu)?;
+    let client = Arc::new(match &identity_profile {
+        Some(profile) => genmeta_network::Client::load_profile(profile.path())
+            .await
+            .context(BuildEndpointSnafu)?,
+        None => genmeta_network::Client::anonymous(),
+    });
 
     let listeners = bind_listeners(&options).await?;
     let router = Arc::new(route::Router::new());
@@ -409,7 +394,7 @@ fn configure_tcp_keepalive(stream: &tokio::net::TcpStream) {
 /// Accept loop for a single TCP listener. Runs until the listener is dropped.
 async fn accept_loop(
     listener: TcpListener,
-    client: Arc<Endpoint>,
+    client: Arc<genmeta_network::Client>,
     router: Arc<route::Router>,
     semaphore: Arc<Semaphore>,
 ) {
@@ -476,7 +461,10 @@ mod tests {
     fn options_accept_global_flag() {
         let options = Options::try_parse_from(["genmeta-proxy", "--global"]).unwrap();
 
-        assert_eq!(options.home_scope(), dhttp::home::HomeScope::Global);
+        assert_eq!(
+            options.home_scope(),
+            genmeta_network::home::HomeScope::Global
+        );
     }
 
     #[test]

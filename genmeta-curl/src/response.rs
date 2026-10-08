@@ -1,14 +1,17 @@
 use std::{
     io::Write,
     path::PathBuf,
-    pin::{Pin, pin},
+    pin::Pin,
     task::{Context, Poll},
 };
 
 use async_compression::tokio::bufread::{DeflateDecoder, GzipDecoder, ZstdDecoder};
-use dhttp::h3x::dhttp::message::MessageReader;
+use dhttp::Body as MessageReader;
+use futures::TryStreamExt;
+use http_body_util::BodyExt;
 use snafu::ResultExt;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio_util::io::StreamReader;
 
 use crate::{
     cli::Options,
@@ -182,10 +185,15 @@ where
 
     loop {
         let chunk = response_stream
-            .read_data_chunk()
+            .frame()
             .await
+            .transpose()
+            .map_err(std::io::Error::other)
             .context(error::ReceiveResponseSnafu)?;
-        let Some(bytes) = chunk else { break };
+        let Some(frame) = chunk else { break };
+        let Ok(bytes) = frame.into_data() else {
+            continue;
+        };
         if !emitted_marker && !bytes.is_empty() {
             verbose
                 .download_chunk(bytes.len())
@@ -225,7 +233,11 @@ where
             .context(error::CreateOutputFileSnafu)?;
 
         let n = if decompress {
-            let body_reader = pin!(response_stream.as_reader());
+            let body_reader = tokio::io::BufReader::new(StreamReader::new(
+                response_stream
+                    .into_data_stream()
+                    .map_err(std::io::Error::other),
+            ));
             decompress_copy(
                 body_reader,
                 &mut file,
@@ -251,7 +263,11 @@ where
         let mut stdout = stdout_output_for_response_body();
 
         let n = if decompress {
-            let body_reader = pin!(response_stream.as_reader());
+            let body_reader = tokio::io::BufReader::new(StreamReader::new(
+                response_stream
+                    .into_data_stream()
+                    .map_err(std::io::Error::other),
+            ));
             decompress_copy(
                 body_reader,
                 &mut stdout,

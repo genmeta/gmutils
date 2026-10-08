@@ -15,7 +15,6 @@ enum Options {
     Identity(genmeta_identity::Cli),
     Nslookup(genmeta_nslookup::Options),
     Proxy(genmeta_proxy::Options),
-    Ssh(genmeta_ssh::Options),
     Version {},
 }
 
@@ -33,8 +32,6 @@ enum Error {
     Nslookup { source: genmeta_nslookup::Error },
     #[snafu(transparent)]
     Proxy { source: genmeta_proxy::Error },
-    #[snafu(transparent)]
-    Ssh { source: genmeta_ssh::Error },
     #[snafu(transparent)]
     Whatever { source: Whatever },
 }
@@ -95,7 +92,7 @@ async fn main() -> Result<(), Error> {
 
     let mut cmd = Options::command();
 
-    for name in ["access", "curl", "discover", "nslookup", "proxy", "ssh"] {
+    for name in ["access", "curl", "discover", "nslookup", "proxy"] {
         cmd = cmd.mut_subcommand(name, enable_help);
     }
     cmd = cmd.mut_subcommand("doctor", enable_help_for_subcommands);
@@ -118,7 +115,6 @@ async fn run(options: Options) -> Result<(), Error> {
         Options::Identity(options) => genmeta_identity::run(options).await?,
         Options::Nslookup(options) => genmeta_nslookup::run(options).await?,
         Options::Proxy(options) => genmeta_proxy::run(options).await?,
-        Options::Ssh(options) => genmeta_ssh::run(options).await?,
         Options::Version {} => println!("{}", env!("CARGO_PKG_VERSION")),
     };
     Ok(())
@@ -188,5 +184,10 @@ mod tests {
         let help = Options::command().render_long_help().to_string();
         assert!(help.contains("identity"), "{help}");
         assert!(help.contains("id"), "{help}");
+    }
+    #[test]
+    fn launcher_rejects_removed_ssh_command() {
+        assert!(Options::try_parse_from(["genmeta", "ssh", "alice.pilot"]).is_err());
+        assert!(Options::command().find_subcommand("ssh").is_none());
     }
 }

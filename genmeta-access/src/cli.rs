@@ -1,7 +1,8 @@
 use std::str::FromStr;
 
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
-use dhttp::access::{db::identity::Name, expr::exprs::LocationRuleExprs, pattern::LocationPattern};
+use dhttp::access::{expr::exprs::LocationRuleExprs, pattern::LocationPattern};
+use genmeta_network::name::DhttpName as Name;
 use snafu::{IntoError, ResultExt, Snafu};
 
 /// Wrapper for clap that uses [`snafu::Report`] for richer error display.
@@ -67,11 +68,11 @@ pub struct Options {
 }
 
 impl Options {
-    pub(crate) fn home_scope(&self) -> dhttp::home::HomeScope {
+    pub(crate) fn home_scope(&self) -> genmeta_network::home::HomeScope {
         if self.global {
-            dhttp::home::HomeScope::Global
+            genmeta_network::home::HomeScope::Global
         } else {
-            dhttp::home::HomeScope::User
+            genmeta_network::home::HomeScope::User
         }
     }
 

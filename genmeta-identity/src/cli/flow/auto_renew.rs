@@ -4,7 +4,7 @@ use std::{
     process::Stdio,
 };
 
-use dhttp::{
+use genmeta_network::{
     home::{DhttpHome, HomeScope},
     name::DhttpName,
 };
@@ -325,7 +325,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use dhttp::{
+    use genmeta_network::{
         home::{DhttpHome, HomeScope},
         name::DhttpName,
     };

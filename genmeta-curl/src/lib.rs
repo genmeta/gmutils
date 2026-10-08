@@ -1,9 +1,7 @@
-use std::{io::IsTerminal, pin::pin};
+use std::io::IsTerminal;
 
-use dhttp::h3x::{dhttp::message::MessageReader, quic::GetStreamIdExt};
 use http::StatusCode;
 use snafu::ResultExt;
-use tokio::io;
 
 mod cli;
 mod client;
@@ -24,21 +22,6 @@ use request::RequestPlan;
 use timing::Timing;
 use verbose::{CurlVerbose, StreamId};
 
-/// Receive the response head and record first-byte timing.
-async fn receive_response_head(
-    response_stream: &mut MessageReader,
-    timing: &mut Timing,
-) -> Result<http::response::Parts, Error> {
-    let response = response_stream
-        .read_hyper_response_parts()
-        .await
-        .context(curl_error::ReceiveResponseSnafu)?;
-
-    timing.mark_first_byte();
-
-    Ok(response)
-}
-
 pub async fn run(mut options: Options) -> Result<(), Error> {
     let _guard = init_console(&options);
     let progress_mode = ProgressMode::from_flags(
@@ -48,83 +31,91 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
     );
     let session = client::setup_client(&mut options).await?;
     let verbose = CurlVerbose::stderr(options.verbose);
-
     let mut plan = RequestPlan::initial(&options);
-    let mut redirect_count: u32 = 0;
+    let mut redirect_count = 0;
 
     loop {
         let mut timing = Timing::new();
-
-        let (mut response_stream, mut request_stream) =
-            client::connect_and_open_streams(&session, &plan.uri, &mut timing).await?;
-        let stream_id = request_stream
-            .stream_id()
-            .await
-            .context(curl_error::GetStreamIdSnafu)?;
-        let stream_id = StreamId::from(stream_id);
-        verbose
-            .request(stream_id, &plan)
-            .context(curl_error::WriteVerboseSnafu)?;
-
-        let _bytes_uploaded =
-            request::send_request_body(&plan, &mut request_stream, &verbose, progress_mode).await?;
-        verbose
-            .request_sent()
-            .context(curl_error::WriteVerboseSnafu)?;
-
-        let response = receive_response_head(&mut response_stream, &mut timing).await?;
-        verbose
-            .response(response.status, &response.headers)
-            .context(curl_error::WriteVerboseSnafu)?;
-
-        let status = response.status;
-        let response_headers = response.headers.clone();
-        let http_version = response.version;
-
-        if options.location && status.is_redirection() && status != StatusCode::NOT_MODIFIED {
-            if redirect_count >= options.max_redirs {
-                return curl_error::TooManyRedirectsSnafu.fail();
-            }
-            if let Some(target) =
-                redirect::resolve_redirect(status, &response.headers, &plan.uri, &plan.method)?
-            {
-                let mut body_reader = pin!(response_stream.as_reader());
-                io::copy(&mut body_reader, &mut io::sink()).await.ok();
-                verbose
-                    .redirect_to(&target.uri)
-                    .context(curl_error::WriteVerboseSnafu)?;
-                if target.switched_to_get {
-                    verbose
-                        .switch_to_get()
-                        .context(curl_error::WriteVerboseSnafu)?;
-                }
-                plan = plan.for_redirect(target);
-                redirect_count += 1;
-                continue;
-            }
-        }
-
-        response::fail_on_http_error(&options, status)?;
-
-        response::process_final_response(
-            response_stream,
-            response::ResponseContext {
-                options: &options,
-                status,
-                http_version,
-                current_uri: &plan.uri,
-                current_method: &plan.method,
-                timing: &timing,
-                response_headers: &response_headers,
-                verbose: &verbose,
-                progress_mode,
-            },
+        let request = plan
+            .request_builder()
+            .body(dhttp::WndBuf::new(64 * 1024))
+            .context(curl_error::BuildRequestSnafu)?;
+        let (mut writer, response) = match tokio::time::timeout(
+            session.connect_timeout,
+            session.endpoint.from_request(request),
         )
-        .await?;
-
-        break;
+        .await
+        {
+            Ok(result) => result.context(curl_error::ConnectSnafu)?,
+            Err(_) => return curl_error::TimedoutSnafu.fail(),
+        };
+        timing.mark_connected();
+        verbose
+            .request(StreamId::UNAVAILABLE, &plan)
+            .context(curl_error::WriteVerboseSnafu)?;
+        let upload = async {
+            request::send_request_body(&plan, &mut writer, &verbose, progress_mode).await?;
+            verbose
+                .request_sent()
+                .context(curl_error::WriteVerboseSnafu)
+        };
+        let receive = async {
+            let response = response.await.context(curl_error::ConnectSnafu)?;
+            timing.mark_first_byte();
+            let (parts, body) = response.into_parts();
+            verbose
+                .response(parts.status, &parts.headers)
+                .context(curl_error::WriteVerboseSnafu)?;
+            if options.location
+                && parts.status.is_redirection()
+                && parts.status != StatusCode::NOT_MODIFIED
+            {
+                if redirect_count >= options.max_redirs {
+                    return curl_error::TooManyRedirectsSnafu.fail();
+                }
+                if let Some(target) = redirect::resolve_redirect(
+                    parts.status,
+                    &parts.headers,
+                    &plan.uri,
+                    &plan.method,
+                )? {
+                    drop(body);
+                    return Ok(Some(target));
+                }
+            }
+            response::fail_on_http_error(&options, parts.status)?;
+            response::process_final_response(
+                body,
+                response::ResponseContext {
+                    options: &options,
+                    status: parts.status,
+                    http_version: parts.version,
+                    current_uri: &plan.uri,
+                    current_method: &plan.method,
+                    timing: &timing,
+                    response_headers: &parts.headers,
+                    verbose: &verbose,
+                    progress_mode,
+                },
+            )
+            .await?;
+            Ok(None)
+        };
+        let target = genmeta_network::transfer(upload, receive).await?;
+        // A server may finish its response before the upload; dropping the writer cancels it.
+        drop(writer);
+        let Some(target) = target else { break };
+        verbose
+            .redirect_to(&target.uri)
+            .context(curl_error::WriteVerboseSnafu)?;
+        if target.switched_to_get {
+            verbose
+                .switch_to_get()
+                .context(curl_error::WriteVerboseSnafu)?;
+        }
+        plan = plan.for_redirect(target);
+        redirect_count += 1;
     }
-
     Ok(())
 }
 
@@ -160,7 +151,10 @@ mod tests {
         let options =
             Options::try_parse_from(["genmeta-curl", "--global", "https://example.com/"]).unwrap();
 
-        assert_eq!(options.home_scope(), dhttp::home::HomeScope::Global);
+        assert_eq!(
+            options.home_scope(),
+            genmeta_network::home::HomeScope::Global
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use dhttp::{
+use genmeta_network::{
     home::identity::IdentityProfile,
     log::cert::{CertificateAction, CertificateLogRecord, DefaultCertificateFormatter},
 };
@@ -13,7 +13,7 @@ pub(crate) enum WriteCertificateLogError {
     #[snafu(display("failed to load committed identity {}", profile.name()))]
     LoadIdentity {
         profile: Box<IdentityProfile>,
-        source: dhttp::home::identity::ssl::LoadIdentityError,
+        source: genmeta_network::home::identity::ssl::LoadIdentityError,
     },
     #[snafu(display("committed identity {} has no leaf certificate", profile.name()))]
     MissingLeaf { profile: Box<IdentityProfile> },
@@ -23,7 +23,7 @@ pub(crate) enum WriteCertificateLogError {
     ))]
     Chain {
         profile: Box<IdentityProfile>,
-        source: dhttp::identity::ExtractDhttpSubjectKeyIdentifierError,
+        source: genmeta_network::runtime_home::certificate::ExtractDhttpSubjectKeyIdentifierError,
     },
     #[snafu(display("failed to construct certificate log record for {}", profile.name()))]
     BuildRecord {
@@ -69,13 +69,14 @@ pub(crate) async fn write_after_commit(
         .context(write_certificate_log_error::MissingLeafSnafu {
             profile: Box::new(profile.clone()),
         })?;
-    let chain = identity
-        .dhttp_subject_key_identifier()
-        .context(write_certificate_log_error::ChainSnafu {
-            profile: Box::new(profile.clone()),
-        })?
-        .chain()
-        .clone();
+    let chain = genmeta_network::runtime_home::certificate::extract_dhttp_subject_key_identifier(
+        identity.certs(),
+    )
+    .context(write_certificate_log_error::ChainSnafu {
+        profile: Box::new(profile.clone()),
+    })?
+    .chain()
+    .clone();
     let record = CertificateLogRecord::from_leaf_der(
         chrono::Local::now().fixed_offset(),
         action,
@@ -115,7 +116,7 @@ mod tests {
     };
 
     use base64::Engine as _;
-    use dhttp::{
+    use genmeta_network::{
         home::{DhttpHome, identity::IdentityProfile},
         log::cert::CertificateAction,
         name::DhttpName,

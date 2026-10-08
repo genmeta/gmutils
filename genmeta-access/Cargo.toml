@@ -11,6 +11,7 @@ keywords = ["genmeta", "dhttp", "access", "cli"]
 categories = ["command-line-utilities", "config"]
 
 [dependencies]
+genmeta-network.workspace = true
 clap = { workspace = true }
 dhttp = { workspace = true, features = [
     "access-cli",

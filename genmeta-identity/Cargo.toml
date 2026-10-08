@@ -11,6 +11,8 @@ keywords = ["genmeta", "dhttp", "identity", "certificate", "cli"]
 categories = ["command-line-utilities", "cryptography"]
 
 [dependencies]
+http-body-util.workspace = true
+genmeta-network.workspace = true
 clap = { workspace = true, optional = true }
 inquire = { workspace = true, optional = true }
 indicatif = { workspace = true, optional = true }

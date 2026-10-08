@@ -1,7 +1,9 @@
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
-use dhttp::{home::DhttpHome, identity::extract_dhttp_subject_key_identifier, name::DhttpName};
 use futures::TryStreamExt;
+use genmeta_network::{
+    home::DhttpHome, identity::extract_dhttp_subject_key_identifier, name::DhttpName,
+};
 use rustls::pki_types::{CertificateDer, UnixTime};
 use tokio::fs;
 
@@ -256,9 +258,10 @@ pub(crate) async fn load_inventory(
         .await
     {
         Ok(names) => names,
-        Err(dhttp::home::identity::ssl::ListIdentityProfilesError::ReadDir { source, .. })
-            if source.kind() == std::io::ErrorKind::NotFound =>
-        {
+        Err(genmeta_network::home::identity::ssl::ListIdentityProfilesError::ReadDir {
+            source,
+            ..
+        }) if source.kind() == std::io::ErrorKind::NotFound => {
             return Ok(LocalInventory { groups: Vec::new() });
         }
         Err(error) => return Err(Error::from(error)),
@@ -278,7 +281,10 @@ pub(crate) async fn try_load_summary_exact(
     match load_summary_exact(dhttp_home, name, default_name).await {
         Ok(summary) => Ok(Some(summary)),
         Err(Error::ResolveIdentityProfile {
-            source: dhttp::home::identity::ssl::ResolveIdentityProfileError::ExactNotFound { .. },
+            source:
+                genmeta_network::home::identity::ssl::ResolveIdentityProfileError::ExactNotFound {
+                    ..
+                },
         }) => Ok(None),
         Err(error) => Err(error),
     }
@@ -383,7 +389,7 @@ pub(crate) fn now_unix_timestamp() -> i64 {
 }
 
 async fn assess_profile(
-    profile: &dhttp::home::identity::IdentityProfile,
+    profile: &genmeta_network::home::identity::IdentityProfile,
 ) -> LocalIdentityAssessment {
     let certs = match profile.load_certs().await {
         Ok(certs) => certs,
@@ -403,7 +409,7 @@ async fn assess_profile(
     let cert_pem = fs::read(
         profile
             .ssl_dir()
-            .join(dhttp::home::identity::ssl::CERT_FILE_NAME),
+            .join(genmeta_network::home::identity::ssl::CERT_FILE_NAME),
     )
     .await
     .ok();
@@ -520,10 +526,10 @@ pub(crate) async fn assess_profile_exact(
 }
 
 fn certificate_state_from_error(
-    error: &dhttp::home::identity::ssl::LoadCertsError,
+    error: &genmeta_network::home::identity::ssl::LoadCertsError,
 ) -> LocalIdentityMaterialState {
     match error {
-        dhttp::home::identity::ssl::LoadCertsError::Read { source, .. }
+        genmeta_network::home::identity::ssl::LoadCertsError::Read { source, .. }
             if source.kind() == std::io::ErrorKind::NotFound =>
         {
             LocalIdentityMaterialState::Missing("certificate missing")
@@ -533,11 +539,11 @@ fn certificate_state_from_error(
 }
 
 fn private_key_state_from_error(
-    error: &dhttp::home::identity::ssl::LoadKeyError,
+    error: &genmeta_network::home::identity::ssl::LoadKeyError,
 ) -> LocalIdentityMaterialState {
     match error {
-        dhttp::home::identity::ssl::LoadKeyError::Metadata { source, .. }
-        | dhttp::home::identity::ssl::LoadKeyError::Read { source, .. }
+        genmeta_network::home::identity::ssl::LoadKeyError::Metadata { source, .. }
+        | genmeta_network::home::identity::ssl::LoadKeyError::Read { source, .. }
             if source.kind() == std::io::ErrorKind::NotFound =>
         {
             LocalIdentityMaterialState::Missing("private key missing")
@@ -561,13 +567,15 @@ fn certificate_chain_is_trusted(
     let Ok(verify_at) = u64::try_from(verify_at) else {
         return false;
     };
-    dhttp::trust::dhttp_client_cert_verifier(dhttp::trust::ClientIdentityPolicy::Required)
-        .verify_client_cert(
-            leaf,
-            &certs[1..],
-            UnixTime::since_unix_epoch(Duration::from_secs(verify_at)),
-        )
-        .is_ok()
+    genmeta_network::trust::dhttp_client_cert_verifier(
+        genmeta_network::trust::ClientIdentityPolicy::Required,
+    )
+    .verify_client_cert(
+        leaf,
+        &certs[1..],
+        UnixTime::since_unix_epoch(Duration::from_secs(verify_at)),
+    )
+    .is_ok()
 }
 
 fn trust_check_timestamp(valid_from: i64, expires_at: i64, now: i64) -> Option<i64> {
@@ -584,7 +592,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use dhttp::{home::DhttpHome, name::DhttpName};
+    use genmeta_network::{home::DhttpHome, name::DhttpName};
 
     #[cfg(not(windows))]
     use super::try_load_summary_exact;

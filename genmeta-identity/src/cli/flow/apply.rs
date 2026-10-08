@@ -1,6 +1,6 @@
 use std::{io::IsTerminal, path::Path};
 
-use dhttp::home::{DhttpHome, HomeScope};
+use genmeta_network::home::{DhttpHome, HomeScope};
 use snafu::{FromString, whatever};
 
 use super::{
@@ -816,7 +816,7 @@ mod tests {
             Self { root, home, target }
         }
 
-        fn profile(&self) -> dhttp::home::identity::IdentityProfile {
+        fn profile(&self) -> genmeta_network::home::identity::IdentityProfile {
             self.home.identity_profile(self.target.dhttp_name())
         }
     }
@@ -1035,7 +1035,7 @@ mod tests {
             super::super::auth_plan::candidate_specs(&child, RemoteTargetState::Missing),
             vec![
                 super::super::auth_plan::AuthCandidateSpec::Identity(
-                    dhttp::name::DhttpName::try_from("alice.smith")
+                    genmeta_network::name::DhttpName::try_from("alice.smith")
                         .unwrap()
                         .into_owned()
                 ),

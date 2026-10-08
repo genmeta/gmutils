@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://media.dhttp.net/img/gmutils/gmutils.svg" width="900" alt="GMUTILS command-line tool family: identity, access, curl, nslookup, ssh, doctor, proxy, and discover">
+  <img src="https://media.dhttp.net/img/gmutils/gmutils.svg" width="900" alt="GMUTILS command-line tool family: identity, access, curl, nslookup, doctor, proxy, and discover">
 </p>
 <p align="center">
   <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/version-0.8.2-1f6feb?style=flat-square" alt="Version 0.8.2"></a>
@@ -25,7 +25,6 @@ Available commands:
 | `genmeta identity` | Create, apply, inspect, and renew Unified Identities and certificates. |
 | `genmeta access` | Manage DHttp API access-control rules. |
 | `genmeta curl` | Send DHttp requests with a curl-like interface. |
-| `genmeta ssh` | Administer remote endpoints over DHttp with SSH-compatible syntax. |
 | `genmeta proxy` | Run a local forward proxy that forwards HTTP requests to DHttp endpoints. |
 | `genmeta nslookup` | Resolve DDns names and discover reachable DHttp addresses. |
 | `genmeta discover` | Discover nearby DHttp endpoints over mDNS. |
@@ -88,3 +87,20 @@ genmeta --help
 ```
 
 Identities are stored under the current user's `~/.dhttp` directory by default. Most client commands use the default identity automatically; pass `--id` to select another identity when a command supports it.
+
+## Development dependency graph
+
+The DHTTP runtime follows Pishoo's pinned Git dependency graph: `dhttp` at
+`d925b240`, with QUIC at `c64cf762`, HTTP/3 at `90ab46c8`, and DDNS at
+`c633d988`. Build with `cargo build --locked --workspace`; adjacent repositories
+and local Cargo patches are not required. The older `dhttp-home` file-management
+helpers are retained only for CLI settings and atomic identity installation;
+all network traffic uses the new runtime.
+
+SSH is temporarily removed from the launcher, workspace and release packages.
+The process-wide runtime manages all network interfaces. Curl, proxy and
+nslookup accept the default `--interface '*'`; other outbound interface
+patterns are rejected until the runtime exposes interface selection. NAT and
+mDNS discovery accept interface names or local IPs as report/discovery filters.
+Missing or stale local OCSP staples are fetched, validated and cached when an
+identity is used.

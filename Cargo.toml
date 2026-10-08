@@ -5,7 +5,7 @@ members = [
     "genmeta",
     "genmeta-access",
     "genmeta-curl",
-    "genmeta-ssh",
+    "genmeta-network",
     "genmeta-nslookup",
     "genmeta-discover",
     "genmeta-nat",
@@ -35,7 +35,6 @@ indicatif = "0.18"
 whoami = "2"
 
 # network
-h3x = "0.6.2"
 http = "1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
@@ -98,20 +97,15 @@ async-compression = { version = "0.4", features = [
 
 # workspace
 genmeta-access = { path = "genmeta-access", version = "0.4.2" }
-dhttp = "0.6.2"
+dhttp = { git = "https://github.com/genmeta/dhttp.git", rev = "d925b240986eaa2863acfaf3f4ad34509e5795e2" }
+genmeta-network = { path = "genmeta-network" }
 genmeta-curl = { path = "genmeta-curl", version = "0.7.1" }
 genmeta-discover = { path = "genmeta-discover", version = "0.4.2" }
 genmeta-doctor = { path = "genmeta-doctor", version = "0.4.1" }
 genmeta-identity = { path = "genmeta-identity", version = "0.4.2", default-features = false }
 genmeta-nat = { path = "genmeta-nat", version = "0.5.1" }
 genmeta-nslookup = { path = "genmeta-nslookup", version = "0.5.1" }
-genmeta-ssh = { path = "genmeta-ssh", version = "0.7.2" }
 genmeta-proxy = { path = "genmeta-proxy", version = "0.4.1" }
-
-# DShell
-dshell = { version = "0.6.2", features = [
-    "config",
-] }
 
 [profile.release]
 opt-level = "z"
@@ -119,3 +113,12 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# Keep the dhttp graph identical to pishoo's pinned transport sources.
+[patch.crates-io]
+dhttp = { git = "https://github.com/genmeta/dhttp.git", rev = "d925b240986eaa2863acfaf3f4ad34509e5795e2" }
+dhttp-home = { git = "https://github.com/genmeta/dhttp.git", rev = "d925b240986eaa2863acfaf3f4ad34509e5795e2" }
+qtls = { git = "https://github.com/genmeta/dquic.git", rev = "c64cf762cbaab9f0b848cf744d4f7352b2514864" }
+qresolve = { git = "https://github.com/genmeta/dquic.git", rev = "c64cf762cbaab9f0b848cf744d4f7352b2514864" }
+qbase = { git = "https://github.com/genmeta/dquic.git", rev = "c64cf762cbaab9f0b848cf744d4f7352b2514864" }
+qrecovery = { git = "https://github.com/genmeta/dquic.git", rev = "c64cf762cbaab9f0b848cf744d4f7352b2514864" }

@@ -1,4 +1,4 @@
-use dhttp::name::DhttpName as Name;
+use genmeta_network::name::DhttpName as Name;
 use http::{Method, Uri};
 use hyper::body::Incoming;
 

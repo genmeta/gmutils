@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Move DHTTP requests, proxy forwarding, DNS resolution and NAT diagnostics to
+  Pishoo's pinned Git transport graph and process-wide network initialization.
+- Validate and cache local OCSP staples before authenticated DHTTP requests.
+- Temporarily remove SSH, DShell and the SSH wrapper scripts from the launcher,
+  workspace, publication list and release packages.
+
 ## [0.8.2] - 2026-08-31
 
 ### Added
