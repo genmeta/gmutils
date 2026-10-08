@@ -1,5 +1,5 @@
 //! Shared CLI identity storage and process-wide DHTTP transport setup.
-pub use cli_home as home;
+pub mod home;
 pub use dhttp_home as runtime_home;
 pub mod ocsp;
 pub use ddns;

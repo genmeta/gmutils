@@ -90,17 +90,14 @@ Identities are stored under the current user's `~/.dhttp` directory by default. 
 
 ## Development dependency graph
 
-The DHTTP runtime follows Pishoo's pinned Git dependency graph: `dhttp` at
-`d925b240`, with QUIC at `c64cf762`, HTTP/3 at `90ab46c8`, and DDNS at
-`c633d988`. Build with `cargo build --locked --workspace`; adjacent repositories
-and local Cargo patches are not required. The older `dhttp-home` file-management
-helpers are retained only for CLI settings and atomic identity installation;
-all network traffic uses the new runtime.
+The DHTTP runtime follows Pishoo's local dependency graph. Keep `gmutils`,
+`dhttp`, `dquic`, `h3x`, `ddns`, and `rankey` in adjacent directories, then run
+`cargo build --workspace` from `gmutils`. Runtime, HTTP/3, DNS, transport, and
+key-management dependencies use those local checkouts. The workspace patches
+unify registry edges with the same local QUIC types.
 
-If a parent directory has Cargo patches for adjacent development repositories,
-use `bash scripts/cargo-pinned.sh build --workspace` to build with this project's
-pinned graph. This runs Cargo from a temporary directory while explicitly
-loading the project manifest and configuration, without changing other projects.
+CLI settings and atomic certificate installation are maintained inside
+`genmeta-network`; they no longer require an older Git checkout of `dhttp-home`.
 
 SSH is temporarily removed from the launcher, workspace and release packages.
 The process-wide runtime manages all network interfaces. Curl, proxy and

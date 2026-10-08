@@ -19,6 +19,7 @@ fn main() {
         .expect("failed to write generated DHTTP bootstrap constants");
 
     println!("cargo::rerun-if-env-changed={ROOT_CA_PEM_ENV}");
+    println!("cargo::rerun-if-env-changed=DHTTP_GLOBAL_HOME");
 }
 
 fn root_ca_der() -> Vec<u8> {

@@ -6,16 +6,14 @@ license.workspace = true
 publish = false
 
 [dependencies]
+dirs.workspace = true
 dhttp = { workspace = true, features = ["access-cli", "access-migration", "log"] }
-dhttp-home = { git = "https://github.com/genmeta/dhttp.git", rev = "d925b240986eaa2863acfaf3f4ad34509e5795e2" }
-# CLI settings and atomic certificate installation are absent from the new runtime home.
-# Retain those file-management helpers without any legacy networking dependencies.
-cli-home = { package = "dhttp-home", git = "https://github.com/genmeta/dhttp.git", rev = "0370d553d3280d98074a798ec27b655b4bd82ee2" }
+dhttp-home = { path = "../../dhttp/home" }
 dhttp-identity = "0.3.0"
-ddns = { package = "dyns", git = "https://github.com/genmeta/ddns.git", rev = "c633d9880747ecb8e6211c017f0b5e51a003b59c", features = ["h3", "http", "mdns"] }
-qprotocol = { git = "https://github.com/genmeta/dquic.git", rev = "c64cf762cbaab9f0b848cf744d4f7352b2514864" }
-qbase = { git = "https://github.com/genmeta/dquic.git", rev = "c64cf762cbaab9f0b848cf744d4f7352b2514864" }
-qtls = { git = "https://github.com/genmeta/dquic.git", rev = "c64cf762cbaab9f0b848cf744d4f7352b2514864" }
+ddns = { package = "dyns", path = "../../ddns", features = ["h3", "http", "mdns"] }
+qprotocol = { path = "../../dquic/qprotocol" }
+qbase = { path = "../../dquic/qbase" }
+qtls = { path = "../../dquic/qtls" }
 reqwest.workspace = true
 x509-parser.workspace = true
 der = "0.7"
@@ -23,6 +21,8 @@ sha1 = "0.10"
 x509-cert = "0.2"
 x509-ocsp = "0.2"
 tempfile = "3"
+serde.workspace = true
+toml = "1"
 http.workspace = true
 futures.workspace = true
 rustls.workspace = true

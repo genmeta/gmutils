@@ -51,7 +51,7 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 
 # security
-rankey = "0.2.2"
+rankey = { path = "../rankey", version = "0.2.2" }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 x509-parser = "0.18"
 p384 = "0.14.0-rc.7"
@@ -97,7 +97,7 @@ async-compression = { version = "0.4", features = [
 
 # workspace
 genmeta-access = { path = "genmeta-access", version = "0.4.2" }
-dhttp = { git = "https://github.com/genmeta/dhttp.git", rev = "d925b240986eaa2863acfaf3f4ad34509e5795e2" }
+dhttp = { path = "../dhttp/dhttp", version = "0.6.2" }
 genmeta-network = { path = "genmeta-network" }
 genmeta-curl = { path = "genmeta-curl", version = "0.7.1" }
 genmeta-discover = { path = "genmeta-discover", version = "0.4.2" }
@@ -114,11 +114,11 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
-# Keep the dhttp graph identical to pishoo's pinned transport sources.
+# Share registry dependency types with the adjacent transport workspaces, as in pishoo.
 [patch.crates-io]
-dhttp = { git = "https://github.com/genmeta/dhttp.git", rev = "d925b240986eaa2863acfaf3f4ad34509e5795e2" }
-dhttp-home = { git = "https://github.com/genmeta/dhttp.git", rev = "d925b240986eaa2863acfaf3f4ad34509e5795e2" }
-qtls = { git = "https://github.com/genmeta/dquic.git", rev = "c64cf762cbaab9f0b848cf744d4f7352b2514864" }
-qresolve = { git = "https://github.com/genmeta/dquic.git", rev = "c64cf762cbaab9f0b848cf744d4f7352b2514864" }
-qbase = { git = "https://github.com/genmeta/dquic.git", rev = "c64cf762cbaab9f0b848cf744d4f7352b2514864" }
-qrecovery = { git = "https://github.com/genmeta/dquic.git", rev = "c64cf762cbaab9f0b848cf744d4f7352b2514864" }
+dhttp = { path = "../dhttp/dhttp", version = "0.6.2" }
+dhttp-home = { path = "../dhttp/home" }
+qtls = { path = "../dquic/qtls" }
+qresolve = { path = "../dquic/qresolve" }
+qbase = { path = "../dquic/qbase" }
+qrecovery = { path = "../dquic/qrecovery" }
