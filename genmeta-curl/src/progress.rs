@@ -38,23 +38,18 @@ pub(crate) fn init_console(options: &Options) -> ConsoleGuard {
     let level = if options.silent && !options.show_error && std::env::var_os("RUST_LOG").is_none() {
         tracing_subscriber::filter::LevelFilter::OFF
     } else {
-        tracing_subscriber::filter::LevelFilter::INFO
+        tracing_subscriber::filter::LevelFilter::WARN
     };
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
                 .with_ansi(std::io::stderr().is_terminal())
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
-                .with_writer(stderr),
-        )
-        .with(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(level.into())
-                .from_env_lossy()
-                .add_directive(
-                    "netlink_packet_route=error"
-                        .parse()
-                        .expect("static tracing directive is valid"),
+                .with_writer(stderr)
+                .with_filter(
+                    tracing_subscriber::EnvFilter::builder()
+                        .with_default_directive(level.into())
+                        .from_env_lossy(),
                 ),
         )
         .with(indicatif_layer.with_filter(IndicatifFilter::new(false)))
