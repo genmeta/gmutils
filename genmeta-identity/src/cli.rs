@@ -332,7 +332,7 @@ impl Info {
 }
 
 #[derive(Parser, Debug, Clone)]
-#[command(version, about, disable_help_flag = true, disable_version_flag = true)]
+#[command(version, about)]
 pub struct Cli {
     #[arg(
         short = 'g',
@@ -357,7 +357,7 @@ impl Cli {
 }
 
 #[derive(Parser, Debug, Clone)]
-#[command(about, disable_help_flag = true, disable_version_flag = true)]
+#[command(about)]
 pub enum Options {
     #[command(visible_alias = "create")]
     Apply(Apply),

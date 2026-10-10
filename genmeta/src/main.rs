@@ -1,12 +1,13 @@
-use clap::{Arg, ArgAction, Command as ClapCommand, CommandFactory, FromArgMatches, Parser};
+use clap::Parser;
 use snafu::Whatever;
 
 #[derive(Parser, Debug, Clone)]
-#[command(disable_help_flag = true, disable_version_flag = true)]
+#[command(version, about)]
 enum Options {
     Access(genmeta_access::Options),
     Curl(genmeta_curl::Options),
     Discover(genmeta_discover::Options),
+    #[command(version = genmeta_doctor::VERSION)]
     Doctor {
         #[command(subcommand)]
         options: genmeta_doctor::Options,
@@ -36,49 +37,6 @@ enum Error {
     Whatever { source: Whatever },
 }
 
-/// Re-add `--help` (and `--version` when a version is set) to a command and all
-/// its descendants. This counteracts the propagation of `disable_help_flag` from
-/// launcher-level commands, so that independent subcommands still expose flags.
-fn enable_help(mut cmd: ClapCommand) -> ClapCommand {
-    let names: Vec<String> = cmd
-        .get_subcommands()
-        .map(|sc| sc.get_name().to_string())
-        .collect();
-    for name in names {
-        cmd = cmd.mut_subcommand(&name, enable_help);
-    }
-    cmd = cmd.arg(
-        Arg::new("help_flag")
-            .short('h')
-            .long("help")
-            .action(ArgAction::HelpLong)
-            .help("Print help"),
-    );
-    if cmd.get_version().is_some() {
-        cmd = cmd.arg(
-            Arg::new("version_flag")
-                .short('V')
-                .long("version")
-                .action(ArgAction::Version)
-                .help("Print version"),
-        );
-    }
-    cmd
-}
-
-/// Apply [`enable_help`] to every non-launcher subcommand of a launcher command.
-fn enable_help_for_subcommands(mut cmd: ClapCommand) -> ClapCommand {
-    let names: Vec<String> = cmd
-        .get_subcommands()
-        .filter(|sc| !matches!(sc.get_name(), "version"))
-        .map(|sc| sc.get_name().to_string())
-        .collect();
-    for name in names {
-        cmd = cmd.mut_subcommand(&name, enable_help);
-    }
-    cmd
-}
-
 fn install_process_crypto_provider() {
     match rustls::crypto::ring::default_provider().install_default() {
         Ok(()) | Err(_) => {}
@@ -90,16 +48,7 @@ fn install_process_crypto_provider() {
 async fn main() -> Result<(), Error> {
     install_process_crypto_provider();
 
-    let mut cmd = Options::command();
-
-    for name in ["access", "curl", "discover", "nslookup", "proxy"] {
-        cmd = cmd.mut_subcommand(name, enable_help);
-    }
-    cmd = cmd.mut_subcommand("doctor", enable_help_for_subcommands);
-    cmd = cmd.mut_subcommand("identity", enable_help_for_subcommands);
-
-    let matches = cmd.get_matches();
-    let options = Options::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    let options = Options::parse();
 
     run(options).await.inspect_err(|error| {
         tracing::debug!(?error, "Exit with error");
@@ -184,6 +133,44 @@ mod tests {
         let help = Options::command().render_long_help().to_string();
         assert!(help.contains("identity"), "{help}");
         assert!(help.contains("id"), "{help}");
+    }
+
+    #[test]
+    fn help_and_version_flags_work_at_every_command_level() {
+        use clap::error::ErrorKind;
+
+        for command in [
+            vec![],
+            vec!["identity"],
+            vec!["id"],
+            vec!["doctor"],
+            vec!["access"],
+            vec!["curl"],
+            vec!["discover"],
+            vec!["nslookup"],
+            vec!["proxy"],
+            vec!["doctor", "net"],
+        ] {
+            for (flag, kind) in [
+                ("--help", ErrorKind::DisplayHelp),
+                ("-h", ErrorKind::DisplayHelp),
+                ("--version", ErrorKind::DisplayVersion),
+                ("-V", ErrorKind::DisplayVersion),
+            ] {
+                let mut args = vec!["genmeta"];
+                args.extend(command.iter().copied());
+                args.push(flag);
+                let error = Options::try_parse_from(&args).unwrap_err();
+                assert_eq!(error.kind(), kind, "{args:?}: {error}");
+            }
+        }
+        for command in [
+            vec!["version"],
+            vec!["identity", "version"],
+            vec!["doctor", "version"],
+        ] {
+            assert!(Options::try_parse_from(std::iter::once("genmeta").chain(command)).is_ok());
+        }
     }
     #[test]
     fn launcher_rejects_removed_ssh_command() {
