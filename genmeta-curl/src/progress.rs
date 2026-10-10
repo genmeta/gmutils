@@ -172,8 +172,13 @@ mod tests {
     fn indicatif_filter_only_enables_marked_progress_spans() {
         let layer = CountLayer::default();
         let seen = layer.0.clone();
-        let subscriber =
-            tracing_subscriber::registry().with(layer.with_filter(IndicatifFilter::new(false)));
+        let subscriber = tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(std::io::sink)
+                    .with_filter(tracing_subscriber::filter::LevelFilter::WARN),
+            )
+            .with(layer.with_filter(IndicatifFilter::new(false)));
 
         tracing::subscriber::with_default(subscriber, || {
             let _ordinary = tracing::info_span!("ordinary_background_span");
