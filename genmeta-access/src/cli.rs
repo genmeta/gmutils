@@ -33,7 +33,7 @@ where
     version,
     about = "Manage daccess policies through authenticated DHTTP APIs",
     override_usage = "genmeta access [OPTIONS] <path> <operation> ...\n       genmeta access [OPTIONS] list [--wide]\n       genmeta access [OPTIONS] remove <path>...",
-    after_help = "Examples:\n  genmeta access /api allow '*?' --method GET\n  genmeta access /api review '**'\n  genmeta access /api list\n  genmeta access /api remove '*?' --method GET\n  genmeta access list --wide\n\nGrantees: a registered contact name, group@issuer, ** (named), ? (anonymous), *? (all).\nPaths are literal API prefixes; old regex and rule-expression syntax is unsupported."
+    after_help = "Path operations:\n  <path> allow <GRANTEE>    Allow a grantee\n  <path> deny <GRANTEE>     Deny a grantee\n  <path> review <GRANTEE>   Require approval\n  <path> list               List policies at this exact prefix\n  <path> remove <GRANTEE>... | --all\n  <path> clear              Delete all policies at this exact prefix\n\nUse genmeta access <path> <operation> --help for operation options.\n\nExamples:\n  genmeta access /api allow '*?' --method GET\n  genmeta access /api review '**'\n  genmeta access /api list\n  genmeta access /api remove '*?' --method GET\n  genmeta access list --wide\n\nGrantees: a registered contact name, group@issuer, ** (named), ? (anonymous), *? (all).\nPaths are literal API prefixes. Replace old `with method GET` with `--method GET`; regex and rule-expression syntax is unsupported."
 )]
 pub struct Options {
     #[arg(
@@ -90,19 +90,23 @@ impl Options {
 #[derive(Subcommand, Debug, Clone)]
 enum CliCommand {
     #[command(visible_alias = "ls")]
+    /// List API prefixes with policies; --wide includes policy details
     List(GlobalList),
     #[command(visible_alias = "rm")]
+    /// Delete policies at one or more exact API prefixes
     Remove(GlobalRemove),
     #[command(external_subcommand)]
     Path(Vec<String>),
 }
 #[derive(Args, Debug, Clone)]
 struct GlobalList {
+    /// Show path, method, effect and grantee for every policy
     #[arg(short, long)]
     wide: bool,
 }
 #[derive(Args, Debug, Clone)]
 struct GlobalRemove {
+    /// Literal API prefixes to clear; child prefixes are not removed
     #[arg(required = true, value_parser = parse_api)]
     paths: Vec<String>,
 }
