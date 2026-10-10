@@ -44,3 +44,6 @@ tmp/
 
 TODO
 pishoo.pid
+
+# Local CLI test data, request downloads, diagnostics and reports
+/test-results/
