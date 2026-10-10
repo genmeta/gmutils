@@ -88,13 +88,83 @@ genmeta --help
 
 Identities are stored under the current user's `~/.dhttp` directory by default. Most client commands use the default identity automatically; pass `--id` to select another identity when a command supports it.
 
+For `nslookup`, only an explicit trailing `~` expands to `.dhttp.net`:
+
+```bash
+genmeta nslookup 'alice.smith~' h3
+genmeta nslookup example.com system
+```
+
+Ordinary query names retain their namespace. Names are normalized through `dhttp-home`.
+
+## Access policies
+
+`genmeta access` calls the selected identity's authenticated DHTTP management
+API. `--id` selects both the local client credentials and the identity hosting
+the API; otherwise the default identity is used. `--global` selects the home
+scope for loading credentials. Pishoo must be running for that identity.
+
+```bash
+genmeta access --id alice.pilot /api allow '*?' --method GET
+genmeta access /api review '**' --method POST
+genmeta access /api deny '?'
+genmeta access /api list
+genmeta access list --wide
+genmeta access /api remove '*?' --method GET
+genmeta access /api remove --all --method GET
+genmeta access remove /api
+```
+
+Rules are listed through `GET /std/acl/access`, written through
+`POST /std/acl/access/{api}`, and deleted through
+`DELETE /std/acl/allow/{grantee}` with the API and method in the JSON body.
+The CLI never opens or migrates the access database. Pishoo/daccess owns
+persistence, authorization and the live policy cache. HTTP errors and pending
+approval responses are reported without treating the operation as completed.
+
+Paths are literal API prefixes. Each `(API, method, grantee)` has one policy;
+setting it again updates the effect. Writes and explicit grantee removal
+default to method `*`; lists, `clear`, `remove --all` and global path removal
+include all methods unless `--method` is supplied. Grantees are registered
+contact names, `group@issuer`, `**` (named), `?` (anonymous), or `*?` (all).
+Only a trailing `~` expands contact/issuer names to `.dhttp.net`; ordinary names
+keep their namespace. A named contact must already exist in daccess, except
+for the profile owner. Regex paths and old rule expressions are unsupported.
+Removal uses grantees rather than database row IDs. Bulk removal lists current
+rules and deletes them individually through the API; it is not an atomic batch.
+
+Access management uses only mDNS resolution and direct local network endpoints.
+When IPv4 interface bindings are available, management queries use their mDNS
+resolvers to avoid competing IPv6 link-local paths on hosts with many virtual
+interfaces. IPv6-only hosts retain the general mDNS resolver path.
+It can operate without Internet access while the service remains locally
+reachable and its certificates and cached OCSP staples are valid. The pinned
+DHTTP runtime still starts background STUN probes, but initialization does not
+wait for them. Missing or stale client OCSP staples require an online refresh;
+unrestricted offline operation is therefore not guaranteed. Each management
+request has a 30-second timeout, configurable with `--timeout`.
+
 ## Development dependency graph
 
-The DHTTP runtime follows Pishoo's local dependency graph. Keep `gmutils`,
-`dhttp`, `dquic`, `h3x`, `ddns`, and `rankey` in adjacent directories, then run
-`cargo build --workspace` from `gmutils`. Runtime, HTTP/3, DNS, transport, and
-key-management dependencies use those local checkouts. The workspace patches
-unify registry edges with the same local QUIC types.
+The transport dependencies and daccess API contract tests are pinned to the
+reviewed Pishoo compatibility snapshots:
+
+| Repository | Branch | Revision |
+| --- | --- | --- |
+| dhttp (`dhttp`, `dhttp-home`) | `fix/client-ocsp-compatibility` | `f8bdd2700e42782e5b68b62cf69827d37a1e305b` |
+| dquic (all 12 QUIC packages) | `fix/endpoint-kind-matching` | `34a713b48535892ad9843cf2bb0db285e0d09439` |
+| ddns (`dyns`, imported as `ddns`) | `chore/h3-dns-diagnostics` | `b3ef11233e2598a75b316df104b35c2863f64e9f` |
+| h3x | `fix/qpack-feedback-backpressure` | `c26abcd3d8596c10c0fadece240a713741c7873a` |
+| daccess (`access_control`) | `feat/fit-pishoo-local` | `3e3ac6199e88f6b5e521e8d29c934ead3bb5db7c` |
+
+Run `cargo build --workspace --locked`; adjacent dependency checkouts are no
+longer required. Workspace patches unify registry dependencies with the same
+Git sources. Identity key and CSR generation uses stable P-384/PKCS#8 and
+X.509 builder APIs to coexist with qtls's newer RustCrypto dependencies.
+
+If an ancestor `.cargo/config.toml` overrides these packages with local paths,
+run Cargo from outside that ancestor directory with
+`--manifest-path <gmutils>/Cargo.toml` to validate the pinned dependency graph.
 
 CLI settings and atomic certificate installation are maintained inside
 `genmeta-network`; they no longer require an older Git checkout of `dhttp-home`.

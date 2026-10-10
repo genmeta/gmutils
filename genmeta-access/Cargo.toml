@@ -13,14 +13,21 @@ categories = ["command-line-utilities", "config"]
 [dependencies]
 genmeta-network.workspace = true
 clap = { workspace = true }
-dhttp = { workspace = true, features = [
-    "access-cli",
-    "access-orm",
-    "access-migration",
-] }
-sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
+dhttp.workspace = true
+http-body-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+http.workspace = true
+urlencoding.workspace = true
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+access_control.workspace = true
+sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
+axum = { version = "0.8", default-features = false }
+tower = { version = "0.5", features = ["util"] }
+tempfile = "3"

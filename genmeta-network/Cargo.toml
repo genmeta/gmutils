@@ -7,13 +7,13 @@ publish = false
 
 [dependencies]
 dirs.workspace = true
-dhttp = { workspace = true, features = ["access-cli", "access-migration", "log"] }
-dhttp-home = { path = "../../dhttp/home" }
+dhttp = { workspace = true, features = ["log"] }
+dhttp-home.workspace = true
 dhttp-identity = "0.3.0"
-ddns = { package = "dyns", path = "../../ddns", features = ["h3", "http", "mdns"] }
-qprotocol = { path = "../../dquic/qprotocol" }
-qbase = { path = "../../dquic/qbase" }
-qtls = { path = "../../dquic/qtls" }
+ddns.workspace = true
+qprotocol.workspace = true
+qbase.workspace = true
+qtls.workspace = true
 reqwest.workspace = true
 x509-parser.workspace = true
 der = "0.7"

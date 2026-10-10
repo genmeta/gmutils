@@ -3,7 +3,7 @@ pub mod home;
 pub use dhttp_home as runtime_home;
 pub mod ocsp;
 pub use ddns;
-pub use dhttp::{access, log};
+pub use dhttp::log;
 pub use dhttp_identity::{certificate, identity, name};
 pub use qprotocol;
 pub mod message;
@@ -98,16 +98,12 @@ impl Client {
             }
         })?;
         let ocsp = ocsp::load_or_refresh(&profile, &certs).await?;
-        let identity = qbase::endpoint::Endpoint::new(
-            &qtls::default_provider(),
-            profile.name(),
-            certs,
-            key,
-            ocsp,
-        )
-        .map_err(|source| dhttp::Error::Credentials {
-            source: Arc::new(source),
-        })?;
+        let identity =
+            qbase::endpoint::Endpoint::new(profile.name(), certs, key, ocsp).map_err(|source| {
+                dhttp::Error::Credentials {
+                    source: Arc::new(source),
+                }
+            })?;
         Ok(Self::from_endpoint(dhttp::Endpoint::new(identity)))
     }
 }

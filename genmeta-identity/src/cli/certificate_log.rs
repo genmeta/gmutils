@@ -155,7 +155,10 @@ mod tests {
             cert_pem.push('\n');
         }
         cert_pem.push_str("-----END CERTIFICATE-----\n");
-        let key_pem = rankey::generate_secp384r1_key().unwrap();
+        use p384::pkcs8::EncodePrivateKey;
+        let key_pem = p384::ecdsa::SigningKey::random(&mut p384::elliptic_curve::rand_core::OsRng)
+            .to_pkcs8_pem(p384::pkcs8::LineEnding::LF)
+            .unwrap();
         profile
             .save_identity(cert_pem.as_bytes(), key_pem.as_bytes())
             .await

@@ -1,21 +1,11 @@
 use std::str::FromStr;
 
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
-use dhttp::access::{expr::exprs::LocationRuleExprs, pattern::LocationPattern};
 use genmeta_network::name::DhttpName as Name;
-use snafu::{IntoError, ResultExt, Snafu};
+use snafu::{IntoError, Snafu};
 
-/// Wrapper for clap that uses [`snafu::Report`] for richer error display.
-///
-/// Use as a clap argument type to get multi-line error chain output when
-/// parsing complex types like [`LocationPattern`] or [`Name`]:
-///
-/// ```ignore
-/// #[derive(clap::Parser)]
-/// struct Cli {
-///     pattern: ReportFromStr<LocationPattern>,
-/// }
-/// ```
+use crate::api::{Effect, Method};
+
 #[derive(Debug, Clone, Copy)]
 pub struct ReportFromStr<T>(pub T);
 
@@ -31,21 +21,19 @@ where
     T: FromStr<Err: std::error::Error + 'static>,
 {
     type Err = ReportError<T::Err>;
-
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match T::from_str(s) {
-            Ok(value) => Ok(Self(value)),
-            Err(source) => Err(ReportError { source }),
-        }
+        T::from_str(s)
+            .map(Self)
+            .map_err(|source| ReportError { source })
     }
 }
 
 #[derive(Parser, Debug, Clone)]
 #[command(
     version,
-    about,
+    about = "Manage daccess policies through authenticated DHTTP APIs",
     override_usage = "genmeta access [OPTIONS] <path> <operation> ...\n       genmeta access [OPTIONS] list [--wide]\n       genmeta access [OPTIONS] remove <path>...",
-    after_help = "Examples:\n  genmeta access \"/\" allow luffy.pilot~\n  genmeta access \"/\" allow alice.gensokyo.net\n  genmeta access \"/\" list\n  genmeta access list --wide\n  genmeta access --identity reimu.pilot \"/\" deny \"*?\""
+    after_help = "Examples:\n  genmeta access /api allow '*?' --method GET\n  genmeta access /api review '**'\n  genmeta access /api list\n  genmeta access /api remove '*?' --method GET\n  genmeta access list --wide\n\nGrantees: a registered contact name, group@issuer, ** (named), ? (anonymous), *? (all).\nPaths are literal API prefixes; old regex and rule-expression syntax is unsupported."
 )]
 pub struct Options {
     #[arg(
@@ -54,15 +42,22 @@ pub struct Options {
         help = "use the global dhttp home instead of the default user home"
     )]
     global: bool,
-
     #[arg(
         long,
         visible_alias = "id",
         value_name = "NAME",
-        help = "identity to manage; defaults to `genmeta identity default`"
+        help = "identity to manage and authenticate with; defaults to `genmeta identity default`"
     )]
     identity: Option<ReportFromStr<Name<'static>>>,
-
+    #[arg(
+        long,
+        value_name = "METHOD",
+        help = "HTTP method (uppercase or *); defaults to * for writes/grantee removal, all methods for lists/clear"
+    )]
+    method: Option<ReportFromStr<Method>>,
+    /// Timeout in seconds for each management request
+    #[arg(long, default_value = "30", value_parser = clap::value_parser!(u64).range(1..))]
+    pub(crate) timeout: u64,
     #[command(subcommand)]
     command: CliCommand,
 }
@@ -75,11 +70,20 @@ impl Options {
             genmeta_network::home::HomeScope::User
         }
     }
-
     pub(crate) fn into_parts(self) -> Result<(Option<Name<'static>>, Command), ParseCommandError> {
-        let identity = self.identity.map(|ReportFromStr(identity)| identity);
-        let command = self.command.try_into()?;
-        Ok((identity, command))
+        let method = self.method.map(|ReportFromStr(value)| value);
+        let command = match self.command {
+            CliCommand::List(args) => Command::List {
+                wide: args.wide,
+                method,
+            },
+            CliCommand::Remove(args) => Command::RemovePaths {
+                paths: args.paths,
+                method,
+            },
+            CliCommand::Path(arguments) => parse_path_command(arguments, method)?,
+        };
+        Ok((self.identity.map(|ReportFromStr(value)| value), command))
     }
 }
 
@@ -92,34 +96,15 @@ enum CliCommand {
     #[command(external_subcommand)]
     Path(Vec<String>),
 }
-
 #[derive(Args, Debug, Clone)]
 struct GlobalList {
     #[arg(short, long)]
     wide: bool,
 }
-
 #[derive(Args, Debug, Clone)]
 struct GlobalRemove {
-    #[arg(required = true)]
-    patterns: Vec<ReportFromStr<LocationPattern>>,
-}
-
-impl TryFrom<CliCommand> for Command {
-    type Error = ParseCommandError;
-
-    fn try_from(value: CliCommand) -> Result<Self, Self::Error> {
-        match value {
-            CliCommand::List(GlobalList { wide }) => Ok(Self::List { wide }),
-            CliCommand::Remove(GlobalRemove { patterns }) => Ok(Self::RemovePaths {
-                patterns: patterns
-                    .into_iter()
-                    .map(|ReportFromStr(pattern)| pattern)
-                    .collect(),
-            }),
-            CliCommand::Path(arguments) => parse_path_command(arguments),
-        }
-    }
+    #[arg(required = true, value_parser = parse_api)]
+    paths: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -129,64 +114,42 @@ pub(crate) enum Command {
     },
     List {
         wide: bool,
+        method: Option<Method>,
     },
     RemovePaths {
-        patterns: Vec<LocationPattern>,
+        paths: Vec<String>,
+        method: Option<Method>,
     },
     Path {
-        pattern: LocationPattern,
+        path: String,
+        method: Option<Method>,
         operation: PathOperation,
     },
 }
-
-impl Command {
-    pub(crate) fn writes_store(&self, db_exists: bool) -> bool {
-        match self {
-            Self::Print { .. } => false,
-            Self::List { .. } => !db_exists,
-            Self::RemovePaths { .. } => true,
-            Self::Path { operation, .. } => match operation {
-                PathOperation::List => !db_exists,
-                PathOperation::Remove { .. }
-                | PathOperation::Clear
-                | PathOperation::Allow { .. }
-                | PathOperation::Deny { .. } => true,
-            },
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub(crate) enum PathOperation {
     List,
-    Remove { all: bool, sequence: Vec<usize> },
+    Remove { all: bool, grantees: Vec<String> },
     Clear,
-    Allow { expr: LocationRuleExprs },
-    Deny { expr: LocationRuleExprs },
+    Set { effect: Effect, grantee: String },
 }
-
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 pub enum ParseCommandError {
     #[snafu(display("failed to parse access path command"))]
     ParsePathCommand { source: clap::Error },
-
-    #[snafu(display("failed to parse rule expression `{input}`"))]
-    InvalidRuleExpr {
-        input: String,
-        source: <LocationRuleExprs as FromStr>::Err,
-    },
 }
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "genmeta access")]
 struct PathCommand {
-    pattern: ReportFromStr<LocationPattern>,
-
+    #[arg(value_parser = parse_api)]
+    path: String,
+    #[arg(long, global = true, value_name = "METHOD")]
+    method: Option<ReportFromStr<Method>>,
     #[command(subcommand)]
     operation: PathOperationCommand,
 }
-
 #[derive(Subcommand, Debug, Clone)]
 enum PathOperationCommand {
     #[command(visible_alias = "ls")]
@@ -194,67 +157,57 @@ enum PathOperationCommand {
     #[command(visible_alias = "rm")]
     Remove(PathRemove),
     Clear,
-    Allow(RuleExprArgs),
-    Deny(RuleExprArgs),
+    Allow(GranteeArgs),
+    Deny(GranteeArgs),
+    Review(GranteeArgs),
 }
-
 #[derive(Args, Debug, Clone)]
 struct PathRemove {
-    #[arg(long, conflicts_with = "sequence")]
+    #[arg(long, conflicts_with = "grantees")]
     all: bool,
-
-    #[arg(value_name = "SEQUENCE", required_unless_present = "all")]
-    sequence: Vec<usize>,
+    /// Grantees identifying policies to delete (defaults to method *)
+    #[arg(value_name = "GRANTEE", required_unless_present = "all", value_parser = parse_grantee)]
+    grantees: Vec<String>,
 }
-
 #[derive(Args, Debug, Clone)]
-struct RuleExprArgs {
-    #[arg(
-        value_name = "EXPR",
-        required = true,
-        num_args = 1..,
-        allow_hyphen_values = true,
-        trailing_var_arg = true
-    )]
-    expr: Vec<String>,
+struct GranteeArgs {
+    #[arg(value_name = "GRANTEE", value_parser = parse_grantee)]
+    grantee: String,
 }
 
-impl TryFrom<PathCommand> for Command {
-    type Error = ParseCommandError;
-
-    fn try_from(value: PathCommand) -> Result<Self, Self::Error> {
-        let ReportFromStr(pattern) = value.pattern;
-        let operation = value.operation.try_into()?;
-        Ok(Command::Path { pattern, operation })
+fn parse_api(input: &str) -> Result<String, String> {
+    let uri: http::uri::PathAndQuery = input
+        .parse()
+        .map_err(|_| "expected a literal API path beginning with /".to_owned())?;
+    if !input.starts_with('/') || uri.query().is_some() || input.contains(['#', '*', ' ']) {
+        return Err(
+            "expected a literal API path beginning with /, without query, wildcard or regex".into(),
+        );
     }
+    let path = input.trim_end_matches('/');
+    Ok(if path.is_empty() { "/" } else { path }.to_owned())
 }
 
-impl TryFrom<PathOperationCommand> for PathOperation {
-    type Error = ParseCommandError;
-
-    fn try_from(value: PathOperationCommand) -> Result<Self, Self::Error> {
-        match value {
-            PathOperationCommand::List => Ok(Self::List),
-            PathOperationCommand::Remove(PathRemove { all, sequence }) => {
-                Ok(Self::Remove { all, sequence })
-            }
-            PathOperationCommand::Clear => Ok(Self::Clear),
-            PathOperationCommand::Allow(args) => args.into_expr().map(|expr| Self::Allow { expr }),
-            PathOperationCommand::Deny(args) => args.into_expr().map(|expr| Self::Deny { expr }),
+fn parse_grantee(input: &str) -> Result<String, String> {
+    if matches!(input, "**" | "?" | "*?") {
+        return Ok(input.to_owned());
+    }
+    if let Some((title, issuer)) = input.split_once('@') {
+        if title.is_empty() || title.contains([' ', '*', '?', '~', '@']) {
+            return Err("invalid group title".into());
         }
+        let issuer = genmeta_network::runtime_home::normalize_dns_name(issuer)
+            .ok_or("invalid group issuer name")?;
+        return Ok(format!("{title}@{issuer}"));
     }
+    genmeta_network::runtime_home::normalize_dns_name(input)
+        .ok_or_else(|| "invalid contact name; use **, ?, *? or an exact DNS name".into())
 }
 
-impl RuleExprArgs {
-    fn into_expr(self) -> Result<LocationRuleExprs, ParseCommandError> {
-        let input = self.expr.join(" ");
-        input
-            .parse()
-            .context(parse_command_error::InvalidRuleExprSnafu { input })
-    }
-}
-
-fn parse_path_command(arguments: Vec<String>) -> Result<Command, ParseCommandError> {
+fn parse_path_command(
+    arguments: Vec<String>,
+    method: Option<Method>,
+) -> Result<Command, ParseCommandError> {
     let command = match PathCommand::try_parse_from(
         std::iter::once("genmeta access").chain(arguments.iter().map(String::as_str)),
     ) {
@@ -271,5 +224,29 @@ fn parse_path_command(arguments: Vec<String>) -> Result<Command, ParseCommandErr
         }
         Err(source) => return Err(parse_command_error::ParsePathCommandSnafu.into_error(source)),
     };
-    command.try_into()
+    let operation = match command.operation {
+        PathOperationCommand::List => PathOperation::List,
+        PathOperationCommand::Remove(args) => PathOperation::Remove {
+            all: args.all,
+            grantees: args.grantees,
+        },
+        PathOperationCommand::Clear => PathOperation::Clear,
+        PathOperationCommand::Allow(args) => PathOperation::Set {
+            effect: Effect::Allow,
+            grantee: args.grantee,
+        },
+        PathOperationCommand::Deny(args) => PathOperation::Set {
+            effect: Effect::Deny,
+            grantee: args.grantee,
+        },
+        PathOperationCommand::Review(args) => PathOperation::Set {
+            effect: Effect::Review,
+            grantee: args.grantee,
+        },
+    };
+    Ok(Command::Path {
+        path: command.path,
+        method: command.method.map(|ReportFromStr(value)| value).or(method),
+        operation,
+    })
 }

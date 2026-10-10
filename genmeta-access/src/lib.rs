@@ -1,79 +1,57 @@
+use std::{io::IsTerminal, time::Duration};
+
 use genmeta_network::{
     home::{DhttpHome, LoadDhttpHomeError, identity::settings::LoadDhttpSettingsError},
     name::DhttpName as Name,
 };
-mod cli;
-
-use std::io::IsTerminal;
-
-pub use cli::{Options, ParseCommandError, ReportFromStr};
-use genmeta_network::access::{
-    action::RequestAction,
-    db::{
-        identity_access_db_path, init_access_database_for,
-        service::{
-            error::{
-                AppendRuleError, ListAllRulesError, ListRuleSetsError, ListRulesError,
-                RemoveRuleSetError, RemoveRulesError,
-            },
-            location_service::LocationService,
-        },
-    },
-};
+use http_body_util::BodyExt;
 use snafu::{IntoError, OptionExt, ResultExt, Snafu};
+use tokio::io::AsyncWriteExt;
 use tracing_subscriber::prelude::*;
 
-use crate::cli::{Command, PathOperation};
-
-// --- Error ---
+mod api;
+mod cli;
+pub use cli::{Options, ParseCommandError, ReportFromStr};
 
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 pub enum Error {
     #[snafu(transparent)]
     ParseCommand { source: ParseCommandError },
-
     #[snafu(display("failed to load dhttp home"))]
     LoadHome { source: LoadDhttpHomeError },
-
     #[snafu(display("failed to load default identity config"))]
     LoadDefaultIdentityConfig { source: LoadDhttpSettingsError },
-
     #[snafu(display(
         "no default identity configured, use `genmeta identity default <name>` to set one"
     ))]
     MissingDefaultIdentity,
-
-    #[snafu(display("failed to initialize identity access database"))]
-    InitDatabase {
-        source: dhttp::access::db::AccessDbError,
+    #[snafu(display("failed to resolve local credentials for identity `{name}`"))]
+    LoadProfile {
+        name: Name<'static>,
+        source: genmeta_network::home::identity::ssl::ResolveIdentityProfileError,
     },
-
-    #[snafu(display("failed to open identity access database"))]
-    OpenDatabase {
-        source: dhttp::access::db::AccessDbError,
+    #[snafu(display("failed to initialize authenticated DHTTP client"))]
+    Endpoint { source: dhttp::Error },
+    #[snafu(display("failed to build daccess management URI"))]
+    RequestUri { source: http::Error },
+    #[snafu(display("failed to send daccess management request"))]
+    Request { source: dhttp::Error },
+    #[snafu(display("failed to read daccess response"))]
+    Read { source: dhttp::BoxError },
+    #[snafu(display("daccess response exceeds 8 MiB"))]
+    ResponseTooLarge,
+    #[snafu(display("daccess management request timed out after {seconds} seconds"))]
+    Timeout { seconds: u64 },
+    #[snafu(display("failed to encode or decode daccess JSON"))]
+    Json { source: serde_json::Error },
+    #[snafu(display("daccess API {path} returned HTTP {status}: {message}"))]
+    Api {
+        status: http::StatusCode,
+        path: String,
+        message: String,
     },
-
-    #[snafu(display("failed to list access path rules"))]
-    ListRules { source: ListRulesError },
-
-    #[snafu(display("failed to remove access path"))]
-    RemovePath { source: RemoveRuleSetError },
-
-    #[snafu(display("failed to remove rules"))]
-    RemoveRules { source: RemoveRulesError },
-
-    #[snafu(display("failed to add rule"))]
-    AddRule { source: AppendRuleError },
-
-    #[snafu(display("failed to list access paths"))]
-    ListPaths { source: ListRuleSetsError },
-
-    #[snafu(display("failed to list access paths"))]
-    ListAllPaths { source: ListAllRulesError },
 }
-
-// --- Logic ---
 
 fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     let (stderr, guard) = tracing_appender::non_blocking(std::io::stderr());
@@ -95,10 +73,8 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
 
 pub async fn run(options: Options) -> Result<(), Error> {
     let _guard = init_tracing();
-
     let home = DhttpHome::load(options.home_scope()).context(error::LoadHomeSnafu)?;
     let output = run_for_home(&home, options).await?;
-
     if !output.is_empty() {
         println!("{}", output.trim_end());
     }
@@ -106,46 +82,52 @@ pub async fn run(options: Options) -> Result<(), Error> {
 }
 
 pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, Error> {
-    let global = matches!(
-        options.home_scope(),
-        genmeta_network::home::HomeScope::Global
-    );
+    let timeout = options.timeout;
     let (identity, command) = options.into_parts()?;
-    if let Command::Print { output } = command {
+    if let cli::Command::Print { output } = command {
         return Ok(output);
     }
-
     let identity = resolve_identity(home, identity).await?;
-    let identity_profile = home.identity_profile(identity.borrow());
-    let db_path = identity_access_db_path(&genmeta_network::runtime_profile(&identity_profile));
-    let db_exists = db_path.is_file();
-
-    if global && command.writes_store(db_exists) {
-        tracing::warn!(
-            path = %home.as_path().display(),
-            "using the global dhttp home; this operation may require elevated privileges"
-        );
-    }
-
-    if !db_exists {
-        tracing::warn!(
-            "access store not found, initializing at `{}`",
-            db_path.display()
-        );
-    }
-    // Initialization is idempotent and applies pending migrations to an
-    // existing store before any rule is read or changed.
-    let db = init_access_database_for(&genmeta_network::runtime_profile(&identity_profile))
+    let profile = home
+        .resolve_identity_profile(identity.clone())
         .await
-        .context(error::InitDatabaseSnafu)?;
-    let result = run_with(command, &db).await;
-    // Explicitly close the pool: dropping it only spawns an async close task
-    // that never runs before the tokio runtime shuts down, which would leave
-    // the SQLite WAL `-shm`/`-wal` files behind.
-    if let Err(error) = db.close().await {
-        tracing::warn!(?error, "failed to close access database");
+        .context(error::LoadProfileSnafu {
+            name: identity.clone(),
+        })?;
+    init_local_network().await.context(error::EndpointSnafu)?;
+    let endpoint = genmeta_network::Client::load_profile(profile.path())
+        .await
+        .context(error::EndpointSnafu)?;
+    let server = identity
+        .as_full()
+        .parse()
+        .expect("a normalized identity is a valid DHTTP authority");
+    api::execute(&DhttpTransport { endpoint, timeout }, &server, command).await
+}
+
+async fn init_local_network() -> dhttp::Result<()> {
+    genmeta_network::init(&[], &["*".into()]).await?;
+    let bindings = dhttp::AddressBook::global().inner_bindings();
+    // Keep same-host management on IPv4 when available instead of racing
+    // link-local IPv6 endpoints across physical and virtual interfaces.
+    let ipv4: Vec<_> = bindings
+        .iter()
+        .filter(|(bound, _)| bound.is_ipv4() && !bound.ip().is_loopback())
+        .collect();
+    if ipv4.is_empty() {
+        return genmeta_network::init(&[genmeta_network::DnsScheme::Mdns], &["*".into()]).await;
     }
-    result
+    for (bound, device) in ipv4 {
+        let resolver = genmeta_network::ddns::mdns::MdnsResolver::bind(
+            genmeta_network::ddns::resolvers::DHTTP_MDNS_SERVICE_DOMAIN,
+            device.name(),
+            bound.ip(),
+        )
+        .await
+        .map_err(std::io::Error::other)?;
+        dhttp::resolve::Resolver::add(std::sync::Arc::new(resolver));
+    }
+    Ok(())
 }
 
 async fn resolve_identity(
@@ -155,7 +137,6 @@ async fn resolve_identity(
     if let Some(identity) = identity {
         return Ok(identity);
     }
-
     let config = match home.load_settings().await {
         Ok(config) => config,
         Err(LoadDhttpSettingsError::Io { source, .. })
@@ -165,7 +146,6 @@ async fn resolve_identity(
         }
         Err(source) => return Err(error::LoadDefaultIdentityConfigSnafu.into_error(source)),
     };
-
     config
         .settings()
         .default_identity_name()
@@ -173,112 +153,57 @@ async fn resolve_identity(
         .context(error::MissingDefaultIdentitySnafu)
 }
 
-async fn run_with(command: Command, db: &sea_orm::DatabaseConnection) -> Result<String, Error> {
-    let location_service = LocationService::new(db);
-
-    match command {
-        Command::Print { output } => return Ok(output),
-        Command::Path { pattern, operation } => match operation {
-            PathOperation::List => match location_service.list_rules(&pattern).await {
-                Ok(rules) => return Ok(rules.to_string()),
-                Err(ListRulesError::NoMatchedLocation { source }) => {
-                    return Ok(source.to_string());
-                }
-                result => _ = result.context(error::ListRulesSnafu)?,
-            },
-            PathOperation::Remove { all, sequence } => match all {
-                true => location_service
-                    .remove_rule_set(&pattern)
-                    .await
-                    .context(error::RemovePathSnafu)?,
-                false => location_service
-                    .remove_rules(&pattern, sequence)
-                    .await
-                    .context(error::RemoveRulesSnafu)?,
-            },
-            PathOperation::Clear => location_service
-                .remove_rule_set(&pattern)
-                .await
-                .context(error::RemovePathSnafu)?,
-            PathOperation::Allow { expr } => location_service
-                .append_rule(&pattern, RequestAction::Allow, expr)
-                .await
-                .context(error::AddRuleSnafu)?,
-            PathOperation::Deny { expr } => location_service
-                .append_rule(&pattern, RequestAction::Deny, expr)
-                .await
-                .context(error::AddRuleSnafu)?,
-        },
-        Command::List { wide } => match wide {
-            true => {
-                return Ok(location_service
-                    .list_all_rules()
-                    .await
-                    .context(error::ListAllPathsSnafu)?
-                    .to_string());
-            }
-            false => {
-                return Ok(location_service
-                    .list_rule_sets()
-                    .await
-                    .context(error::ListPathsSnafu)?
-                    .to_string());
-            }
-        },
-        Command::RemovePaths { patterns } => {
-            for pattern in patterns {
-                location_service
-                    .remove_rule_set(&pattern)
-                    .await
-                    .context(error::RemovePathSnafu)?;
-            }
-        }
-    }
-
-    Ok(String::new())
+struct DhttpTransport {
+    endpoint: genmeta_network::Client,
+    timeout: u64,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{Command, PathOperation};
-
-    #[test]
-    fn command_writes_store_when_store_is_missing() {
-        assert!(Command::List { wide: false }.writes_store(false));
-        assert!(!Command::List { wide: false }.writes_store(true));
-        assert!(
-            Command::RemovePaths {
-                patterns: Vec::new()
+impl api::Transport for DhttpTransport {
+    async fn send(
+        &self,
+        request: http::Request<Vec<u8>>,
+    ) -> Result<http::Response<Vec<u8>>, Error> {
+        tokio::time::timeout(Duration::from_secs(self.timeout), async {
+            let (parts, body) = request.into_parts();
+            let response = if body.is_empty() {
+                self.endpoint
+                    .from_request(http::Request::from_parts(parts, dhttp::Empty::new()))
+                    .await
+                    .context(error::RequestSnafu)?
+            } else {
+                let (mut writer, receive) = self
+                    .endpoint
+                    .from_request(http::Request::from_parts(
+                        parts,
+                        dhttp::WndBuf::new(64 * 1024),
+                    ))
+                    .await
+                    .context(error::RequestSnafu)?;
+                let upload = async {
+                    writer.write_all(&body).await.map_err(dhttp::Error::from)?;
+                    writer.shutdown().await.map_err(dhttp::Error::from)
+                };
+                // These JSON requests are small. Finish uploading before dropping
+                // the writer; response headers alone do not mean upload has ended.
+                let ((), response) =
+                    tokio::try_join!(upload, receive).context(error::RequestSnafu)?;
+                response
+            };
+            let (parts, mut body) = response.into_parts();
+            let mut bytes = Vec::new();
+            while let Some(frame) = body.frame().await {
+                let frame = frame.context(error::ReadSnafu)?;
+                if let Ok(data) = frame.into_data() {
+                    if bytes.len().saturating_add(data.len()) > 8 * 1024 * 1024 {
+                        return error::ResponseTooLargeSnafu.fail();
+                    }
+                    bytes.extend_from_slice(&data);
+                }
             }
-            .writes_store(true)
-        );
-    }
-
-    #[test]
-    fn path_command_writes_store_only_for_mutations() {
-        assert!(
-            !Command::Path {
-                pattern: "/".parse().unwrap(),
-                operation: PathOperation::List,
-            }
-            .writes_store(true)
-        );
-        assert!(
-            Command::Path {
-                pattern: "/".parse().unwrap(),
-                operation: PathOperation::List,
-            }
-            .writes_store(false)
-        );
-        assert!(
-            Command::Path {
-                pattern: "/".parse().unwrap(),
-                operation: PathOperation::Remove {
-                    all: true,
-                    sequence: Vec::new(),
-                },
-            }
-            .writes_store(true)
-        );
+            Ok(http::Response::from_parts(parts, bytes))
+        })
+        .await
+        .map_err(|_| Error::Timeout {
+            seconds: self.timeout,
+        })?
     }
 }

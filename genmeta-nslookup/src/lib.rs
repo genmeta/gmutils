@@ -16,9 +16,9 @@ use tracing_subscriber::prelude::*;
 #[derive(Parser, Debug, Clone)]
 #[command(name = "nslookup", version, about)]
 pub struct Options {
-    /// Name to query
-    #[arg(index = 1)]
-    name: Name<'static>,
+    /// Name to query (only a trailing ~ expands to .dhttp.net)
+    #[arg(index = 1, value_parser = parse_query_name)]
+    name: String,
 
     /// DNS resolution scheme (e.g. system, mdns, h3)
     #[arg(index = 2, default_value = "mdns,h3", value_delimiter = ',')]
@@ -44,6 +44,11 @@ pub struct Options {
     #[arg(long = "interface", value_name = "bind", default_value = "*",
           hide = cfg!(not(debug_assertions)))]
     binds: Vec<BindPattern>,
+}
+
+fn parse_query_name(input: &str) -> Result<String, String> {
+    genmeta_network::runtime_home::normalize_dns_name(input)
+        .ok_or_else(|| format!("invalid DNS name: {input}"))
 }
 
 impl Options {
@@ -74,7 +79,7 @@ pub enum Error {
     BuildEndpoint { source: dhttp::Error },
     #[snafu(display("failed to lookup dns records of `{name}`"))]
     LookUp {
-        name: Name<'static>,
+        name: String,
         source: std::io::Error,
     },
 }
@@ -159,12 +164,13 @@ pub async fn run(options: Options) -> Result<(), Error> {
         .context(error::BuildEndpointSnafu)?;
     let resolver = dhttp::resolve::Resolver::get();
 
-    let mut lookup = resolver
-        .lookup(options.name.as_full(), "443", None)
-        .await
-        .context(error::LookUpSnafu {
-            name: options.name.to_owned(),
-        })?;
+    let mut lookup =
+        resolver
+            .lookup(&options.name, "443", None)
+            .await
+            .context(error::LookUpSnafu {
+                name: options.name.to_owned(),
+            })?;
 
     if options.streaming {
         println!("Name: {}:", options.name);
@@ -215,5 +221,20 @@ mod tests {
             options.home_scope(),
             genmeta_network::home::HomeScope::Global
         );
+    }
+
+    #[test]
+    fn query_names_use_home_normalization_without_implicit_suffix() {
+        for (input, expected) in [
+            ("nat.example.cn", "nat.example.cn"),
+            (" Alice.Smith~ ", "alice.smith.dhttp.net"),
+            ("Alice.Smith.DHTTP.NET.", "alice.smith.dhttp.net"),
+            ("alice.smith", "alice.smith"),
+            ("localhost", "localhost"),
+        ] {
+            let options = Options::try_parse_from(["nslookup", input, "system"]).unwrap();
+            assert_eq!(options.name, expected);
+        }
+        assert!(Options::try_parse_from(["nslookup", "alice~.example.cn"]).is_err());
     }
 }

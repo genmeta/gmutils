@@ -24,7 +24,7 @@ bytes = { workspace = true }
 chrono = { workspace = true }
 futures = { workspace = true }
 dhttp = { workspace = true }
-rankey = { workspace = true }
+x509-cert = { version = "0.2", features = ["builder"] }
 p384 = { workspace = true }
 pkcs8 = { workspace = true }
 qrcode = { workspace = true }
