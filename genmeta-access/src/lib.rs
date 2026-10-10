@@ -55,6 +55,18 @@ pub enum Error {
 
 fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     let (stderr, guard) = tracing_appender::non_blocking(std::io::stderr());
+    let filter = tracing_subscriber::EnvFilter::builder()
+        .with_default_directive(tracing_subscriber::filter::LevelFilter::WARN.into())
+        .from_env_lossy();
+    let filter = if std::env::var_os("RUST_LOG").is_none() {
+        filter.add_directive(
+            "dhttp::network::interfaces::nat=error"
+                .parse()
+                .expect("static tracing directive is valid"),
+        )
+    } else {
+        filter
+    };
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
@@ -62,11 +74,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
                 .with_writer(stderr),
         )
-        .with(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing_subscriber::filter::LevelFilter::WARN.into())
-                .from_env_lossy(),
-        )
+        .with(filter)
         .init();
     guard
 }

@@ -40,17 +40,27 @@ pub(crate) fn init_console(options: &Options) -> ConsoleGuard {
     } else {
         tracing_subscriber::filter::LevelFilter::WARN
     };
+    let filter = tracing_subscriber::EnvFilter::builder()
+        .with_default_directive(level.into())
+        .from_env_lossy();
+    let filter = if level != tracing_subscriber::filter::LevelFilter::OFF
+        && std::env::var_os("RUST_LOG").is_none()
+    {
+        filter.add_directive(
+            "dhttp::network::interfaces::nat=error"
+                .parse()
+                .expect("static tracing directive is valid"),
+        )
+    } else {
+        filter
+    };
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
                 .with_ansi(std::io::stderr().is_terminal())
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
                 .with_writer(stderr)
-                .with_filter(
-                    tracing_subscriber::EnvFilter::builder()
-                        .with_default_directive(level.into())
-                        .from_env_lossy(),
-                ),
+                .with_filter(filter),
         )
         .with(indicatif_layer.with_filter(IndicatifFilter::new(false)))
         .init();
