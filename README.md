@@ -74,7 +74,7 @@ For a DHttp gateway, install `pishoo` alongside gmutils: `brew install pishoo gm
 With a current Rust toolchain, build and install the launcher from this checkout:
 
 ```bash
-cargo install --path genmeta
+cargo install --path genmeta --locked
 ```
 
 ## Quick start
@@ -166,22 +166,39 @@ wait for them. Missing or stale client OCSP staples require an online refresh;
 unrestricted offline operation is therefore not guaranteed. Each management
 request has a 30-second timeout, configurable with `--timeout`.
 
-## Development dependency graph
+## Dependency snapshots and development builds
 
-The project dependency chain uses adjacent local checkouts during integration
-work. Keep `gmutils`, `dhttp`, `dquic`, `ddns`, `h3x`, and `daccess` in sibling
-directories. Direct dependencies and workspace patches resolve every project
-package to one local source, including the QUIC dependencies inside dhttp,
-ddns and h3x.
+Release builds use committed Git snapshots for the DHTTP dependency graph.
+The workspace manifest pins each repository with a full commit ID, and
+`Cargo.lock` records the resolved sources. No adjacent checkouts are required.
 
-Run `cargo build --workspace --locked`. Path dependencies use the current
-working directories, including uncommitted changes. Identity key and CSR
-generation uses stable P-384/PKCS#8 and X.509 builder APIs.
+| Repository | Commit |
+| ---------- | ------ |
+| `dhttp` (`dhttp`, `dhttp-home`, `dhttp-log`) | `86a39b604797ea79657bdabeba1f036794fbd45e` |
+| `ddns` (`dyns`) | `2047ed4e5a866909acd9b4ef4aa348fa951e9fe5` |
+| `h3x` | `274af16707698fac6c6ff8bc9f2c112d9cf1fdba` |
+| `dquic` (QUIC crates) | `1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb` |
+| `daccess` (`access_control`, access tests) | `3e3ac6199e88f6b5e521e8d29c934ead3bb5db7c` |
+
+DHTTP, DDNS and H3X already pin the same QUIC snapshot. Workspace registry
+patches keep any crates.io references on those Git sources as well. The QUIC
+snapshot includes the concurrent Initial connection fix.
+
+Run `cargo build --workspace --locked` and
+`cargo test --workspace --all-targets --all-features --locked`.
+Identity key and CSR generation uses stable P-384/PKCS#8 and X.509 builder APIs.
 
 For a locked build in an environment with ancestor Cargo patch configuration,
 run Cargo from outside that ancestor directory with
 `--manifest-path <gmutils>/Cargo.toml --locked`. This keeps unrelated local
-patches from changing the workspace lockfile.
+patches from changing the workspace lockfile. Local integration can use
+untracked Cargo configuration to override sources with sibling checkouts;
+do not commit a lockfile resolved with those overrides for release.
+
+These snapshots support binary/package releases. A new crates.io release also
+requires published versions of the Git dependencies and a publishable
+`genmeta-network` package; the current snapshot graph is not ready for
+`cargo publish`.
 
 CLI settings and atomic certificate installation are maintained inside
 `genmeta-network`.

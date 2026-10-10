@@ -212,32 +212,28 @@ pub(crate) async fn execute<T: Transport>(
 ) -> Result<String, Error> {
     let api = Api { transport, server };
     match command {
-        Command::Print { output } => return Ok(output),
-        Command::List { wide, method } => {
-            return Ok(render(api.all_rules().await?, method.as_ref(), wide));
-        }
+        Command::Print { output } => Ok(output),
+        Command::List { wide, method } => Ok(render(api.all_rules().await?, method.as_ref(), wide)),
         Command::RemovePaths { paths, method } => {
             let mut removed = 0;
             for path in &paths {
                 removed += api.clear(path, method.as_ref()).await?;
             }
-            return Ok(format!(
+            Ok(format!(
                 "Removed {removed} policies across {} API prefixes.\n",
                 paths.len()
-            ));
+            ))
         }
         Command::Path {
             path,
             method,
             operation,
         } => match operation {
-            PathOperation::List => {
-                return Ok(render(
-                    BTreeMap::from([(path.clone(), api.path_rules(&path).await?)]),
-                    method.as_ref(),
-                    true,
-                ));
-            }
+            PathOperation::List => Ok(render(
+                BTreeMap::from([(path.clone(), api.path_rules(&path).await?)]),
+                method.as_ref(),
+                true,
+            )),
             PathOperation::Set { effect, grantee } => {
                 let method = method.unwrap_or(Method::Unspecified);
                 api.request(
@@ -250,26 +246,26 @@ pub(crate) async fn execute<T: Transport>(
                     StatusCode::NO_CONTENT,
                 )
                 .await?;
-                return Ok(format!(
+                Ok(format!(
                     "Set {} policy: {path} {} {grantee}\n",
                     effect.as_str(),
                     method.as_str()
-                ));
+                ))
             }
             PathOperation::Clear | PathOperation::Remove { all: true, .. } => {
                 let removed = api.clear(&path, method.as_ref()).await?;
-                return Ok(format!("Removed {removed} policies at {path}.\n"));
+                Ok(format!("Removed {removed} policies at {path}.\n"))
             }
             PathOperation::Remove { grantees, .. } => {
                 let method = method.unwrap_or(Method::Unspecified);
                 for grantee in &grantees {
                     api.remove(&path, method.as_str(), grantee).await?;
                 }
-                return Ok(format!(
+                Ok(format!(
                     "Removed policies for {} grantees at {path} (method {}).\n",
                     grantees.len(),
                     method.as_str()
-                ));
+                ))
             }
         },
     }

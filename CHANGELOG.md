@@ -15,6 +15,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Temporarily remove SSH, DShell and the SSH wrapper scripts from the launcher,
   workspace, publication list and release packages.
 
+### Fixed
+
+- Keep default CLI output quiet while preserving curl progress and explicit
+  logging options.
+- Manage Pishoo listening settings through each identity's `config.db`.
+- Clarify access-command syntax, rule listings and successful writes.
+
+### Dependencies
+
+- Replace sibling path dependencies with committed Git snapshots for DHTTP,
+  DDNS, H3X, QUIC and access-control tests, and record their sources in the
+  binary lockfile.
+- Use the same QUIC revision across the transport graph, including the
+  concurrent Initial connection fix.
+- Require locked CI and package builds to preserve dependency snapshots.
+
 ## [0.8.2] - 2026-08-31
 
 ### Added
