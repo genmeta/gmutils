@@ -107,11 +107,15 @@ async fn run(transport: &impl Transport, args: &[&str]) -> Result<String, Error>
 #[tokio::test]
 async fn authenticated_api_crud_updates_service_and_json_contract() {
     let server = Server::new().await;
-    run(&server, &["/api/", "allow", "*?", "--method", "GET"])
+    let written = run(&server, &["/api/", "allow", "*?", "--method", "GET"])
         .await
         .unwrap();
+    assert_eq!(written, "Set allow policy: /api GET *?\n");
     let output = run(&server, &["/api", "list"]).await.unwrap();
-    assert!(output.contains("/api\tGET\tallow *?"), "{output}");
+    assert_eq!(
+        output,
+        "PATH\tMETHOD\tEFFECT\tGRANTEE\n/api\tGET\tallow\t*?\n"
+    );
     let headers = Headers {
         method: http::Method::GET,
         path: "/api/item".into(),
@@ -138,7 +142,7 @@ async fn authenticated_api_crud_updates_service_and_json_contract() {
             .unwrap()
             .lines()
             .count(),
-        1
+        2
     );
     run(&server, &["/api", "remove", "*?", "--method", "GET"])
         .await
@@ -181,8 +185,9 @@ async fn method_filtering_and_clear_use_api_reads_then_exact_deletes() {
     let output = run(&server, &["list", "--wide"]).await.unwrap();
     assert!(!output.contains("GET"));
     assert!(output.contains("POST"));
-    assert!(output.contains("review staff@example.com"));
-    run(&server, &["remove", "/api"]).await.unwrap();
+    assert!(output.contains("review\tstaff@example.com"));
+    let removed = run(&server, &["remove", "/api"]).await.unwrap();
+    assert_eq!(removed, "Removed 2 policies across 1 API prefixes.\n");
     assert!(run(&server, &["list"]).await.unwrap().is_empty());
 }
 
@@ -193,7 +198,7 @@ async fn root_and_nested_api_paths_round_trip_through_router() {
         run(&server, &[path, "review", "**"]).await.unwrap();
         let output = run(&server, &[path, "list"]).await.unwrap();
         assert!(
-            output.contains(&format!("{path}\t*\treview **")),
+            output.contains(&format!("{path}\t*\treview\t**")),
             "{output}"
         );
         run(&server, &[path, "clear"]).await.unwrap();
@@ -267,7 +272,7 @@ async fn explicit_removal_defaults_to_wildcard_method_and_is_idempotent() {
         run(&server, &["/api", "list"])
             .await
             .unwrap()
-            .contains("POST\tdeny ?")
+            .contains("POST\tdeny\t?")
     );
     let calls = server.calls.lock().unwrap();
     assert!(
@@ -299,7 +304,7 @@ async fn grouped_grantees_and_global_method_filters_round_trip() {
         run(&server, &["list", "--wide"])
             .await
             .unwrap()
-            .contains("review staff@example.com")
+            .contains("review\tstaff@example.com")
     );
     run(
         &server,
