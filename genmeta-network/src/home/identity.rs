@@ -38,6 +38,7 @@ impl IdentityProfile {
     pub const ACCESS_LOG_FILE: &'static str = "access.log";
     pub const DB_DIR: &'static str = "db";
     pub const ACCESS_DB_FILE: &'static str = "access.db";
+    pub const CONFIG_DB_FILE: &'static str = "config.db";
     pub const SERVER_CONF_FILE: &'static str = "server.conf";
 
     pub fn name(&self) -> &DhttpName<'static> {
@@ -66,6 +67,10 @@ impl IdentityProfile {
 
     pub fn access_db_path(&self) -> PathBuf {
         self.join(Self::DB_DIR).join(Self::ACCESS_DB_FILE)
+    }
+
+    pub fn config_db_path(&self) -> PathBuf {
+        self.join(Self::DB_DIR).join(Self::CONFIG_DB_FILE)
     }
 
     pub fn server_conf_path(&self) -> PathBuf {

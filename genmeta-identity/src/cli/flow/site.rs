@@ -4,12 +4,13 @@ use genmeta_network::home::{
     DhttpHome,
     identity::{IdentityProfile, ssl::ResolveIdentityProfileError},
 };
-use snafu::{IntoError, ResultExt, Snafu};
+use sea_orm::{
+    ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait,
+};
+use snafu::{ResultExt, Snafu};
 use tokio::fs;
 
 use crate::cli::SiteCommand;
-
-pub(crate) const SERVER_CONF_BACKUP_FILE: &str = "server.conf.bak";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ServerConfigState {
@@ -26,8 +27,7 @@ pub(crate) enum ConfigChange {
 
 #[derive(Debug)]
 pub(crate) struct ServerConfig {
-    active: PathBuf,
-    backup: PathBuf,
+    path: PathBuf,
 }
 
 #[derive(Debug, Snafu)]
@@ -35,151 +35,230 @@ pub(crate) struct ServerConfig {
 pub enum Error {
     #[snafu(transparent)]
     ResolveIdentityProfile { source: ResolveIdentityProfileError },
-    #[snafu(display("failed to inspect server configuration {}", path.display()))]
+    #[snafu(display("failed to inspect Pishoo configuration {}", path.display()))]
     Inspect {
         path: PathBuf,
         source: std::io::Error,
     },
-    #[snafu(display("server configuration path is not a regular file: {}", path.display()))]
+    #[snafu(display("Pishoo configuration is not a regular file: {}", path.display()))]
     NotRegularFile { path: PathBuf },
-    #[snafu(display(
-        "server configuration is missing: neither {} nor {} exists",
-        active.display(),
-        backup.display()
-    ))]
-    MissingConfiguration { active: PathBuf, backup: PathBuf },
-    #[snafu(display(
-        "cannot disable server because a backup already exists at {}; back it up or move it before retrying",
-        path.display()
-    ))]
-    BackupExists { path: PathBuf },
-    #[snafu(display(
-        "failed to rename server configuration from {} to {}",
-        source_path.display(),
-        target_path.display()
-    ))]
-    Rename {
-        source_path: PathBuf,
-        target_path: PathBuf,
-        source: std::io::Error,
+    #[snafu(display("Pishoo configuration is missing at {}; start Pishoo to initialize it", path.display()))]
+    MissingConfiguration { path: PathBuf },
+    #[snafu(display("failed to access Pishoo configuration database {}", path.display()))]
+    Database {
+        path: PathBuf,
+        source: sea_orm::DbErr,
     },
+    #[snafu(display("invalid Pishoo configuration at {}: {message}", path.display()))]
+    InvalidConfiguration { path: PathBuf, message: String },
 }
 
 impl ServerConfig {
     pub(crate) fn for_profile(profile: &IdentityProfile) -> Self {
         Self {
-            active: profile.server_conf_path(),
-            backup: profile.join(SERVER_CONF_BACKUP_FILE),
+            path: profile.config_db_path(),
         }
+    }
+
+    async fn open(&self) -> Result<DatabaseConnection, Error> {
+        if !regular_file_exists(&self.path).await? {
+            return Err(Error::MissingConfiguration {
+                path: self.path.clone(),
+            });
+        }
+        // rw prevents a typo or missing profile from silently creating a database.
+        let uri = format!(
+            "sqlite://{}?mode=rw",
+            urlencoding::encode(&self.path.to_string_lossy())
+        );
+        Database::connect(uri)
+            .await
+            .context(error::DatabaseSnafu { path: &self.path })
+    }
+
+    async fn listen(&self, db: &impl ConnectionTrait) -> Result<i64, Error> {
+        let invalid = |message: &str| Error::InvalidConfiguration {
+            path: self.path.clone(),
+            message: message.into(),
+        };
+        let version = db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "PRAGMA user_version",
+            ))
+            .await
+            .context(error::DatabaseSnafu { path: &self.path })?
+            .ok_or_else(|| invalid("schema version is missing"))?;
+        let version: i64 = version
+            .try_get_by_index(0)
+            .map_err(|_| invalid("invalid schema version"))?;
+        if version != 1 {
+            return Err(invalid("supported schema version is 1"));
+        }
+        let rows = db
+            .query_all_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT listen, typeof(listen) AS kind FROM settings",
+            ))
+            .await
+            .context(error::DatabaseSnafu { path: &self.path })?;
+        if rows.len() != 1 {
+            return Err(invalid("settings must contain exactly one row"));
+        }
+        let kind: String = rows[0]
+            .try_get("", "kind")
+            .map_err(|_| invalid("invalid listen type"))?;
+        let listen: i64 = rows[0]
+            .try_get("", "listen")
+            .map_err(|_| invalid("listen must be an integer in 0..=3"))?;
+        if kind != "integer" || !(0..=3).contains(&listen) {
+            return Err(invalid("listen must be an integer in 0..=3"));
+        }
+        Ok(listen)
     }
 
     pub(crate) async fn state(&self) -> Result<ServerConfigState, Error> {
-        if regular_file_exists(&self.active).await? {
-            return Ok(ServerConfigState::Enabled);
+        if !regular_file_exists(&self.path).await? {
+            return Ok(ServerConfigState::Missing);
         }
-        if regular_file_exists(&self.backup).await? {
-            return Ok(ServerConfigState::Disabled);
+        let db = self.open().await?;
+        let tx = db
+            .begin()
+            .await
+            .context(error::DatabaseSnafu { path: &self.path })?;
+        let listen = self.listen(&tx).await?;
+        tx.commit()
+            .await
+            .context(error::DatabaseSnafu { path: &self.path })?;
+        Ok(if listen == 0 {
+            ServerConfigState::Disabled
+        } else {
+            ServerConfigState::Enabled
+        })
+    }
+
+    async fn set_enabled(&self, enabled: bool) -> Result<ConfigChange, Error> {
+        let db = self.open().await?;
+        let tx = db
+            .begin()
+            .await
+            .context(error::DatabaseSnafu { path: &self.path })?;
+        let listen = self.listen(&tx).await?;
+        // Preserve an enabled identity's chosen internal/external/both scope.
+        let target = if enabled {
+            if listen == 0 { 3 } else { listen }
+        } else {
+            0
+        };
+        if listen != target {
+            tx.execute_raw(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "UPDATE settings SET listen = ?",
+                [target.into()],
+            ))
+            .await
+            .context(error::DatabaseSnafu { path: &self.path })?;
         }
-        Ok(ServerConfigState::Missing)
+        tx.commit()
+            .await
+            .context(error::DatabaseSnafu { path: &self.path })?;
+        Ok(if listen == target {
+            ConfigChange::Unchanged
+        } else {
+            ConfigChange::Changed
+        })
     }
 
     pub(crate) async fn enable(&self) -> Result<ConfigChange, Error> {
-        match self.state().await? {
-            ServerConfigState::Enabled => Ok(ConfigChange::Unchanged),
-            ServerConfigState::Disabled => {
-                rename(&self.backup, &self.active).await?;
-                Ok(ConfigChange::Changed)
-            }
-            ServerConfigState::Missing => error::MissingConfigurationSnafu {
-                active: self.active.clone(),
-                backup: self.backup.clone(),
-            }
-            .fail(),
-        }
+        self.set_enabled(true).await
+    }
+    pub(crate) async fn disable(&self) -> Result<ConfigChange, Error> {
+        self.set_enabled(false).await
     }
 
-    pub(crate) async fn disable(&self) -> Result<ConfigChange, Error> {
-        match self.state().await? {
-            ServerConfigState::Enabled => {
-                if regular_file_exists(&self.backup).await? {
-                    return error::BackupExistsSnafu {
-                        path: self.backup.clone(),
-                    }
-                    .fail();
+    /// Initialize only a newly created database, with listening disabled until opted in.
+    pub(crate) async fn create_disabled(&self) -> Result<(), Error> {
+        let parent = self.path.parent().expect("config database has a parent");
+        fs::create_dir_all(parent)
+            .await
+            .context(error::InspectSnafu { path: parent })?;
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        drop(
+            options
+                .open(&self.path)
+                .await
+                .context(error::InspectSnafu { path: &self.path })?,
+        );
+        let result = async {
+            let db = self.open().await?;
+            let result = async {
+                let tx = db.begin().await.context(error::DatabaseSnafu { path: &self.path })?;
+                for sql in [
+                    "CREATE TABLE settings (listen INTEGER NOT NULL CHECK(typeof(listen) = 'integer' AND listen BETWEEN 0 AND 3))",
+                    "INSERT INTO settings(listen) VALUES(0)",
+                    "CREATE TABLE proxy_locations(location TEXT NOT NULL PRIMARY KEY, proxy_pass TEXT NOT NULL)",
+                    "PRAGMA user_version = 1",
+                ] {
+                    tx.execute_unprepared(sql).await.context(error::DatabaseSnafu { path: &self.path })?;
                 }
-                rename(&self.active, &self.backup).await?;
-                Ok(ConfigChange::Changed)
-            }
-            ServerConfigState::Disabled => Ok(ConfigChange::Unchanged),
-            ServerConfigState::Missing => error::MissingConfigurationSnafu {
-                active: self.active.clone(),
-                backup: self.backup.clone(),
-            }
-            .fail(),
+                tx.commit().await.context(error::DatabaseSnafu { path: &self.path })?;
+                Ok(())
+            }.await;
+            db.close().await.context(error::DatabaseSnafu { path: &self.path })?;
+            result
+        }.await;
+        if result.is_err() {
+            fs::remove_file(&self.path)
+                .await
+                .context(error::InspectSnafu { path: &self.path })?;
         }
+        result
     }
 }
 
 async fn regular_file_exists(path: &Path) -> Result<bool, Error> {
     match fs::symlink_metadata(path).await {
         Ok(metadata) if metadata.file_type().is_file() => Ok(true),
-        Ok(_) => error::NotRegularFileSnafu {
+        Ok(_) => Err(Error::NotRegularFile {
             path: path.to_path_buf(),
-        }
-        .fail(),
+        }),
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(source) => Err(error::InspectSnafu {
+        Err(source) => Err(Error::Inspect {
             path: path.to_path_buf(),
-        }
-        .into_error(source)),
+            source,
+        }),
     }
 }
 
-async fn rename(source: &Path, target: &Path) -> Result<(), Error> {
-    fs::rename(source, target)
-        .await
-        .context(error::RenameSnafu {
-            source_path: source.to_path_buf(),
-            target_path: target.to_path_buf(),
-        })
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) const RELOAD_HINT: &str = "Run `sudo brew services reload pishoo` to apply the change.";
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) const RELOAD_HINT: &str = "Run `sudo systemctl reload pishoo` to apply the change.";
+pub(crate) const RESTART_HINT: &str = "Restart the Pishoo process serving this DHTTP home to apply the change; for an installed service, use `pishoo restart`.";
 
 pub(crate) fn print_enable_result(identity: &str, change: ConfigChange) {
-    match change {
-        ConfigChange::Changed => {
-            super::transcript::print_line(format!("Server enabled for {identity}."));
-            super::transcript::print_line(RELOAD_HINT);
-        }
-        ConfigChange::Unchanged => {
-            super::transcript::print_line(format!("Server is already enabled for {identity}."));
-        }
-    }
+    let message = match change {
+        ConfigChange::Changed => format!("Server enabled for {identity} (listen: both)."),
+        ConfigChange::Unchanged => format!("Server is already enabled for {identity}."),
+    };
+    super::transcript::print_line(message);
+    super::transcript::print_line(RESTART_HINT);
 }
 
 fn print_disable_result(identity: &str, change: ConfigChange) {
-    match change {
-        ConfigChange::Changed => {
-            super::transcript::print_line(format!("Server disabled for {identity}."));
-            super::transcript::print_line(RELOAD_HINT);
-        }
-        ConfigChange::Unchanged => {
-            super::transcript::print_line(format!("Server is already disabled for {identity}."));
-        }
-    }
+    let message = match change {
+        ConfigChange::Changed => format!("Server disabled for {identity} (listen: off)."),
+        ConfigChange::Unchanged => format!("Server is already disabled for {identity}."),
+    };
+    super::transcript::print_line(message);
+    super::transcript::print_line(RESTART_HINT);
 }
 
 pub(crate) async fn run_ensite(
     command: &SiteCommand,
-    dhttp_home: &DhttpHome,
+    home: &DhttpHome,
 ) -> Result<(), crate::cli::Error> {
     let identity = super::target::IdentityTarget::parse(&command.id)?.into_dhttp_name();
-    let profile = dhttp_home
+    let profile = home
         .resolve_identity_profile_exactly(identity.borrow())
         .await?;
     let change = ServerConfig::for_profile(&profile).enable().await?;
@@ -189,10 +268,10 @@ pub(crate) async fn run_ensite(
 
 pub(crate) async fn run_dissite(
     command: &SiteCommand,
-    dhttp_home: &DhttpHome,
+    home: &DhttpHome,
 ) -> Result<(), crate::cli::Error> {
     let identity = super::target::IdentityTarget::parse(&command.id)?.into_dhttp_name();
-    let profile = dhttp_home
+    let profile = home
         .resolve_identity_profile_exactly(identity.borrow())
         .await?;
     let change = ServerConfig::for_profile(&profile).disable().await?;
@@ -202,195 +281,100 @@ pub(crate) async fn run_dissite(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use genmeta_network::name::DhttpName;
 
-    use genmeta_network::{home::DhttpHome, name::DhttpName};
-    use tokio::fs;
+    use super::*;
 
-    use super::{
-        ConfigChange, Error, RELOAD_HINT, SERVER_CONF_BACKUP_FILE, ServerConfig, ServerConfigState,
-    };
-
-    struct Fixture {
-        root: PathBuf,
-        home: DhttpHome,
-        name: DhttpName<'static>,
+    async fn fixture() -> (tempfile::TempDir, IdentityProfile, ServerConfig) {
+        let root = tempfile::Builder::new()
+            .prefix("site #? 测试")
+            .tempdir()
+            .unwrap();
+        let home = DhttpHome::new(root.path().to_path_buf());
+        let profile = home.identity_profile(DhttpName::try_from("alice.smith".to_owned()).unwrap());
+        let config = ServerConfig::for_profile(&profile);
+        config.create_disabled().await.unwrap();
+        (root, profile, config)
     }
 
-    impl Fixture {
-        async fn new(label: &str) -> Self {
-            let nonce = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("clock after epoch")
-                .as_nanos();
-            let root = std::env::temp_dir().join(format!(
-                "genmeta-identity-site-{label}-{}-{nonce}",
-                std::process::id()
-            ));
-            let home = DhttpHome::new(root.clone());
-            let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
-            fs::create_dir_all(home.identity_profile(name.borrow()).path())
+    #[tokio::test]
+    async fn changes_listen_without_losing_proxies_and_preserves_enabled_scope() {
+        let (_root, _profile, config) = fixture().await;
+        let db = config.open().await.unwrap();
+        db.execute_unprepared(
+            "INSERT INTO proxy_locations VALUES('/app', 'http://127.0.0.1:8080')",
+        )
+        .await
+        .unwrap();
+        assert_eq!(config.state().await.unwrap(), ServerConfigState::Disabled);
+        assert_eq!(config.enable().await.unwrap(), ConfigChange::Changed);
+        assert_eq!(config.state().await.unwrap(), ServerConfigState::Enabled);
+        for scope in [1, 2, 3] {
+            db.execute_unprepared(&format!("UPDATE settings SET listen={scope}"))
                 .await
                 .unwrap();
-            Self { root, home, name }
+            assert_eq!(config.enable().await.unwrap(), ConfigChange::Unchanged);
+            assert_eq!(config.listen(&db).await.unwrap(), scope);
         }
-
-        fn profile(&self) -> genmeta_network::home::identity::IdentityProfile {
-            self.home.identity_profile(self.name.borrow())
-        }
-
-        fn config(&self) -> ServerConfig {
-            ServerConfig::for_profile(&self.profile())
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.root);
-        }
+        assert_eq!(config.disable().await.unwrap(), ConfigChange::Changed);
+        assert_eq!(config.disable().await.unwrap(), ConfigChange::Unchanged);
+        assert_eq!(config.listen(&db).await.unwrap(), 0);
+        let row = db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT proxy_pass FROM proxy_locations",
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            row.try_get::<String>("", "proxy_pass").unwrap(),
+            "http://127.0.0.1:8080"
+        );
     }
 
     #[tokio::test]
-    async fn state_prefers_active_configuration_over_backup() {
-        let fixture = Fixture::new("state-matrix").await;
-        let profile = fixture.profile();
-        let active = profile.server_conf_path();
-        let backup = profile.join(SERVER_CONF_BACKUP_FILE);
-        let config = fixture.config();
-
+    async fn invalid_or_missing_configuration_is_not_modified() {
+        let (_root, profile, config) = fixture().await;
+        let db = config.open().await.unwrap();
+        db.execute_unprepared("PRAGMA user_version=2")
+            .await
+            .unwrap();
+        assert!(matches!(
+            config.enable().await,
+            Err(Error::InvalidConfiguration { .. })
+        ));
+        assert!(matches!(
+            config.disable().await,
+            Err(Error::InvalidConfiguration { .. })
+        ));
+        db.execute_unprepared("PRAGMA user_version=1; INSERT INTO settings VALUES(0)")
+            .await
+            .unwrap();
+        assert!(matches!(
+            config.enable().await,
+            Err(Error::InvalidConfiguration { .. })
+        ));
+        db.close().await.unwrap();
+        fs::remove_file(profile.config_db_path()).await.unwrap();
         assert_eq!(config.state().await.unwrap(), ServerConfigState::Missing);
+        assert!(matches!(
+            config.enable().await,
+            Err(Error::MissingConfiguration { .. })
+        ));
+        assert!(!profile.config_db_path().exists());
+    }
 
-        fs::write(&backup, "disabled").await.unwrap();
+    #[tokio::test]
+    async fn non_regular_database_is_rejected_and_existing_database_is_preserved() {
+        let (_root, profile, config) = fixture().await;
+        assert!(config.create_disabled().await.is_err());
         assert_eq!(config.state().await.unwrap(), ServerConfigState::Disabled);
-
-        fs::rename(&backup, &active).await.unwrap();
-        assert_eq!(config.state().await.unwrap(), ServerConfigState::Enabled);
-
-        fs::write(&backup, "stale backup").await.unwrap();
-        assert_eq!(config.state().await.unwrap(), ServerConfigState::Enabled);
-    }
-
-    #[tokio::test]
-    async fn enable_promotes_backup_and_is_idempotent() {
-        let fixture = Fixture::new("enable").await;
-        let profile = fixture.profile();
-        let active = profile.server_conf_path();
-        let backup = profile.join(SERVER_CONF_BACKUP_FILE);
-        fs::write(&backup, "edited config").await.unwrap();
-
-        assert_eq!(
-            fixture.config().enable().await.unwrap(),
-            ConfigChange::Changed
-        );
-        assert_eq!(fs::read_to_string(&active).await.unwrap(), "edited config");
-        assert!(!backup.exists());
-        assert_eq!(
-            fixture.config().enable().await.unwrap(),
-            ConfigChange::Unchanged
-        );
-    }
-
-    #[tokio::test]
-    async fn disable_preserves_active_as_backup_and_is_idempotent() {
-        let fixture = Fixture::new("disable").await;
-        let profile = fixture.profile();
-        let active = profile.server_conf_path();
-        let backup = profile.join(SERVER_CONF_BACKUP_FILE);
-        fs::write(&active, "active config").await.unwrap();
-
-        assert_eq!(
-            fixture.config().disable().await.unwrap(),
-            ConfigChange::Changed
-        );
-        assert!(!active.exists());
-        assert_eq!(fs::read_to_string(&backup).await.unwrap(), "active config");
-        assert_eq!(
-            fixture.config().disable().await.unwrap(),
-            ConfigChange::Unchanged
-        );
-    }
-
-    #[tokio::test]
-    async fn disable_preserves_both_files_when_backup_already_exists() {
-        let fixture = Fixture::new("active-with-backup").await;
-        let profile = fixture.profile();
-        let active = profile.server_conf_path();
-        let backup = profile.join(SERVER_CONF_BACKUP_FILE);
-        fs::write(&active, "active config").await.unwrap();
-        fs::write(&backup, "backup config").await.unwrap();
-
-        assert_eq!(
-            fixture.config().state().await.unwrap(),
-            ServerConfigState::Enabled
-        );
-        assert_eq!(
-            fixture.config().enable().await.unwrap(),
-            ConfigChange::Unchanged
-        );
-        assert_eq!(fs::read_to_string(&active).await.unwrap(), "active config");
-        assert_eq!(fs::read_to_string(&backup).await.unwrap(), "backup config");
-
-        let error = fixture.config().disable().await.unwrap_err();
-        let rendered = error.to_string();
-        assert!(matches!(error, Error::BackupExists { path } if path == backup));
-        assert!(rendered.contains("back it up or move it"), "{rendered}");
-        assert_eq!(fs::read_to_string(&active).await.unwrap(), "active config");
-        assert_eq!(fs::read_to_string(&backup).await.unwrap(), "backup config");
-    }
-
-    #[tokio::test]
-    async fn missing_configuration_is_an_error_for_both_changes() {
-        let fixture = Fixture::new("missing").await;
-
+        fs::remove_file(profile.config_db_path()).await.unwrap();
+        fs::create_dir(profile.config_db_path()).await.unwrap();
         assert!(matches!(
-            fixture.config().enable().await,
-            Err(Error::MissingConfiguration { .. })
+            config.enable().await,
+            Err(Error::NotRegularFile { .. })
         ));
-        assert!(matches!(
-            fixture.config().disable().await,
-            Err(Error::MissingConfiguration { .. })
-        ));
-    }
-
-    #[tokio::test]
-    async fn non_regular_configuration_paths_are_rejected() {
-        let fixture = Fixture::new("non-regular").await;
-        let profile = fixture.profile();
-        let active = profile.server_conf_path();
-        let backup = profile.join(SERVER_CONF_BACKUP_FILE);
-
-        fs::create_dir(&active).await.unwrap();
-        assert!(matches!(
-            fixture.config().state().await,
-            Err(Error::NotRegularFile { path }) if path == active
-        ));
-        fs::remove_dir(&active).await.unwrap();
-
-        fs::create_dir(&backup).await.unwrap();
-        assert!(matches!(
-            fixture.config().state().await,
-            Err(Error::NotRegularFile { path }) if path == backup
-        ));
-
-        fs::write(&active, "active config").await.unwrap();
-        assert_eq!(
-            fixture.config().state().await.unwrap(),
-            ServerConfigState::Enabled
-        );
-        assert!(matches!(
-            fixture.config().disable().await,
-            Err(Error::NotRegularFile { path }) if path == backup
-        ));
-    }
-
-    #[test]
-    fn reload_hint_only_describes_reloading_pishoo() {
-        assert!(RELOAD_HINT.contains("reload pishoo"));
-        assert!(!RELOAD_HINT.contains("group"));
-        assert!(!RELOAD_HINT.contains("usermod"));
-        assert!(!RELOAD_HINT.contains("dseditgroup"));
     }
 }

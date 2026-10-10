@@ -575,7 +575,7 @@ async fn offer_server_activation(
                 let change = server.enable().await.map_err(server_error)?;
                 super::site::print_enable_result(target.short_name(), change);
                 super::transcript::print_line(format!(
-                    "After reloading pishoo, visit `genmeta curl https://{}~/welcome`.",
+                    "After restarting Pishoo, visit `genmeta curl https://{}~/std/file/welcome/index.html`.",
                     target.short_name()
                 ));
             } else {
@@ -945,43 +945,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn noninteractive_apply_keeps_a_disabled_server_configuration() {
+    async fn noninteractive_apply_keeps_listening_disabled() {
         let fixture = ServerFixture::new("disabled").await;
         let profile = fixture.profile();
-        let backup = profile.join(super::super::site::SERVER_CONF_BACKUP_FILE);
-        tokio::fs::write(&backup, "edited config").await.unwrap();
-
+        let config = super::super::site::ServerConfig::for_profile(&profile);
+        config.create_disabled().await.unwrap();
         offer_server_activation(&fixture.home, &fixture.target, false)
             .await
             .unwrap();
-
-        assert!(!profile.server_conf_path().exists());
         assert_eq!(
-            tokio::fs::read_to_string(&backup).await.unwrap(),
-            "edited config"
+            config.state().await.unwrap(),
+            super::super::site::ServerConfigState::Disabled
         );
     }
 
     #[tokio::test]
-    async fn apply_treats_active_configuration_as_enabled_when_backup_also_exists() {
-        let fixture = ServerFixture::new("active-with-backup").await;
-        let profile = fixture.profile();
-        let active = profile.server_conf_path();
-        let backup = profile.join(super::super::site::SERVER_CONF_BACKUP_FILE);
-        tokio::fs::write(&active, "active config").await.unwrap();
-        tokio::fs::write(&backup, "backup config").await.unwrap();
-
+    async fn apply_keeps_an_enabled_pishoo_configuration() {
+        let fixture = ServerFixture::new("enabled").await;
+        let config = super::super::site::ServerConfig::for_profile(&fixture.profile());
+        config.create_disabled().await.unwrap();
+        config.enable().await.unwrap();
         offer_server_activation(&fixture.home, &fixture.target, true)
             .await
             .unwrap();
-
         assert_eq!(
-            tokio::fs::read_to_string(&active).await.unwrap(),
-            "active config"
-        );
-        assert_eq!(
-            tokio::fs::read_to_string(&backup).await.unwrap(),
-            "backup config"
+            config.state().await.unwrap(),
+            super::super::site::ServerConfigState::Enabled
         );
     }
 
