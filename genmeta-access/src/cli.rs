@@ -145,10 +145,12 @@ pub enum ParseCommandError {
 }
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "genmeta access")]
+#[command(name = "genmeta access", version, propagate_version = true)]
 struct PathCommand {
+    /// Literal API prefix; operates on this exact prefix, not its child prefixes
     #[arg(value_parser = parse_api)]
     path: String,
+    /// HTTP method (uppercase or *); defaults to * for writes/grantee removal, all methods for list/clear/remove --all
     #[arg(long, global = true, value_name = "METHOD")]
     method: Option<ReportFromStr<Method>>,
     #[command(subcommand)]
@@ -157,24 +159,32 @@ struct PathCommand {
 #[derive(Subcommand, Debug, Clone)]
 enum PathOperationCommand {
     #[command(visible_alias = "ls")]
+    /// List policies at this prefix across all methods, unless --method is supplied
     List,
     #[command(visible_alias = "rm")]
+    /// Remove one or more grantees for method *, or use --all to clear the prefix
     Remove(PathRemove),
+    /// Delete all policies at this prefix; --method limits deletion to that method
     Clear,
+    /// Allow this grantee; replaces its existing effect for the same prefix and method
     Allow(GranteeArgs),
+    /// Deny this grantee; replaces its existing effect for the same prefix and method
     Deny(GranteeArgs),
+    /// Require approval for this grantee; replaces its existing effect for the same prefix and method
     Review(GranteeArgs),
 }
 #[derive(Args, Debug, Clone)]
 struct PathRemove {
+    /// Delete every grantee across all methods; --method limits the selection
     #[arg(long, conflicts_with = "grantees")]
     all: bool,
-    /// Grantees identifying policies to delete (defaults to method *)
+    /// Grantees to delete for method * by default; multiple grantees are deleted individually, not atomically
     #[arg(value_name = "GRANTEE", required_unless_present = "all", value_parser = parse_grantee)]
     grantees: Vec<String>,
 }
 #[derive(Args, Debug, Clone)]
 struct GranteeArgs {
+    /// Registered contact name, group@issuer, ** (named), ? (anonymous), or *? (all); quote wildcards in the shell
     #[arg(value_name = "GRANTEE", value_parser = parse_grantee)]
     grantee: String,
 }
