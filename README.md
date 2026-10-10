@@ -97,6 +97,25 @@ genmeta nslookup example.com system
 
 Ordinary query names retain their namespace. Names are normalized through `dhttp-home`.
 
+## CLI help and identity listening
+
+Use `genmeta --help`, `genmeta identity --help`, and `genmeta doctor --help`
+for command groups. `--version` and `-V` are available for the launcher and
+these groups; the `version` subcommand is also supported.
+
+`genmeta identity ensite --id NAME` and `dissite --id NAME` update Pishoo's
+`db/config.db` for the selected user or global home. `ensite` changes disabled
+listening to `both` (3) and preserves an already enabled scope; `dissite` sets
+it to `off` (0). Proxy rules are preserved. Restart the Pishoo process serving
+that home after saving; an installed service supports `pishoo restart`.
+New identity onboarding creates a configuration with listening disabled and
+`file/welcome/index.html`, served at `/std/file/welcome/index.html` once enabled.
+
+Access and curl log warnings and errors by default, suppressing background
+NAT warnings. Set `RUST_LOG=debug` or
+`RUST_LOG=trace` to inspect transport diagnostics. Curl progress and `--verbose`
+request/response output are independent of this log filter.
+
 ## Access policies
 
 `genmeta access` calls the selected identity's authenticated DHTTP management
@@ -129,47 +148,44 @@ include all methods unless `--method` is supplied. Grantees are registered
 contact names, `group@issuer`, `**` (named), `?` (anonymous), or `*?` (all).
 Only a trailing `~` expands contact/issuer names to `.dhttp.net`; ordinary names
 keep their namespace. A named contact must already exist in daccess, except
-for the profile owner. Regex paths and old rule expressions are unsupported.
+for the profile owner. API prefixes must begin with `/` and contain no query,
+wildcard or fragment.
 Removal uses grantees rather than database row IDs. Bulk removal lists current
 rules and deletes them individually through the API; it is not an atomic batch.
+Successful writes print a confirmation after the server responds. `list --wide`
+and path-specific `list` print tab-separated `PATH`, `METHOD`, `EFFECT`, and
+`GRANTEE` columns with a header; `list` prints just the API prefixes.
 
 Access management uses only mDNS resolution and direct local network endpoints.
-When IPv4 interface bindings are available, management queries use their mDNS
-resolvers to avoid competing IPv6 link-local paths on hosts with many virtual
-interfaces. IPv6-only hosts retain the general mDNS resolver path.
+The shared mDNS resolver tracks active IPv4 and IPv6 sockets as interfaces
+change. Connection candidates are handled by the current DHTTP/QUIC runtime.
 It can operate without Internet access while the service remains locally
-reachable and its certificates and cached OCSP staples are valid. The pinned
-DHTTP runtime still starts background STUN probes, but initialization does not
+reachable and its certificates and cached OCSP staples are valid. The DHTTP
+runtime starts background STUN probes, but initialization does not
 wait for them. Missing or stale client OCSP staples require an online refresh;
 unrestricted offline operation is therefore not guaranteed. Each management
 request has a 30-second timeout, configurable with `--timeout`.
 
 ## Development dependency graph
 
-The transport dependencies and daccess API contract tests are pinned to the
-reviewed Pishoo compatibility snapshots:
+The project dependency chain uses adjacent local checkouts during integration
+work. Keep `gmutils`, `dhttp`, `dquic`, `ddns`, `h3x`, and `daccess` in sibling
+directories. Direct dependencies and workspace patches resolve every project
+package to one local source, including the QUIC dependencies inside dhttp,
+ddns and h3x.
 
-| Repository | Branch | Revision |
-| --- | --- | --- |
-| dhttp (`dhttp`, `dhttp-home`) | `fix/client-ocsp-compatibility` | `f8bdd2700e42782e5b68b62cf69827d37a1e305b` |
-| dquic (all 12 QUIC packages) | `fix/endpoint-kind-matching` | `34a713b48535892ad9843cf2bb0db285e0d09439` |
-| ddns (`dyns`, imported as `ddns`) | `chore/h3-dns-diagnostics` | `b3ef11233e2598a75b316df104b35c2863f64e9f` |
-| h3x | `fix/qpack-feedback-backpressure` | `c26abcd3d8596c10c0fadece240a713741c7873a` |
-| daccess (`access_control`) | `feat/fit-pishoo-local` | `3e3ac6199e88f6b5e521e8d29c934ead3bb5db7c` |
+Run `cargo build --workspace --locked`. Path dependencies use the current
+working directories, including uncommitted changes. Identity key and CSR
+generation uses stable P-384/PKCS#8 and X.509 builder APIs.
 
-Run `cargo build --workspace --locked`; adjacent dependency checkouts are no
-longer required. Workspace patches unify registry dependencies with the same
-Git sources. Identity key and CSR generation uses stable P-384/PKCS#8 and
-X.509 builder APIs to coexist with qtls's newer RustCrypto dependencies.
-
-If an ancestor `.cargo/config.toml` overrides these packages with local paths,
+For a locked build in an environment with ancestor Cargo patch configuration,
 run Cargo from outside that ancestor directory with
-`--manifest-path <gmutils>/Cargo.toml` to validate the pinned dependency graph.
+`--manifest-path <gmutils>/Cargo.toml --locked`. This keeps unrelated local
+patches from changing the workspace lockfile.
 
 CLI settings and atomic certificate installation are maintained inside
-`genmeta-network`; they no longer require an older Git checkout of `dhttp-home`.
+`genmeta-network`.
 
-SSH is temporarily removed from the launcher, workspace and release packages.
 The process-wide runtime manages all network interfaces. Curl, proxy and
 nslookup accept the default `--interface '*'`; other outbound interface
 patterns are rejected until the runtime exposes interface selection. NAT and
