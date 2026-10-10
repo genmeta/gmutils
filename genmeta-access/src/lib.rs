@@ -114,28 +114,7 @@ pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, 
 }
 
 async fn init_local_network() -> dhttp::Result<()> {
-    genmeta_network::init(&[], &["*".into()]).await?;
-    let bindings = dhttp::AddressBook::global().inner_bindings();
-    // Keep same-host management on IPv4 when available instead of racing
-    // link-local IPv6 endpoints across physical and virtual interfaces.
-    let ipv4: Vec<_> = bindings
-        .iter()
-        .filter(|(bound, _)| bound.is_ipv4() && !bound.ip().is_loopback())
-        .collect();
-    if ipv4.is_empty() {
-        return genmeta_network::init(&[genmeta_network::DnsScheme::Mdns], &["*".into()]).await;
-    }
-    for (bound, device) in ipv4 {
-        let resolver = genmeta_network::ddns::mdns::MdnsResolver::bind(
-            genmeta_network::ddns::resolvers::DHTTP_MDNS_SERVICE_DOMAIN,
-            device.name(),
-            bound.ip(),
-        )
-        .await
-        .map_err(std::io::Error::other)?;
-        dhttp::resolve::Resolver::add(std::sync::Arc::new(resolver));
-    }
-    Ok(())
+    genmeta_network::init(&[genmeta_network::DnsScheme::Mdns], &["*".into()]).await
 }
 
 async fn resolve_identity(

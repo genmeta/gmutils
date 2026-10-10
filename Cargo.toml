@@ -96,13 +96,13 @@ async-compression = { version = "0.4", features = [
 
 # workspace
 genmeta-access = { path = "genmeta-access", version = "0.4.2" }
-dhttp = { git = "https://github.com/genmeta/dhttp.git", rev = "f8bdd2700e42782e5b68b62cf69827d37a1e305b" }
-access_control = { git = "https://github.com/genmeta/daccess.git", rev = "3e3ac6199e88f6b5e521e8d29c934ead3bb5db7c" }
-dhttp-home = { git = "https://github.com/genmeta/dhttp.git", rev = "f8bdd2700e42782e5b68b62cf69827d37a1e305b" }
-ddns = { package = "dyns", git = "https://github.com/genmeta/ddns.git", rev = "b3ef11233e2598a75b316df104b35c2863f64e9f", features = ["h3", "http", "mdns"] }
-qbase = { git = "https://github.com/genmeta/dquic.git", rev = "34a713b48535892ad9843cf2bb0db285e0d09439" }
-qprotocol = { git = "https://github.com/genmeta/dquic.git", rev = "34a713b48535892ad9843cf2bb0db285e0d09439" }
-qtls = { git = "https://github.com/genmeta/dquic.git", rev = "34a713b48535892ad9843cf2bb0db285e0d09439" }
+dhttp = { path = "../dhttp/dhttp", version = "0.6.2" }
+access_control = { path = "../daccess" }
+dhttp-home = { path = "../dhttp/home", version = "0.5.0" }
+ddns = { package = "dyns", path = "../ddns", features = ["h3", "http", "mdns"] }
+qbase = { path = "../dquic/qbase" }
+qprotocol = { path = "../dquic/qprotocol" }
+qtls = { path = "../dquic/qtls" }
 genmeta-network = { path = "genmeta-network" }
 genmeta-curl = { path = "genmeta-curl", version = "0.7.1" }
 genmeta-discover = { path = "genmeta-discover", version = "0.4.2" }
@@ -119,21 +119,21 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
-# Keep registry dependencies on the same reviewed snapshots as direct Git dependencies.
+# Keep registry dependencies on the same adjacent project sources.
 [patch.crates-io]
-dhttp = { git = "https://github.com/genmeta/dhttp.git", rev = "f8bdd2700e42782e5b68b62cf69827d37a1e305b" }
-dhttp-home = { git = "https://github.com/genmeta/dhttp.git", rev = "f8bdd2700e42782e5b68b62cf69827d37a1e305b" }
-dyns = { git = "https://github.com/genmeta/ddns.git", rev = "b3ef11233e2598a75b316df104b35c2863f64e9f" }
-h3x = { git = "https://github.com/genmeta/h3x.git", rev = "c26abcd3d8596c10c0fadece240a713741c7873a" }
-qbase = { git = "https://github.com/genmeta/dquic.git", rev = "34a713b48535892ad9843cf2bb0db285e0d09439" }
-qcongestion = { git = "https://github.com/genmeta/dquic.git", rev = "34a713b48535892ad9843cf2bb0db285e0d09439" }
-qconnection = { git = "https://github.com/genmeta/dquic.git", rev = "34a713b48535892ad9843cf2bb0db285e0d09439" }
-qevent = { git = "https://github.com/genmeta/dquic.git", rev = "34a713b48535892ad9843cf2bb0db285e0d09439" }
-qmacro = { git = "https://github.com/genmeta/dquic.git", rev = "34a713b48535892ad9843cf2bb0db285e0d09439" }
-qprotocol = { git = "https://github.com/genmeta/dquic.git", rev = "34a713b48535892ad9843cf2bb0db285e0d09439" }
-qrecovery = { git = "https://github.com/genmeta/dquic.git", rev = "34a713b48535892ad9843cf2bb0db285e0d09439" }
-qresolve = { git = "https://github.com/genmeta/dquic.git", rev = "34a713b48535892ad9843cf2bb0db285e0d09439" }
-qtls = { git = "https://github.com/genmeta/dquic.git", rev = "34a713b48535892ad9843cf2bb0db285e0d09439" }
-qtransport = { git = "https://github.com/genmeta/dquic.git", rev = "34a713b48535892ad9843cf2bb0db285e0d09439" }
-qtraversal = { git = "https://github.com/genmeta/dquic.git", rev = "34a713b48535892ad9843cf2bb0db285e0d09439" }
-qudp = { git = "https://github.com/genmeta/dquic.git", rev = "34a713b48535892ad9843cf2bb0db285e0d09439" }
+dhttp = { path = "../dhttp/dhttp", version = "0.6.2" }
+dhttp-home = { path = "../dhttp/home", version = "0.5.0" }
+dyns = { path = "../ddns" }
+h3x = { path = "../h3x", version = "0.6.2" }
+qbase = { path = "../dquic/qbase" }
+qcongestion = { path = "../dquic/qcongestion" }
+qconnection = { path = "../dquic/qconnection" }
+qevent = { path = "../dquic/qevent" }
+qmacro = { path = "../dquic/qmacro" }
+qprotocol = { path = "../dquic/qprotocol" }
+qrecovery = { path = "../dquic/qrecovery" }
+qresolve = { path = "../dquic/qresolve" }
+qtls = { path = "../dquic/qtls" }
+qtransport = { path = "../dquic/qtransport" }
+qtraversal = { path = "../dquic/qtraversal" }
+qudp = { path = "../dquic/qudp" }
