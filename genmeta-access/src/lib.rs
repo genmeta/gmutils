@@ -1,9 +1,7 @@
 use std::{io::IsTerminal, time::Duration};
 
-use genmeta_network::{
-    home::{DhttpHome, LoadDhttpHomeError, identity::settings::LoadDhttpSettingsError},
-    name::DhttpName as Name,
-};
+use dhttp_home::{DhttpHome, LoadDhttpHomeError, identity::settings::LoadDhttpSettingsError};
+use dhttp_identity::name::DhttpName as Name;
 use http_body_util::BodyExt;
 use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 use tokio::io::AsyncWriteExt;
@@ -29,7 +27,7 @@ pub enum Error {
     #[snafu(display("failed to resolve local credentials for identity `{name}`"))]
     LoadProfile {
         name: Name<'static>,
-        source: genmeta_network::home::identity::ssl::ResolveIdentityProfileError,
+        source: dhttp_home::identity::ssl::ResolveIdentityProfileError,
     },
     #[snafu(display("failed to initialize authenticated DHTTP client"))]
     Endpoint { source: dhttp::Error },
@@ -97,13 +95,13 @@ pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, 
     }
     let identity = resolve_identity(home, identity).await?;
     let profile = home
-        .resolve_identity_profile(identity.clone())
+        .resolve_identity_profile((identity.clone()).as_full())
         .await
         .context(error::LoadProfileSnafu {
             name: identity.clone(),
         })?;
     init_local_network().await.context(error::EndpointSnafu)?;
-    let endpoint = genmeta_network::Client::load_profile(profile.path())
+    let endpoint = dhttp::Endpoint::load_from_with_ocsp(profile.path())
         .await
         .context(error::EndpointSnafu)?;
     let server = identity
@@ -114,7 +112,7 @@ pub async fn run_for_home(home: &DhttpHome, options: Options) -> Result<String, 
 }
 
 async fn init_local_network() -> dhttp::Result<()> {
-    genmeta_network::init(&[genmeta_network::DnsScheme::Mdns], &["*".into()]).await
+    init_network(&[ddns::DnsScheme::Mdns], &["*".into()]).await
 }
 
 async fn resolve_identity(
@@ -141,7 +139,7 @@ async fn resolve_identity(
 }
 
 struct DhttpTransport {
-    endpoint: genmeta_network::Client,
+    endpoint: dhttp::Endpoint,
     timeout: u64,
 }
 impl api::Transport for DhttpTransport {
@@ -193,4 +191,38 @@ impl api::Transport for DhttpTransport {
             seconds: self.timeout,
         })?
     }
+}
+
+async fn init_network(schemes: &[ddns::DnsScheme], binds: &[String]) -> dhttp::Result<()> {
+    if binds.iter().any(|bind| bind != "*") {
+        return Err(dhttp::Error::InvalidRequest {
+            message: "the process-wide DHTTP network currently requires --interface '*'".into(),
+        });
+    }
+    let mdns = ddns::install_resolvers(schemes)?;
+    let network = dhttp::DhttpNetwork::init().await?;
+    if let Some(mdns) = mdns {
+        static MAINTENANCE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+        MAINTENANCE
+            .get_or_try_init(|| async {
+                mdns.maintain(std::time::Duration::from_secs(1), move || {
+                    Ok(network
+                        .active_bindings()
+                        .map_err(std::io::Error::other)?
+                        .into_iter()
+                        .filter(|binding| {
+                            dhttp::resolve::EndpointAddr::direct(binding.address).scope()
+                                == Some(dhttp::Scope::Internal)
+                        })
+                        .map(|binding| {
+                            ddns::mdns::MdnsBinding::new(binding.device, binding.address.ip())
+                        })
+                        .collect())
+                })
+                .await?;
+                Ok::<(), std::io::Error>(())
+            })
+            .await?;
+    }
+    Ok(())
 }

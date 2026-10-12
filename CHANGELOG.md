@@ -5,7 +5,7 @@
 ### Changed
 
 - Adapt command-line tools to dhttp 0.7.0, dyns 0.8.0 and daccess 0.1.0.
-- Publish the shared genmeta-network runtime before dependent command-line crates.
+- Command-line tools use DHTTP endpoints directly; identity storage and OCSP preparation live in dhttp-home, and resolver setup lives in dyns.
 - Manage Pishoo listening through config.db and update access path commands.
 - Preserve curl progress while reducing default transport logs; restore help and version flags.
 - Remove the SSH command and genmeta-ssh from this release.
@@ -15,7 +15,6 @@
 | Package | Previous published version | Prepared version |
 | --- | --- | --- |
 | `genmeta` | 0.8.2 | 0.9.0 |
-| `genmeta-network` | first release | 0.1.0 |
 | `genmeta-access` | 0.4.2 | 0.5.0 |
 | `genmeta-curl` | 0.7.1 | 0.8.0 |
 | `genmeta-discover` | 0.4.2 | 0.5.0 |

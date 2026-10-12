@@ -14,7 +14,9 @@ categories = ["command-line-utilities", "network-programming"]
 http-body-util.workspace = true
 futures.workspace = true
 tokio-util = { version = "0.7", features = ["io"] }
-genmeta-network.workspace = true
+ddns.workspace = true
+dhttp-home = { workspace = true, features = ["manage"] }
+dhttp-identity.workspace = true
 async-compression = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true }

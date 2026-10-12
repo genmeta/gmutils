@@ -119,7 +119,7 @@ mod tests {
             "genmeta-auth-missing-profile-{}",
             std::process::id()
         ));
-        let source = match genmeta_network::Client::load_profile(&missing).await {
+        let source = match dhttp::Endpoint::load_from_with_ocsp(&missing).await {
             Ok(_) => panic!("missing identity profile unexpectedly loaded"),
             Err(source) => source,
         };

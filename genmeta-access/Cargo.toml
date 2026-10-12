@@ -11,7 +11,9 @@ keywords = ["genmeta", "dhttp", "access", "cli"]
 categories = ["command-line-utilities", "config"]
 
 [dependencies]
-genmeta-network.workspace = true
+ddns.workspace = true
+dhttp-home = { workspace = true, features = ["manage"] }
+dhttp-identity.workspace = true
 clap = { workspace = true }
 dhttp.workspace = true
 http-body-util.workspace = true

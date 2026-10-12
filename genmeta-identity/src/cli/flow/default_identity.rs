@@ -1,6 +1,6 @@
 use std::io::IsTerminal;
 
-use genmeta_network::home::{DhttpHome, HomeScope};
+use dhttp_home::{DhttpHome, HomeScope};
 use snafu::whatever;
 
 use super::{local, output, target::IdentityTarget};
@@ -29,13 +29,11 @@ fn default_set_decision(summary: &local::LocalIdentitySummary, force: bool) -> D
 
 async fn set_default_summary(
     dhttp_home: &DhttpHome,
-    current_config: Option<genmeta_network::home::identity::settings::DhttpSettingsFile>,
+    current_config: Option<dhttp_home::identity::settings::DhttpSettingsFile>,
     summary: local::LocalIdentitySummary,
 ) -> Result<(), Error> {
     let mut current_config = current_config.unwrap_or_else(|| {
-        genmeta_network::home::identity::settings::DhttpSettingsFile::new(
-            dhttp_home.settings_path(),
-        )
+        dhttp_home::identity::settings::DhttpSettingsFile::new(dhttp_home.settings_path())
     });
     current_config
         .settings_mut()
@@ -84,7 +82,7 @@ pub(crate) async fn run(
         target.dhttp_name(),
         configured_default_name
             .as_ref()
-            .map(genmeta_network::name::DhttpName::borrow),
+            .map(dhttp_identity::name::DhttpName::borrow),
     )
     .await?
     else {

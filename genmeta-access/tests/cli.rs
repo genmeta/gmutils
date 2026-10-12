@@ -1,6 +1,6 @@
 use clap::{CommandFactory, Parser};
+use dhttp_home::DhttpHome;
 use genmeta_access::{Options, run_for_home};
-use genmeta_network::home::DhttpHome;
 
 #[test]
 fn help_describes_authenticated_api_policy_management() {

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use genmeta_network::name::{DhttpName, InvalidDhttpName};
+use dhttp_identity::name::{DhttpName, InvalidDhttpName};
 use snafu::{ResultExt, Snafu};
 
 use super::local::{LocalIdentityStatus, LocalIdentitySummary};
@@ -169,7 +169,7 @@ impl ParseIdentityTargetError {
 mod tests {
     use std::path::PathBuf;
 
-    use genmeta_network::name::DhttpName;
+    use dhttp_identity::name::DhttpName;
 
     use super::{
         IdentityLevel, IdentityTarget, RemoteTargetState, ReplacementRequirement,

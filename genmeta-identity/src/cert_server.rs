@@ -567,18 +567,21 @@ pub struct CertServer {
 }
 
 impl CertServer {
-    async fn identity_endpoint(identity_domain: &str) -> Result<genmeta_network::Client, Error> {
-        let home = genmeta_network::home::DhttpHome::load(genmeta_network::home::HomeScope::User)
-            .map_err(|source| Error::DhttpEndpoint {
-            source: std::io::Error::other(source).into(),
-        })?;
-        let name = identity_domain.parse().map_err(
-            |source: genmeta_network::name::InvalidDhttpName| Error::DhttpEndpoint {
+    async fn identity_endpoint(identity_domain: &str) -> Result<dhttp::Endpoint, Error> {
+        let home = dhttp_home::DhttpHome::load(dhttp_home::HomeScope::User).map_err(|source| {
+            Error::DhttpEndpoint {
                 source: std::io::Error::other(source).into(),
-            },
-        )?;
+            }
+        })?;
+        let name = identity_domain
+            .parse::<dhttp_identity::name::DhttpName>()
+            .map_err(
+                |source: dhttp_identity::name::InvalidDhttpName| Error::DhttpEndpoint {
+                    source: std::io::Error::other(source).into(),
+                },
+            )?;
         let profile = home
-            .resolve_identity_profile(name)
+            .resolve_identity_profile((name).as_full())
             .await
             .map_err(|source| Error::DhttpEndpoint {
                 source: std::io::Error::other(source).into(),
@@ -586,17 +589,12 @@ impl CertServer {
         Self::identity_endpoint_from_profile(profile.path()).await
     }
 
-    async fn identity_endpoint_from_profile(
-        profile_dir: &Path,
-    ) -> Result<genmeta_network::Client, Error> {
-        let endpoint = genmeta_network::Client::load_profile(profile_dir)
+    async fn identity_endpoint_from_profile(profile_dir: &Path) -> Result<dhttp::Endpoint, Error> {
+        let endpoint = dhttp::Endpoint::load_from_with_ocsp(profile_dir)
             .await
             .context(DhttpEndpointFromProfileSnafu)?;
-        genmeta_network::init(
-            &[
-                genmeta_network::DnsScheme::System,
-                genmeta_network::DnsScheme::H3,
-            ],
+        init_network(
+            &[ddns::DnsScheme::System, ddns::DnsScheme::H3],
             &["*".to_owned()],
         )
         .await
@@ -609,7 +607,7 @@ impl CertServer {
         let base_url =
             reqwest::Url::parse(&base_url).whatever_context("failed to parse cert server URL")?;
 
-        let root_cert = reqwest::Certificate::from_der(genmeta_network::trust::DHTTP_ROOT_CA_DER)
+        let root_cert = reqwest::Certificate::from_der(dhttp::trust::DHTTP_ROOT_CA_DER)
             .whatever_context("failed to parse DHTTP root certificate")?;
         let http_client = reqwest::Client::builder()
             .tls_certs_merge([root_cert])
@@ -1218,6 +1216,40 @@ impl Error {
                 if *status == expected_status && self.api_code() == Some(expected_code)
         )
     }
+}
+
+async fn init_network(schemes: &[ddns::DnsScheme], binds: &[String]) -> dhttp::Result<()> {
+    if binds.iter().any(|bind| bind != "*") {
+        return Err(dhttp::Error::InvalidRequest {
+            message: "the process-wide DHTTP network currently requires --interface '*'".into(),
+        });
+    }
+    let mdns = ddns::install_resolvers(schemes)?;
+    let network = dhttp::DhttpNetwork::init().await?;
+    if let Some(mdns) = mdns {
+        static MAINTENANCE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+        MAINTENANCE
+            .get_or_try_init(|| async {
+                mdns.maintain(std::time::Duration::from_secs(1), move || {
+                    Ok(network
+                        .active_bindings()
+                        .map_err(std::io::Error::other)?
+                        .into_iter()
+                        .filter(|binding| {
+                            dhttp::resolve::EndpointAddr::direct(binding.address).scope()
+                                == Some(dhttp::Scope::Internal)
+                        })
+                        .map(|binding| {
+                            ddns::mdns::MdnsBinding::new(binding.device, binding.address.ip())
+                        })
+                        .collect())
+                })
+                .await?;
+                Ok::<(), std::io::Error>(())
+            })
+            .await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

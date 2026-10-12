@@ -11,7 +11,10 @@ keywords = ["genmeta", "dhttp", "nat", "stun", "cli"]
 categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
-genmeta-network.workspace = true
+qprotocol.workspace = true
+ddns.workspace = true
+dhttp-home = { workspace = true, features = ["manage"] }
+dhttp-identity.workspace = true
 clap = { workspace = true }
 futures = { workspace = true }
 dhttp = { workspace = true }

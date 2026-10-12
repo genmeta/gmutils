@@ -176,8 +176,10 @@ resolved dependency versions. Publication order and lockfile preparation are
 listed in [RELEASING.md](RELEASING.md). Run Cargo outside directories containing
 ancestor path patches when preparing the release lockfile.
 
-CLI settings and atomic certificate installation are maintained inside
-`genmeta-network`.
+CLI settings, identity profiles and recoverable certificate installation are
+maintained by dhttp-home. Online OCSP preparation is enabled explicitly when
+loading an endpoint; ordinary DHTTP identity loading remains local-only.
+Each CLI uses DHTTP endpoints directly and selects its dyns resolver sources.
 
 The process-wide runtime manages all network interfaces. Curl, proxy and
 nslookup accept the default `--interface '*'`; other outbound interface

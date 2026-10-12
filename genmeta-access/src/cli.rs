@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
-use genmeta_network::name::DhttpName as Name;
+use dhttp_identity::name::DhttpName as Name;
 use snafu::{IntoError, Snafu};
 
 use crate::api::{Effect, Method};
@@ -63,11 +63,11 @@ pub struct Options {
 }
 
 impl Options {
-    pub(crate) fn home_scope(&self) -> genmeta_network::home::HomeScope {
+    pub(crate) fn home_scope(&self) -> dhttp_home::HomeScope {
         if self.global {
-            genmeta_network::home::HomeScope::Global
+            dhttp_home::HomeScope::Global
         } else {
-            genmeta_network::home::HomeScope::User
+            dhttp_home::HomeScope::User
         }
     }
     pub(crate) fn into_parts(self) -> Result<(Option<Name<'static>>, Command), ParseCommandError> {
@@ -210,11 +210,10 @@ fn parse_grantee(input: &str) -> Result<String, String> {
         if title.is_empty() || title.contains([' ', '*', '?', '~', '@']) {
             return Err("invalid group title".into());
         }
-        let issuer = genmeta_network::runtime_home::normalize_dns_name(issuer)
-            .ok_or("invalid group issuer name")?;
+        let issuer = dhttp_home::normalize_dns_name(issuer).ok_or("invalid group issuer name")?;
         return Ok(format!("{title}@{issuer}"));
     }
-    genmeta_network::runtime_home::normalize_dns_name(input)
+    dhttp_home::normalize_dns_name(input)
         .ok_or_else(|| "invalid contact name; use **, ?, *? or an exact DNS name".into())
 }
 

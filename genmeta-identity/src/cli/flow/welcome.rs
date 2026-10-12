@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use genmeta_network::{home::DhttpHome, name::DhttpName};
+use dhttp_home::DhttpHome;
+use dhttp_identity::name::DhttpName;
 use snafu::{IntoError, ResultExt, Snafu};
 use tokio::{fs, io::AsyncWriteExt};
 
@@ -61,7 +62,9 @@ pub(crate) async fn maybe_create_welcome_service(
     dhttp_home: &DhttpHome,
     name: DhttpName<'_>,
 ) -> Result<Option<WelcomeServiceCreated>, WelcomeServiceError> {
-    let profile = dhttp_home.identity_profile(name.borrow());
+    let profile = dhttp_home
+        .identity_profile((name.borrow()).as_full())
+        .expect("validated identity name");
     let config_db_path = profile.config_db_path();
     let welcome_page_path = profile.join(WELCOME_PAGE_PATH);
 
@@ -236,7 +239,7 @@ async fn write_new_file_transaction(
 
 #[cfg(test)]
 mod tests {
-    use genmeta_network::home::DhttpHome;
+    use dhttp_home::DhttpHome;
 
     use super::*;
 
@@ -245,7 +248,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let home = DhttpHome::new(root.path().to_path_buf());
         let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
-        let profile = home.identity_profile(name.borrow());
+        let profile = home
+            .identity_profile((name.borrow()).as_full())
+            .expect("validated identity name");
         let created = maybe_create_welcome_service(&home, name.borrow())
             .await
             .unwrap()
@@ -281,7 +286,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let home = DhttpHome::new(root.path().to_path_buf());
         let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
-        let profile = home.identity_profile(name.borrow());
+        let profile = home
+            .identity_profile((name.borrow()).as_full())
+            .expect("validated identity name");
         let path = profile.join(WELCOME_PAGE_PATH);
         fs::create_dir_all(path.parent().unwrap()).await.unwrap();
         fs::write(&path, "existing").await.unwrap();
@@ -302,7 +309,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let home = DhttpHome::new(root.path().to_path_buf());
         let name = DhttpName::try_from("alice.smith".to_owned()).unwrap();
-        let profile = home.identity_profile(name.borrow());
+        let profile = home
+            .identity_profile((name.borrow()).as_full())
+            .expect("validated identity name");
         let path = profile.join(WELCOME_PAGE_PATH);
         fs::create_dir_all(path.parent().unwrap()).await.unwrap();
         symlink(profile.join("missing-target"), &path).unwrap();

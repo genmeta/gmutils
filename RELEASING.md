@@ -3,7 +3,6 @@
 | Package | Previous published version | Prepared version |
 | --- | --- | --- |
 | `genmeta` | 0.8.2 | 0.9.0 |
-| `genmeta-network` | first release | 0.1.0 |
 | `genmeta-access` | 0.4.2 | 0.5.0 |
 | `genmeta-curl` | 0.7.1 | 0.8.0 |
 | `genmeta-discover` | 0.4.2 | 0.5.0 |
@@ -40,10 +39,10 @@ Planned tag: `v0.9.0`. Release through the repository's GitHub Actions workflow.
 Use an annotated tag with the changelog entry as its release notes. Actual
 publication and production deployment remain separate from this preparation PR.
 
-Publish genmeta-network first, then command crates, and genmeta last.
-For the first genmeta-network publication, configure the repository secret
-CARGO_REGISTRY_TOKEN with permission to create the crate; subsequent releases
-use Trusted Publishing. The workflow fails if the first-release token is absent.
+Publish the updated dhttp-home, DHTTP and dyns APIs first, then command crates,
+and genmeta last. Command crates depend directly on these upstream libraries.
+Refresh the registry lockfile after upstream publication before running
+release checks; local integration overrides are not a release lockfile.
 
 ## Tag-triggered artifacts
 

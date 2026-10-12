@@ -1,15 +1,15 @@
 use std::{
     collections::{HashMap, HashSet},
     io::IsTerminal,
+    string::String as BindPattern,
     time::Duration,
 };
 
 use clap::Parser;
-use genmeta_network::{
-    BindPattern, DnsScheme, home,
-    name::DhttpName as Name,
-    qprotocol::{AddressBook, AddressEvent},
-};
+use ddns::DnsScheme;
+use dhttp_home as home;
+use dhttp_identity::name::DhttpName as Name;
+use qprotocol::{AddressBook, AddressEvent};
 use snafu::{ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
 
@@ -85,16 +85,16 @@ fn selected(patterns: &[BindPattern], device: &str, ip: std::net::IpAddr) -> boo
 
 pub async fn run(options: Options) -> Result<(), Error> {
     let _guard = init_tracing();
-    genmeta_network::init(&[DnsScheme::System, DnsScheme::H3], &["*".into()])
+    init_network(&[DnsScheme::System, DnsScheme::H3], &["*".into()])
         .await
         .context(error::NetworkSnafu)?;
     if let Some(name) = options.id.as_ref() {
         let home = home::DhttpHome::load(options.home_scope()).context(error::HomeSnafu)?;
         let profile = home
-            .resolve_identity_profile(name.borrow())
+            .resolve_identity_profile((name.borrow()).as_full())
             .await
             .context(error::IdentitySnafu)?;
-        genmeta_network::Client::load_profile(profile.path())
+        dhttp::Endpoint::load_from_with_ocsp(profile.path())
             .await
             .context(error::NetworkSnafu)?;
     }
@@ -150,6 +150,40 @@ pub async fn run(options: Options) -> Result<(), Error> {
                 );
             }
         }
+    }
+    Ok(())
+}
+
+async fn init_network(schemes: &[ddns::DnsScheme], binds: &[String]) -> dhttp::Result<()> {
+    if binds.iter().any(|bind| bind != "*") {
+        return Err(dhttp::Error::InvalidRequest {
+            message: "the process-wide DHTTP network currently requires --interface '*'".into(),
+        });
+    }
+    let mdns = ddns::install_resolvers(schemes)?;
+    let network = dhttp::DhttpNetwork::init().await?;
+    if let Some(mdns) = mdns {
+        static MAINTENANCE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+        MAINTENANCE
+            .get_or_try_init(|| async {
+                mdns.maintain(std::time::Duration::from_secs(1), move || {
+                    Ok(network
+                        .active_bindings()
+                        .map_err(std::io::Error::other)?
+                        .into_iter()
+                        .filter(|binding| {
+                            dhttp::resolve::EndpointAddr::direct(binding.address).scope()
+                                == Some(dhttp::Scope::Internal)
+                        })
+                        .map(|binding| {
+                            ddns::mdns::MdnsBinding::new(binding.device, binding.address.ip())
+                        })
+                        .collect())
+                })
+                .await?;
+                Ok::<(), std::io::Error>(())
+            })
+            .await?;
     }
     Ok(())
 }

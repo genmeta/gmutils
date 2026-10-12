@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
 use std::fs;
 
-use genmeta_network::home::HomeScope;
+use dhttp_home::HomeScope;
 
 const MAX_DEVICE_NAME_LEN: usize = 128;
 const UNKNOWN_USER: &str = "unknown-user";
@@ -147,7 +147,7 @@ pub(crate) fn resolve_device_name(explicit: Option<&str>, home_scope: HomeScope)
 
 #[cfg(test)]
 mod tests {
-    use genmeta_network::home::HomeScope;
+    use dhttp_home::HomeScope;
 
     #[cfg(target_os = "linux")]
     use super::linux_os_release_name;

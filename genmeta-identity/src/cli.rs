@@ -6,22 +6,20 @@ mod certificate_log;
 use std::io::IsTerminal;
 
 use clap::Parser;
-pub use flow::{install::Error as InstallError, welcome::WelcomeServiceError};
-#[cfg(test)]
-use genmeta_network::certificate::CertificateChainKey;
-use genmeta_network::{
-    home::{
-        DhttpHome, HomeScope, LoadDhttpHomeError,
-        identity::{
-            settings::{DhttpSettingsFile, LoadDhttpSettingsError, SaveDhttpSettingsError},
-            ssl::{
-                ListIdentityProfilesError, LoadCertsError, LoadIdentityError, LoadKeyError,
-                ResolveIdentityProfileError,
-            },
+use dhttp_home::{
+    DhttpHome, HomeScope, LoadDhttpHomeError,
+    identity::{
+        settings::{DhttpSettingsFile, LoadDhttpSettingsError, SaveDhttpSettingsError},
+        ssl::{
+            ListIdentityProfilesError, LoadCertsError, LoadIdentityError, LoadKeyError,
+            ResolveIdentityProfileError,
         },
     },
-    name::DhttpName as Name,
 };
+#[cfg(test)]
+use dhttp_identity::certificate::CertificateChainKey;
+use dhttp_identity::name::DhttpName as Name;
+pub use flow::{install::Error as InstallError, welcome::WelcomeServiceError};
 use indicatif::ProgressStyle;
 use snafu::{ResultExt, Snafu, Whatever, whatever};
 use tokio::io;
@@ -122,7 +120,7 @@ impl snafu::FromString for Error {
 
 #[cfg(test)]
 fn certificate_chain_key_from_identity(
-    identity: &genmeta_network::identity::Identity,
+    identity: &dhttp_identity::identity::Identity,
 ) -> Result<Option<CertificateChainKey>, Error> {
     match identity.dhttp_subject_key_identifier() {
         Ok(ski) => Ok(Some(ski.chain().clone())),
@@ -457,8 +455,8 @@ mod tests {
     };
 
     use clap::{CommandFactory, Parser};
-    use genmeta_network::{
-        home::{DhttpHome, HomeScope},
+    use dhttp_home::{DhttpHome, HomeScope};
+    use dhttp_identity::{
         identity::Identity,
         name::{DhttpName, Name},
     };
@@ -753,7 +751,9 @@ mod tests {
         let home_path = unique_test_home_path("default-saved-noninteractive");
         let dhttp_home = DhttpHome::new(home_path.clone());
         let name = DhttpName::try_from("alice.smith").unwrap();
-        let profile = dhttp_home.identity_profile(name.borrow());
+        let profile = dhttp_home
+            .identity_profile((name.borrow()).as_full())
+            .expect("validated identity name");
         tokio::fs::create_dir_all(profile.path()).await.unwrap();
 
         let command = Default {
@@ -784,11 +784,8 @@ mod tests {
         let before = Cli::try_parse_from(["genmeta", "--global", "list"]).unwrap();
         let after = Cli::try_parse_from(["genmeta", "list", "--global"]).unwrap();
 
-        assert_eq!(
-            before.home_scope(),
-            genmeta_network::home::HomeScope::Global
-        );
-        assert_eq!(after.home_scope(), genmeta_network::home::HomeScope::Global);
+        assert_eq!(before.home_scope(), dhttp_home::HomeScope::Global);
+        assert_eq!(after.home_scope(), dhttp_home::HomeScope::Global);
     }
 
     #[test]

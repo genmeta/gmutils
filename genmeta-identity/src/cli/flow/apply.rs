@@ -1,6 +1,6 @@
 use std::{io::IsTerminal, path::Path};
 
-use genmeta_network::home::{DhttpHome, HomeScope};
+use dhttp_home::{DhttpHome, HomeScope};
 use snafu::{FromString, whatever};
 
 use super::{
@@ -553,7 +553,7 @@ async fn offer_server_activation(
 ) -> Result<(), Error> {
     let server_error = |source| Error::InstalledServerConfiguration { source };
     let profile = dhttp_home
-        .resolve_identity_profile_exactly(target.dhttp_name())
+        .resolve_identity_profile_exactly((target.dhttp_name()).as_full())
         .await
         .map_err(super::site::Error::from)
         .map_err(server_error)?;
@@ -810,14 +810,20 @@ mod tests {
             ));
             let home = DhttpHome::new(root.clone());
             let target = IdentityTarget::parse("alice.smith").unwrap();
-            tokio::fs::create_dir_all(home.identity_profile(target.dhttp_name()).path())
-                .await
-                .unwrap();
+            tokio::fs::create_dir_all(
+                home.identity_profile((target.dhttp_name()).as_full())
+                    .expect("validated identity name")
+                    .path(),
+            )
+            .await
+            .unwrap();
             Self { root, home, target }
         }
 
-        fn profile(&self) -> genmeta_network::home::identity::IdentityProfile {
-            self.home.identity_profile(self.target.dhttp_name())
+        fn profile(&self) -> dhttp_home::identity::IdentityProfile {
+            self.home
+                .identity_profile((self.target.dhttp_name()).as_full())
+                .expect("validated identity name")
         }
     }
 
@@ -1024,7 +1030,7 @@ mod tests {
             super::super::auth_plan::candidate_specs(&child, RemoteTargetState::Missing),
             vec![
                 super::super::auth_plan::AuthCandidateSpec::Identity(
-                    genmeta_network::name::DhttpName::try_from("alice.smith")
+                    dhttp_identity::name::DhttpName::try_from("alice.smith")
                         .unwrap()
                         .into_owned()
                 ),

@@ -73,7 +73,6 @@ jobs:
 
           # Dependencies must precede dependents for per-crate publication.
           packages=(
-            genmeta-network
             genmeta-access
             genmeta-curl
             genmeta-discover

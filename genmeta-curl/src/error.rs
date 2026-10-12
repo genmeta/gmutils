@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use genmeta_network::{home, name::DhttpName as Name};
+use dhttp_home as home;
+use dhttp_identity::name::DhttpName as Name;
 use snafu::Snafu;
 use tokio::io;
 
@@ -11,9 +12,7 @@ pub enum Error {
     MissingAuthority {},
 
     #[snafu(display("failed to normalize dhttp uri"))]
-    NormalizeUri {
-        source: genmeta_network::message::IntoUriError,
-    },
+    NormalizeUri { source: dhttp::Error },
 
     #[snafu(display("failed to construct normalized request uri"))]
     ConstructRequestUri { source: http::uri::InvalidUriParts },
@@ -24,12 +23,12 @@ pub enum Error {
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
         name: Name<'static>,
-        source: genmeta_network::home::identity::ssl::ResolveIdentityProfileError,
+        source: dhttp_home::identity::ssl::ResolveIdentityProfileError,
     },
 
     #[snafu(display("failed to load identity certificate and key"))]
     LoadIdentitySsl {
-        source: genmeta_network::home::identity::ssl::LoadIdentityError,
+        source: dhttp_home::identity::ssl::LoadIdentityError,
     },
 
     #[snafu(display("failed to build dhttp endpoint"))]

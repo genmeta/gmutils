@@ -1,7 +1,8 @@
 use std::{io::ErrorKind, path::PathBuf};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use genmeta_network::{home::DhttpHome, name::DhttpName};
+use dhttp_home::DhttpHome;
+use dhttp_identity::name::DhttpName;
 use p384::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey, LineEnding};
 use serde::{Deserialize, Serialize};
 use snafu::{FromString, ResultExt};
@@ -320,7 +321,10 @@ impl PendingRenewal {
 }
 
 fn pending_path(dhttp_home: &DhttpHome, name: DhttpName<'_>) -> PathBuf {
-    dhttp_home.identity_profile(name).join(PENDING_RENEWAL_FILE)
+    dhttp_home
+        .identity_profile((name).as_full())
+        .expect("validated identity name")
+        .join(PENDING_RENEWAL_FILE)
 }
 
 #[cfg(unix)]
@@ -518,9 +522,13 @@ mod tests {
         ));
         let home = DhttpHome::new(home_path.clone());
         let name = DhttpName::try_from("alice.smith").unwrap();
-        tokio::fs::create_dir_all(home.identity_profile(name.borrow()).path())
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(
+            home.identity_profile((name.borrow()).as_full())
+                .expect("validated identity name")
+                .path(),
+        )
+        .await
+        .unwrap();
 
         let created = PendingRenewal::create(&home, name.borrow(), "primary", 7, "test laptop")
             .await
@@ -581,9 +589,13 @@ mod tests {
         ));
         let home = DhttpHome::new(home_path.clone());
         let name = DhttpName::try_from("alice.smith").unwrap();
-        tokio::fs::create_dir_all(home.identity_profile(name.borrow()).path())
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(
+            home.identity_profile((name.borrow()).as_full())
+                .expect("validated identity name")
+                .path(),
+        )
+        .await
+        .unwrap();
 
         PendingRenewal::create(&home, name.borrow(), "primary", 7, "test laptop")
             .await

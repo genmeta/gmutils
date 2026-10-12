@@ -1,9 +1,7 @@
 use std::path::PathBuf;
 
-use genmeta_network::{
-    home::identity::IdentityProfile,
-    log::cert::{CertificateAction, CertificateLogRecord, DefaultCertificateFormatter},
-};
+use dhttp::log::cert::{CertificateAction, CertificateLogRecord, DefaultCertificateFormatter};
+use dhttp_home::identity::IdentityProfile;
 use snafu::{OptionExt, ResultExt, Snafu};
 use tokio::io::AsyncWriteExt;
 
@@ -13,7 +11,7 @@ pub(crate) enum WriteCertificateLogError {
     #[snafu(display("failed to load committed identity {}", profile.name()))]
     LoadIdentity {
         profile: Box<IdentityProfile>,
-        source: genmeta_network::home::identity::ssl::LoadIdentityError,
+        source: dhttp_home::identity::ssl::LoadIdentityError,
     },
     #[snafu(display("committed identity {} has no leaf certificate", profile.name()))]
     MissingLeaf { profile: Box<IdentityProfile> },
@@ -23,7 +21,7 @@ pub(crate) enum WriteCertificateLogError {
     ))]
     Chain {
         profile: Box<IdentityProfile>,
-        source: genmeta_network::runtime_home::certificate::ExtractDhttpSubjectKeyIdentifierError,
+        source: dhttp_home::certificate::ExtractDhttpSubjectKeyIdentifierError,
     },
     #[snafu(display("failed to construct certificate log record for {}", profile.name()))]
     BuildRecord {
@@ -69,14 +67,12 @@ pub(crate) async fn write_after_commit(
         .context(write_certificate_log_error::MissingLeafSnafu {
             profile: Box::new(profile.clone()),
         })?;
-    let chain = genmeta_network::runtime_home::certificate::extract_dhttp_subject_key_identifier(
-        identity.certs(),
-    )
-    .context(write_certificate_log_error::ChainSnafu {
-        profile: Box::new(profile.clone()),
-    })?
-    .chain()
-    .clone();
+    let chain = dhttp_home::certificate::extract_dhttp_subject_key_identifier(identity.certs())
+        .context(write_certificate_log_error::ChainSnafu {
+            profile: Box::new(profile.clone()),
+        })?
+        .chain()
+        .clone();
     let record = CertificateLogRecord::from_leaf_der(
         chrono::Local::now().fixed_offset(),
         action,
@@ -116,11 +112,9 @@ mod tests {
     };
 
     use base64::Engine as _;
-    use genmeta_network::{
-        home::{DhttpHome, identity::IdentityProfile},
-        log::cert::CertificateAction,
-        name::DhttpName,
-    };
+    use dhttp::log::cert::CertificateAction;
+    use dhttp_home::{DhttpHome, identity::IdentityProfile};
+    use dhttp_identity::name::DhttpName;
 
     use super::write_after_commit;
 
@@ -146,7 +140,9 @@ mod tests {
         ));
         let home = DhttpHome::new(home_path.clone());
         let name: DhttpName<'static> = "fixture.example".parse().unwrap();
-        let profile = home.identity_profile(name);
+        let profile = home
+            .identity_profile((name).as_full())
+            .expect("validated identity name");
         let encoded = base64::engine::general_purpose::STANDARD
             .encode(include_bytes!("../../tests/fixtures/valid.der"));
         let mut cert_pem = String::from("-----BEGIN CERTIFICATE-----\n");

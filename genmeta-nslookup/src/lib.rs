@@ -1,15 +1,15 @@
 use std::{
     collections::{HashMap, HashSet},
     io::IsTerminal,
+    string::String as BindPattern,
 };
 
 use clap::Parser;
+use ddns::DnsScheme;
+use dhttp_home as home;
+use dhttp_home::{DhttpHome, identity::IdentityProfile};
+use dhttp_identity::name::DhttpName as Name;
 use futures::StreamExt;
-use genmeta_network::{
-    BindPattern, DnsScheme,
-    home::{self, DhttpHome, identity::IdentityProfile},
-    name::DhttpName as Name,
-};
 use snafu::{IntoError, ResultExt, Snafu};
 use tracing_subscriber::prelude::*;
 
@@ -47,8 +47,7 @@ pub struct Options {
 }
 
 fn parse_query_name(input: &str) -> Result<String, String> {
-    genmeta_network::runtime_home::normalize_dns_name(input)
-        .ok_or_else(|| format!("invalid DNS name: {input}"))
+    dhttp_home::normalize_dns_name(input).ok_or_else(|| format!("invalid DNS name: {input}"))
 }
 
 impl Options {
@@ -69,11 +68,11 @@ pub enum Error {
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
         name: Name<'static>,
-        source: genmeta_network::home::identity::ssl::ResolveIdentityProfileError,
+        source: dhttp_home::identity::ssl::ResolveIdentityProfileError,
     },
     #[snafu(display("failed to load identity certificate and key"))]
     LoadIdentitySsl {
-        source: genmeta_network::home::identity::ssl::LoadIdentityError,
+        source: dhttp_home::identity::ssl::LoadIdentityError,
     },
     #[snafu(display("failed to build dhttp endpoint"))]
     BuildEndpoint { source: dhttp::Error },
@@ -129,7 +128,7 @@ async fn load_identity_profile(options: &Options) -> Result<Option<IdentityProfi
     if let Some(name) = &options.id {
         tracing::debug!(%name, "trying to load command line identity");
         return home
-            .resolve_identity_profile(name.clone())
+            .resolve_identity_profile((name.clone()).as_full())
             .await
             .context(error::LoadExplicitIdentitySnafu { name: name.clone() })
             .map(Some);
@@ -155,11 +154,11 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let identity_profile = load_identity_profile(&options).await?;
     // Validate a selected identity even though DNS lookup itself doesn't require credentials.
     if let Some(profile) = &identity_profile {
-        genmeta_network::Client::load_profile(profile.path())
+        dhttp::Endpoint::load_from_with_ocsp(profile.path())
             .await
             .context(error::BuildEndpointSnafu)?;
     }
-    genmeta_network::init(&options.schemes, &options.binds)
+    init_network(&options.schemes, &options.binds)
         .await
         .context(error::BuildEndpointSnafu)?;
     let resolver = dhttp::resolve::Resolver::get();
@@ -206,6 +205,40 @@ pub async fn run(options: Options) -> Result<(), Error> {
     Ok(())
 }
 
+async fn init_network(schemes: &[ddns::DnsScheme], binds: &[String]) -> dhttp::Result<()> {
+    if binds.iter().any(|bind| bind != "*") {
+        return Err(dhttp::Error::InvalidRequest {
+            message: "the process-wide DHTTP network currently requires --interface '*'".into(),
+        });
+    }
+    let mdns = ddns::install_resolvers(schemes)?;
+    let network = dhttp::DhttpNetwork::init().await?;
+    if let Some(mdns) = mdns {
+        static MAINTENANCE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+        MAINTENANCE
+            .get_or_try_init(|| async {
+                mdns.maintain(std::time::Duration::from_secs(1), move || {
+                    Ok(network
+                        .active_bindings()
+                        .map_err(std::io::Error::other)?
+                        .into_iter()
+                        .filter(|binding| {
+                            dhttp::resolve::EndpointAddr::direct(binding.address).scope()
+                                == Some(dhttp::Scope::Internal)
+                        })
+                        .map(|binding| {
+                            ddns::mdns::MdnsBinding::new(binding.device, binding.address.ip())
+                        })
+                        .collect())
+                })
+                .await?;
+                Ok::<(), std::io::Error>(())
+            })
+            .await?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -217,10 +250,7 @@ mod tests {
         let options =
             Options::try_parse_from(["nslookup", "--global", "alice.smith", "mdns"]).unwrap();
 
-        assert_eq!(
-            options.home_scope(),
-            genmeta_network::home::HomeScope::Global
-        );
+        assert_eq!(options.home_scope(), dhttp_home::HomeScope::Global);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use genmeta_network::{certificate::DhttpSubjectKeyIdentifier, name::DhttpName};
+use dhttp_identity::{certificate::DhttpSubjectKeyIdentifier, name::DhttpName};
 use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, UnixTime, pem::PemObject},
     server::danger::ClientCertVerifier,
@@ -42,7 +42,7 @@ pub enum Error {
     MissingResponseMetadata,
     #[snafu(display("certificate response contains invalid DHTTP certificate metadata"))]
     InvalidResponseMetadata {
-        source: genmeta_network::certificate::InvalidDhttpSubjectKeyIdentifier,
+        source: dhttp_identity::certificate::InvalidDhttpSubjectKeyIdentifier,
     },
     #[snafu(display("certificate response DHTTP certificate metadata does not match the leaf"))]
     ResponseMetadataMismatch,
@@ -64,7 +64,7 @@ pub enum Error {
     MissingTargetName { target: String },
     #[snafu(display("leaf certificate is missing or has invalid DHTTP certificate metadata"))]
     LeafMetadata {
-        source: genmeta_network::identity::ExtractDhttpSubjectKeyIdentifierError,
+        source: dhttp_identity::identity::ExtractDhttpSubjectKeyIdentifierError,
     },
     #[snafu(display("leaf DHTTP certificate metadata usage does not match the response"))]
     LeafMetadataUsage,
@@ -84,7 +84,7 @@ pub enum Error {
     UntrustedCertificate { source: rustls::Error },
     #[snafu(display("failed to install validated identity"))]
     SaveIdentity {
-        source: genmeta_network::home::identity::ssl::SaveIdentityError,
+        source: dhttp_home::identity::ssl::SaveIdentityError,
     },
 }
 
@@ -97,9 +97,8 @@ pub(crate) fn validate_install(
     expected: &InstallExpectation<'_>,
     key_pem: &str,
 ) -> Result<(), Error> {
-    let verifier = genmeta_network::trust::dhttp_client_cert_verifier(
-        genmeta_network::trust::ClientIdentityPolicy::Required,
-    );
+    let verifier =
+        dhttp::trust::dhttp_client_cert_verifier(dhttp::trust::ClientIdentityPolicy::Required);
     validate_install_with_verifier(detail, expected, key_pem, verifier)
 }
 
@@ -174,7 +173,7 @@ fn validate_install_with_verifier(
         }
     );
 
-    let leaf_ski = genmeta_network::identity::extract_dhttp_subject_key_identifier(&certs)
+    let leaf_ski = dhttp_identity::identity::extract_dhttp_subject_key_identifier(&certs)
         .context(error::LeafMetadataSnafu)?;
     ensure!(
         leaf_ski == response_ski,
@@ -205,14 +204,16 @@ fn validate_install_with_verifier(
 }
 
 pub(crate) async fn validate_and_save(
-    dhttp_home: &genmeta_network::home::DhttpHome,
+    dhttp_home: &dhttp_home::DhttpHome,
     detail: &CertificateDetail,
     expected: &InstallExpectation<'_>,
     key_pem: &str,
     action: dhttp::log::cert::CertificateAction,
 ) -> Result<(), Error> {
     validate_install(detail, expected, key_pem)?;
-    let profile = dhttp_home.identity_profile(expected.target.borrow());
+    let profile = dhttp_home
+        .identity_profile((expected.target.borrow()).as_full())
+        .expect("validated identity name");
     profile
         .save_identity(detail.cert_pem.as_bytes(), key_pem.as_bytes())
         .await
@@ -376,7 +377,7 @@ mod tests {
             std::process::id()
         ));
         let _ = tokio::fs::remove_dir_all(&home_path).await;
-        let home = genmeta_network::home::DhttpHome::new(home_path.clone());
+        let home = dhttp_home::DhttpHome::new(home_path.clone());
         let name = DhttpName::try_from("alice.smith").unwrap();
         let mut invalid = detail();
         invalid.domain = "other.smith.dhttp.net".to_string();

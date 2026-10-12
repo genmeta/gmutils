@@ -5,7 +5,6 @@ members = [
     "genmeta",
     "genmeta-access",
     "genmeta-curl",
-    "genmeta-network",
     "genmeta-nslookup",
     "genmeta-discover",
     "genmeta-nat",
@@ -96,14 +95,14 @@ async-compression = { version = "0.4", features = [
 
 # workspace
 genmeta-access = { path = "genmeta-access", version = "0.5.0" }
-dhttp = { version = "0.7.0" }
+dhttp = { version = "0.7.0", features = ["online-identity", "log"] }
+dhttp-identity = "0.3.0"
 access_control = { package = "daccess", version = "0.1.0" }
 dhttp-home = { version = "0.6.0" }
 ddns = { version = "0.8.0", package = "dyns", features = ["h3", "http", "mdns"] }
 qbase = { version = "0.7.0" }
 qprotocol = { version = "0.7.0" }
 qtls = { version = "0.1.0" }
-genmeta-network = { version = "0.1.0", path = "genmeta-network" }
 genmeta-curl = { path = "genmeta-curl", version = "0.8.0" }
 genmeta-discover = { path = "genmeta-discover", version = "0.5.0" }
 genmeta-doctor = { path = "genmeta-doctor", version = "0.5.0" }

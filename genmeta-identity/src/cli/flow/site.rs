@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use genmeta_network::home::{
+use dhttp_home::{
     DhttpHome,
     identity::{IdentityProfile, ssl::ResolveIdentityProfileError},
 };
@@ -259,7 +259,7 @@ pub(crate) async fn run_ensite(
 ) -> Result<(), crate::cli::Error> {
     let identity = super::target::IdentityTarget::parse(&command.id)?.into_dhttp_name();
     let profile = home
-        .resolve_identity_profile_exactly(identity.borrow())
+        .resolve_identity_profile_exactly((identity.borrow()).as_full())
         .await?;
     let change = ServerConfig::for_profile(&profile).enable().await?;
     print_enable_result(identity.as_partial(), change);
@@ -272,7 +272,7 @@ pub(crate) async fn run_dissite(
 ) -> Result<(), crate::cli::Error> {
     let identity = super::target::IdentityTarget::parse(&command.id)?.into_dhttp_name();
     let profile = home
-        .resolve_identity_profile_exactly(identity.borrow())
+        .resolve_identity_profile_exactly((identity.borrow()).as_full())
         .await?;
     let change = ServerConfig::for_profile(&profile).disable().await?;
     print_disable_result(identity.as_partial(), change);
@@ -281,7 +281,7 @@ pub(crate) async fn run_dissite(
 
 #[cfg(test)]
 mod tests {
-    use genmeta_network::name::DhttpName;
+    use dhttp_identity::name::DhttpName;
 
     use super::*;
 
@@ -291,7 +291,9 @@ mod tests {
             .tempdir()
             .unwrap();
         let home = DhttpHome::new(root.path().to_path_buf());
-        let profile = home.identity_profile(DhttpName::try_from("alice.smith".to_owned()).unwrap());
+        let profile = home
+            .identity_profile((DhttpName::try_from("alice.smith".to_owned()).unwrap()).as_full())
+            .expect("validated identity name");
         let config = ServerConfig::for_profile(&profile);
         config.create_disabled().await.unwrap();
         (root, profile, config)

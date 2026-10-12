@@ -44,14 +44,17 @@ fn rewrite_request_for_h3(mut req: Request<Incoming>) -> Request<Incoming> {
 /// Forward a request while polling the upstream response concurrently with upload.
 pub async fn forward_h3(
     req: Request<Incoming>,
-    client: &genmeta_network::Client,
+    client: &Option<dhttp::Endpoint>,
 ) -> Result<Response<ForwardBody>, Error> {
     let req = rewrite_request_for_h3(req);
     let (mut parts, mut body) = req.into_parts();
     parts.version = http::Version::HTTP_3;
     let request = Request::from_parts(parts, dhttp::WndBuf::new(64 * 1024));
-    let (mut writer, response) = client
-        .from_request(request)
+    let request = match client {
+        Some(endpoint) => endpoint.from_request(request),
+        None => dhttp::Anonymous.from_request(request),
+    };
+    let (mut writer, response) = request
         .await
         .whatever_context::<_, Error>("failed to open DHTTP request")?;
     let mut upload = tokio::spawn(async move {

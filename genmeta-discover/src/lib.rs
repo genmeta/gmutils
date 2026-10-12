@@ -1,18 +1,16 @@
 use std::{
     collections::{HashMap, HashSet},
     io::IsTerminal,
+    string::String as BindPattern,
 };
 
 use clap::Parser;
-use genmeta_network::{
-    BindPattern,
-    ddns::{
-        core::parser::{
-            packet::{Packet, be_packet},
-            record::RData,
-        },
-        resolvers::DHTTP_MDNS_SERVICE_DOMAIN,
+use ddns::{
+    core::parser::{
+        packet::{Packet, be_packet},
+        record::RData,
     },
+    resolvers::DHTTP_MDNS_SERVICE_DOMAIN,
 };
 use socket2::{Domain, Socket, Type};
 use tokio::net::UdpSocket;
@@ -68,7 +66,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
 pub async fn run(options: Options) {
     let _guard = init_tracing();
 
-    if let Err(error) = genmeta_network::init(&[], &["*".into()]).await {
+    if let Err(error) = dhttp::DhttpNetwork::init().await {
         tracing::error!(%error, "failed to initialize interfaces");
         return;
     }
