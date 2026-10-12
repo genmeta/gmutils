@@ -1,16 +1,16 @@
-# Release preparation for v0.9.0
+# Release preparation for v0.9.0-preview.1
 
 | Package | Previous published version | Prepared version |
 | --- | --- | --- |
-| `genmeta` | 0.8.2 | 0.9.0 |
-| `genmeta-access` | 0.4.2 | 0.5.0 |
-| `genmeta-curl` | 0.7.1 | 0.8.0 |
-| `genmeta-discover` | 0.4.2 | 0.5.0 |
-| `genmeta-doctor` | 0.4.1 | 0.5.0 |
-| `genmeta-identity` | 0.4.2 | 0.5.0 |
-| `genmeta-nat` | 0.5.1 | 0.6.0 |
-| `genmeta-nslookup` | 0.5.1 | 0.6.0 |
-| `genmeta-proxy` | 0.4.1 | 0.5.0 |
+| `genmeta` | 0.8.2 | 0.9.0-preview.1 |
+| `genmeta-access` | 0.4.2 | 0.5.0-preview.1 |
+| `genmeta-curl` | 0.7.1 | 0.8.0-preview.1 |
+| `genmeta-discover` | 0.4.2 | 0.5.0-preview.1 |
+| `genmeta-doctor` | 0.4.1 | 0.5.0-preview.1 |
+| `genmeta-identity` | 0.4.2 | 0.5.0-preview.1 |
+| `genmeta-nat` | 0.5.1 | 0.6.0-preview.1 |
+| `genmeta-nslookup` | 0.5.1 | 0.6.0-preview.1 |
+| `genmeta-proxy` | 0.4.1 | 0.5.0-preview.1 |
 
 ## Dependency order
 
@@ -35,7 +35,7 @@ upstream publication and lockfile refresh; merge and tag only that checked commi
 
 ## Publication
 
-Planned tag: `v0.9.0`. Release through the repository's GitHub Actions workflow.
+Planned tag: `v0.9.0-preview.1`. Release through the repository's GitHub Actions workflow.
 Use an annotated tag with the changelog entry as its release notes. Actual
 publication and production deployment remain separate from this preparation PR.
 
@@ -46,7 +46,7 @@ release checks; local integration overrides are not a release lockfile.
 
 ## Tag-triggered artifacts
 
-Pushing `v0.9.0` to this repository triggers release.yml for DEB, RPM and Homebrew.
+Pushing `v0.9.0-preview.1` to this repository triggers release.yml for DEB, RPM and Homebrew.
 The tag must match the main package version. Packaging creates a draft GitHub
 Release, uploads artifacts, and publishes that Release after all package jobs
 succeed. Release builds keep `--locked`; refresh the registry lockfile after
@@ -55,4 +55,7 @@ credentials must be configured in repository Actions settings.
 
 Windows/Scoop publication is deferred for this release. The existing Scoop
 script, template and destinations are retained for a later release, but no
-Windows job runs when the v0.9.0 tag is pushed.
+Windows job runs when the v0.9.0-preview.1 tag is pushed.
+
+All workspace command crates use `-preview.1` prereleases. DEB/RPM and Homebrew
+publication selects the preview channel from the main package version.

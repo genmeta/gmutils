@@ -2,7 +2,7 @@
   <img src="https://media.dhttp.net/img/gmutils/gmutils.svg" width="900" alt="GMUTILS command-line tool family: identity, access, curl, nslookup, doctor, proxy, and discover">
 </p>
 <p align="center">
-  <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/version-0.9.0-1f6feb?style=flat-square" alt="Version 0.9.0"></a>
+  <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/version-0.9.0--preview.1-1f6feb?style=flat-square" alt="Version 0.9.0-preview.1"></a>
   <a href="https://doc.rust-lang.org/edition-guide/rust-2024/"><img src="https://img.shields.io/badge/Rust-2024-dea584?style=flat-square&amp;logo=rust&amp;logoColor=black" alt="Rust 2024 edition"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-00a51a?style=flat-square&amp;logo=apache&amp;logoColor=white" alt="Apache-2.0 license"></a>
   <a href="#install"><img src="https://img.shields.io/badge/Cargo-supported-dea584?style=flat-square&amp;logo=rust&amp;logoColor=black" alt="Cargo package supported"></a>
@@ -170,7 +170,7 @@ request has a 30-second timeout, configurable with `--timeout`.
 
 ## Release dependencies and development builds
 
-The 0.9.0 release uses compatible crates.io versions for DHTTP, DNS, QUIC and
+The 0.9.0-preview.1 release uses compatible crates.io versions for DHTTP, DNS, QUIC and
 daccess. The published TLS backend is `qrustls` 0.23.45. `Cargo.lock` records the
 resolved dependency versions. Publication order and lockfile preparation are
 listed in [RELEASING.md](RELEASING.md). Run Cargo outside directories containing
