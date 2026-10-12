@@ -157,8 +157,10 @@ and path-specific `list` print tab-separated `PATH`, `METHOD`, `EFFECT`, and
 `GRANTEE` columns with a header; `list` prints just the API prefixes.
 
 Access management uses only mDNS resolution and direct local network endpoints.
-The shared mDNS resolver tracks active IPv4 and IPv6 sockets as interfaces
-change. Connection candidates are handled by the current DHTTP/QUIC runtime.
+DHTTP owns interface watching and exposes active IPv4 and IPv6 bindings.
+The CLI selects and registers resolver sources through DHTTP's `qresolve`
+interface, and passes binding snapshots to dyns to synchronize mDNS instances.
+Connection candidates are handled by the current DHTTP/QUIC runtime.
 It can operate without Internet access while the service remains locally
 reachable and its certificates and cached OCSP staples are valid. The DHTTP
 runtime starts background STUN probes, but initialization does not

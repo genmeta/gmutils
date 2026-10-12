@@ -118,14 +118,16 @@ pub async fn init(schemes: &[DnsScheme], binds: &[BindPattern]) -> dhttp::Result
     let mdns = install_resolvers(schemes)?;
     dhttp::DhttpNetwork::init().await?;
     if let Some(mdns) = mdns {
-        maintain_mdns_bindings(&mdns).await;
+        maintain_mdns_bindings(&mdns).await?;
         static MAINTENANCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
         MAINTENANCE.get_or_init(|| {
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
                 loop {
                     interval.tick().await;
-                    maintain_mdns_bindings(&mdns).await;
+                    if let Err(error) = maintain_mdns_bindings(&mdns).await {
+                        tracing::warn!(%error, "failed to read active network bindings");
+                    }
                 }
             });
         });
@@ -133,28 +135,25 @@ pub async fn init(schemes: &[DnsScheme], binds: &[BindPattern]) -> dhttp::Result
     Ok(())
 }
 
-async fn maintain_mdns_bindings(mdns: &ddns::mdns::MdnsResolverSet) {
-    let desired: std::collections::HashSet<_> = dhttp::AddressBook::global()
-        .inner_bindings()
+async fn maintain_mdns_bindings(mdns: &ddns::mdns::MdnsResolverSet) -> dhttp::Result<()> {
+    let bindings = dhttp::DhttpNetwork::global()?.active_bindings()?;
+    let desired = bindings
         .into_iter()
-        .filter(|(bound, _)| qprotocol::Dock::global().find_socket(*bound).is_some())
-        .map(|(bound, device)| ddns::mdns::MdnsBinding::new(device.name(), bound.ip()))
-        .collect();
-    for instance in mdns.snapshot() {
-        let binding = ddns::mdns::MdnsBinding::new(instance.bound_device(), instance.bound_ip());
-        if !desired.contains(&binding)
-            && let Err(error) = mdns.remove(&binding).await
-        {
-            tracing::warn!(%error, "failed to remove mDNS binding");
-        }
+        // mDNS uses internal bindings; DHTTP also exposes loopback and external ones.
+        .filter(|binding| {
+            dhttp::resolve::EndpointAddr::direct(binding.address).scope()
+                == Some(dhttp::Scope::Internal)
+        })
+        .map(|binding| ddns::mdns::MdnsBinding::new(binding.device, binding.address.ip()));
+    for error in mdns.reconcile(desired).await {
+        tracing::warn!(%error, "failed to synchronize mDNS bindings");
     }
-    for binding in desired {
-        if let Err(error) = mdns.upsert(binding).await {
-            tracing::warn!(%error, "failed to prepare mDNS binding");
-        }
-    }
+    Ok(())
 }
 
+/// Genmeta's application policy: explicitly register only the requested sources.
+/// DNS providers own their instances; DHTTP owns network bindings and qresolve
+/// owns the registry. H3/HTTP bootstrap additionally requires system DNS.
 pub fn install_resolvers(schemes: &[DnsScheme]) -> io::Result<Option<ddns::mdns::MdnsResolverSet>> {
     #[derive(Default)]
     struct Installed {
