@@ -122,51 +122,65 @@ impl ServerConfig {
             return Ok(ServerConfigState::Missing);
         }
         let db = self.open().await?;
-        let tx = db
-            .begin()
+        let result = async {
+            let tx = db
+                .begin()
+                .await
+                .context(error::DatabaseSnafu { path: &self.path })?;
+            let listen = self.listen(&tx).await?;
+            tx.commit()
+                .await
+                .context(error::DatabaseSnafu { path: &self.path })?;
+            Ok(if listen == 0 {
+                ServerConfigState::Disabled
+            } else {
+                ServerConfigState::Enabled
+            })
+        }
+        .await;
+        db.close()
             .await
             .context(error::DatabaseSnafu { path: &self.path })?;
-        let listen = self.listen(&tx).await?;
-        tx.commit()
-            .await
-            .context(error::DatabaseSnafu { path: &self.path })?;
-        Ok(if listen == 0 {
-            ServerConfigState::Disabled
-        } else {
-            ServerConfigState::Enabled
-        })
+        result
     }
 
     async fn set_enabled(&self, enabled: bool) -> Result<ConfigChange, Error> {
         let db = self.open().await?;
-        let tx = db
-            .begin()
-            .await
-            .context(error::DatabaseSnafu { path: &self.path })?;
-        let listen = self.listen(&tx).await?;
-        // Preserve an enabled identity's chosen internal/external/both scope.
-        let target = if enabled {
-            if listen == 0 { 3 } else { listen }
-        } else {
-            0
-        };
-        if listen != target {
-            tx.execute_raw(Statement::from_sql_and_values(
-                DatabaseBackend::Sqlite,
-                "UPDATE settings SET listen = ?",
-                [target.into()],
-            ))
-            .await
-            .context(error::DatabaseSnafu { path: &self.path })?;
+        let result = async {
+            let tx = db
+                .begin()
+                .await
+                .context(error::DatabaseSnafu { path: &self.path })?;
+            let listen = self.listen(&tx).await?;
+            // Preserve an enabled identity's chosen internal/external/both scope.
+            let target = if enabled {
+                if listen == 0 { 3 } else { listen }
+            } else {
+                0
+            };
+            if listen != target {
+                tx.execute_raw(Statement::from_sql_and_values(
+                    DatabaseBackend::Sqlite,
+                    "UPDATE settings SET listen = ?",
+                    [target.into()],
+                ))
+                .await
+                .context(error::DatabaseSnafu { path: &self.path })?;
+            }
+            tx.commit()
+                .await
+                .context(error::DatabaseSnafu { path: &self.path })?;
+            Ok(if listen == target {
+                ConfigChange::Unchanged
+            } else {
+                ConfigChange::Changed
+            })
         }
-        tx.commit()
+        .await;
+        db.close()
             .await
             .context(error::DatabaseSnafu { path: &self.path })?;
-        Ok(if listen == target {
-            ConfigChange::Unchanged
-        } else {
-            ConfigChange::Changed
-        })
+        result
     }
 
     pub(crate) async fn enable(&self) -> Result<ConfigChange, Error> {
