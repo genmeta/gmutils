@@ -10,7 +10,7 @@ RUN set -eux; \
         rpm-build rpmdevtools systemd-rpm-macros \
         gcc make pkgconf-pkg-config \
         ca-certificates curl wget tar xz which util-linux \
-        clang; \
+        clang python3 cmake; \
     dnf clean all
 
 RUN set -eux; \

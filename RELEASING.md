@@ -44,3 +44,12 @@ Publish genmeta-network first, then command crates, and genmeta last.
 For the first genmeta-network publication, configure the repository secret
 CARGO_REGISTRY_TOKEN with permission to create the crate; subsequent releases
 use Trusted Publishing. The workflow fails if the first-release token is absent.
+
+## Tag-triggered artifacts
+
+Pushing `v0.9.0` to this repository triggers release.yml for DEB, RPM, Homebrew and Scoop.
+The tag must match the main package version. Packaging creates a draft GitHub
+Release, uploads artifacts, and publishes that Release after all package jobs
+succeed. Release builds keep `--locked`; refresh the registry lockfile after
+upstream publication before tagging. The existing S3, signing and tap/bucket
+credentials must be configured in repository Actions settings.
