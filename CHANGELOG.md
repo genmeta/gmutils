@@ -1,11 +1,60 @@
 # Changelog
 
+## [0.9.0-preview.1] - 2026-10-12
+
+### Changed
+
+- Adapt command-line tools to dhttp 0.7.0, dyns 0.8.0 and daccess 0.1.0.
+- Command-line tools use DHTTP endpoints directly; identity storage and OCSP preparation live in dhttp-home, and resolver setup lives in dyns.
+- Manage Pishoo listening through config.db and update access path commands.
+- Preserve curl progress while reducing default transport logs; restore help and version flags.
+- Remove the SSH command and genmeta-ssh from this release.
+
+### Release versions
+
+| Package | Previous published version | Prepared version |
+| --- | --- | --- |
+| `genmeta` | 0.8.2 | 0.9.0-preview.1 |
+| `genmeta-access` | 0.4.2 | 0.5.0-preview.1 |
+| `genmeta-curl` | 0.7.1 | 0.8.0-preview.1 |
+| `genmeta-discover` | 0.4.2 | 0.5.0-preview.1 |
+| `genmeta-doctor` | 0.4.1 | 0.5.0-preview.1 |
+| `genmeta-identity` | 0.4.2 | 0.5.0-preview.1 |
+| `genmeta-nat` | 0.5.1 | 0.6.0-preview.1 |
+| `genmeta-nslookup` | 0.5.1 | 0.6.0-preview.1 |
+| `genmeta-proxy` | 0.4.1 | 0.5.0-preview.1 |
+
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Changed
+
+- Move DHTTP requests, proxy forwarding, DNS resolution and NAT diagnostics to
+  Pishoo's local transport graph and process-wide network initialization.
+- Validate and cache local OCSP staples before authenticated DHTTP requests.
+- Temporarily remove SSH, DShell and the SSH wrapper scripts from the launcher,
+  workspace, publication list and release packages.
+
+### Fixed
+
+- Keep default CLI output quiet while preserving curl progress and explicit
+  logging options.
+- Manage Pishoo listening settings through each identity's `config.db`.
+- Clarify access-command syntax, rule listings and successful writes.
+
+### Dependencies
+
+- Replace sibling path dependencies with committed Git snapshots for DHTTP,
+  DDNS, H3X, QUIC and access-control tests, and record their sources in the
+  binary lockfile.
+- Use the same QUIC revision across the transport graph, including the
+  concurrent Initial connection fix.
+- Require locked CI and package builds to preserve dependency snapshots.
 
 ## [0.8.2] - 2026-08-31
 

@@ -4,10 +4,8 @@ use std::{
     process::Stdio,
 };
 
-use dhttp::{
-    home::{DhttpHome, HomeScope},
-    name::DhttpName,
-};
+use dhttp_home::{DhttpHome, HomeScope};
+use dhttp_identity::name::DhttpName;
 use snafu::{ResultExt, Snafu};
 use tokio::{io::AsyncWriteExt, process::Command};
 
@@ -264,7 +262,10 @@ pub(crate) async fn ensure_schedule(home_scope: HomeScope) -> Result<(), Error> 
 }
 
 fn disabled_path(dhttp_home: &DhttpHome, identity: DhttpName<'_>) -> PathBuf {
-    dhttp_home.identity_profile(identity).join(DISABLED_FILE)
+    dhttp_home
+        .identity_profile((identity).as_full())
+        .expect("validated identity name")
+        .join(DISABLED_FILE)
 }
 
 pub(crate) async fn is_identity_enabled(
@@ -325,10 +326,8 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use dhttp::{
-        home::{DhttpHome, HomeScope},
-        name::DhttpName,
-    };
+    use dhttp_home::{DhttpHome, HomeScope};
+    use dhttp_identity::name::DhttpName;
 
     use super::{
         build_entry, disable_identity, enable_identity, ensure_with, is_identity_enabled,
@@ -483,9 +482,14 @@ mod tests {
         let test_dir = unique_test_dir();
         let dhttp_home = DhttpHome::new(test_dir.clone());
         let identity = DhttpName::try_from("alice.smith").unwrap();
-        tokio::fs::create_dir_all(dhttp_home.identity_profile(identity.borrow()).path())
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(
+            dhttp_home
+                .identity_profile((identity.borrow()).as_full())
+                .expect("validated identity name")
+                .path(),
+        )
+        .await
+        .unwrap();
 
         assert!(
             is_identity_enabled(&dhttp_home, identity.borrow())

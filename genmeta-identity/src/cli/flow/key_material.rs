@@ -1,12 +1,16 @@
 use std::{io::ErrorKind, path::PathBuf};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use dhttp::{home::DhttpHome, name::DhttpName};
-use p384::pkcs8::{DecodePrivateKey, EncodePublicKey};
-use rankey::EncodePem;
+use dhttp_home::DhttpHome;
+use dhttp_identity::name::DhttpName;
+use p384::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey, LineEnding};
 use serde::{Deserialize, Serialize};
 use snafu::{FromString, ResultExt};
 use tokio::io::AsyncWriteExt;
+use x509_cert::{
+    builder::{Builder, RequestBuilder},
+    der::EncodePem,
+};
 
 use crate::cli::{EncodeCsrSnafu, Error, GenerateCsrSnafu, GenerateKeySnafu};
 
@@ -16,27 +20,38 @@ pub(crate) trait KeyMaterialGenerator {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct RankeyGenerator;
+pub(crate) struct P384Generator;
 
-impl KeyMaterialGenerator for RankeyGenerator {
+impl KeyMaterialGenerator for P384Generator {
     fn generate_key(&self) -> Result<String, Error> {
-        rankey::generate_secp384r1_key()
+        p384::ecdsa::SigningKey::random(&mut p384::elliptic_curve::rand_core::OsRng)
+            .to_pkcs8_pem(LineEnding::LF)
             .map(|key| key.to_string())
             .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
             .context(GenerateKeySnafu)
     }
 
     fn generate_csr(&self, key_pem: &str, full_name: &str) -> Result<String, Error> {
-        rankey::generate_csr(key_pem, "CN", full_name, &[full_name])
-            .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
-            .context(GenerateCsrSnafu)?
-            .to_pem(rankey::LineEnding::LF)
+        let request = (|| -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
+            let key = p384::ecdsa::SigningKey::from_pkcs8_pem(key_pem)?;
+            let subject = format!("CN={full_name},C=CN").parse()?;
+            let mut builder = RequestBuilder::new(subject, &key)?;
+            builder.add_extension(&x509_cert::ext::pkix::SubjectAltName(vec![
+                x509_cert::ext::pkix::name::GeneralName::DnsName(
+                    x509_cert::der::asn1::Ia5String::new(full_name)?,
+                ),
+            ]))?;
+            Ok(builder.build::<p384::ecdsa::DerSignature>()?)
+        })()
+        .context(GenerateCsrSnafu)?;
+        request
+            .to_pem(LineEnding::LF)
             .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
             .context(EncodeCsrSnafu)
     }
 }
 
-pub(crate) struct LazyKeyMaterial<G = RankeyGenerator> {
+pub(crate) struct LazyKeyMaterial<G = P384Generator> {
     name: DhttpName<'static>,
     generator: G,
     key_pem: Option<String>,
@@ -91,15 +106,15 @@ where
     }
 }
 
-impl LazyKeyMaterial<RankeyGenerator> {
+impl LazyKeyMaterial<P384Generator> {
     pub(crate) fn for_name(name: DhttpName<'_>) -> Self {
-        Self::new(name, RankeyGenerator)
+        Self::new(name, P384Generator)
     }
 
     pub(crate) fn from_existing(name: DhttpName<'_>, key_pem: String, csr_pem: String) -> Self {
         Self {
             name: name.into_owned(),
-            generator: RankeyGenerator,
+            generator: P384Generator,
             key_pem: Some(key_pem),
             csr_pem: Some(csr_pem),
         }
@@ -155,7 +170,7 @@ impl PendingRenewal {
         sequence: u32,
         device_name: &str,
     ) -> Result<Self, Error> {
-        let generator = RankeyGenerator;
+        let generator = P384Generator;
         let key_pem =
             super::progress::run_sync(super::progress::GENERATE_KEY, || generator.generate_key())?;
         let csr_pem = generator.generate_csr(&key_pem, name.as_full())?;
@@ -306,7 +321,10 @@ impl PendingRenewal {
 }
 
 fn pending_path(dhttp_home: &DhttpHome, name: DhttpName<'_>) -> PathBuf {
-    dhttp_home.identity_profile(name).join(PENDING_RENEWAL_FILE)
+    dhttp_home
+        .identity_profile((name).as_full())
+        .expect("validated identity name")
+        .join(PENDING_RENEWAL_FILE)
 }
 
 #[cfg(unix)]
@@ -426,6 +444,48 @@ mod tests {
     }
 
     #[test]
+    fn generated_csr_has_a_valid_p384_signature_and_requested_identity() {
+        use x509_parser::{
+            extensions::{GeneralName, ParsedExtension},
+            prelude::FromDer,
+        };
+
+        let generator = P384Generator;
+        let key = generator.generate_key().unwrap();
+        let name = "alice.smith.dhttp.net";
+        let pem = generator.generate_csr(&key, name).unwrap();
+        let (_, pem) = x509_parser::pem::parse_x509_pem(pem.as_bytes()).unwrap();
+        let (_, csr) =
+            x509_parser::certification_request::X509CertificationRequest::from_der(&pem.contents)
+                .unwrap();
+        csr.verify_signature().unwrap();
+        assert_eq!(
+            csr.certification_request_info
+                .subject
+                .iter_common_name()
+                .next()
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            name
+        );
+        let san = csr
+            .requested_extensions()
+            .unwrap()
+            .find_map(|extension| match extension {
+                ParsedExtension::SubjectAlternativeName(san) => Some(san),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(san.general_names, vec![GeneralName::DNSName(name)]);
+        let key = p384::ecdsa::SigningKey::from_pkcs8_pem(&key).unwrap();
+        assert_eq!(
+            csr.certification_request_info.subject_pki.raw,
+            key.verifying_key().to_public_key_der().unwrap().as_bytes()
+        );
+    }
+
+    #[test]
     fn lazy_material_generates_one_key_and_one_csr_across_retries() {
         let generator = CountingGenerator::default();
         let name = DhttpName::try_from("alice.smith").unwrap();
@@ -462,9 +522,13 @@ mod tests {
         ));
         let home = DhttpHome::new(home_path.clone());
         let name = DhttpName::try_from("alice.smith").unwrap();
-        tokio::fs::create_dir_all(home.identity_profile(name.borrow()).path())
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(
+            home.identity_profile((name.borrow()).as_full())
+                .expect("validated identity name")
+                .path(),
+        )
+        .await
+        .unwrap();
 
         let created = PendingRenewal::create(&home, name.borrow(), "primary", 7, "test laptop")
             .await
@@ -525,9 +589,13 @@ mod tests {
         ));
         let home = DhttpHome::new(home_path.clone());
         let name = DhttpName::try_from("alice.smith").unwrap();
-        tokio::fs::create_dir_all(home.identity_profile(name.borrow()).path())
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(
+            home.identity_profile((name.borrow()).as_full())
+                .expect("validated identity name")
+                .path(),
+        )
+        .await
+        .unwrap();
 
         PendingRenewal::create(&home, name.borrow(), "primary", 7, "test laptop")
             .await

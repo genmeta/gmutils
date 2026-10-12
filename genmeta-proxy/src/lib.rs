@@ -1,16 +1,13 @@
 #![recursion_limit = "256"]
-
-use std::{io::IsTerminal, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    io::IsTerminal, net::SocketAddr, string::String as BindPattern, sync::Arc, time::Duration,
+};
 
 use clap::Parser;
-use dhttp::{
-    ddns::resolvers::DnsScheme,
-    dquic::binds::BindPattern,
-    endpoint::Endpoint,
-    home::{self, DhttpHome, identity::IdentityProfile},
-    message::IntoUri,
-    name::DhttpName as Name,
-};
+use ddns::DnsScheme;
+use dhttp_home as home;
+use dhttp_home::{DhttpHome, identity::IdentityProfile};
+use dhttp_identity::name::DhttpName as Name;
 use http_body_util::BodyExt;
 use snafu::{IntoError, Report, ResultExt, Snafu};
 use tokio::{net::TcpListener, sync::Semaphore, task::JoinSet};
@@ -71,9 +68,7 @@ impl Options {
 #[snafu(visibility(pub))]
 pub enum Error {
     #[snafu(display("failed to normalize dhttp uri"))]
-    NormalizeUri {
-        source: dhttp::message::IntoUriError,
-    },
+    NormalizeUri { source: dhttp::Error },
 
     #[snafu(display("failed to load dhttp home"))]
     LoadDhttpHome { source: home::LoadDhttpHomeError },
@@ -81,18 +76,16 @@ pub enum Error {
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
         name: Name<'static>,
-        source: dhttp::home::identity::ssl::ResolveIdentityProfileError,
+        source: dhttp_home::identity::ssl::ResolveIdentityProfileError,
     },
 
     #[snafu(display("failed to load identity certificate and key"))]
     LoadIdentitySsl {
-        source: dhttp::home::identity::ssl::LoadIdentityError,
+        source: dhttp_home::identity::ssl::LoadIdentityError,
     },
 
     #[snafu(display("failed to build dhttp endpoint"))]
-    BuildEndpoint {
-        source: dhttp::endpoint::BuildEndpointError,
-    },
+    BuildEndpoint { source: dhttp::Error },
 
     #[snafu(display("failed to bind proxy listener"))]
     BindListener { source: std::io::Error },
@@ -174,7 +167,7 @@ where
 
 async fn handle_request(
     req: hyper::Request<hyper::body::Incoming>,
-    client: &Endpoint,
+    client: &Option<dhttp::Endpoint>,
     router: &route::Router,
 ) -> Result<hyper::Response<BoxBody>, hyper::Error> {
     let route = router.classify(&req);
@@ -182,8 +175,8 @@ async fn handle_request(
     match route {
         route::Route::GenmetaPlainHttp { .. } => {
             let mut req = req;
-            let self_name = client.name();
-            match req.uri().clone().into_uri(self_name.as_ref()) {
+            let self_name = client.as_ref().map(dhttp::Endpoint::name);
+            match dhttp::expand_uri_with_base(self_name, req.uri().clone()) {
                 Ok(uri) => *req.uri_mut() = uri,
                 Err(e) => {
                     let error = NormalizeUriSnafu.into_error(e);
@@ -279,13 +272,11 @@ fn init_tracing(options: &Options) -> Result<tracing_appender::non_blocking::Wor
 async fn bind_listeners(options: &Options) -> Result<Vec<TcpListener>, Error> {
     let mut listeners = Vec::new();
     for bind in &options.listens {
-        let ip = bind.host.as_ip_addr().ok_or_else(|| {
+        let addr: SocketAddr = bind.parse().map_err(|error| {
             <Error as snafu::FromString>::without_source(format!(
-                "listen bind `{}` must be a concrete ip address",
-                bind.host
+                "invalid proxy listen address `{bind}`: {error}"
             ))
         })?;
-        let addr = SocketAddr::new(ip, bind.effective_port());
         let listener = TcpListener::bind(addr).await.context(BindListenerSnafu)?;
         tracing::info!(%addr, "proxy listening");
         listeners.push(listener);
@@ -313,7 +304,7 @@ async fn load_identity_profile(options: &Options) -> Result<Option<IdentityProfi
     if let Some(name) = &options.id {
         tracing::debug!(%name, "trying to load command line identity");
         return home
-            .resolve_identity_profile(name.clone())
+            .resolve_identity_profile((name.clone()).as_full())
             .await
             .context(LoadExplicitIdentitySnafu { name: name.clone() })
             .map(Some);
@@ -338,23 +329,17 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let _guard = init_tracing(&options)?;
 
     let identity_profile = load_identity_profile(&options).await?;
-    let identity = match &identity_profile {
-        Some(profile) => Some(Arc::new(
-            profile
-                .load_identity()
+    init_network(&options.dns, &options.binds)
+        .await
+        .context(BuildEndpointSnafu)?;
+    let client = Arc::new(match &identity_profile {
+        Some(profile) => Some(
+            dhttp::Endpoint::load_from_with_ocsp(profile.path())
                 .await
-                .context(LoadIdentitySslSnafu)?,
-        )),
+                .context(BuildEndpointSnafu)?,
+        ),
         None => None,
-    };
-
-    let mut builder = Endpoint::builder()
-        .bind(Arc::new(options.binds.clone()))
-        .maybe_identity(identity);
-    for scheme in options.dns.iter().copied() {
-        builder = builder.dns(scheme);
-    }
-    let client = Arc::new(builder.build().await.context(BuildEndpointSnafu)?);
+    });
 
     let listeners = bind_listeners(&options).await?;
     let router = Arc::new(route::Router::new());
@@ -409,7 +394,7 @@ fn configure_tcp_keepalive(stream: &tokio::net::TcpStream) {
 /// Accept loop for a single TCP listener. Runs until the listener is dropped.
 async fn accept_loop(
     listener: TcpListener,
-    client: Arc<Endpoint>,
+    client: Arc<Option<dhttp::Endpoint>>,
     router: Arc<route::Router>,
     semaphore: Arc<Semaphore>,
 ) {
@@ -466,6 +451,40 @@ pub mod h3_forward;
 pub mod route;
 pub mod tunnel;
 
+async fn init_network(schemes: &[ddns::DnsScheme], binds: &[String]) -> dhttp::Result<()> {
+    if binds.iter().any(|bind| bind != "*") {
+        return Err(dhttp::Error::InvalidRequest {
+            message: "the process-wide DHTTP network currently requires --interface '*'".into(),
+        });
+    }
+    let mdns = ddns::install_resolvers(schemes)?;
+    let network = dhttp::DhttpNetwork::init().await?;
+    if let Some(mdns) = mdns {
+        static MAINTENANCE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+        MAINTENANCE
+            .get_or_try_init(|| async {
+                mdns.maintain(std::time::Duration::from_secs(1), move || {
+                    Ok(network
+                        .active_bindings()
+                        .map_err(std::io::Error::other)?
+                        .into_iter()
+                        .filter(|binding| {
+                            dhttp::resolve::EndpointAddr::direct(binding.address).scope()
+                                == Some(dhttp::Scope::Internal)
+                        })
+                        .map(|binding| {
+                            ddns::mdns::MdnsBinding::new(binding.device, binding.address.ip())
+                        })
+                        .collect())
+                })
+                .await?;
+                Ok::<(), std::io::Error>(())
+            })
+            .await?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -476,7 +495,7 @@ mod tests {
     fn options_accept_global_flag() {
         let options = Options::try_parse_from(["genmeta-proxy", "--global"]).unwrap();
 
-        assert_eq!(options.home_scope(), dhttp::home::HomeScope::Global);
+        assert_eq!(options.home_scope(), dhttp_home::HomeScope::Global);
     }
 
     #[test]

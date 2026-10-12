@@ -5,8 +5,7 @@
   "homepage": {{scoop.homepage.json}},
   "architecture": {{scoop.architecture.json}},
   "bin": [
-    "genmeta.exe",
-    "genmeta-ssh.bat"
+    "genmeta.exe"
   ],
   "checkver": {{scoop.checkver.json}},
   "autoupdate": {{scoop.autoupdate.json}}

@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
-use dhttp::{home::DhttpHome, identity::extract_dhttp_subject_key_identifier, name::DhttpName};
+use dhttp_home::DhttpHome;
+use dhttp_identity::{identity::extract_dhttp_subject_key_identifier, name::DhttpName};
 use futures::TryStreamExt;
 use rustls::pki_types::{CertificateDer, UnixTime};
 use tokio::fs;
@@ -256,7 +257,7 @@ pub(crate) async fn load_inventory(
         .await
     {
         Ok(names) => names,
-        Err(dhttp::home::identity::ssl::ListIdentityProfilesError::ReadDir { source, .. })
+        Err(dhttp_home::identity::ssl::ListIdentityProfilesError::ReadDir { source, .. })
             if source.kind() == std::io::ErrorKind::NotFound =>
         {
             return Ok(LocalInventory { groups: Vec::new() });
@@ -265,7 +266,14 @@ pub(crate) async fn load_inventory(
     };
     let mut summaries = Vec::with_capacity(names.len());
     for name in names {
-        summaries.push(load_summary_exact(dhttp_home, name.borrow(), default_name.clone()).await?);
+        summaries.push(
+            load_summary_exact(
+                dhttp_home,
+                DhttpName::try_from(name.as_str()).expect("validated profile name"),
+                default_name.clone(),
+            )
+            .await?,
+        );
     }
     Ok(build_inventory(summaries))
 }
@@ -278,7 +286,7 @@ pub(crate) async fn try_load_summary_exact(
     match load_summary_exact(dhttp_home, name, default_name).await {
         Ok(summary) => Ok(Some(summary)),
         Err(Error::ResolveIdentityProfile {
-            source: dhttp::home::identity::ssl::ResolveIdentityProfileError::ExactNotFound { .. },
+            source: dhttp_home::identity::ssl::ResolveIdentityProfileError::ExactNotFound { .. },
         }) => Ok(None),
         Err(error) => Err(error),
     }
@@ -291,7 +299,7 @@ pub(crate) async fn load_summary_exact(
 ) -> Result<LocalIdentitySummary, Error> {
     let target = IdentityTarget::parse(name.as_partial())?;
     let profile = dhttp_home
-        .resolve_identity_profile_exactly(name.clone())
+        .resolve_identity_profile_exactly((name.clone()).as_full())
         .await?;
     let assessment = assess_profile(&profile).await;
     let status = classify_status(&assessment, now_unix_timestamp());
@@ -383,7 +391,7 @@ pub(crate) fn now_unix_timestamp() -> i64 {
 }
 
 async fn assess_profile(
-    profile: &dhttp::home::identity::IdentityProfile,
+    profile: &dhttp_home::identity::IdentityProfile,
 ) -> LocalIdentityAssessment {
     let certs = match profile.load_certs().await {
         Ok(certs) => certs,
@@ -403,7 +411,7 @@ async fn assess_profile(
     let cert_pem = fs::read(
         profile
             .ssl_dir()
-            .join(dhttp::home::identity::ssl::CERT_FILE_NAME),
+            .join(dhttp_home::identity::ssl::CERT_FILE_NAME),
     )
     .await
     .ok();
@@ -464,7 +472,7 @@ async fn assess_profile(
                         matches!(
                             name,
                             x509_parser::extensions::GeneralName::DNSName(candidate)
-                                if candidate == &profile.name().as_full()
+                                if candidate == &profile.name()
                         )
                     })
                 });
@@ -515,15 +523,17 @@ pub(crate) async fn assess_profile_exact(
     dhttp_home: &DhttpHome,
     name: DhttpName<'_>,
 ) -> Result<LocalIdentityAssessment, Error> {
-    let profile = dhttp_home.resolve_identity_profile_exactly(name).await?;
+    let profile = dhttp_home
+        .resolve_identity_profile_exactly((name).as_full())
+        .await?;
     Ok(assess_profile(&profile).await)
 }
 
 fn certificate_state_from_error(
-    error: &dhttp::home::identity::ssl::LoadCertsError,
+    error: &dhttp_home::identity::ssl::LoadCertsError,
 ) -> LocalIdentityMaterialState {
     match error {
-        dhttp::home::identity::ssl::LoadCertsError::Read { source, .. }
+        dhttp_home::identity::ssl::LoadCertsError::Read { source, .. }
             if source.kind() == std::io::ErrorKind::NotFound =>
         {
             LocalIdentityMaterialState::Missing("certificate missing")
@@ -533,11 +543,11 @@ fn certificate_state_from_error(
 }
 
 fn private_key_state_from_error(
-    error: &dhttp::home::identity::ssl::LoadKeyError,
+    error: &dhttp_home::identity::ssl::LoadKeyError,
 ) -> LocalIdentityMaterialState {
     match error {
-        dhttp::home::identity::ssl::LoadKeyError::Metadata { source, .. }
-        | dhttp::home::identity::ssl::LoadKeyError::Read { source, .. }
+        dhttp_home::identity::ssl::LoadKeyError::Metadata { source, .. }
+        | dhttp_home::identity::ssl::LoadKeyError::Read { source, .. }
             if source.kind() == std::io::ErrorKind::NotFound =>
         {
             LocalIdentityMaterialState::Missing("private key missing")
@@ -584,7 +594,8 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use dhttp::{home::DhttpHome, name::DhttpName};
+    use dhttp_home::DhttpHome;
+    use dhttp_identity::name::DhttpName;
 
     #[cfg(not(windows))]
     use super::try_load_summary_exact;
@@ -658,9 +669,13 @@ mod tests {
         let home = DhttpHome::new(home_path.clone());
         let requested = DhttpName::try_from("phone.alice.smith").unwrap();
         let wildcard = requested.clone().to_wildcard();
-        tokio::fs::create_dir_all(home.identity_profile(wildcard.borrow()).ssl_dir())
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(
+            home.identity_profile((wildcard.borrow()).as_full())
+                .expect("validated identity name")
+                .ssl_dir(),
+        )
+        .await
+        .unwrap();
 
         assert!(
             try_load_summary_exact(&home, requested.borrow(), None)
@@ -680,7 +695,8 @@ mod tests {
         let home_path = unique_test_home_path("untrusted-local-certificate");
         let home = DhttpHome::new(home_path);
         let name = DhttpName::try_from("alice.smith").unwrap();
-        home.identity_profile(name.borrow())
+        home.identity_profile((name.borrow()).as_full())
+            .expect("validated identity name")
             .save_identity(CHAIN.as_bytes(), KEY.as_bytes())
             .await
             .unwrap();

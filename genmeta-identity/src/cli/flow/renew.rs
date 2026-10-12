@@ -1,6 +1,6 @@
 use std::{io::IsTerminal, path::Path};
 
-use dhttp::home::{DhttpHome, HomeScope};
+use dhttp_home::{DhttpHome, HomeScope};
 use snafu::{FromString, whatever};
 
 use super::{auth_plan::CandidateEvent, local};
@@ -512,7 +512,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use dhttp::home::{DhttpHome, HomeScope};
+    use dhttp_home::{DhttpHome, HomeScope};
 
     use super::{
         RenewPreflight, inventory_targets, renew_not_due_message, renew_not_saved_root_message,

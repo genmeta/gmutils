@@ -8,7 +8,6 @@ class {{homebrew.class}} < Formula
 
   def install
     bin.install "genmeta"
-    bin.install "genmeta-ssh.sh"
   end
 
   test do

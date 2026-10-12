@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="https://media.dhttp.net/img/gmutils/gmutils.svg" width="900" alt="GMUTILS command-line tool family: identity, access, curl, nslookup, ssh, doctor, proxy, and discover">
+  <img src="https://media.dhttp.net/img/gmutils/gmutils.svg" width="900" alt="GMUTILS command-line tool family: identity, access, curl, nslookup, doctor, proxy, and discover">
 </p>
 <p align="center">
-  <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/version-0.8.2-1f6feb?style=flat-square" alt="Version 0.8.2"></a>
+  <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/version-0.9.0--preview.1-1f6feb?style=flat-square" alt="Version 0.9.0-preview.1"></a>
   <a href="https://doc.rust-lang.org/edition-guide/rust-2024/"><img src="https://img.shields.io/badge/Rust-2024-dea584?style=flat-square&amp;logo=rust&amp;logoColor=black" alt="Rust 2024 edition"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-00a51a?style=flat-square&amp;logo=apache&amp;logoColor=white" alt="Apache-2.0 license"></a>
   <a href="#install"><img src="https://img.shields.io/badge/Cargo-supported-dea584?style=flat-square&amp;logo=rust&amp;logoColor=black" alt="Cargo package supported"></a>
@@ -25,7 +25,6 @@ Available commands:
 | `genmeta identity` | Create, apply, inspect, and renew Unified Identities and certificates. |
 | `genmeta access` | Manage DHttp API access-control rules. |
 | `genmeta curl` | Send DHttp requests with a curl-like interface. |
-| `genmeta ssh` | Administer remote endpoints over DHttp with SSH-compatible syntax. |
 | `genmeta proxy` | Run a local forward proxy that forwards HTTP requests to DHttp endpoints. |
 | `genmeta nslookup` | Resolve DDns names and discover reachable DHttp addresses. |
 | `genmeta discover` | Discover nearby DHttp endpoints over mDNS. |
@@ -75,7 +74,7 @@ For a DHttp gateway, install `pishoo` alongside gmutils: `brew install pishoo gm
 With a current Rust toolchain, build and install the launcher from this checkout:
 
 ```bash
-cargo install --path genmeta
+cargo install --path genmeta --locked
 ```
 
 ## Quick start
@@ -88,3 +87,103 @@ genmeta --help
 ```
 
 Identities are stored under the current user's `~/.dhttp` directory by default. Most client commands use the default identity automatically; pass `--id` to select another identity when a command supports it.
+
+For `nslookup`, only an explicit trailing `~` expands to `.dhttp.net`:
+
+```bash
+genmeta nslookup 'alice.smith~' h3
+genmeta nslookup example.com system
+```
+
+Ordinary query names retain their namespace. Names are normalized through `dhttp-home`.
+
+## CLI help and identity listening
+
+Use `genmeta --help`, `genmeta identity --help`, and `genmeta doctor --help`
+for command groups. `--version` and `-V` are available for the launcher and
+these groups; the `version` subcommand is also supported.
+
+`genmeta identity ensite --id NAME` and `dissite --id NAME` update Pishoo's
+`db/config.db` for the selected user or global home. `ensite` changes disabled
+listening to `both` (3) and preserves an already enabled scope; `dissite` sets
+it to `off` (0). Proxy rules are preserved. Restart the Pishoo process serving
+that home after saving; an installed service supports `pishoo restart`.
+New identity onboarding creates a configuration with listening disabled and
+`file/welcome/index.html`, served at `/std/file/welcome/index.html` once enabled.
+
+Access and curl log warnings and errors by default, suppressing background
+NAT warnings. Set `RUST_LOG=debug` or
+`RUST_LOG=trace` to inspect transport diagnostics. Curl progress and `--verbose`
+request/response output are independent of this log filter.
+
+## Access policies
+
+`genmeta access` calls the selected identity's authenticated DHTTP management
+API. `--id` selects both the local client credentials and the identity hosting
+the API; otherwise the default identity is used. `--global` selects the home
+scope for loading credentials. Pishoo must be running for that identity.
+
+```bash
+genmeta access --id alice.pilot /api allow '*?' --method GET
+genmeta access /api review '**' --method POST
+genmeta access /api deny '?'
+genmeta access /api list
+genmeta access list --wide
+genmeta access /api remove '*?' --method GET
+genmeta access /api remove --all --method GET
+genmeta access remove /api
+```
+
+Rules are listed through `GET /std/acl/access`, written through
+`POST /std/acl/access/{api}`, and deleted through
+`DELETE /std/acl/allow/{grantee}` with the API and method in the JSON body.
+The CLI never opens or migrates the access database. Pishoo/daccess owns
+persistence, authorization and the live policy cache. HTTP errors and pending
+approval responses are reported without treating the operation as completed.
+
+Paths are literal API prefixes. Each `(API, method, grantee)` has one policy;
+setting it again updates the effect. Writes and explicit grantee removal
+default to method `*`; lists, `clear`, `remove --all` and global path removal
+include all methods unless `--method` is supplied. Grantees are registered
+contact names, `group@issuer`, `**` (named), `?` (anonymous), or `*?` (all).
+Only a trailing `~` expands contact/issuer names to `.dhttp.net`; ordinary names
+keep their namespace. A named contact must already exist in daccess, except
+for the profile owner. API prefixes must begin with `/` and contain no query,
+wildcard or fragment.
+Removal uses grantees rather than database row IDs. Bulk removal lists current
+rules and deletes them individually through the API; it is not an atomic batch.
+Successful writes print a confirmation after the server responds. `list --wide`
+and path-specific `list` print tab-separated `PATH`, `METHOD`, `EFFECT`, and
+`GRANTEE` columns with a header; `list` prints just the API prefixes.
+
+Access management uses only mDNS resolution and direct local network endpoints.
+DHTTP owns interface watching and exposes active IPv4 and IPv6 bindings.
+The CLI selects and registers resolver sources through DHTTP's `qresolve`
+interface, and passes binding snapshots to dyns to synchronize mDNS instances.
+Connection candidates are handled by the current DHTTP/QUIC runtime.
+It can operate without Internet access while the service remains locally
+reachable and its certificates and cached OCSP staples are valid. The DHTTP
+runtime starts background STUN probes, but initialization does not
+wait for them. Missing or stale client OCSP staples require an online refresh;
+unrestricted offline operation is therefore not guaranteed. Each management
+request has a 30-second timeout, configurable with `--timeout`.
+
+## Release dependencies and development builds
+
+The 0.9.0-preview.1 release uses compatible crates.io versions for DHTTP, DNS, QUIC and
+daccess. The published TLS backend is `qrustls` 0.23.45. `Cargo.lock` records the
+resolved dependency versions. Publication order and lockfile preparation are
+listed in [RELEASING.md](RELEASING.md). Run Cargo outside directories containing
+ancestor path patches when preparing the release lockfile.
+
+CLI settings, identity profiles and recoverable certificate installation are
+maintained by dhttp-home. Online OCSP preparation is enabled explicitly when
+loading an endpoint; ordinary DHTTP identity loading remains local-only.
+Each CLI uses DHTTP endpoints directly and selects its dyns resolver sources.
+
+The process-wide runtime manages all network interfaces. Curl, proxy and
+nslookup accept the default `--interface '*'`; other outbound interface
+patterns are rejected until the runtime exposes interface selection. NAT and
+mDNS discovery accept interface names or local IPs as report/discovery filters.
+Missing or stale local OCSP staples are fetched, validated and cached when an
+identity is used.

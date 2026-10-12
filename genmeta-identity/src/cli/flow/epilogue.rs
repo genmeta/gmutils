@@ -1,4 +1,5 @@
-use dhttp::{home::DhttpHome, name::DhttpName};
+use dhttp_home::DhttpHome;
+use dhttp_identity::name::DhttpName;
 use snafu::FromString;
 
 use crate::cli::{self, Error, prompt::InquireResultExt};
@@ -85,7 +86,8 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use dhttp::{home::DhttpHome, name::DhttpName};
+    use dhttp_home::DhttpHome;
+    use dhttp_identity::name::DhttpName;
     use tokio::fs;
 
     use super::{DefaultSuggestion, suggest_default_change};
@@ -130,7 +132,9 @@ mod tests {
         let home_path = unique_test_home_path("keeps-default-unset");
         let dhttp_home = DhttpHome::new(home_path.clone());
         let name = DhttpName::try_from("alice.smith").unwrap();
-        let profile = dhttp_home.identity_profile(name.borrow());
+        let profile = dhttp_home
+            .identity_profile((name.borrow()).as_full())
+            .expect("validated identity name");
         fs::create_dir_all(profile.ssl_dir()).await.unwrap();
 
         super::run_lifecycle_epilogue(&dhttp_home, name.borrow(), false)

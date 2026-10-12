@@ -1,386 +1,61 @@
-use std::path::PathBuf;
-
 use clap::{CommandFactory, Parser};
-use dhttp::{
-    access::db::{
-        identity::Name, identity_access_db_path, init_access_database_for, open_access_database,
-    },
-    home::{DhttpHome, identity::settings::SaveDhttpSettingsError},
-};
+use dhttp_home::DhttpHome;
 use genmeta_access::{Options, run_for_home};
-use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
-use snafu::Report;
 
 #[test]
-fn manifest_uses_dhttp_facade_for_access_api() {
-    let package_manifest = include_str!("../Cargo.toml");
-    let workspace_manifest = include_str!("../../Cargo.toml");
-
-    assert!(
-        package_manifest
-            .lines()
-            .any(|line| line.trim_start().starts_with("dhttp = { workspace = true")),
-        "genmeta-access should depend on the dhttp facade"
-    );
-    assert!(
-        !package_manifest.contains("dhttp-access"),
-        "genmeta-access must not directly depend on dhttp-access"
-    );
-    assert!(
-        !workspace_manifest
-            .lines()
-            .any(|line| line.trim_start().starts_with("dhttp-access =")),
-        "gmutils workspace must not expose dhttp-access as a direct dependency"
-    );
-}
-
-struct TestHome {
-    path: PathBuf,
-}
-
-impl TestHome {
-    fn new(name: &str) -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "genmeta-access-tests-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&path).unwrap();
-        Self { path }
-    }
-
-    fn home(&self) -> DhttpHome {
-        DhttpHome::new(self.path.clone())
-    }
-}
-
-impl Drop for TestHome {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
-
-async fn run_cli(home: &DhttpHome, command: &str) -> String {
-    let mut args = vec!["access"];
-    args.extend(command.split_whitespace());
-    let options = Options::try_parse_from(&args).unwrap();
-    run_for_home(home, options)
-        .await
-        .unwrap_or_else(|error| panic!("{}", Report::from_error(error)))
-}
-
-async fn run_cli_args(home: &DhttpHome, command: &[&str]) -> String {
-    let mut args = vec!["access"];
-    args.extend(command.iter().copied());
-    let options = Options::try_parse_from(&args).unwrap();
-    run_for_home(home, options)
-        .await
-        .unwrap_or_else(|error| panic!("{}", Report::from_error(error)))
-}
-
-async fn try_run_cli(home: &DhttpHome, command: &str) -> Result<String, genmeta_access::Error> {
-    let mut args = vec!["access"];
-    args.extend(command.split_whitespace());
-    let options = Options::try_parse_from(&args).unwrap();
-    run_for_home(home, options).await
-}
-
-async fn try_run_cli_args(
-    home: &DhttpHome,
-    command: &[&str],
-) -> Result<String, genmeta_access::Error> {
-    let mut args = vec!["access"];
-    args.extend(command.iter().copied());
-    let options = Options::try_parse_from(&args).unwrap();
-    run_for_home(home, options).await
-}
-
-async fn set_default_identity(
-    home: &DhttpHome,
-    identity: &str,
-) -> Result<(), SaveDhttpSettingsError> {
-    let identity: Name<'static> = identity.parse().unwrap();
-    let mut settings = home.new_settings();
-    settings.settings_mut().set_default_identity_name(identity);
-    settings.save().await
+fn help_describes_authenticated_api_policy_management() {
+    let help = Options::command().render_long_help().to_string();
+    assert!(help.contains("authenticated DHTTP"));
+    assert!(help.contains("--global"));
+    assert!(help.contains("group@issuer"));
+    assert!(help.contains("review"));
+    assert!(!help.contains("rule ID"));
+    assert!(!help.contains("--server"));
+    assert!(Options::try_parse_from(["access", "--id", "alice.pilot", "list"]).is_ok());
+    assert!(Options::try_parse_from(["access", "--server", "alice.pilot~", "list"]).is_err());
 }
 
 #[tokio::test]
-async fn inline_default_identity_auto_init_creates_store() {
-    let test_home = TestHome::new("auto-init");
-    let home = test_home.home();
-    let identity: Name<'static> = "alice.pilot".parse().unwrap();
-    let identity_profile = home.identity_profile(identity.borrow());
-
-    assert!(!identity_access_db_path(&identity_profile).is_file());
-    set_default_identity(&home, "alice.pilot").await.unwrap();
-    run_cli(&home, "list").await;
-    assert!(identity_access_db_path(&identity_profile).is_file());
-}
-
-#[tokio::test]
-async fn existing_store_applies_pending_migrations() {
-    let test_home = TestHome::new("existing-store-migration");
-    let home = test_home.home();
-    let identity: Name<'static> = "alice.pilot".parse().unwrap();
-    let identity_profile = home.identity_profile(identity.borrow());
-    let db = init_access_database_for(&identity_profile).await.unwrap();
-    db.execute_unprepared("DROP INDEX idx_location_rules_logical_unique")
-        .await
-        .unwrap();
-    db.execute_unprepared(
-        "DELETE FROM migration WHERE version = 'm20260807_120000_unique_location_rules'",
+async fn help_and_parse_errors_do_not_load_credentials_or_touch_database() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = DhttpHome::new(temp.path().to_owned());
+    let help = run_for_home(
+        &home,
+        Options::try_parse_from(["access", "/api", "review", "--help"]).unwrap(),
     )
     .await
     .unwrap();
-    db.close().await.unwrap();
-
-    run_cli(&home, "--identity alice.pilot list").await;
-
-    let db = open_access_database(&identity_profile).await.unwrap();
-    let row = db
-        .query_one_raw(Statement::from_string(
-            DatabaseBackend::Sqlite,
-            "SELECT COUNT(*) AS count FROM sqlite_master \
-             WHERE type = 'index' AND name = 'idx_location_rules_logical_unique'"
-                .to_owned(),
-        ))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(row.try_get::<i64>("", "count").unwrap(), 1);
-    db.close().await.unwrap();
-}
-
-#[test]
-fn identity_accepts_id_alias() {
-    let options = Options::try_parse_from(["access", "--id", "alice.pilot", "list"])
-        .expect("--id alias should parse");
-    let debug = format!("{options:?}");
-    assert!(debug.contains("alice.pilot"), "{debug}");
+    assert!(help.contains("<GRANTEE>"));
+    assert!(help.contains("--method"));
+    for args in [
+        vec!["/api", "allow", "*?", "with", "method", "GET"],
+        vec!["~ ^/api", "allow", "*?"],
+        vec!["/api", "allow", "“*?”"],
+        vec!["/api", "allow", "*?", "--method", "get"],
+        vec!["/api", "remove", "--all", "*?"],
+    ] {
+        let options =
+            Options::try_parse_from(std::iter::once("access").chain(args.iter().copied())).unwrap();
+        assert!(
+            matches!(
+                run_for_home(&home, options).await,
+                Err(genmeta_access::Error::ParseCommand { .. })
+            ),
+            "{args:?}"
+        );
+    }
+    assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
 }
 
 #[tokio::test]
-async fn invalid_identity_input_error() {
-    let error =
-        Options::try_parse_from(["access", "--identity", "invalid identity", "list"]).unwrap_err();
-    let error = error.to_string();
-    assert!(
-        error.contains("name contains invalid characters")
-            || error.contains("name is missing required suffix")
-    );
-}
-
-#[tokio::test]
-async fn inline_path_crud_flow() {
-    let test_home = TestHome::new("cli-path-crud");
-    let home = test_home.home();
-    set_default_identity(&home, "alice.pilot").await.unwrap();
-
-    run_cli(&home, "/api deny *?").await;
-    let listed = run_cli(&home, "/api list").await;
-    assert!(listed.contains("/api"));
-    assert!(listed.contains("deny *?"));
-
-    let all = run_cli(&home, "list --wide").await;
-    assert!(all.contains("/api"));
-
-    run_cli(&home, "/api remove 0").await;
-    let after_remove = run_cli(&home, "/api list").await;
-    assert!(after_remove.contains("- /api"));
-    assert!(!after_remove.contains("deny *?"));
-}
-
-#[tokio::test]
-async fn inline_explicit_identity_overrides_default_identity() {
-    let test_home = TestHome::new("cli-isolation");
-    let home = test_home.home();
-    set_default_identity(&home, "alice.pilot").await.unwrap();
-
-    run_cli(&home, "--identity bob.pilot /api allow *?").await;
-
-    let alice_rules = run_cli(&home, "list --wide").await;
-    let bob_rules = run_cli(&home, "--identity bob.pilot list --wide").await;
-
-    assert!(!alice_rules.contains("/api"));
-    assert!(bob_rules.contains("/api"));
-}
-
-#[tokio::test]
-async fn inline_remove_path_flow() {
-    let test_home = TestHome::new("remove-path");
-    let home = test_home.home();
-    set_default_identity(&home, "alice.pilot").await.unwrap();
-
-    run_cli(&home, "/api allow *?").await;
-    assert!(run_cli(&home, "list --wide").await.contains("/api"));
-
-    run_cli(&home, "remove /api").await;
-
-    assert!(!run_cli(&home, "list --wide").await.contains("/api"));
-}
-
-#[tokio::test]
-async fn inline_remove_path_all_flow() {
-    let test_home = TestHome::new("remove-path-all");
-    let home = test_home.home();
-    set_default_identity(&home, "alice.pilot").await.unwrap();
-
-    run_cli(&home, "/api allow *?").await;
-    assert!(run_cli(&home, "list --wide").await.contains("/api"));
-
-    run_cli(&home, "/api remove --all").await;
-
-    assert!(!run_cli(&home, "list --wide").await.contains("/api"));
-}
-
-#[tokio::test]
-async fn inline_expr_preserves_quoted_and_hyphen_prefixed_values() {
-    let test_home = TestHome::new("quoted-expr");
-    let home = test_home.home();
-    set_default_identity(&home, "alice.pilot").await.unwrap();
-
-    run_cli_args(
-        &home,
-        &["/quoted", "allow", "*?", "with", "method", "\"not\""],
-    )
-    .await;
-    run_cli_args(&home, &["/quoted", "deny", "*?", "with", "method", "--bot"]).await;
-
-    let listed = run_cli_args(&home, &["/quoted", "list"]).await;
-    assert!(listed.contains(r#"allow *? with method "not""#));
-    assert!(listed.contains("deny *? with method --bot"));
-}
-
-#[tokio::test]
-async fn inline_access_name_shorthand_is_displayed() {
-    let test_home = TestHome::new("name-shorthand");
-    let home = test_home.home();
-    set_default_identity(&home, "alice.pilot").await.unwrap();
-
-    run_cli(&home, "/api allow bob.pilot~").await;
-
-    let listed = run_cli(&home, "/api list").await;
-    assert!(listed.contains("bob.pilot~"), "listed rules: {listed}");
-    assert!(
-        !listed.contains("bob.pilot.dhttp.net"),
-        "listed rules should use shorthand: {listed}"
-    );
-}
-
-#[tokio::test]
-async fn inline_access_plain_name_is_not_dhttp_expanded() {
-    let test_home = TestHome::new("plain-name");
-    let home = test_home.home();
-    set_default_identity(&home, "alice.pilot").await.unwrap();
-
-    run_cli(&home, "/api allow bob.pilot").await;
-
-    let listed = run_cli(&home, "/api list").await;
-    assert!(listed.contains("bob.pilot"), "listed rules: {listed}");
-    assert!(
-        !listed.contains("bob.pilot.dhttp.net"),
-        "plain name must not expand: {listed}"
-    );
-}
-
-#[tokio::test]
-async fn inline_access_rejects_unreachable_name_pattern() {
-    let test_home = TestHome::new("smart-quote-pattern");
-    let home = test_home.home();
-    set_default_identity(&home, "alice.pilot").await.unwrap();
-
-    let error = try_run_cli(&home, "/api allow “*?”").await.unwrap_err();
-    let rendered = Report::from_error(error).to_string();
-
-    assert!(rendered.contains("client name"), "error: {rendered}");
-    assert!(rendered.contains("cannot match"), "error: {rendered}");
-}
-
-#[tokio::test]
-async fn inline_path_preserves_shell_quoted_pattern_with_spaces() {
-    let test_home = TestHome::new("quoted-path");
-    let home = test_home.home();
-    set_default_identity(&home, "alice.pilot").await.unwrap();
-
-    let pattern = "~ ^/api/v[0-9]+$";
-    run_cli_args(&home, &[pattern, "allow", r#"*? with method "not""#]).await;
-
-    let listed = run_cli_args(&home, &[pattern, "list"]).await;
-    assert!(listed.contains(pattern));
-    assert!(listed.contains(r#"allow *? with method "not""#));
-}
-
-#[tokio::test]
-async fn inline_path_operation_errors_use_clap_style() {
-    let test_home = TestHome::new("path-clap-error");
-    let home = test_home.home();
-
-    let error = try_run_cli_args(&home, &["/api", "remove", "--all", "0"])
-        .await
-        .unwrap_err();
-    let rendered = Report::from_error(error).to_string();
-
-    assert!(rendered.contains("cannot be used with"));
-    assert!(rendered.contains("Usage:"));
-}
-
-#[tokio::test]
-async fn inline_path_operation_help_is_rendered_as_output() {
-    let test_home = TestHome::new("path-help");
-    let home = test_home.home();
-
-    let output = run_cli_args(&home, &["/api", "allow", "--help"]).await;
-
-    assert!(output.contains("Usage:"));
-    assert!(output.contains("<EXPR>"));
-}
-
-#[tokio::test]
-async fn missing_default_identity_is_actionable() {
-    let test_home = TestHome::new("missing-default");
-    let home = test_home.home();
-
-    let error = try_run_cli(&home, "list").await.unwrap_err();
-    let rendered = Report::from_error(error).to_string();
-
-    assert!(rendered.contains("no default identity configured"));
-    assert!(rendered.contains("genmeta identity default <name>"));
-}
-
-#[test]
-fn help_output_shows_inline_usage() {
-    let mut help = Vec::new();
-    Options::command().write_long_help(&mut help).unwrap();
-    let help = String::from_utf8(help).unwrap();
-
-    assert!(help.contains("genmeta access [OPTIONS] <path> <operation>"));
-    assert!(help.contains("genmeta access \"/\" allow luffy.pilot~"));
-}
-
-#[test]
-fn global_flag_parses_and_is_described_in_help() {
-    assert!(Options::try_parse_from(["access", "--global", "list"]).is_ok());
-
-    let mut help = Vec::new();
-    Options::command().write_long_help(&mut help).unwrap();
-    let help = String::from_utf8(help).unwrap();
-
-    assert!(help.contains("--global"));
-    assert!(help.contains("global dhttp home"));
-}
-
-#[tokio::test]
-async fn bare_word_is_rejected_as_location_pattern() {
-    let test_home = TestHome::new("bare-word");
-    let home = test_home.home();
-    set_default_identity(&home, "alice.pilot").await.unwrap();
-
-    let error = try_run_cli(&home, "banana allow *?").await.unwrap_err();
-    let rendered = Report::from_error(error).to_string();
-
-    assert!(rendered.contains("invalid value 'banana' for '<PATTERN>'"));
-    assert!(rendered.contains("expected common pattern"));
+async fn authentication_requires_selected_or_default_local_credentials() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = DhttpHome::new(temp.path().to_owned());
+    let options = Options::try_parse_from(["access", "list"]).unwrap();
+    let error = run_for_home(&home, options).await.unwrap_err();
+    assert!(error.to_string().contains("genmeta identity default"));
+    let options = Options::try_parse_from(["access", "--identity", "alice.pilot", "list"]).unwrap();
+    let error = run_for_home(&home, options).await.unwrap_err();
+    assert!(matches!(error, genmeta_access::Error::LoadProfile { .. }));
+    assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
 }

@@ -42,6 +42,20 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Validate release tag version
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+        run: |
+          python3 - "$GITHUB_REF_NAME" <<'PY'
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path("genmeta/Cargo.toml").read_text())["package"]["version"]
+          expected = f"v{version}"
+          if sys.argv[1] != expected:
+              raise SystemExit(f"release tag {sys.argv[1]} must match {expected}")
+          PY
+
       - name: Create GitHub Release
         if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         env:
@@ -86,6 +100,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
+            --draft \
             --title "$GITHUB_REF_NAME" \
             --notes-file "$notes_file" \
             "${release_args[@]}"
@@ -402,220 +417,6 @@ jobs:
             gmutils/target/common/rpm/**
             gmutils/target/publish-reports/*.toml
 
-  linux-scoop:
-    needs: github-release
-    name: Linux scoop packages and S3 publish
-    runs-on: ubuntu-24.04
-    timeout-minutes: 240
-    defaults:
-      run:
-        shell: bash
-        working-directory: gmutils
-    steps:
-      - name: Checkout gmutils
-        uses: actions/checkout@v6
-        with:
-          path: gmutils
-          persist-credentials: false
-
-
-      - name: Install Rust
-        run: |
-          rustup toolchain install nightly --profile minimal
-          rustup default nightly
-          rustup target add x86_64-pc-windows-msvc i686-pc-windows-msvc
-
-      - name: Cache cargo downloads
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/git
-            ~/.cargo/registry
-            ~/.cargo/bin/cargo-xwin
-            ~/.cache/cargo-xwin
-          key: gmutils-linux-scoop-cargo-${{ hashFiles('gmutils/Cargo.lock') }}
-          restore-keys: |
-            gmutils-linux-scoop-cargo-
-
-      - name: Install scoop tooling
-        run: |
-          sudo apt-get update
-          sudo apt-get install --assume-yes --no-install-recommends llvm nasm
-
-      - name: Install cargo-xwin
-        run: |
-          if ! command -v cargo-xwin >/dev/null 2>&1; then
-            cargo install cargo-xwin --locked
-          fi
-
-      - name: Read Scoop bucket destination
-        id: scoop_destination
-        env:
-          XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
-          XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-        run: cargo xtask show s3-destination scoop --github-output >> "$GITHUB_OUTPUT"
-
-      - name: Validate release configuration
-        env:
-          XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
-          XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          missing=0
-          required=(
-            XTASK_RELEASE_S3_ENDPOINT_URL
-            DHTTP_ROOT_CA_PEM
-            DHTTP_BOOTSTRAP_URL
-            DHTTP_NAME_SERVICE
-            DHTTP_MDNS_SERVICE_DOMAIN
-            DHTTP_CA_SERVICE
-            XTASK_RELEASE_S3_ACCESS_KEY_ID
-            XTASK_RELEASE_S3_SECRET_ACCESS_KEY
-            HOMEBREW_TAP_GITHUB_TOKEN
-          )
-          for name in "${required[@]}"; do
-            if [ -z "${!name:-}" ]; then
-              echo "missing required release configuration: $name" >&2
-              missing=1
-            fi
-          done
-          exit "$missing"
-
-      - name: Checkout Scoop bucket
-        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ steps.scoop_destination.outputs.repository }}
-          ref: ${{ steps.scoop_destination.outputs.base_branch }}
-          path: scoop-bucket
-          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-
-      - name: Package scoop artifacts
-        run: |
-          cargo xtask package --overwrite-manifest \
-            scoop \
-              --target x86_64-pc-windows-msvc \
-              --target i686-pc-windows-msvc
-
-      - name: Publish S3 for scoop artifacts
-        env:
-          XTASK_RELEASE_S3_ACCESS_KEY_ID: ${{ secrets.XTASK_RELEASE_S3_ACCESS_KEY_ID }}
-          XTASK_RELEASE_S3_SECRET_ACCESS_KEY: ${{ secrets.XTASK_RELEASE_S3_SECRET_ACCESS_KEY }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          mode=dry-run
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
-            mode=publish
-          fi
-          publish_cmd=(cargo xtask publish s3)
-          if [[ "$mode" == "dry-run" ]]; then
-            publish_cmd+=(--dry-run)
-          fi
-          "${publish_cmd[@]}" --publish-report target/publish-reports/scoop.toml scoop
-
-      - name: Create Scoop bucket pull request
-        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
-        env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-          SCOOP_BUCKET_REPOSITORY: ${{ steps.scoop_destination.outputs.repository }}
-          SCOOP_BUCKET_BASE_BRANCH: ${{ steps.scoop_destination.outputs.base_branch }}
-          MANIFEST_NAME: gmutils.json
-        run: |
-          set -euo pipefail
-          bucket_dir="$GITHUB_WORKSPACE/scoop-bucket"
-          manifest_source="$PWD/target/common/scoop/$MANIFEST_NAME"
-          manifest_dest="$bucket_dir/$MANIFEST_NAME"
-          test -f "$manifest_source"
-
-          cp "$manifest_source" "$manifest_dest"
-
-          cd "$bucket_dir"
-          if [[ -z "$(git status --porcelain -- "$MANIFEST_NAME")" ]]; then
-            echo "scoop bucket manifest is unchanged"
-            exit 0
-          fi
-
-          branch="publish/gmutils/${GITHUB_REF_NAME}"
-          commit_message="feat: release gmutils ${GITHUB_REF_NAME}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -c "$branch"
-          git add "$MANIFEST_NAME"
-          git commit -m "$commit_message"
-          git push --force-with-lease origin "$branch"
-
-          existing_pr="$(
-            gh pr list \
-              --repo "$SCOOP_BUCKET_REPOSITORY" \
-              --base "$SCOOP_BUCKET_BASE_BRANCH" \
-              --head "$branch" \
-              --state open \
-              --json number \
-              --jq '.[0].number // ""'
-          )"
-          if [[ -n "$existing_pr" ]]; then
-            echo "scoop bucket pull request #$existing_pr already exists"
-          else
-            gh pr create \
-              --repo "$SCOOP_BUCKET_REPOSITORY" \
-              --base "$SCOOP_BUCKET_BASE_BRANCH" \
-              --head "$branch" \
-              --title "publish gmutils ${GITHUB_REF_NAME}" \
-              --body "Generated by $GITHUB_REPOSITORY release ${GITHUB_REF_NAME}."
-          fi
-
-      - name: Upload scoop packages to GitHub Release
-        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          report=target/publish-reports/scoop.toml
-          test -f "$report"
-          assets=()
-          while IFS= read -r asset; do
-            assets+=("$asset")
-          done < <(python3 - "$report" <<'PY'
-          import sys
-          import tomllib
-
-          with open(sys.argv[1], "rb") as handle:
-              report = tomllib.load(handle)
-
-          for manifest in report.get("manifests", []):
-              for asset in manifest.get("artifacts", []):
-                  print(asset["local-path"])
-          PY
-          )
-          if [ "${#assets[@]}" -eq 0 ]; then
-            echo "no scoop release assets selected by publish report; skipping GitHub Release upload"
-            exit 0
-          fi
-          for attempt in {1..30}; do
-            if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              break
-            fi
-            if [ "$attempt" -eq 30 ]; then
-              echo "github release $GITHUB_REF_NAME was not visible after waiting" >&2
-              exit 1
-            fi
-            sleep 2
-          done
-          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
-
-      - name: Upload scoop manifests
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: gmutils-scoop-release
-          if-no-files-found: ignore
-          path: |
-            gmutils/target/common/scoop/**
-            gmutils/target/publish-reports/*.toml
-
   homebrew:
     needs: github-release
     name: Homebrew package and S3 publish
@@ -815,3 +616,15 @@ jobs:
           path: |
             gmutils/target/common/brew/**
             gmutils/target/publish-reports/*.toml
+
+  finalize-release:
+    name: Publish completed GitHub Release
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    needs: [github-release, linux-deb, linux-rpm, homebrew]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false

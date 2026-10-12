@@ -1,46 +1,77 @@
 name: Publish crates.io
 
 on:
+  pull_request:
   workflow_dispatch:
   push:
-    branches: ["main"]
+    branches:
+      - main
     tags:
       - "v*"
-  pull_request:
-    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
+
+      - name: Validate release tag version
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+        run: |
+          python3 - "$GITHUB_REF_NAME" <<'PY'
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          manifest = tomllib.loads(Path("genmeta/Cargo.toml").read_text())
+          package = manifest.get("package", manifest.get("workspace", {}).get("package", {}))
+          expected = f"v{package['version']}"
+          if sys.argv[1] != expected:
+              raise SystemExit(f"release tag {sys.argv[1]} must match {expected}")
+          PY
 
       - name: Install Rust nightly toolchain
-        run: |
-          rustup toolchain install nightly --profile minimal --component rustfmt --component clippy
-          rustup default nightly
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+          components: rustfmt, clippy
 
       - name: Check formatting
-        run: cargo +nightly fmt -- --check
+        run: cargo fmt -- --check
 
       - name: Run clippy
-        run: cargo +nightly clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
 
-      - name: Run tests
-        run: cargo +nightly test --workspace --all-targets --all-features
+      - name: Test workspace
+        run: cargo test --locked --workspace --all-features --all-targets -- --test-threads=1
 
-      - name: Plan crates.io publish packages
-        id: publish_plan
+      - name: Authenticate to crates.io
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      - name: Release publishable workspace crates
         shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          FIRST_PUBLISH_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+            mode=publish
+          else
+            mode=dry-run
+          fi
+
+          # Dependencies must precede dependents for per-crate publication.
           packages=(
             genmeta-access
             genmeta-curl
@@ -50,45 +81,15 @@ jobs:
             genmeta-doctor
             genmeta-nslookup
             genmeta-proxy
-            genmeta-ssh
             genmeta
           )
-          {
-            echo "package_count=${#packages[@]}"
-            echo 'publish_packages<<EOF'
-            printf '%s\n' "${packages[@]}"
-            echo EOF
-          } >> "$GITHUB_OUTPUT"
 
-      - name: Authenticate to crates.io
-        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
-        uses: rust-lang/crates-io-auth-action@v1
-        id: auth
-
-      - name: Publish crates.io candidates
-        shell: bash
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-          PUBLISH_PACKAGES: ${{ steps.publish_plan.outputs.publish_packages }}
-        run: |
-          set -euo pipefail
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
-            mode=publish
-          else
-            mode=dry-run
-          fi
-
-          mapfile -t packages <<< "$PUBLISH_PACKAGES"
-          if [ "${#packages[@]}" -eq 0 ]; then
-            echo "no publishable workspace crates"
-            exit 0
-          fi
-
-          cargo +nightly metadata --format-version 1 > "$RUNNER_TEMP/workspace-metadata.json"
+          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/workspace-metadata.json"
           package_versions="$(
             PACKAGES="$(printf '%s\n' "${packages[@]}")" RUNNER_TEMP="$RUNNER_TEMP" python3 - <<'PY'
           import json
           import os
+          import sys
           from pathlib import Path
 
           metadata = json.loads((Path(os.environ["RUNNER_TEMP"]) / "workspace-metadata.json").read_text())
@@ -98,11 +99,15 @@ jobs:
               package = by_name.get(name)
               if package is None:
                   raise SystemExit(f"failed to resolve workspace package metadata for {name}")
+              if package.get("publish") == []:
+                  print(f"skip {name} (publish = false)", file=sys.stderr)
+                  continue
               print(f"{name}\t{package['version']}")
           PY
           )"
 
           packages_to_publish=()
+          first_releases=()
           while IFS=$'\t' read -r crate_name crate_version; do
             [ -n "$crate_name" ] || continue
             crate_state="$(
@@ -147,37 +152,37 @@ jobs:
               echo "publish $crate_name $crate_version"
               packages_to_publish+=("$crate_name")
             else
-              echo "skip $crate_name $crate_version (crate not yet initialized on crates.io)"
+              if [[ "$mode" == "publish" && -z "$FIRST_PUBLISH_TOKEN" ]]; then
+                echo "::error::$crate_name needs its first publication. Configure the CARGO_REGISTRY_TOKEN repository secret for this CI release."
+                exit 1
+              fi
+              echo "publish $crate_name $crate_version (first release)"
+              packages_to_publish+=("$crate_name")
+              first_releases+=("$crate_name")
             fi
           done <<< "$package_versions"
 
           if [[ "${#packages_to_publish[@]}" -eq 0 ]]; then
-            echo "no already-initialized crates need a new crates.io release"
+            echo "no workspace crates need a new crates.io release"
             exit 0
           fi
 
           if [[ "$mode" == "dry-run" ]]; then
-            publish_args=(cargo +nightly publish --dry-run --locked)
+            publish_args=(cargo publish --dry-run --locked)
             echo "dry-run publish packages: ${packages_to_publish[*]}"
+            for package in "${packages_to_publish[@]}"; do
+              publish_args+=(-p "$package")
+            done
+            "${publish_args[@]}"
           else
-            publish_args=(cargo +nightly publish --locked)
             echo "publish packages: ${packages_to_publish[*]}"
-          fi
-
-          for package in "${packages_to_publish[@]}"; do
-            publish_args+=(-p "$package")
-          done
-          "${publish_args[@]}"
-
-      - name: Report dry-run candidates
-        if: ${{ !(github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) }}
-        shell: bash
-        env:
-          PUBLISH_PACKAGES: ${{ steps.publish_plan.outputs.publish_packages }}
-        run: |
-          set -euo pipefail
-          if [ -z "$PUBLISH_PACKAGES" ]; then
-            echo "no crates.io publish candidates"
-          else
-            printf 'dry-run crates.io publish packages:\n%s\n' "$PUBLISH_PACKAGES"
+            for package in "${packages_to_publish[@]}"; do
+              if [[ " ${first_releases[*]} " == *" $package "* ]]; then
+                echo "publish $package using first-release API token"
+                CARGO_REGISTRY_TOKEN="$FIRST_PUBLISH_TOKEN" cargo publish --locked -p "$package"
+              else
+                echo "publish $package using OIDC"
+                cargo publish --locked -p "$package"
+              fi
+            done
           fi

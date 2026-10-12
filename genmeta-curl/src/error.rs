@@ -1,14 +1,7 @@
-use std::{convert::Infallible, path::PathBuf};
+use std::path::PathBuf;
 
-use dhttp::{
-    h3x::{
-        dhttp::message::{InitialMessageStreamError, MessageStreamError},
-        hyper::SendMessageError,
-        quic,
-    },
-    home,
-    name::DhttpName as Name,
-};
+use dhttp_home as home;
+use dhttp_identity::name::DhttpName as Name;
 use snafu::Snafu;
 use tokio::io;
 
@@ -19,9 +12,7 @@ pub enum Error {
     MissingAuthority {},
 
     #[snafu(display("failed to normalize dhttp uri"))]
-    NormalizeUri {
-        source: dhttp::message::IntoUriError,
-    },
+    NormalizeUri { source: dhttp::Error },
 
     #[snafu(display("failed to construct normalized request uri"))]
     ConstructRequestUri { source: http::uri::InvalidUriParts },
@@ -32,43 +23,37 @@ pub enum Error {
     #[snafu(display("failed to load explicit identity `{name}`"))]
     LoadExplicitIdentity {
         name: Name<'static>,
-        source: dhttp::home::identity::ssl::ResolveIdentityProfileError,
+        source: dhttp_home::identity::ssl::ResolveIdentityProfileError,
     },
 
     #[snafu(display("failed to load identity certificate and key"))]
     LoadIdentitySsl {
-        source: dhttp::home::identity::ssl::LoadIdentityError,
+        source: dhttp_home::identity::ssl::LoadIdentityError,
     },
 
     #[snafu(display("failed to build dhttp endpoint"))]
-    BuildEndpoint {
-        source: dhttp::endpoint::BuildEndpointError,
-    },
+    BuildEndpoint { source: dhttp::Error },
 
     #[snafu(display("failed to connect to server"))]
-    Connect {
-        source: dhttp::endpoint::ConnectError,
-    },
+    Connect { source: dhttp::Error },
 
     #[snafu(display("connection timed out"))]
     Timedout {},
 
     #[snafu(display("failed to open request stream"))]
-    InitialMessageStream { source: InitialMessageStreamError },
+    InitialMessageStream { source: dhttp::Error },
 
     #[snafu(display("failed to build HTTP request"))]
     BuildRequest { source: http::Error },
 
     #[snafu(display("failed to get HTTP/3 stream id"))]
-    GetStreamId { source: quic::StreamError },
+    GetStreamId { source: std::io::Error },
 
     #[snafu(display("failed to write verbose output"))]
     WriteVerbose { source: io::Error },
 
     #[snafu(display("failed to send HTTP request"))]
-    SendRequest {
-        source: SendMessageError<Infallible>,
-    },
+    SendRequest { source: std::io::Error },
 
     #[snafu(display("failed to open file `{}` to upload", path.display()))]
     OpenUploadFile { path: PathBuf, source: io::Error },
@@ -77,10 +62,10 @@ pub enum Error {
     UploadFile { path: PathBuf, source: io::Error },
 
     #[snafu(display("failed to close request stream"))]
-    CloseRequestStream { source: MessageStreamError },
+    CloseRequestStream { source: std::io::Error },
 
     #[snafu(display("failed to receive response"))]
-    ReceiveResponse { source: MessageStreamError },
+    ReceiveResponse { source: std::io::Error },
 
     #[snafu(display("server returned HTTP status {status}"))]
     HttpErrorStatus { status: http::StatusCode },

@@ -28,9 +28,8 @@ rm -rf "$out/staging"
 mkdir -p "$out/staging"
 product_source="$out/product-source"
 prepare_product_source "$product_source"
-XWIN_ARCH=x86,x86_64 cargo-xwin build --release --manifest-path "$product_source/genmeta/Cargo.toml" --target "$target" --bin genmeta
+XWIN_ARCH=x86,x86_64 cargo-xwin build --release --locked --manifest-path "$product_source/genmeta/Cargo.toml" --target "$target" --bin genmeta
 cp "$product_source/target/$target/release/genmeta.exe" "$out/staging/genmeta.exe"
-cp genmeta-ssh.bat "$out/staging/genmeta-ssh.bat"
 python3 - "$out/staging" "$out/gmutils-$version-$target.zip" <<'PY'
 from pathlib import Path
 import sys, zipfile

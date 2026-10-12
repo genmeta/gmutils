@@ -1,10 +1,7 @@
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Debug, Clone, clap::Parser)]
-#[command(
-    name = "doctor",
-    about,
-    disable_help_flag = true,
-    disable_version_flag = true
-)]
+#[command(name = "doctor", version, about)]
 pub enum Options {
     Net(genmeta_nat::Options),
     Version {},

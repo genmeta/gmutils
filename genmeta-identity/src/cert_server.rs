@@ -1,9 +1,11 @@
 use std::{path::Path, sync::Arc};
 
+use http_body_util::BodyExt;
 use reqwest::header;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use snafu::{FromString, ResultExt, Snafu, Whatever};
+use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -18,21 +20,13 @@ pub enum Error {
     #[snafu(display("failed to parse JSON response from cert server"))]
     Json { source: serde_json::Error },
     #[snafu(display("failed to load DHTTP identity endpoint"))]
-    DhttpEndpoint {
-        source: dhttp::endpoint::LoadEndpointError<dhttp::name::InvalidDhttpName>,
-    },
+    DhttpEndpoint { source: dhttp::Error },
     #[snafu(display("failed to load DHTTP identity endpoint from selected profile"))]
-    DhttpEndpointFromProfile {
-        source: dhttp::endpoint::LoadEndpointFromPathError,
-    },
+    DhttpEndpointFromProfile { source: dhttp::Error },
     #[snafu(display("failed to send DHTTP identity request"))]
-    DhttpRequest {
-        source: dhttp::endpoint::client::RequestError,
-    },
+    DhttpRequest { source: dhttp::Error },
     #[snafu(display("failed to read DHTTP identity response body"))]
-    DhttpRead {
-        source: dhttp::message::ReadBufferedBodyError,
-    },
+    DhttpRead { source: dhttp::BoxError },
     #[snafu(display("identity authentication failed and email fallback is unavailable"))]
     IdentityFallbackUnavailable,
     #[snafu(transparent)]
@@ -551,14 +545,15 @@ async fn parse_create_subdomain_response(
 }
 
 async fn parse_dhttp_response<T: DeserializeOwned>(
-    mut response: dhttp::endpoint::client::Response,
+    response: http::Response<dhttp::Body>,
 ) -> Result<T, Error> {
     let status = response.status();
-    let body = response.read_to_bytes().await;
-    // Explicitly finish the response stream before dropping it. This avoids
-    // noisy dquic drop diagnostics when the server has already sent a body.
-    _ = response.stop(dhttp::h3x::error::Code::H3_NO_ERROR).await;
-    let body = body.context(DhttpReadSnafu)?;
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .map_err(|source| Error::DhttpRead { source })?
+        .to_bytes();
     if !status.is_success() {
         return parse_error_body(status, &body).and_then(|()| unreachable!());
     }
@@ -572,22 +567,39 @@ pub struct CertServer {
 }
 
 impl CertServer {
-    async fn identity_endpoint(
-        identity_domain: &str,
-    ) -> Result<Arc<dhttp::endpoint::Endpoint>, Error> {
-        let endpoint = dhttp::endpoint::Endpoint::load(identity_domain)
+    async fn identity_endpoint(identity_domain: &str) -> Result<dhttp::Endpoint, Error> {
+        let home = dhttp_home::DhttpHome::load(dhttp_home::HomeScope::User).map_err(|source| {
+            Error::DhttpEndpoint {
+                source: std::io::Error::other(source).into(),
+            }
+        })?;
+        let name = identity_domain
+            .parse::<dhttp_identity::name::DhttpName>()
+            .map_err(
+                |source: dhttp_identity::name::InvalidDhttpName| Error::DhttpEndpoint {
+                    source: std::io::Error::other(source).into(),
+                },
+            )?;
+        let profile = home
+            .resolve_identity_profile((name).as_full())
             .await
-            .context(DhttpEndpointSnafu)?;
-        Ok(Arc::new(endpoint))
+            .map_err(|source| Error::DhttpEndpoint {
+                source: std::io::Error::other(source).into(),
+            })?;
+        Self::identity_endpoint_from_profile(profile.path()).await
     }
 
-    async fn identity_endpoint_from_profile(
-        profile_dir: &Path,
-    ) -> Result<Arc<dhttp::endpoint::Endpoint>, Error> {
-        let endpoint = dhttp::endpoint::Endpoint::load_from(profile_dir)
+    async fn identity_endpoint_from_profile(profile_dir: &Path) -> Result<dhttp::Endpoint, Error> {
+        let endpoint = dhttp::Endpoint::load_from_with_ocsp(profile_dir)
             .await
             .context(DhttpEndpointFromProfileSnafu)?;
-        Ok(Arc::new(endpoint))
+        init_network(
+            &[ddns::DnsScheme::System, ddns::DnsScheme::H3],
+            &["*".to_owned()],
+        )
+        .await
+        .context(DhttpEndpointSnafu)?;
+        Ok(endpoint)
     }
 
     pub fn new(base_url: impl Into<Arc<str>>) -> Result<Self, Whatever> {
@@ -634,17 +646,30 @@ impl CertServer {
     ) -> Result<T, Error> {
         let endpoint = Self::identity_endpoint(identity_domain).await?;
         let uri = self.service_url(path);
-        let mut request = endpoint.new_request().method(method).uri(uri).header(
+        let mut request = http::Request::builder().method(method).uri(uri).header(
             http::header::CONTENT_TYPE,
             http::HeaderValue::from_static("application/json"),
         );
         if let Some(idempotency_key) = idempotency_key {
             request = request.header("idempotency-key", idempotency_header(idempotency_key)?);
         }
-        let response = request
-            .body(body.to_string())
+        let request = request
+            .body(dhttp::WndBuf::new(64 * 1024))
+            .map_err(|source| Error::DhttpRequest {
+                source: std::io::Error::other(source).into(),
+            })?;
+        let (mut writer, response) = endpoint
+            .from_request(request)
             .await
             .context(DhttpRequestSnafu)?;
+        let upload = async {
+            writer
+                .write_all(body.to_string().as_bytes())
+                .await
+                .map_err(dhttp::Error::from)?;
+            writer.shutdown().await.map_err(dhttp::Error::from)
+        };
+        let (_, response) = tokio::try_join!(upload, response).context(DhttpRequestSnafu)?;
         parse_dhttp_response(response).await
     }
 
@@ -669,17 +694,30 @@ impl CertServer {
     ) -> Result<T, Error> {
         let endpoint = Self::identity_endpoint_from_profile(profile_dir).await?;
         let uri = self.service_url(path);
-        let mut request = endpoint.new_request().method(method).uri(uri).header(
+        let mut request = http::Request::builder().method(method).uri(uri).header(
             http::header::CONTENT_TYPE,
             http::HeaderValue::from_static("application/json"),
         );
         if let Some(idempotency_key) = idempotency_key {
             request = request.header("idempotency-key", idempotency_header(idempotency_key)?);
         }
-        let response = request
-            .body(body.to_string())
+        let request = request
+            .body(dhttp::WndBuf::new(64 * 1024))
+            .map_err(|source| Error::DhttpRequest {
+                source: std::io::Error::other(source).into(),
+            })?;
+        let (mut writer, response) = endpoint
+            .from_request(request)
             .await
             .context(DhttpRequestSnafu)?;
+        let upload = async {
+            writer
+                .write_all(body.to_string().as_bytes())
+                .await
+                .map_err(dhttp::Error::from)?;
+            writer.shutdown().await.map_err(dhttp::Error::from)
+        };
+        let (_, response) = tokio::try_join!(upload, response).context(DhttpRequestSnafu)?;
         parse_dhttp_response(response).await
     }
 
@@ -690,7 +728,19 @@ impl CertServer {
     ) -> Result<T, Error> {
         let endpoint = Self::identity_endpoint(identity_domain).await?;
         let uri = self.service_url(path_and_query);
-        let response = endpoint.get(uri).await.context(DhttpRequestSnafu)?;
+        let uri = uri
+            .parse::<http::Uri>()
+            .map_err(|source| Error::DhttpRequest {
+                source: source.into(),
+            })?;
+        let request = http::Request::builder()
+            .uri(uri)
+            .body(dhttp::Empty::new())
+            .expect("valid request");
+        let response = endpoint
+            .from_request(request)
+            .await
+            .context(DhttpRequestSnafu)?;
         parse_dhttp_response(response).await
     }
 
@@ -1166,6 +1216,40 @@ impl Error {
                 if *status == expected_status && self.api_code() == Some(expected_code)
         )
     }
+}
+
+async fn init_network(schemes: &[ddns::DnsScheme], binds: &[String]) -> dhttp::Result<()> {
+    if binds.iter().any(|bind| bind != "*") {
+        return Err(dhttp::Error::InvalidRequest {
+            message: "the process-wide DHTTP network currently requires --interface '*'".into(),
+        });
+    }
+    let mdns = ddns::install_resolvers(schemes)?;
+    let network = dhttp::DhttpNetwork::init().await?;
+    if let Some(mdns) = mdns {
+        static MAINTENANCE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+        MAINTENANCE
+            .get_or_try_init(|| async {
+                mdns.maintain(std::time::Duration::from_secs(1), move || {
+                    Ok(network
+                        .active_bindings()
+                        .map_err(std::io::Error::other)?
+                        .into_iter()
+                        .filter(|binding| {
+                            dhttp::resolve::EndpointAddr::direct(binding.address).scope()
+                                == Some(dhttp::Scope::Internal)
+                        })
+                        .map(|binding| {
+                            ddns::mdns::MdnsBinding::new(binding.device, binding.address.ip())
+                        })
+                        .collect())
+                })
+                .await?;
+                Ok::<(), std::io::Error>(())
+            })
+            .await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

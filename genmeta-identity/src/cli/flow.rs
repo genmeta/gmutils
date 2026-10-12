@@ -20,7 +20,7 @@ pub(crate) mod target;
 pub(crate) mod transcript;
 pub(crate) mod welcome;
 
-use dhttp::home::{DhttpHome, HomeScope};
+use dhttp_home::{DhttpHome, HomeScope};
 
 use crate::{
     cert_server::CertServer,

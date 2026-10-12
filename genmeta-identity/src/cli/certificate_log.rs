@@ -1,9 +1,7 @@
 use std::path::PathBuf;
 
-use dhttp::{
-    home::identity::IdentityProfile,
-    log::cert::{CertificateAction, CertificateLogRecord, DefaultCertificateFormatter},
-};
+use dhttp::log::cert::{CertificateAction, CertificateLogRecord, DefaultCertificateFormatter};
+use dhttp_home::identity::IdentityProfile;
 use snafu::{OptionExt, ResultExt, Snafu};
 use tokio::io::AsyncWriteExt;
 
@@ -13,7 +11,7 @@ pub(crate) enum WriteCertificateLogError {
     #[snafu(display("failed to load committed identity {}", profile.name()))]
     LoadIdentity {
         profile: Box<IdentityProfile>,
-        source: dhttp::home::identity::ssl::LoadIdentityError,
+        source: dhttp_home::identity::ssl::LoadIdentityError,
     },
     #[snafu(display("committed identity {} has no leaf certificate", profile.name()))]
     MissingLeaf { profile: Box<IdentityProfile> },
@@ -23,7 +21,7 @@ pub(crate) enum WriteCertificateLogError {
     ))]
     Chain {
         profile: Box<IdentityProfile>,
-        source: dhttp::identity::ExtractDhttpSubjectKeyIdentifierError,
+        source: dhttp_home::certificate::ExtractDhttpSubjectKeyIdentifierError,
     },
     #[snafu(display("failed to construct certificate log record for {}", profile.name()))]
     BuildRecord {
@@ -69,8 +67,7 @@ pub(crate) async fn write_after_commit(
         .context(write_certificate_log_error::MissingLeafSnafu {
             profile: Box::new(profile.clone()),
         })?;
-    let chain = identity
-        .dhttp_subject_key_identifier()
+    let chain = dhttp_home::certificate::extract_dhttp_subject_key_identifier(identity.certs())
         .context(write_certificate_log_error::ChainSnafu {
             profile: Box::new(profile.clone()),
         })?
@@ -115,11 +112,9 @@ mod tests {
     };
 
     use base64::Engine as _;
-    use dhttp::{
-        home::{DhttpHome, identity::IdentityProfile},
-        log::cert::CertificateAction,
-        name::DhttpName,
-    };
+    use dhttp::log::cert::CertificateAction;
+    use dhttp_home::{DhttpHome, identity::IdentityProfile};
+    use dhttp_identity::name::DhttpName;
 
     use super::write_after_commit;
 
@@ -145,7 +140,9 @@ mod tests {
         ));
         let home = DhttpHome::new(home_path.clone());
         let name: DhttpName<'static> = "fixture.example".parse().unwrap();
-        let profile = home.identity_profile(name);
+        let profile = home
+            .identity_profile((name).as_full())
+            .expect("validated identity name");
         let encoded = base64::engine::general_purpose::STANDARD
             .encode(include_bytes!("../../tests/fixtures/valid.der"));
         let mut cert_pem = String::from("-----BEGIN CERTIFICATE-----\n");
@@ -154,7 +151,10 @@ mod tests {
             cert_pem.push('\n');
         }
         cert_pem.push_str("-----END CERTIFICATE-----\n");
-        let key_pem = rankey::generate_secp384r1_key().unwrap();
+        use p384::pkcs8::EncodePrivateKey;
+        let key_pem = p384::ecdsa::SigningKey::random(&mut p384::elliptic_curve::rand_core::OsRng)
+            .to_pkcs8_pem(p384::pkcs8::LineEnding::LF)
+            .unwrap();
         profile
             .save_identity(cert_pem.as_bytes(), key_pem.as_bytes())
             .await

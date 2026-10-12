@@ -1,7 +1,7 @@
 [package]
 name = "genmeta-proxy"
 description = "forward proxy routing .dhttp.net requests over DHTTP/3"
-version = "0.4.1"
+version = "0.5.0-preview.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -11,6 +11,9 @@ keywords = ["genmeta", "dhttp", "proxy", "http3", "cli"]
 categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
+ddns.workspace = true
+dhttp-home = { workspace = true, features = ["manage"] }
+dhttp-identity.workspace = true
 clap = { workspace = true }
 dhttp = { workspace = true }
 http = { workspace = true }

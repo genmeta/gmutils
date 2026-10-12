@@ -7,25 +7,23 @@ use http::{HeaderMap, StatusCode};
 
 use crate::request::RequestPlan;
 
-impl From<dhttp::h3x::varint::VarInt> for StreamId {
-    fn from(value: dhttp::h3x::varint::VarInt) -> Self {
-        Self(value.into_inner())
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct StreamId(u64);
+pub(crate) struct StreamId(Option<u64>);
 
 impl StreamId {
+    pub(crate) const UNAVAILABLE: Self = Self(None);
     #[allow(dead_code)]
     pub(crate) fn new(value: u64) -> Self {
-        Self(value)
+        Self(Some(value))
     }
 }
 
 impl fmt::Display for StreamId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        match self.0 {
+            Some(id) => write!(f, "{id}"),
+            None => f.write_str("?"),
+        }
     }
 }
 

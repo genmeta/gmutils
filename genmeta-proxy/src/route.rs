@@ -1,4 +1,4 @@
-use dhttp::name::DhttpName as Name;
+use dhttp_identity::name::DhttpName as Name;
 use http::{Method, Uri};
 use hyper::body::Incoming;
 
