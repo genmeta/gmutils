@@ -47,11 +47,11 @@ reqwest = { version = "0.13", default-features = false, features = [
     "gzip",
     "json",
     "zstd",
-    "rustls-no-provider",
+    "rustls",
 ] }
 
 # security
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rustls = { package = "qrustls", version = "0.23.45", default-features = false, features = ["ring"] }
 x509-parser = "0.18"
 p384 = "0.13"
 pkcs8 = { version = "0.10", features = ["pem"] }
@@ -95,22 +95,22 @@ async-compression = { version = "0.4", features = [
 ] }
 
 # workspace
-genmeta-access = { path = "genmeta-access", version = "0.4.2" }
-dhttp = { git = "https://github.com/genmeta/dhttp.git", rev = "86a39b604797ea79657bdabeba1f036794fbd45e" }
-access_control = { git = "https://github.com/genmeta/daccess.git", rev = "3e3ac6199e88f6b5e521e8d29c934ead3bb5db7c" }
-dhttp-home = { git = "https://github.com/genmeta/dhttp.git", rev = "86a39b604797ea79657bdabeba1f036794fbd45e" }
-ddns = { package = "dyns", git = "https://github.com/genmeta/ddns.git", rev = "2047ed4e5a866909acd9b4ef4aa348fa951e9fe5", features = ["h3", "http", "mdns"] }
-qbase = { git = "https://github.com/genmeta/dquic.git", rev = "1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb" }
-qprotocol = { git = "https://github.com/genmeta/dquic.git", rev = "1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb" }
-qtls = { git = "https://github.com/genmeta/dquic.git", rev = "1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb" }
-genmeta-network = { path = "genmeta-network" }
-genmeta-curl = { path = "genmeta-curl", version = "0.7.1" }
-genmeta-discover = { path = "genmeta-discover", version = "0.4.2" }
-genmeta-doctor = { path = "genmeta-doctor", version = "0.4.1" }
-genmeta-identity = { path = "genmeta-identity", version = "0.4.2", default-features = false }
-genmeta-nat = { path = "genmeta-nat", version = "0.5.1" }
-genmeta-nslookup = { path = "genmeta-nslookup", version = "0.5.1" }
-genmeta-proxy = { path = "genmeta-proxy", version = "0.4.1" }
+genmeta-access = { path = "genmeta-access", version = "0.5.0" }
+dhttp = { version = "0.7.0" }
+access_control = { package = "daccess", version = "0.1.0" }
+dhttp-home = { version = "0.6.0" }
+ddns = { version = "0.8.0", package = "dyns", features = ["h3", "http", "mdns"] }
+qbase = { version = "0.7.0" }
+qprotocol = { version = "0.7.0" }
+qtls = { version = "0.1.0" }
+genmeta-network = { version = "0.1.0", path = "genmeta-network" }
+genmeta-curl = { path = "genmeta-curl", version = "0.8.0" }
+genmeta-discover = { path = "genmeta-discover", version = "0.5.0" }
+genmeta-doctor = { path = "genmeta-doctor", version = "0.5.0" }
+genmeta-identity = { path = "genmeta-identity", version = "0.5.0", default-features = false }
+genmeta-nat = { path = "genmeta-nat", version = "0.6.0" }
+genmeta-nslookup = { path = "genmeta-nslookup", version = "0.6.0" }
+genmeta-proxy = { path = "genmeta-proxy", version = "0.5.0" }
 
 [profile.release]
 opt-level = "z"
@@ -118,22 +118,3 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
-
-# Keep registry dependencies on the same committed sources as direct Git dependencies.
-[patch.crates-io]
-dhttp = { git = "https://github.com/genmeta/dhttp.git", rev = "86a39b604797ea79657bdabeba1f036794fbd45e" }
-dhttp-home = { git = "https://github.com/genmeta/dhttp.git", rev = "86a39b604797ea79657bdabeba1f036794fbd45e" }
-dyns = { git = "https://github.com/genmeta/ddns.git", rev = "2047ed4e5a866909acd9b4ef4aa348fa951e9fe5" }
-h3x = { git = "https://github.com/genmeta/h3x.git", rev = "274af16707698fac6c6ff8bc9f2c112d9cf1fdba" }
-qbase = { git = "https://github.com/genmeta/dquic.git", rev = "1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb" }
-qcongestion = { git = "https://github.com/genmeta/dquic.git", rev = "1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb" }
-qconnection = { git = "https://github.com/genmeta/dquic.git", rev = "1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb" }
-qevent = { git = "https://github.com/genmeta/dquic.git", rev = "1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb" }
-qmacro = { git = "https://github.com/genmeta/dquic.git", rev = "1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb" }
-qprotocol = { git = "https://github.com/genmeta/dquic.git", rev = "1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb" }
-qrecovery = { git = "https://github.com/genmeta/dquic.git", rev = "1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb" }
-qresolve = { git = "https://github.com/genmeta/dquic.git", rev = "1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb" }
-qtls = { git = "https://github.com/genmeta/dquic.git", rev = "1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb" }
-qtransport = { git = "https://github.com/genmeta/dquic.git", rev = "1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb" }
-qtraversal = { git = "https://github.com/genmeta/dquic.git", rev = "1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb" }
-qudp = { git = "https://github.com/genmeta/dquic.git", rev = "1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb" }

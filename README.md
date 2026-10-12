@@ -2,7 +2,7 @@
   <img src="https://media.dhttp.net/img/gmutils/gmutils.svg" width="900" alt="GMUTILS command-line tool family: identity, access, curl, nslookup, doctor, proxy, and discover">
 </p>
 <p align="center">
-  <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/version-0.8.2-1f6feb?style=flat-square" alt="Version 0.8.2"></a>
+  <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/version-0.9.0-1f6feb?style=flat-square" alt="Version 0.9.0"></a>
   <a href="https://doc.rust-lang.org/edition-guide/rust-2024/"><img src="https://img.shields.io/badge/Rust-2024-dea584?style=flat-square&amp;logo=rust&amp;logoColor=black" alt="Rust 2024 edition"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-00a51a?style=flat-square&amp;logo=apache&amp;logoColor=white" alt="Apache-2.0 license"></a>
   <a href="#install"><img src="https://img.shields.io/badge/Cargo-supported-dea584?style=flat-square&amp;logo=rust&amp;logoColor=black" alt="Cargo package supported"></a>
@@ -166,39 +166,13 @@ wait for them. Missing or stale client OCSP staples require an online refresh;
 unrestricted offline operation is therefore not guaranteed. Each management
 request has a 30-second timeout, configurable with `--timeout`.
 
-## Dependency snapshots and development builds
+## Release dependencies and development builds
 
-Release builds use committed Git snapshots for the DHTTP dependency graph.
-The workspace manifest pins each repository with a full commit ID, and
-`Cargo.lock` records the resolved sources. No adjacent checkouts are required.
-
-| Repository | Commit |
-| ---------- | ------ |
-| `dhttp` (`dhttp`, `dhttp-home`, `dhttp-log`) | `86a39b604797ea79657bdabeba1f036794fbd45e` |
-| `ddns` (`dyns`) | `2047ed4e5a866909acd9b4ef4aa348fa951e9fe5` |
-| `h3x` | `274af16707698fac6c6ff8bc9f2c112d9cf1fdba` |
-| `dquic` (QUIC crates) | `1cab7042ddbb4ae65b424cae81a91f88d4eaaaeb` |
-| `daccess` (`access_control`, access tests) | `3e3ac6199e88f6b5e521e8d29c934ead3bb5db7c` |
-
-DHTTP, DDNS and H3X already pin the same QUIC snapshot. Workspace registry
-patches keep any crates.io references on those Git sources as well. The QUIC
-snapshot includes the concurrent Initial connection fix.
-
-Run `cargo build --workspace --locked` and
-`cargo test --workspace --all-targets --all-features --locked`.
-Identity key and CSR generation uses stable P-384/PKCS#8 and X.509 builder APIs.
-
-For a locked build in an environment with ancestor Cargo patch configuration,
-run Cargo from outside that ancestor directory with
-`--manifest-path <gmutils>/Cargo.toml --locked`. This keeps unrelated local
-patches from changing the workspace lockfile. Local integration can use
-untracked Cargo configuration to override sources with sibling checkouts;
-do not commit a lockfile resolved with those overrides for release.
-
-These snapshots support binary/package releases. A new crates.io release also
-requires published versions of the Git dependencies and a publishable
-`genmeta-network` package; the current snapshot graph is not ready for
-`cargo publish`.
+The 0.9.0 release uses compatible crates.io versions for DHTTP, DNS, QUIC and
+daccess. The published TLS backend is `qrustls` 0.23.45. `Cargo.lock` records the
+resolved dependency versions. Publication order and lockfile preparation are
+listed in [RELEASING.md](RELEASING.md). Run Cargo outside directories containing
+ancestor path patches when preparing the release lockfile.
 
 CLI settings and atomic certificate installation are maintained inside
 `genmeta-network`.

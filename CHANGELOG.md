@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.9.0] - 2026-10-12
+
+### Changed
+
+- Adapt command-line tools to dhttp 0.7.0, dyns 0.8.0 and daccess 0.1.0.
+- Publish the shared genmeta-network runtime before dependent command-line crates.
+- Manage Pishoo listening through config.db and update access path commands.
+- Preserve curl progress while reducing default transport logs; restore help and version flags.
+- Remove the SSH command and genmeta-ssh from this release.
+
+### Release versions
+
+| Package | Previous published version | Prepared version |
+| --- | --- | --- |
+| `genmeta` | 0.8.2 | 0.9.0 |
+| `genmeta-network` | first release | 0.1.0 |
+| `genmeta-access` | 0.4.2 | 0.5.0 |
+| `genmeta-curl` | 0.7.1 | 0.8.0 |
+| `genmeta-discover` | 0.4.2 | 0.5.0 |
+| `genmeta-doctor` | 0.4.1 | 0.5.0 |
+| `genmeta-identity` | 0.4.2 | 0.5.0 |
+| `genmeta-nat` | 0.5.1 | 0.6.0 |
+| `genmeta-nslookup` | 0.5.1 | 0.6.0 |
+| `genmeta-proxy` | 0.4.1 | 0.5.0 |
+
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
