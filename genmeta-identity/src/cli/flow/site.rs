@@ -287,7 +287,11 @@ mod tests {
 
     async fn fixture() -> (tempfile::TempDir, IdentityProfile, ServerConfig) {
         let root = tempfile::Builder::new()
-            .prefix("site #? 测试")
+            .prefix(if cfg!(windows) {
+                "site # 测试"
+            } else {
+                "site #? 测试"
+            })
             .tempdir()
             .unwrap();
         let home = DhttpHome::new(root.path().to_path_buf());
