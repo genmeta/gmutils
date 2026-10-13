@@ -32,6 +32,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Wait for a target-compatible local path before short-lived curl commands initiate
+  QUIC. Mediated targets observe STUN mapping updates; ready direct and LAN paths
+  connect immediately. DNS preflight, readiness and connection share the original
+  connect timeout, without changing DQUIC path discovery.
+
 ### Changed
 
 - Move DHTTP requests, proxy forwarding, DNS resolution and NAT diagnostics to
