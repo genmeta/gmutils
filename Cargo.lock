@@ -1915,6 +1915,8 @@ dependencies = [
  "http",
  "http-body-util",
  "indicatif",
+ "qprotocol",
+ "qtls",
  "snafu",
  "tokio",
  "tokio-util",

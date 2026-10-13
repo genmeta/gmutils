@@ -1,5 +1,6 @@
-use std::io::IsTerminal;
+use std::io::{self, IsTerminal};
 
+use futures::{StreamExt, stream::FusedStream};
 use http::StatusCode;
 use snafu::ResultExt;
 
@@ -7,6 +8,8 @@ mod cli;
 mod client;
 mod error;
 mod progress;
+#[cfg(test)]
+mod readiness_tests;
 mod redirect;
 mod request;
 mod response;
@@ -40,13 +43,28 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
             .request_builder()
             .body(dhttp::WndBuf::new(64 * 1024))
             .context(curl_error::BuildRequestSnafu)?;
-        let (mut writer, response) = match tokio::time::timeout(
-            session.connect_timeout,
+        let (mut writer, response) = match tokio::time::timeout(session.connect_timeout, async {
+            let resolver = dhttp::resolve::Resolver::get();
+            let uri = dhttp::expand_uri_with_base(
+                session
+                    .identity_profile
+                    .as_ref()
+                    .map(|profile| profile.name()),
+                plan.uri.clone(),
+            )?;
+            let name = lookup_name(&uri)?;
+            let records = resolver
+                .lookup(&name, "", None)
+                .await
+                .map_err(dhttp::Error::from)?;
+            wait_for_path(qprotocol::AddressBook::global(), records)
+                .await
+                .map_err(dhttp::Error::from)?;
             match &session.endpoint {
-                Some(endpoint) => endpoint.from_request(request),
-                None => dhttp::Anonymous.from_request(request),
-            },
-        )
+                Some(endpoint) => endpoint.from_request(request).await,
+                None => dhttp::Anonymous.from_request(request).await,
+            }
+        })
         .await
         {
             Ok(result) => result.context(curl_error::ConnectSnafu)?,
@@ -120,6 +138,108 @@ pub async fn run(mut options: Options) -> Result<(), Error> {
         redirect_count += 1;
     }
     Ok(())
+}
+
+// Derive the same DNS name as DHTTP routing: a DHTTP :sequence is not a port.
+fn lookup_name(uri: &http::Uri) -> dhttp::Result<String> {
+    if uri
+        .scheme_str()
+        .is_some_and(|scheme| !matches!(scheme, "http" | "https" | "dhttp" | "ws" | "wss"))
+    {
+        return Err(dhttp::Error::InvalidRequest {
+            message: "unsupported URI scheme".into(),
+        });
+    }
+    let host = uri.host().ok_or_else(|| dhttp::Error::InvalidRequest {
+        message: "URI has no remote authority".into(),
+    })?;
+    if host.contains('_')
+        || !matches!(
+            qtls::ServerName::try_from(host),
+            Ok(qtls::ServerName::DnsName(_))
+        )
+    {
+        return Err(dhttp::Error::InvalidName {
+            name: host.to_owned(),
+        });
+    }
+    let host = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
+    if host.ends_with(dhttp_home::DHTTP_SUFFIX) {
+        return Ok(host);
+    }
+    let target = uri
+        .authority()
+        .expect("a host has an authority")
+        .as_str()
+        .rsplit('@')
+        .next()
+        .unwrap();
+    match target.rsplit_once(':') {
+        Some((_, port)) => {
+            let port = port
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port != 0)
+                .ok_or_else(|| dhttp::Error::InvalidRequest {
+                    message: "URI port must be between 1 and 65535".into(),
+                })?;
+            Ok(format!("{host}:{port}"))
+        }
+        None => Ok(host),
+    }
+}
+
+// Network initialization starts STUN asynchronously. A short-lived command must
+// wait for a local path matching its resolved target before initiating QUIC.
+// This preflight and connection establishment share the caller's timeout.
+async fn wait_for_path(
+    addresses: &qprotocol::AddressBook,
+    records: dhttp::resolve::RecordStream,
+) -> io::Result<()> {
+    let mut updates = addresses.subscribe_ddns();
+    let mut records = records.fuse();
+    let mut mediated = Vec::new();
+    let ready = |source: &dhttp::resolve::Source, peer| {
+        addresses.pathways_to(peer, source).into_iter().any(|path| {
+            let Some(socket) = qprotocol::QuicProtocol::global().find_socket(path.local()) else {
+                return false;
+            };
+            let Ok(bound) = socket.local_addr() else {
+                return false;
+            };
+            qprotocol::Dock::global()
+                .find_socket(bound)
+                .is_some_and(|registered| std::sync::Arc::ptr_eq(&registered, &socket))
+        })
+    };
+    while !records.is_terminated() || !mediated.is_empty() {
+        tokio::select! {
+            record = records.next(), if !records.is_terminated() => {
+                if let Some((source, peer)) = record {
+                    if ready(&source, peer) {
+                        return Ok(());
+                    }
+                    if matches!(peer, dhttp::resolve::EndpointAddr::Mediate { .. })
+                        && peer.is_usable()
+                        && !mediated.contains(&(source.clone(), peer))
+                    {
+                        mediated.push((source, peer));
+                    }
+                }
+            }
+            changed = updates.changed(), if !mediated.is_empty() => {
+                changed.map_err(io::Error::other)?;
+                updates.borrow_and_update();
+                if mediated.iter().any(|(source, peer)| ready(source, *peer)) {
+                    return Ok(());
+                }
+            }
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::NotConnected,
+        "DNS lookup did not yield an available local path",
+    ))
 }
 
 /// Poll upload and response consumption together; a completed response ends uploading.

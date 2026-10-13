@@ -21,6 +21,8 @@ async-compression = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true }
 dhttp = { workspace = true }
+qprotocol = { workspace = true }
+qtls = { workspace = true }
 http = { workspace = true }
 indicatif = { workspace = true }
 snafu = { workspace = true }
@@ -30,3 +32,6 @@ tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
 tracing-indicatif = { workspace = true }
 url = "2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
