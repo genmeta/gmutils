@@ -6,9 +6,7 @@ use webc::v3::{
 };
 
 use super::*;
-
-#[path = "../tests/support/upload_credentials.rs"]
-mod credentials;
+use crate::test_credentials as credentials;
 
 #[test]
 fn upload_cli_accepts_only_the_designed_arguments() {

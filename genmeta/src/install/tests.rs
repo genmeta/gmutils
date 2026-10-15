@@ -595,8 +595,7 @@ async fn installation_timeout_is_unknown_and_never_retries_the_write() {
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
-#[path = "../../tests/support/upload_credentials.rs"]
-mod host_credentials;
+use crate::test_credentials as host_credentials;
 
 #[derive(Debug)]
 struct HostResolver(dhttp::resolve::EndpointAddr);
