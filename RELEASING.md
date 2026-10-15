@@ -77,6 +77,10 @@ The preparation checks above used fixed upstream PR sources. Final checks use
 published crates through the refreshed registry lockfile. Their CI results must
 pass before merging and tagging.
 
-Publication uses the repository CARGO_REGISTRY_TOKEN when configured. Without
-that secret, existing crates use Trusted Publishing; first publication requires
-an API token.
+Existing crates use Trusted Publishing because their registry policy requires
+OIDC. CARGO_REGISTRY_TOKEN is used only for a missing crate's first publication.
+
+To retry crate publication without replacing an existing release tag, dispatch
+`publish-crates.yml` from main with `release_tag=v0.9.0-preview.2`. The workflow
+checks out that exact annotated tag, validates its version and commit, and skips
+versions already present on crates.io. An empty input remains a dry run.
