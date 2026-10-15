@@ -1,4 +1,4 @@
-//! System service commands and HTTP reverse-proxy configuration.
+//! HTTP reverse-proxy configuration through the selected identity service.
 use std::path::PathBuf;
 
 use http::Method;
@@ -11,7 +11,7 @@ pub(super) enum Command {
     Proxy {
         #[arg(short, long)]
         id: Option<String>,
-        /// [LOCATION [TARGET]], remove LOCATION, clear, or replace FILE.json
+        /// Optional LOCATION and TARGET, or remove LOCATION, clear, or replace FILE.json
         args: Vec<String>,
     },
 }

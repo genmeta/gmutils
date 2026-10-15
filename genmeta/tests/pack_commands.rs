@@ -215,7 +215,14 @@ fn invalid_files_and_existing_targets_preserve_old_content() {
         "output already exists",
     );
     assert_eq!(std::fs::read(&file).unwrap(), b"old content");
-    for invalid in ["a%20b", "name with space", "question?", "back\\slash"] {
+    let invalid_names = ["a%20b", "name with space", "hash#name"];
+    #[cfg(unix)]
+    let invalid_names = invalid_names
+        .into_iter()
+        .chain(["question?", "back\\slash"]);
+    // Windows rejects '?' as a filename and treats '\\' as a separator before
+    // the packer can inspect them. Keep portable invalid-name coverage there.
+    for invalid in invalid_names {
         let bad = app.join("public").join(invalid);
         std::fs::write(&bad, "invalid").unwrap();
         fails(&pack(&home, &app, &[]), "invalid content file path");
