@@ -5,6 +5,7 @@ use snafu::Whatever;
 
 mod install;
 mod pack;
+mod server;
 mod upload;
 
 #[derive(Parser, Debug, Clone)]
@@ -26,6 +27,11 @@ enum Options {
         #[command(subcommand)]
         command: PackageCommand,
     },
+    /// Manage Pishoo reverse proxy configuration
+    Server {
+        #[command(subcommand)]
+        command: server::Command,
+    },
     Nslookup(genmeta_nslookup::Options),
     Proxy(genmeta_proxy::Options),
     Version {},
@@ -39,6 +45,9 @@ enum PackageCommand {
         /// Project directory or build manifest
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// Sign already-built artifacts without running the source build
+        #[arg(long)]
+        no_build: bool,
         /// Signed output file (defaults to the built manifest's dist directory)
         #[arg(short, long, value_name = "FILE.webc")]
         output: Option<PathBuf>,
@@ -59,6 +68,9 @@ enum PackageCommand {
     Install {
         /// Package short name or canonical publisher/name
         target: String,
+        /// Install this local signed WEBC instead of downloading from the store
+        #[arg(long, conflicts_with = "version")]
+        file: Option<PathBuf>,
         /// Local identity hosting the packages (defaults to the configured identity)
         #[arg(short, long)]
         id: Option<String>,
@@ -94,11 +106,22 @@ enum PackageCommand {
     },
     /// List installed packages (both types by default)
     List {
+        /// Query packages currently loaded by Pishoo
+        #[arg(long)]
+        loaded: bool,
         /// Local identity hosting the packages (defaults to the configured identity)
         #[arg(short, long)]
         id: Option<String>,
         #[arg(long = "type", value_name = "TYPE", value_parser = ["app", "lib"])]
         kind: Option<String>,
+    },
+    /// Validate a local signed WEBC through the selected Pishoo service
+    Check {
+        file: PathBuf,
+        #[arg(short, long)]
+        id: Option<String>,
+        #[arg(long = "type", value_parser = ["app", "lib"], required = true)]
+        kind: String,
     },
     /// Show an installed package, including its exact dependencies
     Info {
@@ -156,14 +179,27 @@ async fn run(options: Options) -> Result<(), Error> {
         Options::Doctor { options } => genmeta_doctor::run(options).await?,
         Options::Identity(options) => genmeta_identity::run(options).await?,
         Options::Package { command } => match command {
-            PackageCommand::Build { path, output, id } => pack::run(path, output, id).await?,
+            PackageCommand::Build {
+                path,
+                output,
+                id,
+                no_build,
+            } => pack::run(path, output, id, no_build).await?,
             PackageCommand::Publish { file, id } => upload::run(file, id).await?,
             PackageCommand::Install {
                 target,
+                file,
                 id,
                 version,
                 kind,
-            } => install::run("install", Some(target), id, version, Some(kind)).await?,
+            } => {
+                if let Some(file) = file {
+                    let value = install::local_package(Some(&target), &file, id, &kind).await?;
+                    println!("{}", value);
+                } else {
+                    install::run("install", Some(target), id, version, Some(kind)).await?;
+                }
+            }
             PackageCommand::Update {
                 target,
                 id,
@@ -176,8 +212,14 @@ async fn run(options: Options) -> Result<(), Error> {
             PackageCommand::Info { target, id, kind } => {
                 install::run("info", Some(target), id, None, Some(kind)).await?
             }
-            PackageCommand::List { id, kind } => install::run("list", None, id, None, kind).await?,
+            PackageCommand::List { id, kind, loaded } => {
+                install::run(if loaded { "loaded" } else { "list" }, None, id, None, kind).await?
+            }
+            PackageCommand::Check { file, id, kind } => {
+                println!("{}", install::local_package(None, &file, id, &kind).await?);
+            }
         },
+        Options::Server { command } => server::run(command).await?,
         Options::Nslookup(options) => genmeta_nslookup::run(options).await?,
         Options::Proxy(options) => genmeta_proxy::run(options).await?,
         Options::Version {} => println!("{}", env!("CARGO_PKG_VERSION")),
@@ -301,7 +343,7 @@ mod tests {
     fn launcher_accepts_pack_defaults_and_explicit_paths() {
         let options = Options::try_parse_from(["genmeta", "package", "build"]).unwrap();
         assert!(
-            matches!(options, Options::Package { command: PackageCommand::Build { path, output: None, id: None } } if path == std::path::Path::new("."))
+            matches!(options, Options::Package { command: PackageCommand::Build { path, output: None, id: None, no_build: false } } if path == std::path::Path::new("."))
         );
         let options = Options::try_parse_from([
             "genmeta",
@@ -315,7 +357,7 @@ mod tests {
         ])
         .unwrap();
         assert!(
-            matches!(options, Options::Package { command: PackageCommand::Build { path, output: Some(output), id: Some(id) } }
+            matches!(options, Options::Package { command: PackageCommand::Build { path, output: Some(output), id: Some(id), no_build: false } }
             if path == std::path::Path::new("project with spaces/wasmer.toml")
                 && output == std::path::Path::new("out file.webc") && id == "dev.dhttp.net")
         );

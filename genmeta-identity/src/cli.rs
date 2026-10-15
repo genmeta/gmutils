@@ -365,6 +365,13 @@ pub enum Options {
     Ensite(SiteCommand),
     #[command(about = "Disable an identity server configuration")]
     Dissite(SiteCommand),
+    /// Show or change the local server listening scope
+    Listen {
+        #[arg(long)]
+        id: String,
+        #[arg(value_parser = ["off", "internal", "external", "both", "0", "1", "2", "3"])]
+        scope: Option<String>,
+    },
     Info(Info),
     List(List),
     Version {},
@@ -374,7 +381,12 @@ impl Options {
     pub fn writes_home(&self) -> bool {
         matches!(
             self,
-            Self::Apply(_) | Self::Renew(_) | Self::Default(_) | Self::Ensite(_) | Self::Dissite(_)
+            Self::Apply(_)
+                | Self::Renew(_)
+                | Self::Default(_)
+                | Self::Ensite(_)
+                | Self::Dissite(_)
+                | Self::Listen { scope: Some(_), .. }
         )
     }
 
@@ -392,6 +404,9 @@ impl Options {
             }
             Options::Ensite(cmd) => flow::run_ensite(cmd, dhttp_home).await,
             Options::Dissite(cmd) => flow::run_dissite(cmd, dhttp_home).await,
+            Options::Listen { id, scope } => {
+                flow::site::run_listen(id, scope.as_deref(), dhttp_home).await
+            }
             Options::Info(cmd) => flow::run_info(cmd, dhttp_home, cert_server).await,
             Options::List(cmd) => flow::run_list(cmd, dhttp_home, cert_server).await,
             Options::Version {} => {

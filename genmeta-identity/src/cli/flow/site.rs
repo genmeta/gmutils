@@ -42,7 +42,7 @@ pub enum Error {
     },
     #[snafu(display("Pishoo configuration is not a regular file: {}", path.display()))]
     NotRegularFile { path: PathBuf },
-    #[snafu(display("Pishoo configuration is missing at {}; start Pishoo to initialize it", path.display()))]
+    #[snafu(display("Pishoo configuration is missing at {}; use `genmeta identity ensite --id NAME` to create it", path.display()))]
     MissingConfiguration { path: PathBuf },
     #[snafu(display("failed to access Pishoo configuration database {}", path.display()))]
     Database {
@@ -128,10 +128,13 @@ impl ServerConfig {
                 .await
                 .context(error::DatabaseSnafu { path: &self.path })?;
             let listen = self.listen(&tx).await?;
+            let enabled = configured_enabled(&tx, &self.path)
+                .await?
+                .unwrap_or(listen != 0);
             tx.commit()
                 .await
                 .context(error::DatabaseSnafu { path: &self.path })?;
-            Ok(if listen == 0 {
+            Ok(if !enabled {
                 ServerConfigState::Disabled
             } else {
                 ServerConfigState::Enabled
@@ -152,17 +155,24 @@ impl ServerConfig {
                 .await
                 .context(error::DatabaseSnafu { path: &self.path })?;
             let listen = self.listen(&tx).await?;
-            // Preserve an enabled identity's chosen internal/external/both scope.
-            let target = if enabled {
-                if listen == 0 { 3 } else { listen }
+            let saved_enabled = configured_enabled(&tx, &self.path).await?;
+            // Explicit enable restores listening when off; disable retains the chosen scope.
+            let target = if enabled && listen == 0 { 3 } else { listen };
+            let changed = saved_enabled.unwrap_or(listen != 0) != enabled || listen != target;
+            if saved_enabled.is_some() {
+                tx.execute_raw(Statement::from_sql_and_values(
+                    DatabaseBackend::Sqlite,
+                    "UPDATE settings SET enabled = ?, listen = ?",
+                    [i64::from(enabled).into(), target.into()],
+                ))
+                .await
+                .context(error::DatabaseSnafu { path: &self.path })?;
             } else {
-                0
-            };
-            if listen != target {
+                // Keep compatibility with legacy v1 until Pishoo performs its migration.
                 tx.execute_raw(Statement::from_sql_and_values(
                     DatabaseBackend::Sqlite,
                     "UPDATE settings SET listen = ?",
-                    [target.into()],
+                    [if enabled { target } else { 0 }.into()],
                 ))
                 .await
                 .context(error::DatabaseSnafu { path: &self.path })?;
@@ -170,10 +180,10 @@ impl ServerConfig {
             tx.commit()
                 .await
                 .context(error::DatabaseSnafu { path: &self.path })?;
-            Ok(if listen == target {
-                ConfigChange::Unchanged
-            } else {
+            Ok(if changed {
                 ConfigChange::Changed
+            } else {
+                ConfigChange::Unchanged
             })
         }
         .await;
@@ -184,6 +194,9 @@ impl ServerConfig {
     }
 
     pub(crate) async fn enable(&self) -> Result<ConfigChange, Error> {
+        if !regular_file_exists(&self.path).await? {
+            self.create_disabled().await?;
+        }
         self.set_enabled(true).await
     }
     pub(crate) async fn disable(&self) -> Result<ConfigChange, Error> {
@@ -211,8 +224,8 @@ impl ServerConfig {
             let result = async {
                 let tx = db.begin().await.context(error::DatabaseSnafu { path: &self.path })?;
                 for sql in [
-                    "CREATE TABLE settings (listen INTEGER NOT NULL CHECK(typeof(listen) = 'integer' AND listen BETWEEN 0 AND 3))",
-                    "INSERT INTO settings(listen) VALUES(0)",
+                    "CREATE TABLE settings (listen INTEGER NOT NULL CHECK(typeof(listen) = 'integer' AND listen BETWEEN 0 AND 3), enabled INTEGER NOT NULL CHECK(typeof(enabled) = 'integer' AND enabled IN (0, 1)))",
+                    "INSERT INTO settings(listen, enabled) VALUES(3, 0)",
                     "CREATE TABLE proxy_locations(location TEXT NOT NULL PRIMARY KEY, proxy_pass TEXT NOT NULL)",
                     "PRAGMA user_version = 1",
                 ] {
@@ -233,6 +246,40 @@ impl ServerConfig {
     }
 }
 
+// A missing column denotes legacy v1; invalid current values must never enable a server.
+async fn configured_enabled(db: &impl ConnectionTrait, path: &Path) -> Result<Option<bool>, Error> {
+    let columns = db
+        .query_all_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "PRAGMA table_info(settings)",
+        ))
+        .await
+        .context(error::DatabaseSnafu { path })?;
+    if !columns
+        .iter()
+        .any(|column| column.try_get::<String>("", "name").ok().as_deref() == Some("enabled"))
+    {
+        return Ok(None);
+    }
+    let rows = db
+        .query_all_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT enabled, typeof(enabled) AS kind FROM settings",
+        ))
+        .await
+        .context(error::DatabaseSnafu { path })?;
+    if rows.len() == 1
+        && rows[0].try_get::<String>("", "kind").ok().as_deref() == Some("integer")
+        && let Ok(value @ (0 | 1)) = rows[0].try_get::<i64>("", "enabled")
+    {
+        return Ok(Some(value == 1));
+    }
+    Err(Error::InvalidConfiguration {
+        path: path.to_owned(),
+        message: "enabled must be one integer in 0..=1".into(),
+    })
+}
+
 async fn regular_file_exists(path: &Path) -> Result<bool, Error> {
     match fs::symlink_metadata(path).await {
         Ok(metadata) if metadata.file_type().is_file() => Ok(true),
@@ -247,11 +294,11 @@ async fn regular_file_exists(path: &Path) -> Result<bool, Error> {
     }
 }
 
-pub(crate) const SERVICE_HINT: &str = "A running Pishoo process serving this DHTTP home applies the change automatically; no restart is needed. If Pishoo is not running, start it with `pishoo start` for an installed service, or run `pishoo` in the foreground.";
+pub(crate) const SERVICE_HINT: &str = "Configuration saved. Run `pishoo reload` to re-read configured identities, or `pishoo reload --pid PID` for a foreground process. Manage the installed service with systemctl or brew services.";
 
 pub(crate) fn print_enable_result(identity: &str, change: ConfigChange) {
     let message = match change {
-        ConfigChange::Changed => format!("Server enabled for {identity} (listen: both)."),
+        ConfigChange::Changed => format!("Server enabled for {identity}."),
         ConfigChange::Unchanged => format!("Server is already enabled for {identity}."),
     };
     super::transcript::print_line(message);
@@ -260,7 +307,7 @@ pub(crate) fn print_enable_result(identity: &str, change: ConfigChange) {
 
 fn print_disable_result(identity: &str, change: ConfigChange) {
     let message = match change {
-        ConfigChange::Changed => format!("Server disabled for {identity} (listen: off)."),
+        ConfigChange::Changed => format!("Server disabled for {identity}."),
         ConfigChange::Unchanged => format!("Server is already disabled for {identity}."),
     };
     super::transcript::print_line(message);
@@ -290,6 +337,67 @@ pub(crate) async fn run_dissite(
         .await?;
     let change = ServerConfig::for_profile(&profile).disable().await?;
     print_disable_result(identity.as_partial(), change);
+    Ok(())
+}
+
+/// Local configuration remains usable when HTTP listening is off.
+pub(crate) async fn run_listen(
+    id: &str,
+    scope: Option<&str>,
+    home: &DhttpHome,
+) -> Result<(), crate::cli::Error> {
+    let identity = super::target::IdentityTarget::parse(id)?.into_dhttp_name();
+    let profile = home
+        .resolve_identity_profile_exactly(identity.as_full())
+        .await?;
+    let config = ServerConfig::for_profile(&profile);
+    let db = config.open().await?;
+    let result = async {
+        let tx = db
+            .begin()
+            .await
+            .context(error::DatabaseSnafu { path: &config.path })?;
+        let listen = config.listen(&tx).await?;
+        let enabled = configured_enabled(&tx, &config.path).await?;
+        let target = match scope {
+            None => listen,
+            Some("off" | "0") => 0,
+            Some("internal" | "1") => 1,
+            Some("external" | "2") => 2,
+            Some("both" | "3") => 3,
+            Some(_) => {
+                return Err(Error::InvalidConfiguration {
+                    path: config.path.clone(),
+                    message: "invalid listening scope".into(),
+                });
+            }
+        };
+        if scope.is_some() {
+            tx.execute_raw(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "UPDATE settings SET listen=?",
+                [target.into()],
+            ))
+            .await
+            .context(error::DatabaseSnafu { path: &config.path })?;
+        }
+        tx.commit()
+            .await
+            .context(error::DatabaseSnafu { path: &config.path })?;
+        println!(
+            "{}",
+            serde_json::json!({"enabled":enabled.unwrap_or(target != 0),"listen":target})
+        );
+        Ok::<_, Error>(())
+    }
+    .await;
+    db.close()
+        .await
+        .context(error::DatabaseSnafu { path: &config.path })?;
+    result?;
+    if scope.is_some() {
+        super::transcript::print_line(SERVICE_HINT);
+    }
     Ok(())
 }
 
@@ -338,7 +446,7 @@ mod tests {
         }
         assert_eq!(config.disable().await.unwrap(), ConfigChange::Changed);
         assert_eq!(config.disable().await.unwrap(), ConfigChange::Unchanged);
-        assert_eq!(config.listen(&db).await.unwrap(), 0);
+        assert_eq!(config.listen(&db).await.unwrap(), 3);
         let row = db
             .query_one_raw(Statement::from_string(
                 DatabaseBackend::Sqlite,
@@ -368,7 +476,7 @@ mod tests {
             config.disable().await,
             Err(Error::InvalidConfiguration { .. })
         ));
-        db.execute_unprepared("PRAGMA user_version=1; INSERT INTO settings VALUES(0)")
+        db.execute_unprepared("PRAGMA user_version=1; INSERT INTO settings VALUES(3, 0)")
             .await
             .unwrap();
         assert!(matches!(
@@ -379,10 +487,67 @@ mod tests {
         fs::remove_file(profile.config_db_path()).await.unwrap();
         assert_eq!(config.state().await.unwrap(), ServerConfigState::Missing);
         assert!(matches!(
-            config.enable().await,
+            config.disable().await,
             Err(Error::MissingConfiguration { .. })
         ));
         assert!(!profile.config_db_path().exists());
+        assert_eq!(config.enable().await.unwrap(), ConfigChange::Changed);
+        assert_eq!(config.state().await.unwrap(), ServerConfigState::Enabled);
+    }
+
+    #[tokio::test]
+    async fn enabled_flag_controls_state_and_disable_preserves_scope() {
+        let (_root, _profile, config) = fixture().await;
+        let db = config.open().await.unwrap();
+        db.execute_unprepared("UPDATE settings SET listen=1, enabled=0")
+            .await
+            .unwrap();
+        assert_eq!(config.state().await.unwrap(), ServerConfigState::Disabled);
+        assert_eq!(config.enable().await.unwrap(), ConfigChange::Changed);
+        assert_eq!(config.listen(&db).await.unwrap(), 1);
+        assert_eq!(config.disable().await.unwrap(), ConfigChange::Changed);
+        assert_eq!(config.state().await.unwrap(), ServerConfigState::Disabled);
+        assert_eq!(config.listen(&db).await.unwrap(), 1);
+        db.execute_unprepared("UPDATE settings SET listen=0, enabled=1")
+            .await
+            .unwrap();
+        assert_eq!(config.enable().await.unwrap(), ConfigChange::Changed);
+        assert_eq!(config.listen(&db).await.unwrap(), 3);
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn local_listen_updates_database_without_enabling_or_needing_http() {
+        let (root, profile, config) = fixture().await;
+        let home = DhttpHome::new(root.path().to_path_buf());
+        run_listen("alice.smith", Some("internal"), &home)
+            .await
+            .unwrap();
+        let db = config.open().await.unwrap();
+        assert_eq!(config.listen(&db).await.unwrap(), 1);
+        assert_eq!(config.state().await.unwrap(), ServerConfigState::Disabled);
+        run_listen("alice.smith", Some("off"), &home).await.unwrap();
+        assert_eq!(config.listen(&db).await.unwrap(), 0);
+        assert!(!profile.ssl_dir().exists());
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn legacy_v1_still_uses_listen_without_schema_changes() {
+        let (_root, _profile, config) = fixture().await;
+        let db = config.open().await.unwrap();
+        db.execute_unprepared(
+            "ALTER TABLE settings DROP COLUMN enabled; UPDATE settings SET listen=0",
+        )
+        .await
+        .unwrap();
+        assert_eq!(config.state().await.unwrap(), ServerConfigState::Disabled);
+        assert_eq!(config.enable().await.unwrap(), ConfigChange::Changed);
+        assert_eq!(config.listen(&db).await.unwrap(), 3);
+        assert_eq!(config.disable().await.unwrap(), ConfigChange::Changed);
+        assert_eq!(config.listen(&db).await.unwrap(), 0);
+        assert_eq!(configured_enabled(&db, &config.path).await.unwrap(), None);
+        db.close().await.unwrap();
     }
 
     #[tokio::test]

@@ -131,16 +131,16 @@ for command groups. `--version` and `-V` are available for the launcher and
 these groups; the `version` subcommand is also supported.
 
 `genmeta identity ensite --id NAME` and `dissite --id NAME` update Pishoo's
-`db/config.db` for the selected user or global home. `ensite` changes disabled
-listening to `both` (3) and preserves an already enabled scope; `dissite` sets
-it to `off` (0). Proxy rules are preserved. A running Pishoo process serving
-that home automatically discovers identities and applies listening changes;
-no restart is needed. If it is not running, use `pishoo start` for an installed
-service, or run `pishoo` in a separate terminal for a foreground process.
-New identity onboarding creates a configuration with listening disabled and
-`file/welcome/index.html`, served at `/std/file/welcome/index.html` once enabled.
-Interactive application offers to enable the server (default: yes); noninteractive
-application leaves it disabled. See [Identity to Workspace and contacts](docs/identity-workspace-contacts.md)
+`db/config.db` for the selected user or global home. `ensite` explicitly creates
+missing configuration and enables the server; `dissite` sets `enabled=false`
+while preserving its listening scope and proxy rules. Legacy v1 configurations
+without `enabled` still use listen=0 to disable hosting. A running Pishoo process
+serving that home automatically discovers configured identities and applies changes.
+Interactive identity application creates configuration and a welcome page only
+when the user accepts server activation. Declining, or noninteractive application,
+creates neither. Existing server configuration is preserved. Pishoo skips identities
+without config.db; credentials alone do not enable hosting.
+See [Identity to Workspace and contacts](docs/identity-workspace-contacts.md)
 for the complete command sequence, readiness checks, and contact approval flow.
 
 Access and curl log warnings and errors by default, suppressing background
@@ -151,9 +151,9 @@ request/response output are independent of this log filter.
 ## Build and sign a package
 
 `genmeta package build PATH` executes the local manifest's `[build]` recipe and
-then signs and validates its output through the installed `pishoo-pack` tool.
+then signs its output and validates it through the publisher identity’s Pishoo API.
 See [Package management](#package-management) for the recipe and all commands.
-For existing artifacts, `pishoo-pack PATH -o FILE.webc` retains the packaging-only
+For existing artifacts, `genmeta package build --no-build PATH -o FILE.webc` retains the packaging-only
 workflow. The signer uses the current account's `~/.dhttp`; `--id` checks the
 publisher and does not rewrite the manifest.
 
@@ -257,7 +257,7 @@ The CLI checks these conditions before using the existing store installation API
 the preflight is not an atomic compare-and-swap with concurrent administrators.
 Exact dependency/publisher checks and per-package transactions remain on the host.
 
-`build` requires an installed `pishoo-pack` supporting `--build`, plus a recipe in
+`build` uses the local signer and a running Pishoo validation API, plus a recipe in
 the local `wasmer.toml`:
 
 ```toml
@@ -271,9 +271,34 @@ The command runs in the source directory on every invocation. The optional
 build prevents signing. Recipe arguments are passed directly; no shell string is
 constructed. Build logs go to stderr; the final signed-package result is JSON on
 stdout. `--id` checks the generated publisher rather than rewriting it.
-For already-built artifacts use `pishoo-pack PATH -o FILE.webc` directly.
+For already-built artifacts use `genmeta package build --no-build PATH -o FILE.webc` directly.
 `publish` does not rebuild or change the signed package.
 
 The new removal command requires the Pishoo detail API's `Package-Id` response
 header and sends `Expected-Package-Id` to prevent deleting a replacement publisher
 under the same short name. Update Pishoo first if this capability is missing.
+
+## Pishoo management
+
+Pishoo provides the host APIs and `pishoo reload`; management lives in gmutils:
+
+```sh
+genmeta identity ensite --id alice.smith
+genmeta identity dissite --id alice.smith
+genmeta identity listen --id alice.smith internal
+pishoo reload
+genmeta server proxy --id alice.smith /api 127.0.0.1:8080
+genmeta server proxy --id alice.smith remove /api
+genmeta package check ./example.webc --type lib --id alice.smith
+genmeta package install example --file ./example.webc --type lib --id alice.smith
+genmeta package list --loaded --id alice.smith
+```
+
+Identity settings are edited locally, including when listening is disabled.
+Proxy changes and package operations call the running host and retain its authorization,
+validation, dependency and atomic-install rules. Local package files require exact
+dependencies to be installed first; store installation resolves dependencies as before.
+`genmeta package build` now builds and signs directly; `--no-build` packages existing
+artifacts. Validation calls the signing identity's running Pishoo API. No Pishoo
+CLI or pishoo-pack executable is needed. Service start/stop/restart/status belong
+to systemctl or brew services; gmutils does not wrap them.

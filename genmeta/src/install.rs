@@ -486,6 +486,7 @@ async fn catalog(
     kind: &str,
     target: Option<&str>,
     require_removal_support: bool,
+    loaded: bool,
 ) -> Result<Option<Value>, Whatever> {
     let collection = if kind == "app" { "apps" } else { "libs" };
     let path = match target {
@@ -493,6 +494,7 @@ async fn catalog(
             "/std/sys/package/{collection}/{}",
             target.rsplit('/').next().unwrap()
         ),
+        None if loaded => format!("/std/sys/package/loaded-{collection}"),
         None => format!("/std/sys/package/{collection}"),
     };
     tokio::time::timeout(RESOLUTION_TIMEOUT, async {
@@ -660,15 +662,22 @@ pub(super) async fn run(
         dhttp_home::certificate::extract_dhttp_subject_key_identifier(authority.certificates())
             .whatever_context("Local credentials have no valid owner hash")?;
     let owner = ski.owner_hash().clone();
-    if operation == "list" {
+    if matches!(operation, "list" | "loaded") {
         let mut packages = Vec::new();
         for selected in ["app", "lib"] {
             if kind.as_deref().is_some_and(|kind| kind != selected) {
                 continue;
             }
-            let value = catalog(&endpoint, &owner, selected, None, false)
-                .await?
-                .unwrap();
+            let value = catalog(
+                &endpoint,
+                &owner,
+                selected,
+                None,
+                false,
+                operation == "loaded",
+            )
+            .await?
+            .unwrap();
             packages.extend(value.as_array().unwrap().iter().cloned());
         }
         println!(
@@ -679,7 +688,15 @@ pub(super) async fn run(
     }
     let target = target.as_deref().unwrap();
     let kind = kind.as_deref().unwrap();
-    let current = catalog(&endpoint, &owner, kind, Some(target), operation == "remove").await?;
+    let current = catalog(
+        &endpoint,
+        &owner,
+        kind,
+        Some(target),
+        operation == "remove",
+        false,
+    )
+    .await?;
     if matches!(operation, "info" | "remove") {
         let Some(current) = current else {
             whatever!("Package {target} ({kind}) is not installed")
@@ -738,6 +755,154 @@ pub(super) async fn run(
         serde_json::to_string(&output).whatever_context("Failed to encode success output")?
     );
     Ok(())
+}
+
+// These commands use the host's existing authorization and validation boundaries.
+pub(super) async fn host_request(
+    id: Option<String>,
+    method: http::Method,
+    path: &str,
+    body: Vec<u8>,
+    content_type: &'static str,
+) -> Result<Value, Whatever> {
+    let home = DhttpHome::load(HomeScope::User).whatever_context("Cannot load identity home")?;
+    let profile = identity(&home, id).await?;
+    init_network().await?;
+    let endpoint = dhttp::Endpoint::load_from_with_ocsp(profile.path())
+        .await
+        .whatever_context("Cannot load selected identity credentials")?;
+    let authority = endpoint
+        .local_authority()
+        .whatever_context("Cannot read identity")?;
+    let ski =
+        dhttp_home::certificate::extract_dhttp_subject_key_identifier(authority.certificates())
+            .whatever_context("Cannot read identity owner")?;
+    let owner = ski.owner_hash().clone();
+    host_exchange(&endpoint, &owner, method, path, body, content_type).await
+}
+
+async fn host_exchange(
+    endpoint: &dhttp::Endpoint,
+    owner: &OwnerHash,
+    method: http::Method,
+    path: &str,
+    body: Vec<u8>,
+    content_type: &'static str,
+) -> Result<Value, Whatever> {
+    tokio::time::timeout(INSTALL_TIMEOUT, async {
+        let request = http::Request::builder()
+            .method(method)
+            .uri(uri(endpoint.name(), path)?)
+            .header(header::CONTENT_TYPE, content_type)
+            .header(header::ACCEPT, "application/json")
+            .body(dhttp::WndBuf::new(64 * 1024))
+            .whatever_context("Invalid host request")?;
+        let (mut writer, response) = endpoint
+            .from_request(request)
+            .expect_remote_owner_hash(owner.clone())
+            .await
+            .whatever_context(format!(
+                "Cannot connect to selected Pishoo service. {SERVICE}"
+            ))?;
+        let upload = async {
+            writer.write_all(&body).await.map_err(dhttp::Error::from)?;
+            writer.shutdown().await.map_err(dhttp::Error::from)
+        };
+        let (_, response) = tokio::try_join!(upload, response).whatever_context(
+            "Request failed; a write outcome may be unknown. Inspect the service before retrying",
+        )?;
+        verify_remote(&response, endpoint.name(), &owner)?;
+        let status = response.status();
+        let bytes = read_body(response).await?;
+        ensure_whatever!(
+            matches!(
+                status,
+                StatusCode::OK | StatusCode::CREATED | StatusCode::NO_CONTENT
+            ),
+            "Pishoo returned HTTP {status}: {}",
+            String::from_utf8_lossy(&bytes)
+        );
+        if bytes.is_empty() {
+            Ok(Value::Null)
+        } else {
+            serde_json::from_slice(&bytes).whatever_context("Invalid Pishoo JSON response")
+        }
+    })
+    .await
+    .whatever_context(
+        "Request timed out; a write may still complete. Inspect the service before retrying",
+    )?
+}
+
+pub(super) async fn local_package(
+    target: Option<&str>,
+    file: &std::path::Path,
+    id: Option<String>,
+    kind: &str,
+) -> Result<Value, Whatever> {
+    use std::io::Read;
+    ensure_whatever!(matches!(kind, "app" | "lib"), "Type must be app or lib");
+    if let Some(target) = target {
+        validate_input(target, None, kind)?;
+    }
+    let input = std::fs::File::open(file).whatever_context("Cannot open WEBC file")?;
+    ensure_whatever!(
+        input
+            .metadata()
+            .whatever_context("Cannot inspect WEBC file")?
+            .is_file(),
+        "WEBC input must be a regular file"
+    );
+    let mut bytes = Vec::new();
+    input
+        .take(64 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .whatever_context("Cannot read WEBC file")?;
+    ensure_whatever!(
+        !bytes.is_empty() && bytes.len() <= 64 * 1024 * 1024,
+        "WEBC must contain 1..64 MiB"
+    );
+    // The signed manifest supplies the full identity; the host verifies its signature.
+    let path = if let Some(target) = target {
+        let package =
+            webc::Container::from_bytes_and_version(bytes.clone().into(), webc::Version::V3)
+                .whatever_context("Cannot parse WEBC")?;
+        let Some(metadata) = package
+            .manifest()
+            .wapm()
+            .whatever_context("Cannot read WEBC identity")?
+        else {
+            whatever!("Missing WEBC identity");
+        };
+        let package_id = metadata.name.as_deref().unwrap_or("");
+        ensure_whatever!(
+            if target.contains('/') {
+                target == package_id
+            } else {
+                package_id.rsplit('/').next() == Some(target)
+            },
+            "File package identity does not match TARGET"
+        );
+        format!(
+            "/std/sys/package/{}s/{}",
+            kind,
+            target.rsplit('/').next().unwrap()
+        )
+    } else {
+        format!("/std/sys/package/{kind}-check")
+    };
+    host_request(
+        id,
+        if target.is_some() {
+            http::Method::PUT
+        } else {
+            http::Method::POST
+        },
+        &path,
+        bytes,
+        "application/octet-stream",
+    )
+    .await
 }
 
 #[cfg(test)]

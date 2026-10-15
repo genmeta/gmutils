@@ -1,8 +1,6 @@
 //! Single-package publication. Pishoo remains the only package/signature validator.
 use std::{
-    io::Write,
     path::{Path, PathBuf},
-    process::Stdio,
     time::Duration,
 };
 
@@ -22,7 +20,6 @@ const PACKAGE_LIMIT: usize = 64 * 1024 * 1024;
 const JSON_LIMIT: usize = 1024 * 1024;
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(180);
 const METADATA_TIMEOUT: Duration = Duration::from_secs(30);
-const CHECK_TIMEOUT: Duration = Duration::from_secs(180);
 
 pub(super) async fn run(file: PathBuf, id: Option<String>) -> Result<(), Whatever> {
     let bytes = read_snapshot(&file).await?;
@@ -192,23 +189,16 @@ fn manifest_identity(bytes: &[u8]) -> Result<Value, Whatever> {
     whatever!("missing WEBC manifest");
 }
 
-fn check_tool() -> Result<PathBuf, Whatever> {
-    let executable =
-        std::env::current_exe().whatever_context("cannot locate genmeta executable")?;
-    let sibling = executable.with_file_name(if cfg!(windows) {
-        "pishoo.exe"
-    } else {
-        "pishoo"
-    });
-    if sibling.is_file() {
-        return Ok(sibling);
-    }
-    Ok(PathBuf::from("pishoo"))
-}
-
 async fn checked_package(bytes: &[u8]) -> Result<Value, Whatever> {
     let identity = manifest_identity(bytes)?;
-    let metadata = check_with_tool(bytes, text(&identity, "kind")?, &check_tool()?).await?;
+    let metadata = crate::install::host_request(
+        Some(text(&identity, "publisher")?.to_string()),
+        http::Method::POST,
+        &format!("/std/sys/package/{}-check", text(&identity, "kind")?),
+        bytes.to_vec(),
+        "application/octet-stream",
+    )
+    .await?;
     for key in ["id", "publisher", "name", "version", "kind"] {
         if metadata[key] != identity[key] {
             whatever!("Pishoo check result disagrees with manifest {key}");
@@ -224,58 +214,6 @@ async fn checked_package(bytes: &[u8]) -> Result<Value, Whatever> {
     // Also enforce safe path segments even when an obsolete check tool is installed.
     version_path(&metadata)?;
     Ok(metadata)
-}
-
-async fn check_with_tool(bytes: &[u8], kind: &str, tool: &Path) -> Result<Value, Whatever> {
-    let mut stage = tempfile::Builder::new()
-        .prefix("genmeta-upload-")
-        .suffix(".webc")
-        .tempfile()
-        .whatever_context("cannot create private package check file")?;
-    stage
-        .write_all(bytes)
-        .whatever_context("cannot stage package for Pishoo check")?;
-    stage
-        .flush()
-        .whatever_context("cannot flush package check file")?;
-    let mut child = tokio::process::Command::new(tool)
-        .args([kind, "check"])
-        .arg(stage.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .whatever_context("cannot start pishoo check; install Pishoo with app/lib check support")?;
-    let stdout = child
-        .stdout
-        .take()
-        .whatever_context("missing Pishoo check stdout")?;
-    let stderr = child
-        .stderr
-        .take()
-        .whatever_context("missing Pishoo check stderr")?;
-    let (status, stdout, stderr) = tokio::time::timeout(CHECK_TIMEOUT, async {
-        tokio::try_join!(
-            async {
-                child
-                    .wait()
-                    .await
-                    .whatever_context("failed to wait for Pishoo check")
-            },
-            bounded_read(stdout, JSON_LIMIT, "Pishoo check JSON"),
-            bounded_read(stderr, JSON_LIMIT, "Pishoo check diagnostics"),
-        )
-    })
-    .await
-    .whatever_context("Pishoo package check timed out")??;
-    if !status.success() {
-        whatever!(
-            "Pishoo {kind} check failed: {}",
-            String::from_utf8_lossy(&stderr).trim()
-        );
-    }
-    serde_json::from_slice(&stdout).whatever_context("Pishoo check returned invalid JSON")
 }
 
 fn digest(bytes: &[u8]) -> String {

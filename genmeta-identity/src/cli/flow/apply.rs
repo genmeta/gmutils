@@ -563,15 +563,29 @@ async fn offer_server_activation(
         super::site::ServerConfigState::Enabled => {
             super::transcript::print_line("Server is already enabled for this name.");
         }
-        super::site::ServerConfigState::Disabled if !interactive => {
+        super::site::ServerConfigState::Disabled | super::site::ServerConfigState::Missing
+            if !interactive =>
+        {
             print_server_disabled_hint(target.short_name());
         }
-        super::site::ServerConfigState::Disabled => {
+        super::site::ServerConfigState::Disabled | super::site::ServerConfigState::Missing => {
             let enabled = crate::cli::prompt::prompt_enable_server()
                 .await
                 .require_interactive("`genmeta identity ensite --id IDENTITY`")
                 .map_err(|source| Error::ServerActivationPrompt { source })?;
             if enabled {
+                let welcome =
+                    super::welcome::maybe_create_welcome_service(dhttp_home, target.dhttp_name())
+                        .await;
+                match welcome {
+                    Ok(Some(_)) => super::transcript::print_block(
+                        &super::welcome::format_welcome_service_created(target.short_name()),
+                    ),
+                    Ok(None) => {}
+                    Err(error) => super::transcript::print_warning(&format!(
+                        "The identity was installed, but the sample welcome page could not be created: {error}"
+                    )),
+                }
                 let change = server.enable().await.map_err(server_error)?;
                 super::site::print_enable_result(target.short_name(), change);
                 super::transcript::print_line(format!(
@@ -583,18 +597,13 @@ async fn offer_server_activation(
                 print_server_disabled_hint(target.short_name());
             }
         }
-        super::site::ServerConfigState::Missing => {
-            super::transcript::print_warning(
-                "The identity was installed, but no server configuration was found.",
-            );
-        }
     }
     Ok(())
 }
 
 fn print_server_disabled_hint(identity: &str) {
     super::transcript::print_line(format!(
-        "Server configuration remains disabled. Enable it with `genmeta identity ensite --id {identity}`."
+        "Server is not enabled. Enable it with `genmeta identity ensite --id {identity}`."
     ));
 }
 
@@ -674,18 +683,6 @@ async fn install_and_finish(
         }
     }
 
-    let welcome =
-        super::welcome::maybe_create_welcome_service(dhttp_home, resolved.target.dhttp_name())
-            .await;
-    match welcome {
-        Ok(Some(_)) => super::transcript::print_block(
-            &super::welcome::format_welcome_service_created(resolved.target.short_name()),
-        ),
-        Ok(None) => {}
-        Err(error) => super::transcript::print_warning(&format!(
-            "The identity was installed, but the sample welcome page could not be created: {error}"
-        )),
-    }
     offer_server_activation(dhttp_home, &resolved.target, interactive).await?;
 
     super::epilogue::run_lifecycle_epilogue(dhttp_home, resolved.target.dhttp_name(), interactive)
@@ -949,6 +946,16 @@ mod tests {
     fn apply_always_requests_a_client_and_server_certificate() {
         assert_eq!(APPLY_CERTIFICATE_KIND, IdentityKind::Primary);
         assert_eq!(APPLY_CERTIFICATE_KIND.as_str(), "primary");
+    }
+
+    #[tokio::test]
+    async fn noninteractive_apply_does_not_create_server_configuration_or_welcome_page() {
+        let fixture = ServerFixture::new("client").await;
+        offer_server_activation(&fixture.home, &fixture.target, false)
+            .await
+            .unwrap();
+        assert!(!fixture.profile().config_db_path().exists());
+        assert!(!fixture.profile().join("file/welcome/index.html").exists());
     }
 
     #[tokio::test]
