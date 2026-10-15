@@ -575,7 +575,8 @@ async fn offer_server_activation(
                 let change = server.enable().await.map_err(server_error)?;
                 super::site::print_enable_result(target.short_name(), change);
                 super::transcript::print_line(format!(
-                    "After restarting Pishoo, visit `genmeta curl https://{}~/std/file/welcome/index.html`.",
+                    "Once Pishoo has loaded this identity, check it with `genmeta curl --id {} https://{}~/std/file/welcome/index.html`.",
+                    target.short_name(),
                     target.short_name()
                 ));
             } else {

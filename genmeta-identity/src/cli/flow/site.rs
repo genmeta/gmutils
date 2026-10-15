@@ -247,7 +247,7 @@ async fn regular_file_exists(path: &Path) -> Result<bool, Error> {
     }
 }
 
-pub(crate) const RESTART_HINT: &str = "Restart the Pishoo process serving this DHTTP home to apply the change; for an installed service, use `pishoo restart`.";
+pub(crate) const SERVICE_HINT: &str = "A running Pishoo process serving this DHTTP home applies the change automatically; no restart is needed. If Pishoo is not running, start it with `pishoo start` for an installed service, or run `pishoo` in the foreground.";
 
 pub(crate) fn print_enable_result(identity: &str, change: ConfigChange) {
     let message = match change {
@@ -255,7 +255,7 @@ pub(crate) fn print_enable_result(identity: &str, change: ConfigChange) {
         ConfigChange::Unchanged => format!("Server is already enabled for {identity}."),
     };
     super::transcript::print_line(message);
-    super::transcript::print_line(RESTART_HINT);
+    super::transcript::print_line(SERVICE_HINT);
 }
 
 fn print_disable_result(identity: &str, change: ConfigChange) {
@@ -264,7 +264,7 @@ fn print_disable_result(identity: &str, change: ConfigChange) {
         ConfigChange::Unchanged => format!("Server is already disabled for {identity}."),
     };
     super::transcript::print_line(message);
-    super::transcript::print_line(RESTART_HINT);
+    super::transcript::print_line(SERVICE_HINT);
 }
 
 pub(crate) async fn run_ensite(
