@@ -811,7 +811,7 @@ async fn host_exchange(
         let (_, response) = tokio::try_join!(upload, response).whatever_context(
             "Request failed; a write outcome may be unknown. Inspect the service before retrying",
         )?;
-        verify_remote(&response, endpoint.name(), &owner)?;
+        verify_remote(&response, endpoint.name(), owner)?;
         let status = response.status();
         let bytes = read_body(response).await?;
         ensure_whatever!(

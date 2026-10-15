@@ -1,86 +1,50 @@
-# Release preparation for v0.9.0-preview.2
+# Release preparation for v0.9.0-preview.3
 
-| Package | Previous published version | Prepared version |
+| Package | Published version | Prepared version |
 | --- | --- | --- |
-| `genmeta` | 0.9.0-preview.1 | 0.9.0-preview.2 |
-| `genmeta-access` | 0.5.0-preview.1 | 0.5.0-preview.2 |
-| `genmeta-curl` | 0.8.0-preview.1 | 0.8.0-preview.2 |
-| `genmeta-discover` | 0.5.0-preview.1 | 0.5.0-preview.2 |
-| `genmeta-doctor` | 0.5.0-preview.1 | 0.5.0-preview.2 |
-| `genmeta-identity` | 0.5.0-preview.1 | 0.5.0-preview.2 |
-| `genmeta-nat` | 0.6.0-preview.1 | 0.6.0-preview.2 |
-| `genmeta-nslookup` | 0.6.0-preview.1 | 0.6.0-preview.2 |
-| `genmeta-proxy` | 0.5.0-preview.1 | 0.5.0-preview.2 |
+| genmeta | 0.9.0-preview.2 | 0.9.0-preview.3 |
+| genmeta-identity | 0.5.0-preview.2 | 0.5.0-preview.3 |
+| Other workspace command crates | current preview.2 versions | unchanged |
 
-## Dependency order
+## Scope and compatibility
 
-Release prerequisites are [dhttp PR #34](https://github.com/genmeta/dhttp/pull/34)
-(dhttp-home 0.6.1, then dhttp 0.7.1) and
-[daccess PR #3](https://github.com/genmeta/daccess/pull/3) (daccess 0.1.1).
-Both releases must be available on crates.io before final registry checks.
-The manifests require these versions with Cargo's compatible-version requirements.
-Existing dyns 0.8.0, h3x 0.7.0 and QUIC versions remain in their current series;
-the TLS backend remains qrustls 0.23.45. No sibling path or Git patches are shipped.
+Require explicit server activation during identity apply, preserve enabled/listen
+semantics, and provide the management/package commands removed from Pishoo.
+Identity activation and listening edit the local config.db so disabled services
+can be restored. Proxy and package operations use authenticated host APIs.
 
-## Validation and lockfiles
+Use Pishoo v0.9.0-preview.3 for the complete opt-in lifecycle and mDNS cleanup.
+System service start/stop/restart/status remain systemctl/Homebrew operations.
+Package builds and publication validate through the publisher identity's running
+Pishoo API; genmeta no longer launches pishoo-pack or pishoo app/lib check.
 
-The required dhttp 0.7.1, dhttp-home 0.6.1 and daccess 0.1.1 releases are
-available on crates.io. The committed Cargo.lock now resolves those registry
-versions with checksums and no local overrides. Registry checks run from a
-checkout outside ancestor Cargo path patches.
+## Validation
 
-Run locked Rust CI, documentation, MSRV and crate/DEB/RPM/Homebrew dry runs
-before tagging. Merge using rebase and tag only the checked commit.
-Local integration lockfiles must never replace the registry release lockfile.
+Run nightly formatting, commitlint, strict Clippy, locked workspace tests,
+documentation, MSRV and crate/DEB/RPM/Homebrew dry runs before tagging. The registry
+lockfile uses published dependencies without sibling Cargo patches. Run Cargo
+with --manifest-path from outside ancestor local overrides while keeping sources
+in the current checkout.
+
+Regressions cover browser-only application, enabled/listen compatibility, literal
+build arguments, input-file protection, authenticated HTTP/3 upload and host errors.
+Publish genmeta-identity 0.5.0-preview.3 before genmeta 0.9.0-preview.3. The existing
+workflow skips unchanged crate versions already present on crates.io.
 
 ## Publication
 
-Planned tag: `v0.9.0-preview.2`. Release through the repository's GitHub Actions workflow.
-Use an annotated tag with the changelog entry as its release notes. Actual
-publication and production deployment remain separate from this preparation PR.
+After successful CI and rebase merge, create annotated tag v0.9.0-preview.3 at the
+checked commit. Existing workflows publish crates, Linux DEB/RPM and macOS Homebrew
+preview artifacts. Trusted Publishing remains required for existing crates; API
+tokens remain limited to first publication. Public APT verification remains enabled.
 
-Publish dhttp-home 0.6.1, dhttp 0.7.1 and daccess 0.1.1 first, then the updated
-command crates, and genmeta last. dyns 0.8.0 is already published. Command crates depend directly on these upstream libraries.
-Refresh the registry lockfile after upstream publication before running
-release checks; local integration overrides are not a release lockfile.
+Windows/Scoop release artifacts remain deferred. This preparation does not create
+a tag, publish artifacts or deploy/restart production services.
 
-## Tag-triggered artifacts
+## Preparation results (2026-10-15)
 
-Pushing `v0.9.0-preview.2` to this repository triggers release.yml for DEB, RPM and Homebrew.
-The tag must match the main package version. Packaging creates a draft GitHub
-Release, uploads artifacts, and publishes that Release after all package jobs
-succeed. Release builds keep `--locked`; refresh the registry lockfile after
-upstream publication before tagging. The existing S3, signing and tap/bucket
-credentials must be configured in repository Actions settings.
-
-Windows/Scoop publication is deferred for this release. The existing Scoop
-script, template and destinations are retained for a later release, but no
-Windows job runs when the v0.9.0-preview.2 tag is pushed.
-
-All workspace command crates use `-preview.2` prereleases. DEB/RPM and Homebrew
-publication selects the preview channel from the main package version.
-
-## History and validation
-
-The original development commits are retained as individual commits. The release
-commit updates versions and dependencies; temporary task plans and implementation
-reports are excluded from the release tree. Required registry checks and
-publication ordering above still apply.
-
-## Preparation checks (2026-10-15)
-
-- Workspace tests: 285 passed; the opt-in local HTTP/3 publish test also passed.
-- Strict all-target/all-feature Clippy and nightly formatting passed.
-- Actual package/remove help exposes the unified commands and --type option.
-
-The preparation checks above used fixed upstream PR sources. Final checks use
-published crates through the refreshed registry lockfile. Their CI results must
-pass before merging and tagging.
-
-Existing crates use Trusted Publishing because their registry policy requires
-OIDC. CARGO_REGISTRY_TOKEN is used only for a missing crate's first publication.
-
-To retry crate publication without replacing an existing release tag, dispatch
-`publish-crates.yml` from main with `release_tag=v0.9.0-preview.2`. The workflow
-checks out that exact annotated tag, validates its version and commit, and skips
-versions already present on crates.io. An empty input remains a dry run.
+- Locked workspace tests and nightly formatting passed.
+- Strict nightly Clippy passed for all targets/features with warnings denied.
+- genmeta-identity and genmeta passed cargo publish --dry-run --locked, including
+  package verification against the temporary registry. No crates were uploaded.
+- Conventional Commits checks passed locally; platform/artifact checks remain CI gates.

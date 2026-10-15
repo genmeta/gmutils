@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.9.0-preview.3] - 2026-10-15
+
+### Changed
+
+- Create server configuration during identity apply only after explicit server
+  activation. Browser-only and noninteractive applications leave config.db absent.
+- Support enabled-aware ensite/dissite and direct local listen settings; preserve
+  the saved scope when disabling and use pishoo reload to apply configuration.
+- Add reverse-proxy management, local package upload/check and loaded-package
+  queries through the existing authenticated Pishoo APIs.
+- Build and sign packages directly in genmeta; use host APIs for build/publication
+  validation instead of launching the removed Pishoo management commands.
+
+### Release versions
+
+- genmeta: 0.9.0-preview.2 → 0.9.0-preview.3.
+- genmeta-identity: 0.5.0-preview.2 → 0.5.0-preview.3.
+- Other command crates retain their published preview.2 versions.
+
+
 ## [0.9.0-preview.2] - 2026-10-15
 
 ### Added

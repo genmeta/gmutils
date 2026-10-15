@@ -6,6 +6,10 @@ use snafu::Whatever;
 mod install;
 mod pack;
 mod server;
+
+#[cfg(test)]
+#[path = "../tests/support/upload_credentials.rs"]
+mod test_credentials;
 mod upload;
 
 #[derive(Parser, Debug, Clone)]
