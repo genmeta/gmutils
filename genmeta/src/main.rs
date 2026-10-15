@@ -1,5 +1,11 @@
+use std::path::PathBuf;
+
 use clap::Parser;
 use snafu::Whatever;
+
+mod install;
+mod pack;
+mod upload;
 
 #[derive(Parser, Debug, Clone)]
 #[command(version, about)]
@@ -14,9 +20,96 @@ enum Options {
     },
     #[command(visible_alias = "id")]
     Identity(genmeta_identity::Cli),
+    /// Build, publish and manage App and Lib packages
+    #[command(version)]
+    Package {
+        #[command(subcommand)]
+        command: PackageCommand,
+    },
     Nslookup(genmeta_nslookup::Options),
     Proxy(genmeta_proxy::Options),
     Version {},
+}
+
+#[derive(clap::Subcommand, Debug, Clone)]
+enum PackageCommand {
+    /// Build a local project and create a signed WEBC package
+    #[command(version)]
+    Build {
+        /// Project directory or build manifest
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Signed output file (defaults to the built manifest's dist directory)
+        #[arg(short, long, value_name = "FILE.webc")]
+        output: Option<PathBuf>,
+        /// Check the signing identity against the built manifest publisher
+        #[arg(short, long, value_name = "PUBLISHER")]
+        id: Option<String>,
+    },
+    /// Publish a signed WEBC package to the trusted store
+    #[command(version)]
+    Publish {
+        /// Existing signed WEBC file
+        file: PathBuf,
+        #[arg(short, long, value_name = "PUBLISHER")]
+        id: Option<String>,
+    },
+    /// Install a published package and its exact dependencies
+    #[command(disable_version_flag = true)]
+    Install {
+        /// Package short name or canonical publisher/name
+        target: String,
+        /// Local identity hosting the packages (defaults to the configured identity)
+        #[arg(short, long)]
+        id: Option<String>,
+        /// Exact release version (defaults to the latest published version)
+        #[arg(long, value_name = "MAJOR.MINOR.PATCH")]
+        version: Option<String>,
+        #[arg(long = "type", value_name = "TYPE", default_value = "app", value_parser = ["app", "lib"])]
+        kind: String,
+    },
+    /// Update an installed package from its original publisher
+    #[command(disable_version_flag = true)]
+    Update {
+        /// Package short name or canonical publisher/name
+        target: String,
+        /// Local identity hosting the packages (defaults to the configured identity)
+        #[arg(short, long)]
+        id: Option<String>,
+        /// Exact release version (defaults to the latest published version)
+        #[arg(long, value_name = "MAJOR.MINOR.PATCH")]
+        version: Option<String>,
+        #[arg(long = "type", value_name = "TYPE", default_value = "app", value_parser = ["app", "lib"])]
+        kind: String,
+    },
+    /// Remove a package, retaining its data and dependencies
+    Remove {
+        /// Package short name or canonical publisher/name
+        target: String,
+        /// Local identity hosting the packages (defaults to the configured identity)
+        #[arg(short, long)]
+        id: Option<String>,
+        #[arg(long = "type", value_name = "TYPE", default_value = "app", value_parser = ["app", "lib"])]
+        kind: String,
+    },
+    /// List installed packages (both types by default)
+    List {
+        /// Local identity hosting the packages (defaults to the configured identity)
+        #[arg(short, long)]
+        id: Option<String>,
+        #[arg(long = "type", value_name = "TYPE", value_parser = ["app", "lib"])]
+        kind: Option<String>,
+    },
+    /// Show an installed package, including its exact dependencies
+    Info {
+        /// Package short name or canonical publisher/name
+        target: String,
+        /// Local identity hosting the packages (defaults to the configured identity)
+        #[arg(short, long)]
+        id: Option<String>,
+        #[arg(long = "type", value_name = "TYPE", default_value = "app", value_parser = ["app", "lib"])]
+        kind: String,
+    },
 }
 
 #[derive(snafu::Snafu, Debug)]
@@ -62,6 +155,29 @@ async fn run(options: Options) -> Result<(), Error> {
         Options::Discover(options) => genmeta_discover::run(options).await,
         Options::Doctor { options } => genmeta_doctor::run(options).await?,
         Options::Identity(options) => genmeta_identity::run(options).await?,
+        Options::Package { command } => match command {
+            PackageCommand::Build { path, output, id } => pack::run(path, output, id).await?,
+            PackageCommand::Publish { file, id } => upload::run(file, id).await?,
+            PackageCommand::Install {
+                target,
+                id,
+                version,
+                kind,
+            } => install::run("install", Some(target), id, version, Some(kind)).await?,
+            PackageCommand::Update {
+                target,
+                id,
+                version,
+                kind,
+            } => install::run("update", Some(target), id, version, Some(kind)).await?,
+            PackageCommand::Remove { target, id, kind } => {
+                install::run("remove", Some(target), id, None, Some(kind)).await?
+            }
+            PackageCommand::Info { target, id, kind } => {
+                install::run("info", Some(target), id, None, Some(kind)).await?
+            }
+            PackageCommand::List { id, kind } => install::run("list", None, id, None, kind).await?,
+        },
         Options::Nslookup(options) => genmeta_nslookup::run(options).await?,
         Options::Proxy(options) => genmeta_proxy::run(options).await?,
         Options::Version {} => println!("{}", env!("CARGO_PKG_VERSION")),
@@ -73,7 +189,7 @@ async fn run(options: Options) -> Result<(), Error> {
 mod tests {
     use clap::{CommandFactory, Parser};
 
-    use super::{Options, install_process_crypto_provider};
+    use super::{Options, PackageCommand, install_process_crypto_provider};
 
     #[test]
     fn installs_rustls_crypto_provider() {
@@ -149,6 +265,9 @@ mod tests {
             vec!["discover"],
             vec!["nslookup"],
             vec!["proxy"],
+            vec!["package"],
+            vec!["package", "publish"],
+            vec!["package", "build"],
             vec!["doctor", "net"],
         ] {
             for (flag, kind) in [
@@ -176,5 +295,32 @@ mod tests {
     fn launcher_rejects_removed_ssh_command() {
         assert!(Options::try_parse_from(["genmeta", "ssh", "alice.pilot"]).is_err());
         assert!(Options::command().find_subcommand("ssh").is_none());
+    }
+
+    #[test]
+    fn launcher_accepts_pack_defaults_and_explicit_paths() {
+        let options = Options::try_parse_from(["genmeta", "package", "build"]).unwrap();
+        assert!(
+            matches!(options, Options::Package { command: PackageCommand::Build { path, output: None, id: None } } if path == std::path::Path::new("."))
+        );
+        let options = Options::try_parse_from([
+            "genmeta",
+            "package",
+            "build",
+            "project with spaces/wasmer.toml",
+            "-o",
+            "out file.webc",
+            "-i",
+            "dev.dhttp.net",
+        ])
+        .unwrap();
+        assert!(
+            matches!(options, Options::Package { command: PackageCommand::Build { path, output: Some(output), id: Some(id) } }
+            if path == std::path::Path::new("project with spaces/wasmer.toml")
+                && output == std::path::Path::new("out file.webc") && id == "dev.dhttp.net")
+        );
+        for arg in ["--force", "--unsigned", "--kind", "--home", "--upload"] {
+            assert!(Options::try_parse_from(["genmeta", "package", "build", arg]).is_err());
+        }
     }
 }

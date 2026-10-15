@@ -29,6 +29,7 @@ Available commands:
 | `genmeta nslookup` | Resolve DDns names and discover reachable DHttp addresses. |
 | `genmeta discover` | Discover nearby DHttp endpoints over mDNS. |
 | `genmeta doctor` | Diagnose NAT and network connectivity. |
+| `genmeta package` | Build, publish, install, update, remove, list and inspect App/Lib packages. |
 
 See the [DHttp utilities documentation](https://docs.dhttp.net/en/docs/core-components/utils) for detailed usage and examples.
 
@@ -97,6 +98,32 @@ genmeta nslookup example.com system
 
 Ordinary query names retain their namespace. Names are normalized through `dhttp-home`.
 
+### Install a published package
+
+```bash
+genmeta package install workspace
+genmeta package install dev.dhttp.net/workspace --version 0.2.0 --id alice.smith
+genmeta package install dev.dhttp.net/chat --type lib
+```
+
+Installation defaults to App, the latest published version, and the configured
+default identity. Short names must resolve to a single publisher across the
+entire store catalog. Use a full `publisher/name` when a short name is ambiguous.
+The selected identity's Pishoo service must already be running and enabled.
+`DHTTP_HOME` is supported; local files, URLs, and anonymous installation are not.
+
+The CLI authenticates `store.dhttp.net`, pins an exact version, and sends one
+authenticated `POST /std/sys/package/store-install` request to Pishoo. Pishoo
+verifies and installs the package and its exact Lib dependencies. Successful output is JSON on stdout;
+progress and diagnostics go to stderr. App results include `entry_url`.
+Resolution has a 120-second deadline; installation waits up to 15 minutes.
+An interruption or timeout reports an unknown outcome and never retries the
+write automatically. Dependencies installed before a parent failure remain.
+Installation does not grant access permissions.
+
+The store must support the current WEBC manifest metadata protocol. Older App
+responses containing OpenAPI are rejected with a compatibility diagnostic.
+
 ## CLI help and identity listening
 
 Use `genmeta --help`, `genmeta identity --help`, and `genmeta doctor --help`
@@ -106,15 +133,29 @@ these groups; the `version` subcommand is also supported.
 `genmeta identity ensite --id NAME` and `dissite --id NAME` update Pishoo's
 `db/config.db` for the selected user or global home. `ensite` changes disabled
 listening to `both` (3) and preserves an already enabled scope; `dissite` sets
-it to `off` (0). Proxy rules are preserved. Restart the Pishoo process serving
-that home after saving; an installed service supports `pishoo restart`.
+it to `off` (0). Proxy rules are preserved. A running Pishoo process serving
+that home automatically discovers identities and applies listening changes;
+no restart is needed. If it is not running, use `pishoo start` for an installed
+service, or run `pishoo` in a separate terminal for a foreground process.
 New identity onboarding creates a configuration with listening disabled and
 `file/welcome/index.html`, served at `/std/file/welcome/index.html` once enabled.
+Interactive application offers to enable the server (default: yes); noninteractive
+application leaves it disabled. See [Identity to Workspace and contacts](docs/identity-workspace-contacts.md)
+for the complete command sequence, readiness checks, and contact approval flow.
 
 Access and curl log warnings and errors by default, suppressing background
 NAT warnings. Set `RUST_LOG=debug` or
 `RUST_LOG=trace` to inspect transport diagnostics. Curl progress and `--verbose`
 request/response output are independent of this log filter.
+
+## Build and sign a package
+
+`genmeta package build PATH` executes the local manifest's `[build]` recipe and
+then signs and validates its output through the installed `pishoo-pack` tool.
+See [Package management](#package-management) for the recipe and all commands.
+For existing artifacts, `pishoo-pack PATH -o FILE.webc` retains the packaging-only
+workflow. The signer uses the current account's `~/.dhttp`; `--id` checks the
+publisher and does not rewrite the manifest.
 
 ## Access policies
 
@@ -187,3 +228,52 @@ patterns are rejected until the runtime exposes interface selection. NAT and
 mDNS discovery accept interface names or local IPs as report/discovery filters.
 Missing or stale local OCSP staples are fetched, validated and cached when an
 identity is used.
+
+## Package management
+
+All seven operations live under `genmeta package`; the former top-level
+`install`, `pack`, and `upload` commands have been removed.
+
+```sh
+genmeta package build ./profile -o ./dist/profile.webc
+genmeta package publish ./dist/profile.webc
+genmeta package install std.dhttp.net/workspace --id sky.lee.dhttp.net
+genmeta package update workspace --id sky.lee.dhttp.net
+genmeta package list --id sky.lee.dhttp.net
+genmeta package info message --type lib --id sky.lee.dhttp.net
+genmeta package remove alice.smith.dhttp.net/message --type lib --id sky.lee.dhttp.net
+```
+
+`list` returns both installed types by default. Other management commands default
+to `--type app`; `--type lib` selects a backend. `info`, `list` and `remove` query
+the identity's Pishoo service, not the store. Both full package IDs and short names
+are supported; a full ID must match the installed publisher. Removal retains data
+and dependencies; the host reports dependent App/Lib IDs when removal is blocked.
+
+`install` leaves an identical installed version unchanged and directs version
+changes to `update`. `update` requires an installed package, stays with its current
+publisher, and selects the latest published version unless `--version` is given.
+The CLI checks these conditions before using the existing store installation API;
+the preflight is not an atomic compare-and-swap with concurrent administrators.
+Exact dependency/publisher checks and per-package transactions remain on the host.
+
+`build` requires an installed `pishoo-pack` supporting `--build`, plus a recipe in
+the local `wasmer.toml`:
+
+```toml
+[build]
+command = ["sh", "build.sh"]
+manifest = "dist/wasmer.toml"
+```
+
+The command runs in the source directory on every invocation. The optional
+`manifest` selects its generated package manifest within that directory. A failed
+build prevents signing. Recipe arguments are passed directly; no shell string is
+constructed. Build logs go to stderr; the final signed-package result is JSON on
+stdout. `--id` checks the generated publisher rather than rewriting it.
+For already-built artifacts use `pishoo-pack PATH -o FILE.webc` directly.
+`publish` does not rebuild or change the signed package.
+
+The new removal command requires the Pishoo detail API's `Package-Id` response
+header and sends `Expected-Package-Id` to prevent deleting a replacement publisher
+under the same short name. Update Pishoo first if this capability is missing.

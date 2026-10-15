@@ -111,6 +111,13 @@ genmeta-nat = { path = "genmeta-nat", version = "0.6.0-preview.1" }
 genmeta-nslookup = { path = "genmeta-nslookup", version = "0.6.0-preview.1" }
 genmeta-proxy = { path = "genmeta-proxy", version = "0.5.0-preview.1" }
 
+[patch.crates-io]
+daccess = { path = "../daccess" }
+qprotocol = { path = "../dquic/qprotocol" }
+qtls = { path = "../dquic/qtls" }
+qtransport = { path = "../dquic/qtransport" }
+qudp = { path = "../dquic/qudp" }
+
 [profile.release]
 opt-level = "z"
 lto = true
