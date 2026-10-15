@@ -94,29 +94,22 @@ async-compression = { version = "0.4", features = [
 ] }
 
 # workspace
-genmeta-access = { path = "genmeta-access", version = "0.5.0-preview.1" }
-dhttp = { version = "0.7.0", features = ["online-identity", "log"] }
+genmeta-access = { path = "genmeta-access", version = "0.5.0-preview.2" }
+dhttp = { version = "0.7.1", features = ["online-identity", "log"] }
 dhttp-identity = "0.3.0"
-access_control = { package = "daccess", version = "0.1.0" }
-dhttp-home = { version = "0.6.0" }
+access_control = { package = "daccess", version = "0.1.1" }
+dhttp-home = { version = "0.6.1" }
 ddns = { version = "0.8.0", package = "dyns", features = ["h3", "http", "mdns"] }
 qbase = { version = "0.7.0" }
 qprotocol = { version = "0.7.0" }
 qtls = { version = "0.1.0" }
-genmeta-curl = { path = "genmeta-curl", version = "0.8.0-preview.1" }
-genmeta-discover = { path = "genmeta-discover", version = "0.5.0-preview.1" }
-genmeta-doctor = { path = "genmeta-doctor", version = "0.5.0-preview.1" }
-genmeta-identity = { path = "genmeta-identity", version = "0.5.0-preview.1", default-features = false }
-genmeta-nat = { path = "genmeta-nat", version = "0.6.0-preview.1" }
-genmeta-nslookup = { path = "genmeta-nslookup", version = "0.6.0-preview.1" }
-genmeta-proxy = { path = "genmeta-proxy", version = "0.5.0-preview.1" }
-
-[patch.crates-io]
-daccess = { path = "../daccess" }
-qprotocol = { path = "../dquic/qprotocol" }
-qtls = { path = "../dquic/qtls" }
-qtransport = { path = "../dquic/qtransport" }
-qudp = { path = "../dquic/qudp" }
+genmeta-curl = { path = "genmeta-curl", version = "0.8.0-preview.2" }
+genmeta-discover = { path = "genmeta-discover", version = "0.5.0-preview.2" }
+genmeta-doctor = { path = "genmeta-doctor", version = "0.5.0-preview.2" }
+genmeta-identity = { path = "genmeta-identity", version = "0.5.0-preview.2", default-features = false }
+genmeta-nat = { path = "genmeta-nat", version = "0.6.0-preview.2" }
+genmeta-nslookup = { path = "genmeta-nslookup", version = "0.6.0-preview.2" }
+genmeta-proxy = { path = "genmeta-proxy", version = "0.5.0-preview.2" }
 
 [profile.release]
 opt-level = "z"

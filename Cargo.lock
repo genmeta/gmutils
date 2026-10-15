@@ -797,9 +797,9 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "combine"
-version = "4.6.7"
+version = "4.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
+checksum = "cfc320937d09e6de266b31b9afb480f197d7a861be86be7cb2ea7e5d1bfffc5e"
 dependencies = [
  "bytes",
  "memchr",
@@ -1069,7 +1069,9 @@ dependencies = [
 
 [[package]]
 name = "daccess"
-version = "0.1.1"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3cc5cc4eca528434b04a1a70cbf44f750b38de953654fe9d0fc105b1b42a28df"
 dependencies = [
  "axum",
  "chrono",
@@ -1363,15 +1365,15 @@ dependencies = [
  "http-body",
  "http-body-util",
  "netwatcher",
- "qbase 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qbase",
  "qconnection",
  "qprotocol",
- "qrecovery 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "qresolve 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qrecovery",
+ "qresolve",
  "qrustls",
  "qtls",
  "qtransport",
- "qudp 0.8.1",
+ "qudp",
  "rustls-pemfile",
  "scopeguard",
  "tokio",
@@ -1573,7 +1575,7 @@ dependencies = [
  "http-body-util",
  "libc",
  "nom 8.0.0",
- "qresolve 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qresolve",
  "qrustls",
  "qtls",
  "rand 0.10.3",
@@ -1930,7 +1932,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta"
-version = "0.9.0-preview.1"
+version = "0.9.0-preview.2"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -1951,7 +1953,7 @@ dependencies = [
  "http-body",
  "http-body-util",
  "libc",
- "qbase 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qbase",
  "qprotocol",
  "qrustls",
  "qtls",
@@ -1969,7 +1971,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-access"
-version = "0.5.0-preview.1"
+version = "0.5.0-preview.2"
 dependencies = [
  "axum",
  "clap",
@@ -1995,7 +1997,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-curl"
-version = "0.8.0-preview.1"
+version = "0.8.0-preview.2"
 dependencies = [
  "async-compression",
  "bytes",
@@ -2022,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-discover"
-version = "0.5.0-preview.1"
+version = "0.5.0-preview.2"
 dependencies = [
  "clap",
  "dhttp",
@@ -2038,7 +2040,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-doctor"
-version = "0.5.0-preview.1"
+version = "0.5.0-preview.2"
 dependencies = [
  "clap",
  "genmeta-nat",
@@ -2049,7 +2051,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-identity"
-version = "0.5.0-preview.1"
+version = "0.5.0-preview.2"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -2089,7 +2091,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nat"
-version = "0.6.0-preview.1"
+version = "0.6.0-preview.2"
 dependencies = [
  "clap",
  "dhttp",
@@ -2107,7 +2109,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nslookup"
-version = "0.6.0-preview.1"
+version = "0.6.0-preview.2"
 dependencies = [
  "clap",
  "dhttp",
@@ -2124,7 +2126,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-proxy"
-version = "0.5.0-preview.1"
+version = "0.5.0-preview.2"
 dependencies = [
  "bytes",
  "clap",
@@ -2253,8 +2255,8 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
- "qbase 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "qrecovery 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qbase",
+ "qrecovery",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -2854,9 +2856,9 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.103"
+version = "0.3.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53b44bfcdb3f8d5837a46dae1ca9660a837176eee74a28b229bc626816589102"
+checksum = "7883d941dae510fb2d978fc3fe018c71c9e2892fd38854de3e8b92c2e5ad9cc5"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -3688,28 +3690,6 @@ dependencies = [
 [[package]]
 name = "qbase"
 version = "0.7.0"
-dependencies = [
- "bitflags 2.13.2",
- "bytes",
- "derive_more",
- "enum_dispatch",
- "futures",
- "getset",
- "nom 8.0.0",
- "qmacro 0.6.0",
- "qtls",
- "rand 0.10.3",
- "rustls",
- "serde",
- "smallvec",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "qbase"
-version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78f8b7a61a7395f50d7e445be878b2b1bfd0724659283c67a58d777230ec66e2"
 dependencies = [
@@ -3720,24 +3700,12 @@ dependencies = [
  "futures",
  "getset",
  "nom 8.0.0",
- "qmacro 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qmacro",
  "qtls",
  "rand 0.10.3",
  "rustls",
  "serde",
  "smallvec",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "qcongestion"
-version = "0.7.0"
-dependencies = [
- "qbase 0.7.0",
- "qevent 0.7.0",
- "rand 0.10.3",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -3749,8 +3717,8 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c95adba81e48aa5347f5594401359f891c0d1e4c3228f6e5d2742d6fbc4ee738"
 dependencies = [
- "qbase 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "qevent 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qbase",
+ "qevent",
  "rand 0.10.3",
  "thiserror 2.0.21",
  "tokio",
@@ -3765,31 +3733,14 @@ checksum = "3ab6cf9495670da09b9d610eecb66ea10b1dde3f519ad5975fd1bb1d02b3bfbf"
 dependencies = [
  "bytes",
  "futures",
- "qbase 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "qcongestion 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qbase",
+ "qcongestion",
  "qprotocol",
- "qrecovery 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "qresolve 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qrecovery",
+ "qresolve",
  "qtls",
  "qtransport",
  "qtraversal",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "qevent"
-version = "0.7.0"
-dependencies = [
- "bytes",
- "derive_builder",
- "derive_more",
- "enum_dispatch",
- "pin-project-lite",
- "qbase 0.7.0",
- "serde",
- "serde_json",
- "serde_with",
  "tokio",
  "tracing",
 ]
@@ -3805,21 +3756,12 @@ dependencies = [
  "derive_more",
  "enum_dispatch",
  "pin-project-lite",
- "qbase 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qbase",
  "serde",
  "serde_json",
  "serde_with",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "qmacro"
-version = "0.6.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.8",
 ]
 
 [[package]]
@@ -3836,6 +3778,8 @@ dependencies = [
 [[package]]
 name = "qprotocol"
 version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8548c54dbd080cef9ed3a6e79819da3e178ad15c010f73bf2346594bac5a152f"
 dependencies = [
  "bytes",
  "dashmap",
@@ -3844,9 +3788,9 @@ dependencies = [
  "http",
  "netdev",
  "nom 8.0.0",
- "qbase 0.7.0",
- "qresolve 0.9.0",
- "qudp 0.8.0",
+ "qbase",
+ "qresolve",
+ "qudp",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -3861,41 +3805,17 @@ checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 [[package]]
 name = "qrecovery"
 version = "0.7.0"
-dependencies = [
- "bytes",
- "derive_more",
- "futures",
- "qbase 0.7.0",
- "qevent 0.7.0",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "qrecovery"
-version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51eac3d871931d94a867e50c54d58fabbfb1c8d893bd48e6a95f12ebaf87bf7a"
 dependencies = [
  "bytes",
  "derive_more",
  "futures",
- "qbase 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "qevent 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qbase",
+ "qevent",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "qresolve"
-version = "0.9.0"
-dependencies = [
- "dns-lookup",
- "futures",
- "qbase 0.7.0",
- "tokio",
 ]
 
 [[package]]
@@ -3906,7 +3826,7 @@ checksum = "304f2a3ffacb1a2516044b13b3a8e95a7e91fd5b87dafb4a37a7cb23086a7cbd"
 dependencies = [
  "dns-lookup",
  "futures",
- "qbase 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qbase",
  "tokio",
 ]
 
@@ -3928,6 +3848,8 @@ dependencies = [
 [[package]]
 name = "qtls"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "427f5e986d4ce4a397f8712265e1b3dfaf043d5c2d300e0f836ecc3a9f601b06"
 dependencies = [
  "bytes",
  "der 0.8.2",
@@ -3948,16 +3870,18 @@ dependencies = [
 [[package]]
 name = "qtransport"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fff22111657b3a094a75403ec051c0dcd1ee83b3c7fe28983469a2617c5f439"
 dependencies = [
  "bytes",
  "dashmap",
  "derive_more",
  "futures",
- "qbase 0.7.0",
- "qcongestion 0.7.0",
- "qevent 0.7.0",
+ "qbase",
+ "qcongestion",
+ "qevent",
  "qprotocol",
- "qrecovery 0.7.0",
+ "qrecovery",
  "qtls",
  "smallvec",
  "thiserror 2.0.21",
@@ -3972,27 +3896,12 @@ checksum = "f9e573c395a0b45f64659f0f6d4707a8bdd463a6195426d58e83c8e1ce955da6"
 dependencies = [
  "bytes",
  "dashmap",
- "qbase 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qbase",
  "qprotocol",
  "qtransport",
  "rand 0.10.3",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "qudp"
-version = "0.8.0"
-dependencies = [
- "bytes",
- "cfg-if",
- "libc",
- "nix",
- "qbase 0.7.0",
- "socket2",
- "tokio",
- "tracing",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4005,7 +3914,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "nix",
- "qbase 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "qbase",
  "socket2",
  "tokio",
  "tracing",
@@ -5968,9 +5877,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.126"
+version = "0.2.129"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b067c0c11094aef6b7a801c1e34a26affafdf3d051dba08456b868789aaf9a4"
+checksum = "9bb54f33acc68fd454578d9820b0bde1a1a3d17aa17bb7b6595806d02886d409"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -5982,19 +5891,20 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.76"
+version = "0.4.79"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c62df1340f32221cb9c54d6a27b030e3dba64361d4a95bed55f9aacb44da291d"
+checksum = "3cbab34de2d982e9b48e18d216d04c4a6f641066ff19ffb699980f591ee3610e"
 dependencies = [
  "js-sys",
+ "tokio",
  "wasm-bindgen",
 ]
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.126"
+version = "0.2.129"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "167ce5e579f6bcf889c4f7175a8a5a585de84e8ff93976ce393efa5f2837aab1"
+checksum = "2e29d0c35b16e224a7eeb5cd2d25e3e1968fbd65604117b44d3b789d00ee8535"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -6002,31 +5912,31 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.126"
+version = "0.2.129"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3997c7839262f4ef12cf90b818d6340c18e80f263f1a94bf157d0ec4420380e"
+checksum = "6f501a8bc3719dba86ef8ae4728879c08001bea749eb1333ac5b91e040e2a6b7"
 dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.8",
  "wasm-bindgen-shared",
 ]
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.126"
+version = "0.2.129"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
+checksum = "23f0c9c52aa7cd7d77769a4cfe2a9adb1b331f489a41d912ce14513d5ab995c6"
 dependencies = [
  "unicode-ident",
 ]
 
 [[package]]
 name = "web-sys"
-version = "0.3.103"
+version = "0.3.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8622dcb61c0bcc9fffa6938bed81210af2da9a7e4a1a834b2e37a59b6dfb6141"
+checksum = "88261b9deccee56594c11a3460c462c41f58d148598fe70ad77070126a68aba4"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
