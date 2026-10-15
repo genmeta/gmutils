@@ -471,6 +471,10 @@ fn local_content_path(project: &Path, source: &str) -> Result<PathBuf> {
     let mut path = PathBuf::new();
     for component in source.components() {
         path.push(component);
+        // A Windows drive/UNC prefix is not a filesystem root until RootDir follows.
+        if matches!(component, Component::Prefix(_)) {
+            continue;
+        }
         if std::fs::symlink_metadata(&path)
             .map_err(|e| format!("missing build artifact {}: {e}", path.display()))?
             .file_type()
@@ -498,6 +502,10 @@ fn resolved_output(path: &Path) -> Result<PathBuf> {
             _ => {
                 resolved.push(component);
             }
+        }
+        // Do not query a partial verbatim drive path such as \\?\C:.
+        if matches!(component, Component::Prefix(_)) {
+            continue;
         }
         match std::fs::symlink_metadata(&resolved) {
             Ok(_) => {
@@ -639,4 +647,33 @@ fn copy_directory(volume: &webc::Volume, path: &str) -> Result<Directory<'static
         children.insert(name, entry);
     }
     Ok(Directory::new(children, Timestamps::default()))
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn canonical_windows_content_paths_wait_for_the_complete_root() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        assert!(matches!(
+            root.components().next(),
+            Some(Component::Prefix(_))
+        ));
+        std::fs::create_dir(root.join("public")).unwrap();
+        assert_eq!(
+            local_content_path(&root, "public").unwrap(),
+            root.join("public")
+        );
+    }
+
+    #[test]
+    fn canonical_windows_output_can_have_missing_parent_directories() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let output = root.join("dist").join("nested").join("test.webc");
+        assert_eq!(resolved_output(&output).unwrap(), output);
+        assert!(!output.parent().unwrap().exists());
+    }
 }

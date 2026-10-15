@@ -13,6 +13,12 @@
 - Build and sign packages directly in genmeta; use host APIs for build/publication
   validation instead of launching the removed Pishoo management commands.
 
+### Fixed
+
+- Handle Windows drive and UNC prefixes before inspecting complete filesystem
+  paths, and keep invalid-name fixtures portable across supported platforms.
+- Render reverse-proxy command help without unresolved rustdoc links.
+
 ### Release versions
 
 - genmeta: 0.9.0-preview.2 → 0.9.0-preview.3.
