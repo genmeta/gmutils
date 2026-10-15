@@ -1,93 +1,70 @@
-//! Check the installed launcher/tool boundary without loading real credentials.
+//! Source builds run directly; no Pishoo executable or packer is launched.
 #![cfg(unix)]
-use std::{os::unix::fs::PermissionsExt, path::Path, process::Command};
-
-fn launcher(dir: &Path) -> std::path::PathBuf {
-    let file = dir.join("genmeta");
-    std::fs::copy(env!("CARGO_BIN_EXE_genmeta"), &file).unwrap();
-    file
-}
-fn tool(path: &Path, script: &str) {
-    std::fs::write(path, format!("#!/bin/sh\n{script}\n")).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
-}
+use std::{os::unix::fs::PermissionsExt, process::Command};
 
 #[test]
-fn sibling_tool_takes_precedence_and_receives_literal_arguments() {
-    let dir = tempfile::tempdir().unwrap();
-    let binary = launcher(dir.path());
-    let fallback = dir.path().join("path");
-    std::fs::create_dir(&fallback).unwrap();
-    tool(&fallback.join("pishoo-pack"), "exit 99");
-    tool(&dir.path().join("pishoo-pack"), "printf '%s\\n' \"$@\"");
-    let output = Command::new(binary)
-        .env("PATH", fallback)
-        .args([
-            "package",
-            "build",
-            "project with spaces;$(echo danger)",
-            "-o",
-            "out with spaces.webc",
-            "-i",
-            "alice~",
-        ])
+fn source_recipe_receives_literal_arguments_without_shell_interpolation() {
+    let root = tempfile::tempdir().unwrap();
+    let literal = "argument with spaces;$(touch unexpected)";
+    std::fs::write(
+        root.path().join("build.sh"),
+        "printf '%s' \"$1\" > received\nexit 17\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join("wasmer.toml"),
+        format!("[build]\ncommand=['/bin/sh','build.sh','{literal}']\n"),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_genmeta"))
+        .args(["package", "build"])
+        .arg(root.path())
         .output()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("source build failed"));
     assert_eq!(
-        String::from_utf8(output.stdout).unwrap(),
-        "--build\n--output\nout with spaces.webc\n--id\nalice~\n--\nproject with spaces;$(echo danger)\n"
+        std::fs::read_to_string(root.path().join("received")).unwrap(),
+        literal
     );
+    assert!(!root.path().join("unexpected").exists());
+    assert!(!root.path().join("dist").exists());
 }
 
 #[test]
-fn path_fallback_preserves_the_tools_single_json_result() {
-    let dir = tempfile::tempdir().unwrap();
-    let binaries = dir.path().join("bin");
-    let fallback = dir.path().join("path");
-    std::fs::create_dir(&binaries).unwrap();
-    std::fs::create_dir(&fallback).unwrap();
-    let binary = launcher(&binaries);
-    tool(
-        &fallback.join("pishoo-pack"),
-        "printf '%s\\n' '{\"id\":\"alice.dhttp.net/hello\",\"kind\":\"app\"}'",
-    );
-    let output = Command::new(binary)
-        .env("PATH", fallback)
-        .args(["package", "build"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["id"], "alice.dhttp.net/hello");
-}
-
-#[test]
-fn missing_and_failed_tools_never_report_success() {
-    let dir = tempfile::tempdir().unwrap();
-    let binary = launcher(dir.path());
-    let output = Command::new(&binary)
-        .env("PATH", "")
+fn obsolete_pishoo_tools_on_path_are_never_called() {
+    let root = tempfile::tempdir().unwrap();
+    for name in ["pishoo", "pishoo-pack"] {
+        let file = root.path().join(name);
+        std::fs::write(&file, "#!/bin/sh\ntouch invoked\nexit 99\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    std::fs::write(root.path().join("wasmer.toml"), "[package]\nname='test'\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_genmeta"))
+        .env("PATH", root.path())
+        .current_dir(root.path())
         .args(["package", "build"])
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("install a Pishoo release"));
-    tool(
-        &dir.path().join("pishoo-pack"),
-        "printf '%s\\n' 'signature validation failed' >&2; exit 7",
-    );
-    let output = Command::new(binary)
-        .env("PATH", "")
-        .args(["package", "build"])
+    assert!(String::from_utf8_lossy(&output.stderr).contains("source build requires [build]"));
+    assert!(!root.path().join("invoked").exists());
+}
+
+#[test]
+fn no_build_never_runs_recipe_and_failure_emits_no_success_json() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("wasmer.toml"),
+        "[build]\ncommand=['/bin/sh','-c','touch invoked']\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_genmeta"))
+        .current_dir(root.path())
+        .args(["package", "build", "--no-build"])
         .output()
         .unwrap();
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("signature validation failed"));
+    assert!(!root.path().join("invoked").exists());
 }

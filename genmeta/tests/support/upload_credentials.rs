@@ -177,6 +177,10 @@ pub fn generate(root: &Path, names: &[(&str, &str, &str)]) {
                 "-no_nonce",
             ],
         );
+        // Credential loaders validate the OCSP issuer from the complete chain.
+        let mut chain = fs::read(root.join(&cert)).unwrap();
+        chain.extend(fs::read(root.join("ca.crt")).unwrap());
+        fs::write(root.join(&cert), chain).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

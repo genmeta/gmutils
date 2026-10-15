@@ -33,6 +33,12 @@ base64 = { workspace = true }
 dhttp-identity = { workspace = true }
 sha2 = "0.10"
 tempfile = "3"
+qtls = { workspace = true }
+dirs = "6"
+url = "2"
+rustix = { version = "1", features = ["fs"] }
+toml = "1"
+urlencoding = { workspace = true }
 webc = { version = "=12.0.1", default-features = false, features = ["v3"] }
 
 [target.'cfg(unix)'.dependencies]
@@ -43,7 +49,6 @@ bytes = { workspace = true }
 futures = { workspace = true }
 qbase = { workspace = true }
 qprotocol = { workspace = true }
-qtls = { workspace = true }
 rcgen = "0.14"
 rustls-pemfile = "2"
 http-body = "1"

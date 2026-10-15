@@ -349,58 +349,6 @@ async fn snapshot_is_bounded_and_survives_original_replacement() {
     }
 }
 
-#[cfg(unix)]
-#[tokio::test]
-async fn check_subprocess_is_private_captured_and_bounded() {
-    use std::os::unix::fs::PermissionsExt;
-    let directory = tempfile::tempdir().unwrap();
-    let tool = directory.path().join("checker");
-    std::fs::write(&tool, "#!/bin/sh\n[ \"$1\" = app ] && [ \"$2\" = check ] || exit 1\n[ \"$(cat \"$3\")\" = snapshot ] || exit 2\nprintf '%s' \"$3\" > \"$0.path\"\nprintf '{\"kind\":\"app\"}'\n").unwrap();
-    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o700)).unwrap();
-    assert_eq!(
-        check_with_tool(b"snapshot", "app", &tool).await.unwrap()["kind"],
-        "app"
-    );
-    let staged = std::fs::read_to_string(tool.with_extension("path")).unwrap();
-    assert!(!Path::new(&staged).exists());
-    std::fs::write(&tool, "#!/bin/sh\necho 'signature invalid' >&2\nexit 1\n").unwrap();
-    assert!(
-        check_with_tool(b"snapshot", "app", &tool)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("signature invalid")
-    );
-    std::fs::write(&tool, "#!/bin/sh\nhead -c 1048577 /dev/zero\n").unwrap();
-    assert!(check_with_tool(b"snapshot", "app", &tool).await.is_err());
-    assert!(
-        check_with_tool(b"snapshot", "app", &directory.path().join("missing"))
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("install Pishoo")
-    );
-}
-
-#[tokio::test(start_paused = true)]
-async fn check_deadline_cancels_child() {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let directory = tempfile::tempdir().unwrap();
-        let tool = directory.path().join("checker");
-        std::fs::write(&tool, "#!/bin/sh\nexec sleep 300\n").unwrap();
-        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(
-            check_with_tool(b"snapshot", "app", &tool)
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("timed out")
-        );
-    }
-}
-
 #[derive(Debug)]
 struct PeerResolver(dhttp::resolve::EndpointAddr);
 impl std::fmt::Display for PeerResolver {
@@ -451,10 +399,8 @@ fn response(status: StatusCode, value: Value) -> http::Response<dhttp::Body> {
         .unwrap()
 }
 
-// This fixture implements only the target publication protocol, with ephemeral
-// credentials/storage. It is not a replacement store runtime or a production API.
 #[tokio::test]
-#[ignore = "requires current pishoo check, OpenSSL and local UDP socket permission"]
+#[ignore = "requires a publisher Pishoo validation API, OpenSSL and local UDP socket permission"]
 async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
     use std::sync::{
         Mutex,

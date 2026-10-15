@@ -594,3 +594,169 @@ async fn installation_timeout_is_unknown_and_never_retries_the_write() {
     assert_eq!(start.elapsed(), INSTALL_TIMEOUT);
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
+
+#[path = "../../tests/support/upload_credentials.rs"]
+mod host_credentials;
+
+#[derive(Debug)]
+struct HostResolver(dhttp::resolve::EndpointAddr);
+impl std::fmt::Display for HostResolver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("host API loopback fixture")
+    }
+}
+impl dhttp::resolve::Resolve for HostResolver {
+    fn lookup<'a>(
+        &'a self,
+        name: &'a str,
+        _: &'a str,
+        _: Option<dhttp::resolve::Family>,
+    ) -> dhttp::resolve::ResolveFuture<'a> {
+        use futures::{FutureExt, StreamExt};
+        async move {
+            assert_eq!(name, "alice.dhttp.net");
+            Ok(futures::stream::iter([(dhttp::resolve::Source::System, self.0)]).boxed())
+        }
+        .boxed()
+    }
+}
+
+#[tokio::test]
+#[ignore = "run alone; owns TLS roots and local QUIC sockets; requires OpenSSL 3"]
+async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors() {
+    use std::sync::{Arc, Mutex};
+
+    use qprotocol::{Dock, UdpSocket};
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join(".dhttp");
+    host_credentials::generate(&home, &[("alice", "alice.dhttp.net", &"a".repeat(64))]);
+    let peer = Arc::new(UdpSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap());
+    Dock::global().add(peer.clone()).unwrap().unwrap();
+    dhttp::DhttpNetwork::init().await.unwrap();
+    let ca = std::fs::read(home.join("ca.crt")).unwrap();
+    qtls::RootCerts::set(
+        rustls_pemfile::certs(&mut ca.as_slice())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap(),
+    )
+    .unwrap();
+    dhttp::resolve::Resolver::add(Arc::new(HostResolver(
+        dhttp::resolve::EndpointAddr::direct(peer.local_addr().unwrap()),
+    )));
+    let profile = IdentityProfile::try_from(home.join("alice")).unwrap();
+    let endpoint = dhttp::Endpoint::new(
+        qbase::endpoint::Endpoint::new(
+            "alice.dhttp.net",
+            profile.load_certs().await.unwrap(),
+            profile.load_key().await.unwrap(),
+            profile.load_ocsp().await.unwrap(),
+        )
+        .unwrap(),
+    );
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let listening = endpoint
+        .listen(
+            dhttp::Scope::Loopback.into(),
+            tower::service_fn({
+                let requests = requests.clone();
+                move |request: http::Request<dhttp::Body>| {
+                    let requests = requests.clone();
+                    async move {
+                        let peer = request
+                            .extensions()
+                            .get::<dhttp::HandshakeSummary>()
+                            .unwrap()
+                            .remote
+                            .as_ref()
+                            .unwrap();
+                        assert_eq!(peer.name(), "alice.dhttp.net");
+                        let method = request.method().clone();
+                        let path = request.uri().path().to_string();
+                        let bytes = request.into_body().collect().await?.to_bytes();
+                        requests
+                            .lock()
+                            .unwrap()
+                            .push((method, path.clone(), bytes.to_vec()));
+                        let (status, value) = if path.ends_with("app-check") {
+                            (
+                                StatusCode::OK,
+                                json!({"kind":"app","id":"alice.dhttp.net/demo","version":"1.0.0"}),
+                            )
+                        } else if path.ends_with("lib-check") {
+                            (
+                                StatusCode::BAD_REQUEST,
+                                json!({"error":"invalid signature"}),
+                            )
+                        } else {
+                            (StatusCode::OK, json!([]))
+                        };
+                        let body = http_body_util::Full::new(bytes::Bytes::from(
+                            serde_json::to_vec(&value).unwrap(),
+                        ))
+                        .map_err(|never| match never {})
+                        .boxed_unsync();
+                        Ok::<_, dhttp::BoxError>(
+                            http::Response::builder()
+                                .status(status)
+                                .header(header::CONTENT_TYPE, "application/json")
+                                .body(body)
+                                .unwrap(),
+                        )
+                    }
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    let authority = endpoint.local_authority().unwrap();
+    let owner =
+        dhttp_home::certificate::extract_dhttp_subject_key_identifier(authority.certificates())
+            .unwrap()
+            .owner_hash()
+            .clone();
+    let result = host_exchange(
+        &endpoint,
+        &owner,
+        http::Method::POST,
+        "/std/sys/package/app-check",
+        b"immutable snapshot".to_vec(),
+        "application/octet-stream",
+    )
+    .await
+    .unwrap();
+    assert_eq!(result["kind"], "app");
+    let error = host_exchange(
+        &endpoint,
+        &owner,
+        http::Method::POST,
+        "/std/sys/package/lib-check",
+        b"invalid".to_vec(),
+        "application/octet-stream",
+    )
+    .await
+    .unwrap_err();
+    assert!(report(error).contains("invalid signature"));
+    assert_eq!(
+        requests.lock().unwrap()[0],
+        (
+            http::Method::POST,
+            "/std/sys/package/app-check".into(),
+            b"immutable snapshot".to_vec()
+        )
+    );
+    assert_eq!(
+        host_exchange(
+            &endpoint,
+            &owner,
+            http::Method::PATCH,
+            "/std/sys/proxies",
+            br#"{"location":"/api","proxy_pass":"127.0.0.1:8080"}"#.to_vec(),
+            "application/json"
+        )
+        .await
+        .unwrap(),
+        json!([])
+    );
+    assert_eq!(requests.lock().unwrap()[2].0, http::Method::PATCH);
+    drop(listening);
+}
