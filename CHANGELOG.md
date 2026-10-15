@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.9.0-preview.2] - 2026-10-15
+
+### Added
+
+- Unify App/Lib lifecycle commands under `genmeta package`: `build`, `publish`,
+  `install`, `update`, `remove`, `list` and `info`, using `--type app|lib`.
+  Remove the old top-level aliases.
+- Build local recipes before signing through `pishoo-pack --build`; publish one
+  verified signed snapshot to the pinned store without automatically retrying writes.
+- Install exact recursive Lib dependencies through the selected running Pishoo;
+  guard removal with the full installed package ID and report dependent packages.
+- Document identity onboarding, Workspace installation and contact authorization.
+
+### Fixed
+
+- Generate upload-test OCSP staples using dhttp-home's shared cache filename.
+- Wait for a target-compatible network path before short-lived curl requests;
+  readiness and connection share the existing connect timeout.
+- Keep pending package installations reachable with bounded probes, and report
+  unknown outcomes after timeout or interruption without automatically retrying writes.
+
+### Dependencies
+
+- Require dhttp 0.7.1, dhttp-home 0.6.1 and daccess 0.1.1 from crates.io.
+- Remove sibling QUIC and daccess patches; retain qrustls 0.23.45.
+- Final registry lockfile refresh and locked release checks await upstream publication.
+
+### Release versions
+
+| Package | Previous published version | Prepared version |
+| --- | --- | --- |
+| `genmeta` | 0.9.0-preview.1 | 0.9.0-preview.2 |
+| `genmeta-access` | 0.5.0-preview.1 | 0.5.0-preview.2 |
+| `genmeta-curl` | 0.8.0-preview.1 | 0.8.0-preview.2 |
+| `genmeta-discover` | 0.5.0-preview.1 | 0.5.0-preview.2 |
+| `genmeta-doctor` | 0.5.0-preview.1 | 0.5.0-preview.2 |
+| `genmeta-identity` | 0.5.0-preview.1 | 0.5.0-preview.2 |
+| `genmeta-nat` | 0.6.0-preview.1 | 0.6.0-preview.2 |
+| `genmeta-nslookup` | 0.6.0-preview.1 | 0.6.0-preview.2 |
+| `genmeta-proxy` | 0.5.0-preview.1 | 0.5.0-preview.2 |
+
 ## [0.9.0-preview.1] - 2026-10-12
 
 ### Changed
@@ -29,39 +70,6 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
-
-### Fixed
-
-- Wait for a target-compatible local path before short-lived curl commands initiate
-  QUIC. Mediated targets observe STUN mapping updates; ready direct and LAN paths
-  connect immediately. DNS preflight, readiness and connection share the original
-  connect timeout, without changing DQUIC path discovery.
-
-### Changed
-
-- Move DHTTP requests, proxy forwarding, DNS resolution and NAT diagnostics to
-  Pishoo's local transport graph and process-wide network initialization.
-- Validate and cache local OCSP staples before authenticated DHTTP requests.
-- Temporarily remove SSH, DShell and the SSH wrapper scripts from the launcher,
-  workspace, publication list and release packages.
-
-### Fixed
-
-- Keep default CLI output quiet while preserving curl progress and explicit
-  logging options.
-- Manage Pishoo listening settings through each identity's `config.db`.
-- Clarify access-command syntax, rule listings and successful writes.
-
-### Dependencies
-
-- Replace sibling path dependencies with committed Git snapshots for DHTTP,
-  DDNS, H3X, QUIC and access-control tests, and record their sources in the
-  binary lockfile.
-- Use the same QUIC revision across the transport graph, including the
-  concurrent Initial connection fix.
-- Require locked CI and package builds to preserve dependency snapshots.
 
 ## [0.8.2] - 2026-08-31
 

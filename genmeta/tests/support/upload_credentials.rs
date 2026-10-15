@@ -157,7 +157,7 @@ pub fn generate(root: &Path, names: &[(&str, &str, &str)]) {
                 "-cert",
                 &cert,
                 "-respout",
-                &format!("{directory}/ocsp.der"),
+                &format!("{directory}/{}", dhttp_home::identity::ssl::OCSP_FILE_NAME),
                 "-ndays",
                 "1",
             ],
@@ -167,7 +167,7 @@ pub fn generate(root: &Path, names: &[(&str, &str, &str)]) {
             &[
                 "ocsp",
                 "-respin",
-                &format!("{directory}/ocsp.der"),
+                &format!("{directory}/{}", dhttp_home::identity::ssl::OCSP_FILE_NAME),
                 "-issuer",
                 "ca.crt",
                 "-cert",
