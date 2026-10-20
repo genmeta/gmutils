@@ -29,7 +29,7 @@ Available commands:
 | `genmeta nslookup` | Resolve DDns names and discover reachable DHttp addresses. |
 | `genmeta discover` | Discover nearby DHttp endpoints over mDNS. |
 | `genmeta doctor` | Diagnose NAT and network connectivity. |
-| `genmeta package` | Build, publish, install, update, remove, list and inspect App/Lib packages. |
+| `genmeta build/publish/install/update/uninstall/list/info` | Build, publish and manage App/Lib packages. |
 
 See the [DHttp utilities documentation](https://docs.dhttp.net/en/docs/core-components/utils) for detailed usage and examples.
 
@@ -101,19 +101,22 @@ Ordinary query names retain their namespace. Names are normalized through `dhttp
 ### Install a published package
 
 ```bash
-genmeta package install workspace
-genmeta package install dev.dhttp.net/workspace --version 0.2.0 --id alice.smith
-genmeta package install std.dhttp.net/message --type lib
+genmeta install workspace
+genmeta install dev.dhttp.net/workspace --version 0.2.0 --id alice.smith
+genmeta install std.dhttp.net/message --lib
 ```
 
 Installation defaults to App, the latest published version, and the configured
-default identity. Short names must resolve to a single publisher across the
-entire store catalog. Use a full `publisher/name` when a short name is ambiguous.
+default identity. Bare installation names select the standard publisher: `workspace`
+means `std.dhttp.net/workspace`. Author names may omit `.dhttp.net`, so
+`alice/message` means `alice.dhttp.net/message`. Update, uninstall and info resolve
+bare names against the installed catalog and preserve the registered publisher.
 The selected identity's Pishoo service must already be running and enabled.
-`DHTTP_HOME` is supported; local files, URLs, and anonymous installation are not.
+Local credentials use the current account’s identity home. Installation accepts only published store releases; local package files, URLs and anonymous installation are not supported.
 
 The CLI authenticates `store.dhttp.net`, pins an exact version, and sends one
-authenticated `POST /std/sys/package/store-install` request to Pishoo. Pishoo
+authenticated `PUT /std/sys/app?name=NAME` or `PUT /std/sys/lib?name=NAME` request
+with JSON `{publisher, version}` to Pishoo. Pishoo
 verifies and installs the package and its exact Lib dependencies. Successful output is JSON on stdout;
 progress and diagnostics go to stderr. App results include `entry_url`.
 Resolution has a 120-second deadline; installation waits up to 15 minutes.
@@ -150,10 +153,10 @@ request/response output are independent of this log filter.
 
 ## Build and sign a package
 
-`genmeta package build PATH` executes the local manifest's `[build]` recipe and
-then signs its output and validates it through the publisher identity’s Pishoo API.
+`genmeta build PATH` executes the local manifest's `[build]` recipe and
+then signs its output locally. Building does not require a running Pishoo service.
 See [Package management](#package-management) for the recipe and all commands.
-For existing artifacts, `genmeta package build --no-build PATH -o FILE.webc` retains the packaging-only
+For existing artifacts, `genmeta build --no-build PATH -o FILE.webc` retains the packaging-only
 workflow. The signer uses the current account's `~/.dhttp`; `--id` checks the
 publisher and does not rewrite the manifest.
 
@@ -231,21 +234,21 @@ identity is used.
 
 ## Package management
 
-All seven operations live under `genmeta package`; the former top-level
-`install`, `pack`, and `upload` commands have been removed.
+Package operations are top-level `genmeta` commands. The `package` grouping and
+former `pack` and `upload` command names have been removed.
 
 ```sh
-genmeta package build ./profile -o ./dist/profile.webc
-genmeta package publish ./dist/profile.webc
-genmeta package install std.dhttp.net/workspace --id sky.lee.dhttp.net
-genmeta package update workspace --id sky.lee.dhttp.net
-genmeta package list --id sky.lee.dhttp.net
-genmeta package info message --type lib --id sky.lee.dhttp.net
-genmeta package remove alice.smith.dhttp.net/message --type lib --id sky.lee.dhttp.net
+genmeta build ./profile -o ./dist/profile.webc
+genmeta publish ./dist/profile.webc
+genmeta install std.dhttp.net/workspace --id sky.lee.dhttp.net
+genmeta update workspace --id sky.lee.dhttp.net
+genmeta list --id sky.lee.dhttp.net
+genmeta info message --lib --id sky.lee.dhttp.net
+genmeta uninstall alice.smith.dhttp.net/message --lib --id sky.lee.dhttp.net
 ```
 
 `list` returns both installed types by default. Other management commands default
-to `--type app`; `--type lib` selects a backend. `info`, `list` and `remove` query
+to `--app`; `--lib` selects a backend. `--app` and `--lib` are mutually exclusive. `info`, `list` and `uninstall` query
 the identity's Pishoo service, not the store. Both full package IDs and short names
 are supported; a full ID must match the installed publisher. Removal retains data
 and dependencies; the host reports dependent App/Lib IDs when removal is blocked.
@@ -257,7 +260,7 @@ The CLI checks these conditions before using the existing store installation API
 the preflight is not an atomic compare-and-swap with concurrent administrators.
 Exact dependency/publisher checks and per-package transactions remain on the host.
 
-`build` uses the local signer and a running Pishoo validation API, plus a recipe in
+`build` uses the local signer and a recipe in
 the local `wasmer.toml`:
 
 ```toml
@@ -271,7 +274,7 @@ The command runs in the source directory on every invocation. The optional
 build prevents signing. Recipe arguments are passed directly; no shell string is
 constructed. Build logs go to stderr; the final signed-package result is JSON on
 stdout. `--id` checks the generated publisher rather than rewriting it.
-For already-built artifacts use `genmeta package build --no-build PATH -o FILE.webc` directly.
+For already-built artifacts use `genmeta build --no-build PATH -o FILE.webc` directly.
 `publish` does not rebuild or change the signed package.
 
 The new removal command requires the Pishoo detail API's `Package-Id` response
@@ -289,16 +292,14 @@ genmeta identity listen --id alice.smith internal
 pishoo reload
 genmeta server proxy --id alice.smith /api 127.0.0.1:8080
 genmeta server proxy --id alice.smith remove /api
-genmeta package check ./example.webc --type lib --id alice.smith
-genmeta package install example --file ./example.webc --type lib --id alice.smith
-genmeta package list --loaded --id alice.smith
+genmeta install alice.smith/example --version 1.0.0 --lib --id alice.smith
+genmeta list --id alice.smith
 ```
 
 Identity settings are edited locally, including when listening is disabled.
 Proxy changes and package operations call the running host and retain its authorization,
-validation, dependency and atomic-install rules. Local package files require exact
-dependencies to be installed first; store installation resolves dependencies as before.
-`genmeta package build` now builds and signs directly; `--no-build` packages existing
-artifacts. Validation calls the signing identity's running Pishoo API. No Pishoo
+validation, dependency and atomic-install rules. Installation and updates select published store releases and resolve exact dependencies through the host. Local artifacts are used only for build and publish.
+`genmeta build` now builds and signs directly; `--no-build` packages existing
+artifacts. Full signature and host compatibility checks run during install/update. No Pishoo
 CLI or pishoo-pack executable is needed. Service start/stop/restart/status belong
 to systemctl or brew services; gmutils does not wrap them.

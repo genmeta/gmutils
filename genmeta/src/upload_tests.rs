@@ -12,18 +12,10 @@ use crate::test_credentials as credentials;
 fn upload_cli_accepts_only_the_designed_arguments() {
     use clap::Parser;
     for args in [
-        vec!["genmeta", "package", "publish", "package.webc"],
+        vec!["genmeta", "publish", "package.webc"],
+        vec!["genmeta", "publish", "package.webc", "-i", "alice"],
         vec![
             "genmeta",
-            "package",
-            "publish",
-            "package.webc",
-            "-i",
-            "alice",
-        ],
-        vec![
-            "genmeta",
-            "package",
             "publish",
             "package.webc",
             "--id",
@@ -32,12 +24,10 @@ fn upload_cli_accepts_only_the_designed_arguments() {
     ] {
         assert!(matches!(
             crate::Options::try_parse_from(args).unwrap(),
-            crate::Options::Package {
-                command: crate::PackageCommand::Publish { .. }
-            }
+            crate::Options::Package(crate::PackageCommand::Publish { .. })
         ));
     }
-    assert!(crate::Options::try_parse_from(["genmeta", "package", "publish"]).is_err());
+    assert!(crate::Options::try_parse_from(["genmeta", "publish"]).is_err());
     for flag in [
         "--kind",
         "--name",
@@ -50,7 +40,6 @@ fn upload_cli_accepts_only_the_designed_arguments() {
         assert!(
             crate::Options::try_parse_from([
                 "genmeta",
-                "package",
                 "publish",
                 "package.webc",
                 flag,
@@ -65,7 +54,7 @@ fn upload_cli_accepts_only_the_designed_arguments() {
         ("--version", clap::error::ErrorKind::DisplayVersion),
     ] {
         assert_eq!(
-            crate::Options::try_parse_from(["genmeta", "package", "publish", flag])
+            crate::Options::try_parse_from(["genmeta", "publish", flag])
                 .unwrap_err()
                 .kind(),
             kind
@@ -398,7 +387,7 @@ fn response(status: StatusCode, value: Value) -> http::Response<dhttp::Body> {
 }
 
 #[tokio::test]
-#[ignore = "requires a publisher Pishoo validation API, OpenSSL and local UDP socket permission"]
+#[ignore = "requires OpenSSL and local UDP socket permission"]
 async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
     use std::sync::{
         Mutex,
@@ -464,7 +453,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
                 puts.fetch_add(1, Ordering::SeqCst);
                 assert_eq!(request.headers()[header::CONTENT_TYPE], "application/webc");
                 let bytes = request.into_body().collect().await?.to_bytes().to_vec();
-                let metadata = checked_package(&bytes).await?;
+                let metadata = inspect_package(&bytes).await?;
                 assert_eq!(version_path(&metadata).unwrap(), path);
                 assert_eq!(package_certificates(&bytes).unwrap(), remote.certificates());
                 let payload = payload_digest(&bytes).unwrap();
@@ -508,7 +497,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
     for kind in ["app", "lib"] {
         let metadata = metadata(kind, "note", json!([]));
         let bytes = build(&metadata, Some(&authority), "test");
-        let checked = checked_package(&bytes).await.unwrap();
+        let checked = inspect_package(&bytes).await.unwrap();
         verify_publisher(&checked, &package_certificates(&bytes).unwrap(), &authority).unwrap();
         assert_eq!(
             publish(&client, &bytes, &checked, &owner).await.unwrap()["result"],
@@ -554,10 +543,10 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
             .contains("409")
         );
         let unsigned = build(&metadata, None, "test");
-        assert!(checked_package(&unsigned).await.is_err());
+        assert!(inspect_package(&unsigned).await.is_err());
         let mut tampered = bytes.clone();
         *tampered.last_mut().unwrap() ^= 1;
-        assert!(checked_package(&tampered).await.is_err());
+        assert!(inspect_package(&tampered).await.is_err());
     }
     let dependency = json!([{"publisher":"alice.dhttp.net","name":"backend","version":"1.0.0"}]);
     for kind in ["app", "lib"] {
@@ -676,7 +665,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
     let input = root.path().join("snapshot.webc");
     std::fs::write(&input, &snapshot_bytes).unwrap();
     let snapshot = read_snapshot(&input).await.unwrap();
-    let checked = checked_package(&snapshot).await.unwrap();
+    let checked = inspect_package(&snapshot).await.unwrap();
     assert_eq!(checked["repository"], snapshot_metadata["repository"]);
     std::fs::write(
         &input,
@@ -708,4 +697,29 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
     assert_eq!(puts.load(Ordering::SeqCst), count);
     listening.abort();
     Dock::global().remove(&peer);
+}
+
+#[tokio::test]
+async fn publication_inspection_is_local_and_requires_an_intact_signed_container() {
+    let author = local("alice.dhttp.net", &"a".repeat(64));
+    let mut metadata = metadata("app", "offline", json!([]));
+    metadata["repository"] = "https://example.com/source".into();
+    let bytes = build(&metadata, Some(&author), "offline page");
+    let parsed = inspect_package(&bytes).await.unwrap();
+    assert_eq!(parsed["id"], metadata["id"]);
+    assert_eq!(parsed["repository"], metadata["repository"]);
+    assert_eq!(parsed["dependencies"], metadata["dependencies"]);
+    assert_eq!(parsed["title"], metadata["title"]);
+    assert!(
+        inspect_package(&build(&metadata, None, "offline page"))
+            .await
+            .is_err()
+    );
+    let mut tampered = bytes;
+    let offset = tampered
+        .windows(b"offline page".len())
+        .position(|bytes| bytes == b"offline page")
+        .unwrap();
+    tampered[offset] ^= 1;
+    assert!(inspect_package(&tampered).await.is_err());
 }

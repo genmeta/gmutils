@@ -1,4 +1,4 @@
-//! Single-package publication. Pishoo remains the only package/signature validator.
+//! Single-package publication; the trusted store validates uploaded releases.
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -23,7 +23,7 @@ const METADATA_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(super) async fn run(file: PathBuf, id: Option<String>) -> Result<(), Whatever> {
     let bytes = read_snapshot(&file).await?;
-    let metadata = checked_package(&bytes).await?;
+    let metadata = inspect_package(&bytes).await?;
     let publisher = text(&metadata, "publisher")?;
     let selected: DhttpName<'static> = id
         .unwrap_or_else(|| publisher.to_owned())
@@ -118,11 +118,11 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str, Whatever> {
         .whatever_context(format!("missing or invalid {key}"))
 }
 
-// Before check, read only the bounded raw manifest to select app/lib. This is
-// parsing, not a substitute for Pishoo's index, layout, import or signature check.
+// Read only the bounded raw manifest for identity and request paths. The store
+// verifies the uploaded release before registering or returning it.
 fn manifest_identity(bytes: &[u8]) -> Result<Value, Whatever> {
     if bytes.get(..8) != Some(b"\0webc003") || bytes.get(8) != Some(&2) {
-        whatever!("expected a signed WEBC v3 package; run genmeta package build first");
+        whatever!("expected a signed WEBC v3 package; run genmeta build first");
     }
     let length = |offset: usize| -> Result<usize, Whatever> {
         let raw: [u8; 8] = bytes
@@ -189,29 +189,26 @@ fn manifest_identity(bytes: &[u8]) -> Result<Value, Whatever> {
     whatever!("missing WEBC manifest");
 }
 
-async fn checked_package(bytes: &[u8]) -> Result<Value, Whatever> {
-    let identity = manifest_identity(bytes)?;
-    let metadata = crate::install::host_request(
-        Some(text(&identity, "publisher")?.to_string()),
-        http::Method::POST,
-        &format!("/std/sys/package/{}-check", text(&identity, "kind")?),
-        bytes.to_vec(),
-        "application/octet-stream",
-    )
-    .await?;
-    for key in ["id", "publisher", "name", "version", "kind"] {
-        if metadata[key] != identity[key] {
-            whatever!("Pishoo check result disagrees with manifest {key}");
+async fn inspect_package(bytes: &[u8]) -> Result<Value, Whatever> {
+    let mut metadata = manifest_identity(bytes)?;
+    let package = webc::Container::from_bytes_and_version(bytes.to_vec().into(), webc::Version::V3)
+        .whatever_context("cannot parse package container")?;
+    package
+        .validate()
+        .whatever_context("invalid package content digest or mapping")?;
+    signature_envelope(bytes)?;
+    let document =
+        serde_json::to_value(package.manifest()).whatever_context("invalid package manifest")?;
+    for key in ["title", "dependencies", "changelog", "entry", "host"] {
+        if let Some(value) = document["package"]["pishoo"].get(key) {
+            metadata[key] = value.clone();
         }
     }
-    if identity.get("repository").is_some()
-        && metadata.get("repository") != identity.get("repository")
-    {
-        whatever!(
-            "Pishoo check must validate and preserve manifest repository; install a current Pishoo"
-        );
+    for key in ["description", "license", "repository"] {
+        if let Some(value) = document["package"]["wapm"].get(key) {
+            metadata[key] = value.clone();
+        }
     }
-    // Also enforce safe path segments even when an obsolete check tool is installed.
     version_path(&metadata)?;
     Ok(metadata)
 }
@@ -222,8 +219,8 @@ fn digest(bytes: &[u8]) -> String {
 
 // Extract the existing protocol digest after the host has validated these spans.
 fn payload_digest(bytes: &[u8]) -> Result<String, Whatever> {
-    let reader = webc::v3::read::OwnedReader::parse(bytes.to_vec())
-        .whatever_context("cannot parse checked WEBC")?;
+    let reader =
+        webc::v3::read::OwnedReader::parse(bytes.to_vec()).whatever_context("cannot parse WEBC")?;
     let index = reader.index();
     let mut hasher = Sha256::new();
     hasher.update(b"\0webc003");
@@ -245,7 +242,7 @@ fn payload_digest(bytes: &[u8]) -> Result<String, Whatever> {
         hasher.update(
             bytes
                 .get(entry.span.start..end)
-                .whatever_context("WEBC span exceeds checked package")?,
+                .whatever_context("WEBC span exceeds package")?,
         );
     }
     Ok(format!("{:x}", hasher.finalize()))
@@ -253,7 +250,7 @@ fn payload_digest(bytes: &[u8]) -> Result<String, Whatever> {
 
 fn signature_envelope(bytes: &[u8]) -> Result<Value, Whatever> {
     let package = webc::Container::from_bytes_and_version(bytes.to_vec().into(), webc::Version::V3)
-        .whatever_context("cannot parse checked package")?;
+        .whatever_context("cannot parse package")?;
     let volume = package
         .get_volume("pishoo-signature")
         .whatever_context("missing package signature")?;
@@ -307,7 +304,7 @@ fn verify_publisher(
         || owner_hash(certificates)? != owner_hash(authority.certificates())?
     {
         whatever!(
-            "package signer differs from current publisher credentials; run genmeta package build again with the current credentials"
+            "package signer differs from current publisher credentials; run genmeta build again with the current credentials"
         );
     }
     Ok(())
@@ -626,7 +623,7 @@ async fn confirm_release(
     {
         whatever!("downloaded saved package digest or size differs from trusted store metadata");
     }
-    let saved_metadata = checked_package(saved).await?;
+    let saved_metadata = inspect_package(saved).await?;
     for key in ["id", "publisher", "name", "kind", "version"] {
         if saved_metadata[key] != metadata[key] {
             whatever!("saved package identity differs from upload");

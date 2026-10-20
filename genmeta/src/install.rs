@@ -37,6 +37,17 @@ fn valid_target(target: &str) -> bool {
     }
 }
 
+fn normalize_target(target: &str, standard_bare: bool) -> String {
+    if let Some((publisher, name)) = target.split_once('/') {
+        if let Some(publisher) = dhttp_home::normalize_name(publisher) {
+            return format!("{publisher}/{name}");
+        }
+    } else if standard_bare && valid_name(target) {
+        return format!("std.dhttp.net/{target}");
+    }
+    target.to_owned()
+}
+
 fn valid_version(version: &str) -> bool {
     let parts: Vec<_> = version.split('.').collect();
     parts.len() == 3
@@ -379,7 +390,7 @@ async fn init_network() -> Result<(), Whatever> {
 }
 
 fn install_body(release: &Value) -> Value {
-    json!({"kind": release["kind"], "publisher": release["publisher"], "name": release["name"], "version": release["version"]})
+    json!({"publisher": release["publisher"], "version": release["version"]})
 }
 
 fn success(result: &Value, release: &Value, identity: &str) -> Result<Value, Whatever> {
@@ -396,7 +407,7 @@ fn success(result: &Value, release: &Value, identity: &str) -> Result<Value, Wha
             "App installation response has no valid saved entry. {UNKNOWN}"
         );
         output["entry_url"] = json!(format!(
-            "https://{identity}/std/{}/",
+            "https://{identity}/{}/",
             release["name"].as_str().unwrap()
         ));
     }
@@ -433,7 +444,14 @@ async fn install(
     let bytes = serde_json::to_vec(&install_body(release))
         .whatever_context("Failed to encode installation JSON")?;
     let (mut writer, receive) = endpoint
-        .post(uri(endpoint.name(), "/std/sys/package/store-install")?)
+        .put(uri(
+            endpoint.name(),
+            &format!(
+                "/std/sys/{}?name={}",
+                release["kind"].as_str().unwrap(),
+                release["name"].as_str().unwrap()
+            ),
+        )?)
         .expect_remote_owner_hash(owner.clone())
         .header(
             header::ACCEPT,
@@ -486,16 +504,13 @@ async fn catalog(
     kind: &str,
     target: Option<&str>,
     require_removal_support: bool,
-    loaded: bool,
 ) -> Result<Option<Value>, Whatever> {
-    let collection = if kind == "app" { "apps" } else { "libs" };
     let path = match target {
         Some(target) => format!(
-            "/std/sys/package/{collection}/{}",
+            "/std/sys/{kind}?name={}",
             target.rsplit('/').next().unwrap()
         ),
-        None if loaded => format!("/std/sys/package/loaded-{collection}"),
-        None => format!("/std/sys/package/{collection}"),
+        None => format!("/std/sys/{kind}/list"),
     };
     tokio::time::timeout(RESOLUTION_TIMEOUT, async {
         let response = endpoint.get(uri(endpoint.name(), &path)?)
@@ -559,15 +574,8 @@ async fn remove(
     package: &Value,
 ) -> Result<Value, Whatever> {
     let id = package["id"].as_str().unwrap();
-    let collection = if package["kind"] == "app" {
-        "apps"
-    } else {
-        "libs"
-    };
-    let path = format!(
-        "/std/sys/package/{collection}/{}",
-        id.rsplit('/').next().unwrap()
-    );
+    let kind = package["kind"].as_str().unwrap();
+    let path = format!("/std/sys/{kind}?name={}", id.rsplit('/').next().unwrap());
     // The host checks the full identity again; a replacement publisher must
     // never be deleted just because it occupies the same short name.
     let condition =
@@ -600,7 +608,7 @@ fn choose_release_target<'a>(
 ) -> Result<&'a str, Whatever> {
     if operation == "update" {
         let Some(current) = current else {
-            whatever!("Package {target} is not installed; use genmeta package install");
+            whatever!("Package {target} is not installed; use genmeta install");
         };
         let id = current["id"].as_str().unwrap();
         ensure_whatever!(
@@ -632,7 +640,7 @@ fn check_install_version(
     }
     ensure_whatever!(
         operation == "update",
-        "Package {} is already installed at {}; use genmeta package update to change its version",
+        "Package {} is already installed at {}; use genmeta update to change its version",
         current["id"],
         current["version"]
     );
@@ -646,6 +654,7 @@ pub(super) async fn run(
     version: Option<String>,
     kind: Option<String>,
 ) -> Result<(), Whatever> {
+    let target = target.map(|target| normalize_target(&target, operation == "install"));
     if let Some(target) = &target {
         validate_input(target, version.as_deref(), kind.as_deref().unwrap_or("app"))?;
     }
@@ -662,22 +671,15 @@ pub(super) async fn run(
         dhttp_home::certificate::extract_dhttp_subject_key_identifier(authority.certificates())
             .whatever_context("Local credentials have no valid owner hash")?;
     let owner = ski.owner_hash().clone();
-    if matches!(operation, "list" | "loaded") {
+    if operation == "list" {
         let mut packages = Vec::new();
         for selected in ["app", "lib"] {
             if kind.as_deref().is_some_and(|kind| kind != selected) {
                 continue;
             }
-            let value = catalog(
-                &endpoint,
-                &owner,
-                selected,
-                None,
-                false,
-                operation == "loaded",
-            )
-            .await?
-            .unwrap();
+            let value = catalog(&endpoint, &owner, selected, None, false)
+                .await?
+                .unwrap();
             packages.extend(value.as_array().unwrap().iter().cloned());
         }
         println!(
@@ -688,15 +690,7 @@ pub(super) async fn run(
     }
     let target = target.as_deref().unwrap();
     let kind = kind.as_deref().unwrap();
-    let current = catalog(
-        &endpoint,
-        &owner,
-        kind,
-        Some(target),
-        operation == "remove",
-        false,
-    )
-    .await?;
+    let current = catalog(&endpoint, &owner, kind, Some(target), operation == "remove").await?;
     if matches!(operation, "info" | "remove") {
         let Some(current) = current else {
             whatever!("Package {target} ({kind}) is not installed")
@@ -729,7 +723,7 @@ pub(super) async fn run(
         let mut output = json!({"id":release["id"],"kind":kind,"version":release["version"],"identity":endpoint.name(),"unchanged":true});
         if kind == "app" {
             output["entry_url"] = json!(format!(
-                "https://{}/std/{}/",
+                "https://{}/{}/",
                 endpoint.name(),
                 release["name"].as_str().unwrap()
             ));
@@ -832,77 +826,6 @@ async fn host_exchange(
     .whatever_context(
         "Request timed out; a write may still complete. Inspect the service before retrying",
     )?
-}
-
-pub(super) async fn local_package(
-    target: Option<&str>,
-    file: &std::path::Path,
-    id: Option<String>,
-    kind: &str,
-) -> Result<Value, Whatever> {
-    use std::io::Read;
-    ensure_whatever!(matches!(kind, "app" | "lib"), "Type must be app or lib");
-    if let Some(target) = target {
-        validate_input(target, None, kind)?;
-    }
-    let input = std::fs::File::open(file).whatever_context("Cannot open WEBC file")?;
-    ensure_whatever!(
-        input
-            .metadata()
-            .whatever_context("Cannot inspect WEBC file")?
-            .is_file(),
-        "WEBC input must be a regular file"
-    );
-    let mut bytes = Vec::new();
-    input
-        .take(64 * 1024 * 1024 + 1)
-        .read_to_end(&mut bytes)
-        .whatever_context("Cannot read WEBC file")?;
-    ensure_whatever!(
-        !bytes.is_empty() && bytes.len() <= 64 * 1024 * 1024,
-        "WEBC must contain 1..64 MiB"
-    );
-    // The signed manifest supplies the full identity; the host verifies its signature.
-    let path = if let Some(target) = target {
-        let package =
-            webc::Container::from_bytes_and_version(bytes.clone().into(), webc::Version::V3)
-                .whatever_context("Cannot parse WEBC")?;
-        let Some(metadata) = package
-            .manifest()
-            .wapm()
-            .whatever_context("Cannot read WEBC identity")?
-        else {
-            whatever!("Missing WEBC identity");
-        };
-        let package_id = metadata.name.as_deref().unwrap_or("");
-        ensure_whatever!(
-            if target.contains('/') {
-                target == package_id
-            } else {
-                package_id.rsplit('/').next() == Some(target)
-            },
-            "File package identity does not match TARGET"
-        );
-        format!(
-            "/std/sys/package/{}s/{}",
-            kind,
-            target.rsplit('/').next().unwrap()
-        )
-    } else {
-        format!("/std/sys/package/{kind}-check")
-    };
-    host_request(
-        id,
-        if target.is_some() {
-            http::Method::PUT
-        } else {
-            http::Method::POST
-        },
-        &path,
-        bytes,
-        "application/octet-stream",
-    )
-    .await
 }
 
 #[cfg(test)]

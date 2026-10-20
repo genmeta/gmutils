@@ -15,8 +15,9 @@ can be restored. Proxy and package operations use authenticated host APIs.
 
 Use Pishoo v0.9.0-preview.3 for the complete opt-in lifecycle and mDNS cleanup.
 System service start/stop/restart/status remain systemctl/Homebrew operations.
-Package builds and publication validate through the publisher identity's running
-Pishoo API; genmeta no longer launches pishoo-pack or pishoo app/lib check.
+Package builds sign locally without requiring a running Pishoo service. Publication
+uses the store API; host compatibility and dependency checks run during store-backed
+installation/update. genmeta does not launch pishoo-pack or pishoo app/lib check.
 
 ## Validation
 
