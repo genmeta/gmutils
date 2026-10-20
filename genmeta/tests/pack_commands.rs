@@ -1,4 +1,4 @@
-//! Real pack/check executables with generated credentials in isolated homes.
+//! Offline build/sign executables with generated credentials in isolated homes.
 use std::{
     ffi::OsStr,
     path::Path,
@@ -79,7 +79,7 @@ fn pack(home: &Path, cwd: &Path, args: &[&OsStr]) -> Output {
         .env("HOME", home.parent().unwrap())
         .env("DHTTP_HOME", "/nonexistent-ignored-pishoo-home")
         .current_dir(cwd)
-        .args(["package", "build", "--no-build"])
+        .args(["build", "--no-build"])
         .args(args)
         .output()
         .unwrap()
@@ -258,4 +258,90 @@ fn backend_fifo_is_rejected_without_waiting_for_a_writer() {
         "regular files",
     );
     assert!(!lib.join("dist").exists());
+}
+
+#[test]
+fn app_and_lib_build_signed_packages_offline_without_a_host_service() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use rcgen::PublicKeyData;
+    use sha2::{Digest, Sha256};
+    for kind in ["app", "lib"] {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home/.dhttp");
+        identity(&home);
+        let input = dir.path().join(kind);
+        project(&input, kind, "");
+        let output = input.join("dist/signed.webc");
+        let result = pack(&home, &input, &["--output".as_ref(), output.as_os_str()]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let summary: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        let bytes = std::fs::read(&output).unwrap();
+        assert_eq!(
+            summary["package_sha256"],
+            format!("{:x}", Sha256::digest(&bytes))
+        );
+        let package =
+            webc::Container::from_bytes_and_version(bytes.clone().into(), webc::Version::V3)
+                .unwrap();
+        package.validate().unwrap();
+        let raw = package
+            .get_volume("pishoo-signature")
+            .unwrap()
+            .read_file("/signature.json")
+            .unwrap()
+            .0;
+        let envelope: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        let signature = STANDARD
+            .decode(envelope["signature"].as_str().unwrap())
+            .unwrap();
+        let reader = webc::v3::read::OwnedReader::parse(bytes.clone()).unwrap();
+        let index = reader.index();
+        let mut digest = Sha256::new();
+        digest.update(b"\0webc003");
+        for entry in std::iter::once(&index.manifest)
+            .chain(std::iter::once(&index.atoms))
+            .chain(
+                index
+                    .volumes
+                    .iter()
+                    .filter(|(name, _)| name.as_str() != "pishoo-signature")
+                    .map(|(_, entry)| entry),
+            )
+        {
+            digest.update(&bytes[entry.span.start..entry.span.end()]);
+        }
+        let mut signed = b"pishoo-webc-signature-v1\0".to_vec();
+        signed.extend_from_slice(&digest.finalize());
+        let key = rcgen::KeyPair::from_pem(
+            &std::fs::read_to_string(home.join("alice/ssl/privkey.pem")).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            dhttp_home::certificate::verify_signature(
+                &key.subject_public_key_info(),
+                &signed,
+                &signature
+            )
+            .unwrap()
+        );
+        if kind == "lib" {
+            let backend = package.get_atom("backend").unwrap();
+            assert!(
+                backend
+                    .windows(b"pishoo:openapi".len())
+                    .any(|value| value == b"pishoo:openapi")
+            );
+            assert!(
+                package
+                    .get_volume("metadata")
+                    .unwrap()
+                    .read_file("/openapi.json")
+                    .is_none()
+            );
+        }
+    }
 }

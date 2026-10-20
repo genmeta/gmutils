@@ -144,7 +144,7 @@ async fn build(
         return Err("--id differs from manifest publisher".into());
     }
     let modules = config.get("module");
-    let backend = if kind == "app" {
+    let mut backend = if kind == "app" {
         if modules.is_some_and(|m| m.as_array().is_none_or(|v| !v.is_empty())) {
             return Err("app must have zero backend modules".into());
         }
@@ -187,8 +187,16 @@ async fn build(
         .and_then(toml::Value::as_str)
         .ok_or("content mapping differs from package kind")?;
     let directory = local_content_path(project, directory)?;
-    if !directory.is_dir() || !directory.join(required).is_file() {
+    if !directory.is_dir() || (kind == "app" && !directory.join(required).is_file()) {
         return Err(format!("missing build artifact: {mount}/{required}").into());
+    }
+    if kind == "lib" {
+        let document = if directory.join("openapi.json").exists() {
+            Some(read_bounded(&directory.join("openapi.json"), 1024 * 1024)?)
+        } else {
+            None
+        };
+        backend = embedded_openapi(backend, document.as_deref())?;
     }
     let output = output.unwrap_or_else(|| {
         project
@@ -205,7 +213,7 @@ async fn build(
     // Count the signature.json entry as part of the existing 4096-entry limit.
     let mut count = 1;
     let mut remaining = 64 * 1024 * 1024 - backend.len();
-    let content = public_directory(&directory, "", &mut count, &mut remaining, 0)?;
+    let content = public_directory(&directory, "", &mut count, &mut remaining, 0, kind == "lib")?;
     // Local-only loading; do not refresh OCSP or initialize a network.
     let home = dhttp_home::DhttpHome::for_user_home_dir(
         dirs::home_dir().ok_or("cannot locate user home directory")?,
@@ -299,12 +307,6 @@ async fn build(
     let mut temporary = tempfile::NamedTempFile::new_in(&parent)?;
     temporary.write_all(&bytes)?;
     temporary.as_file().sync_all()?;
-    let checked =
-        crate::install::local_package(None, temporary.path(), Some(publisher.to_string()), kind)
-            .await?;
-    if checked["id"] != id || checked["kind"] != kind || checked["version"] != version {
-        return Err("host validation returned different package metadata".into());
-    }
     let result = json!({"id":id,"kind":kind,"version":version,
         "file":output.to_string_lossy(),"size":bytes.len(),
         "package_sha256":format!("{:x}", Sha256::digest(&bytes))});
@@ -320,6 +322,96 @@ async fn build(
     std::fs::File::open(&parent)?.sync_all()?;
     println!("{}", serde_json::to_string(&result)?);
     Ok(())
+}
+
+fn embedded_openapi(mut backend: Vec<u8>, source: Option<&[u8]>) -> Result<Vec<u8>> {
+    let mut offset = 8;
+    let mut embedded = None;
+    while offset < backend.len() {
+        let section = backend[offset];
+        let (size, start) = wasm_length(&backend, offset + 1)?;
+        let end = start
+            .checked_add(size)
+            .filter(|end| *end <= backend.len())
+            .ok_or("truncated WASM section")?;
+        if section == 0 {
+            let (length, name_start) = wasm_length(&backend[..end], start)?;
+            let name_end = name_start
+                .checked_add(length)
+                .filter(|name_end| *name_end <= end)
+                .ok_or("invalid WASM custom section name")?;
+            let name = backend
+                .get(name_start..name_end)
+                .ok_or("truncated custom section name")?;
+            if name == b"pishoo:signature" {
+                return Err("backend must not contain a second publisher signature".into());
+            }
+            if name == b"pishoo:openapi" {
+                if embedded.is_some() || end - name_end > 1024 * 1024 {
+                    return Err("duplicate or oversized embedded OpenAPI".into());
+                }
+                embedded = Some(name_end..end);
+            }
+        }
+        offset = end;
+    }
+    let document = embedded
+        .as_ref()
+        .map(|range| &backend[range.clone()])
+        .or(source)
+        .ok_or("missing build artifact: embedded OpenAPI or /metadata/openapi.json")?;
+    if let (Some(range), Some(source)) = (embedded.as_ref(), source) {
+        if backend[range.clone()] != *source {
+            return Err("embedded OpenAPI differs from metadata/openapi.json".into());
+        }
+    }
+    let parsed: Value = serde_json::from_slice(document)?;
+    if document.len() > 1024 * 1024
+        || !parsed["openapi"]
+            .as_str()
+            .is_some_and(|v| v.starts_with("3.1."))
+        || !parsed["paths"].is_object()
+    {
+        return Err("OpenAPI must be a bounded 3.1.x document with paths".into());
+    }
+    if embedded.is_none() {
+        let name = b"pishoo:openapi";
+        let mut payload = Vec::new();
+        wasm_write_length(name.len(), &mut payload);
+        payload.extend_from_slice(name);
+        payload.extend_from_slice(document);
+        backend.push(0);
+        wasm_write_length(payload.len(), &mut backend);
+        backend.extend_from_slice(&payload);
+    }
+    if backend.len() > 64 * 1024 * 1024 {
+        return Err("backend with embedded OpenAPI exceeds 64 MiB".into());
+    }
+    Ok(backend)
+}
+
+fn wasm_length(bytes: &[u8], mut offset: usize) -> Result<(usize, usize)> {
+    let mut length = 0usize;
+    for shift in (0..35).step_by(7) {
+        let byte = *bytes.get(offset).ok_or("truncated WASM length")?;
+        offset += 1;
+        if shift == 28 && byte & 0xf0 != 0 {
+            return Err("WASM length overflow".into());
+        }
+        length |= usize::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Ok((length, offset));
+        }
+    }
+    Err("WASM length overflow".into())
+}
+
+fn wasm_write_length(mut length: usize, bytes: &mut Vec<u8>) {
+    while length >= 0x80 {
+        bytes.push((length as u8 & 0x7f) | 0x80);
+        length >>= 7;
+    }
+    bytes.push(length as u8);
 }
 
 fn reject_url(value: &std::ffi::OsStr) -> Result<()> {
@@ -582,6 +674,7 @@ fn public_directory(
     count: &mut usize,
     remaining: &mut usize,
     depth: usize,
+    omit_openapi: bool,
 ) -> Result<Directory<'static>> {
     if depth > 32 || std::fs::symlink_metadata(path)?.file_type().is_symlink() {
         return Err("content must contain real directories, depth <= 32".into());
@@ -597,6 +690,9 @@ fn public_directory(
             .file_name()
             .into_string()
             .map_err(|_| "invalid UTF-8 content filename")?;
+        if omit_openapi && relative.is_empty() && name == "openapi.json" {
+            continue;
+        }
         let logical = format!("{relative}/{name}");
         if logical.len() > 1024
             || name.is_empty()
@@ -615,6 +711,7 @@ fn public_directory(
                 count,
                 remaining,
                 depth + 1,
+                omit_openapi,
             )?)
         } else if kind.is_file() {
             let bytes = read_bounded(&entry.path(), (16 * 1024 * 1024).min(*remaining))?;
@@ -675,5 +772,42 @@ mod windows_tests {
         let output = root.join("dist").join("nested").join("test.webc");
         assert_eq!(resolved_output(&output).unwrap(), output);
         assert!(!output.parent().unwrap().exists());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embeds_one_openapi_before_package_signing() {
+        let document = br#"{"openapi":"3.1.0","info":{"version":"1.0.0"},"paths":{}}"#;
+        let original = b"\0asm\x0d\0\x01\0".to_vec();
+        let embedded = embedded_openapi(original.clone(), Some(document)).unwrap();
+        assert!(embedded.starts_with(&original));
+        assert!(
+            embedded
+                .windows(document.len())
+                .any(|bytes| bytes == document)
+        );
+        assert_eq!(embedded_openapi(embedded.clone(), None).unwrap(), embedded);
+        assert_eq!(
+            embedded_openapi(embedded.clone(), Some(document)).unwrap(),
+            embedded
+        );
+        assert!(
+            embedded_openapi(embedded, Some(br#"{"openapi":"3.1.0","paths":{"/x":{}}}"#)).is_err()
+        );
+        assert!(embedded_openapi(original, None).is_err());
+    }
+
+    #[test]
+    fn rejects_duplicate_and_truncated_embedded_documents() {
+        let document = br#"{"openapi":"3.1.0","paths":{}}"#;
+        let original = b"\0asm\x0d\0\x01\0".to_vec();
+        let mut embedded = embedded_openapi(original, Some(document)).unwrap();
+        embedded.extend_from_within(8..);
+        assert!(embedded_openapi(embedded, None).is_err());
+        assert!(embedded_openapi(b"\0asm\x0d\0\x01\0\0\x80".to_vec(), None).is_err());
     }
 }
