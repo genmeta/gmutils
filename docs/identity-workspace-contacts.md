@@ -11,7 +11,7 @@ genmeta identity apply zero.ai
 按提示完成身份认证。交互流程询问是否启用服务时默认选“是”；非交互申请目前仍保持关闭。若没有启用，执行：
 
 ```sh
-genmeta identity ensite --id zero.ai
+genmeta listen --id zero.ai all
 ```
 
 已经运行的 Pishoo 会自动发现身份并应用配置，无需重启。只有尚未运行时才启动：
@@ -30,10 +30,10 @@ pishoo
 
 ```sh
 genmeta nslookup zero.ai~ mdns
-genmeta curl --id zero.ai -f https://zero.ai.dhttp.net/std/sys/settings
+genmeta curl --id zero.ai -f https://zero.ai.dhttp.net/std/sys/listen
 ```
 
-配置应返回 `enabled: true` 和非零 `listen`；`listen = 3` 表示局域网和公网监听。首次加载需要验证凭据和准备 OCSP，保存配置后不保证立即可用。若失败，检查 `~/.dhttp/logs/error.log` 中对应身份的错误。
+配置应返回字符串 `listen`；`listen = "all"` 表示回环、局域网和公网监听，`off` 表示停用。首次加载需要验证凭据和准备 OCSP，保存配置后不保证立即可用。若失败，检查 `~/.dhttp/logs/error.log` 中对应身份的错误。
 
 `nslookup zero.ai` 查询的是普通域名；必须使用 `zero.ai~` 或 `zero.ai.dhttp.net` 才是在查这个身份。需要检查公网地址发布时，用 `genmeta nslookup zero.ai~ h3`；局域网解析成功不等于公网可达。
 
@@ -121,4 +121,4 @@ genmeta access --id friend.name /std/message allow zero.ai.dhttp.net --method PO
 - 当前 `zero.ai` 的已安装包来自 `alice.smith.dhttp.net`，不是 `std.dhttp.net`。本次没有覆盖这些包或重新申请身份。
 - 联系人队列与能力目录 GET 接口返回 200。申请、审批及双向授权命令已对照服务端实现和 Workspace 调用核对，本次没有向真实联系人提交申请，因此不将其描述为完整端到端实测。
 - 非交互申请默认关闭、没有专用联系人 CLI，以及不同发布者的同名包冲突，仍是这条链路的使用门槛。
-- 另有配置兼容缺口：当前 `ensite` 只读写 `listen`，未处理新版 Pishoo 独立的 `enabled` 开关。若身份曾通过新版管理界面设为 `enabled=false`，仅执行 `ensite` 可能仍未恢复服务；不能以命令的成功提示代替就绪检查。这不影响本次从旧格式 `listen=0` 启用的 `zero.ai`，但需要后续统一两端配置语义。
+- 当前命令为 `genmeta listen --id NAME MODE`，使用字符串模式；旧数字 listen 和 enabled 在读兼容时转换，写入时合并为单个 listen 字段。off 完整停用身份，恢复时显式指定模式；命令保存成功后仍应检查实际服务就绪。
