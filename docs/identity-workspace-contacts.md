@@ -42,20 +42,20 @@ genmeta curl --id zero.ai -f https://zero.ai.dhttp.net/std/sys/settings
 对尚未安装 Workspace 的身份执行：
 
 ```sh
-genmeta package install std.dhttp.net/workspace --id zero.ai
+genmeta install std.dhttp.net/workspace --id zero.ai
 ```
 
-使用完整发布者名称可以避免短名 `workspace` 在商店中出现多个发布者时产生歧义。Pishoo 会验证包并安装精确版本的 Profile、Message 等 Lib 依赖，无需逐个安装。安装成功会立即更新运行中的应用，无需重启。
+裸名 `genmeta install workspace` 固定选择标准作者 `std.dhttp.net`；这里写出完整发布者名称，使安装来源明确。Pishoo 会验证包并安装精确版本的 Profile、Message 等 Lib 依赖，无需逐个安装。安装成功会立即更新运行中的应用，无需重启。
 
 检查运行中的包和入口：
 
 ```sh
-genmeta curl --id zero.ai -f https://zero.ai.dhttp.net/std/sys/package/loaded-apps
-genmeta curl --id zero.ai -f https://zero.ai.dhttp.net/std/sys/package/loaded-libs
-genmeta curl --id zero.ai -f https://zero.ai.dhttp.net/std/workspace/
+genmeta curl --id zero.ai -f https://zero.ai.dhttp.net/std/sys/app/list
+genmeta curl --id zero.ai -f https://zero.ai.dhttp.net/std/sys/lib/list
+genmeta curl --id zero.ai -f https://zero.ai.dhttp.net/workspace/
 ```
 
-Workspace 的入口是 `https://zero.ai.dhttp.net/std/workspace/`。使用支持 DHTTP 的浏览器/访问环境，并以 `zero.ai` 身份进入自己的工作台；普通浏览器仅有常规 HTTPS 访问能力时，不能据此假定它能访问 DHTTP 服务。`genmeta curl` 可以验证服务，但不会渲染网页。
+Workspace 的入口是 `https://zero.ai.dhttp.net/workspace/`。使用支持 DHTTP 的浏览器/访问环境，并以 `zero.ai` 身份进入自己的工作台；普通浏览器仅有常规 HTTPS 访问能力时，不能据此假定它能访问 DHTTP 服务。`genmeta curl` 可以验证服务，但不会渲染网页。
 
 若已安装另一发布者的同名包，例如 `alice.smith.dhttp.net/workspace`，直接安装 `std.dhttp.net/workspace` 会被同名冲突检查拒绝。先检查现有包；能正常使用的旧包不必为完成后续联系人流程重新安装。迁移发布者需要单独处理现有包及依赖，不能将两条安装命令视为可互换的升级操作。
 

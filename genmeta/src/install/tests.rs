@@ -144,7 +144,7 @@ async fn full_id_and_explicit_lib_version_use_only_exact_endpoint() {
     .unwrap();
     assert_eq!(
         install_body(&result),
-        json!({"kind":"lib", "publisher":"dev.dhttp.net", "name":"chat", "version":"0.2.0"})
+        json!({"publisher":"dev.dhttp.net", "version":"0.2.0"})
     );
 }
 
@@ -280,10 +280,10 @@ fn success_requires_matching_identity_kind_version_and_saved_entry() {
     assert_eq!(
         success(&app, &app, "alice.dhttp.net").unwrap(),
         json!({
-            "id":"dev.dhttp.net/workspace", "kind":"app", "version":"0.2.0", "identity":"alice.dhttp.net", "entry_url":"https://alice.dhttp.net/std/workspace/"
+            "id":"dev.dhttp.net/workspace", "kind":"app", "version":"0.2.0", "identity":"alice.dhttp.net", "entry_url":"https://alice.dhttp.net/workspace/"
         })
     );
-    assert_eq!(install_body(&app).as_object().unwrap().len(), 4);
+    assert_eq!(install_body(&app).as_object().unwrap().len(), 2);
     for key in ["id", "kind", "version", "entry"] {
         let mut changed = app.clone();
         changed[key] = json!("wrong");
@@ -353,93 +353,66 @@ async fn identity_resolution_never_picks_the_first_directory_or_falls_back_to_an
 }
 
 #[test]
-fn package_cli_groups_operations_and_uses_type() {
+fn package_cli_is_top_level_and_selects_app_or_lib() {
     use clap::Parser;
 
     use crate::{Options, PackageCommand};
-    let Options::Package {
-        command: PackageCommand::Install {
-            kind, version, id, ..
-        },
-    } = Options::try_parse_from(["genmeta", "package", "install", "workspace"]).unwrap()
-    else {
-        panic!()
-    };
-    assert_eq!(kind, "app");
-    assert_eq!(version, None);
-    assert_eq!(id, None);
-    for flag in ["-i", "--id"] {
-        let Options::Package {
-            command: PackageCommand::Update {
-                kind, version, id, ..
-            },
-        } = Options::try_parse_from([
-            "genmeta",
-            "package",
-            "update",
-            "dev.dhttp.net/message",
-            flag,
-            "alice",
-            "--type",
-            "lib",
-            "--version",
-            "0.2.0",
-        ])
-        .unwrap()
-        else {
-            panic!()
-        };
-        assert_eq!(kind, "lib");
-        assert_eq!(version.as_deref(), Some("0.2.0"));
-        assert_eq!(id.as_deref(), Some("alice"));
-    }
-    for operation in ["remove", "info"] {
+    assert!(matches!(
+        Options::try_parse_from(["genmeta", "install", "workspace"]).unwrap(),
+        Options::Package(PackageCommand::Install {
+            app: false,
+            lib: false,
+            version: None,
+            id: None,
+            ..
+        })
+    ));
+    for operation in ["install", "update", "uninstall", "info"] {
         assert!(
             Options::try_parse_from([
-                "genmeta", "package", operation, "message", "--type", "lib", "--id", "alice"
+                "genmeta",
+                operation,
+                "alice/message",
+                "--lib",
+                "--id",
+                "alice"
             ])
             .is_ok()
         );
+        assert!(Options::try_parse_from(["genmeta", operation, "workspace", "--app"]).is_ok());
+        assert!(
+            Options::try_parse_from(["genmeta", operation, "workspace", "--app", "--lib"]).is_err()
+        );
+        assert!(
+            Options::try_parse_from(["genmeta", operation, "workspace", "--type", "app"]).is_err()
+        );
     }
     assert!(matches!(
-        Options::try_parse_from(["genmeta", "package", "list"]).unwrap(),
-        Options::Package {
-            command: PackageCommand::List { kind: None, .. }
-        }
+        Options::try_parse_from(["genmeta", "list"]).unwrap(),
+        Options::Package(PackageCommand::List {
+            app: false,
+            lib: false,
+            ..
+        })
     ));
     for args in [
-        vec!["genmeta", "install", "workspace"],
-        vec!["genmeta", "pack"],
-        vec!["genmeta", "upload", "package.webc"],
-        vec!["genmeta", "package", "install"],
-        vec!["genmeta", "package", "install", "workspace", "extra"],
+        vec!["genmeta", "package", "install", "workspace"],
+        vec!["genmeta", "remove", "workspace"],
+        vec!["genmeta", "check", "file.webc"],
+        vec!["genmeta", "list", "--loaded"],
+        vec!["genmeta", "install"],
         vec![
             "genmeta",
-            "package",
             "install",
             "workspace",
-            "--kind",
-            "lib",
+            "--file",
+            "workspace.webc",
         ],
+        vec!["genmeta", "update", "workspace", "--file", "workspace.webc"],
+        vec!["genmeta", "install", "workspace", "extra"],
+        vec!["genmeta", "uninstall", "workspace", "--version", "1.0.0"],
         vec![
             "genmeta",
-            "package",
-            "install",
-            "workspace",
-            "--type",
-            "other",
-        ],
-        vec![
-            "genmeta",
-            "package",
-            "remove",
-            "workspace",
-            "--version",
-            "1.0.0",
-        ],
-        vec![
-            "genmeta",
-            "package",
             "update",
             "workspace",
             "--store",
@@ -448,10 +421,15 @@ fn package_cli_groups_operations_and_uses_type() {
     ] {
         assert!(Options::try_parse_from(args).is_err());
     }
-    let help = Options::try_parse_from(["genmeta", "package", "install", "--help"])
+    let help = Options::try_parse_from(["genmeta", "install", "--help"])
         .unwrap_err()
         .to_string();
-    assert!(help.contains("MAJOR.MINOR.PATCH") && help.contains("--type") && help.contains("--id"));
+    assert!(
+        help.contains("MAJOR.MINOR.PATCH")
+            && help.contains("--app")
+            && help.contains("--lib")
+            && help.contains("--id")
+    );
 }
 
 #[test]
@@ -670,18 +648,22 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
                             .unwrap();
                         assert_eq!(peer.name(), "alice.dhttp.net");
                         let method = request.method().clone();
-                        let path = request.uri().path().to_string();
+                        let path = request.uri().path_and_query().unwrap().to_string();
+                        if path.starts_with("/std/sys/app?name=") || path.starts_with("/std/sys/lib?name=") {
+                            assert_eq!(method, http::Method::PUT);
+                            assert_eq!(request.headers()[header::CONTENT_TYPE], "application/json");
+                        }
                         let bytes = request.into_body().collect().await?.to_bytes();
                         requests
                             .lock()
                             .unwrap()
                             .push((method, path.clone(), bytes.to_vec()));
-                        let (status, value) = if path.ends_with("app-check") {
+                        let (status, value) = if path.starts_with("/std/sys/app?name=") {
                             (
                                 StatusCode::OK,
-                                json!({"kind":"app","id":"alice.dhttp.net/demo","version":"1.0.0"}),
+                                json!({"kind":"app","id":"alice.dhttp.net/demo","version":"1.0.0","entry":"/"}),
                             )
-                        } else if path.ends_with("lib-check") {
+                        } else if path.starts_with("/std/sys/lib?name=") {
                             (
                                 StatusCode::BAD_REQUEST,
                                 json!({"error":"invalid signature"}),
@@ -713,34 +695,18 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
             .unwrap()
             .owner_hash()
             .clone();
-    let result = host_exchange(
-        &endpoint,
-        &owner,
-        http::Method::POST,
-        "/std/sys/package/app-check",
-        b"immutable snapshot".to_vec(),
-        "application/octet-stream",
-    )
-    .await
-    .unwrap();
+    let app = release("alice.dhttp.net", "demo", "app", "1.0.0");
+    let result = install(&endpoint, &owner, &app).await.unwrap();
     assert_eq!(result["kind"], "app");
-    let error = host_exchange(
-        &endpoint,
-        &owner,
-        http::Method::POST,
-        "/std/sys/package/lib-check",
-        b"invalid".to_vec(),
-        "application/octet-stream",
-    )
-    .await
-    .unwrap_err();
+    let lib = release("alice.dhttp.net", "demo", "lib", "1.0.0");
+    let error = install(&endpoint, &owner, &lib).await.unwrap_err();
     assert!(report(error).contains("invalid signature"));
     assert_eq!(
         requests.lock().unwrap()[0],
         (
-            http::Method::POST,
-            "/std/sys/package/app-check".into(),
-            b"immutable snapshot".to_vec()
+            http::Method::PUT,
+            "/std/sys/app?name=demo".into(),
+            br#"{"publisher":"alice.dhttp.net","version":"1.0.0"}"#.to_vec()
         )
     );
     assert_eq!(
@@ -758,4 +724,26 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
     );
     assert_eq!(requests.lock().unwrap()[2].0, http::Method::PATCH);
     drop(listening);
+}
+
+#[test]
+fn abbreviated_publishers_expand_without_changing_installed_bare_names() {
+    assert_eq!(
+        normalize_target("workspace", true),
+        "std.dhttp.net/workspace"
+    );
+    assert_eq!(normalize_target("message", false), "message");
+    assert_eq!(
+        normalize_target("alice/message", true),
+        "alice.dhttp.net/message"
+    );
+    assert_eq!(
+        normalize_target("alice.smith/message", false),
+        "alice.smith.dhttp.net/message"
+    );
+    assert_eq!(
+        normalize_target("alice.dhttp.net/message", true),
+        "alice.dhttp.net/message"
+    );
+    assert!(!valid_target(&normalize_target("@alice/message", true)));
 }

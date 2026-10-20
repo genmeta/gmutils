@@ -25,12 +25,8 @@ enum Options {
     },
     #[command(visible_alias = "id")]
     Identity(genmeta_identity::Cli),
-    /// Build, publish and manage App and Lib packages
-    #[command(version)]
-    Package {
-        #[command(subcommand)]
-        command: PackageCommand,
-    },
+    #[command(flatten)]
+    Package(PackageCommand),
     /// Manage Pishoo reverse proxy configuration
     Server {
         #[command(subcommand)]
@@ -72,17 +68,18 @@ enum PackageCommand {
     Install {
         /// Package short name or canonical publisher/name
         target: String,
-        /// Install this local signed WEBC instead of downloading from the store
-        #[arg(long, conflicts_with = "version")]
-        file: Option<PathBuf>,
         /// Local identity hosting the packages (defaults to the configured identity)
         #[arg(short, long)]
         id: Option<String>,
         /// Exact release version (defaults to the latest published version)
         #[arg(long, value_name = "MAJOR.MINOR.PATCH")]
         version: Option<String>,
-        #[arg(long = "type", value_name = "TYPE", default_value = "app", value_parser = ["app", "lib"])]
-        kind: String,
+        /// Select an App (the default)
+        #[arg(long, conflicts_with = "lib")]
+        app: bool,
+        /// Select a Lib
+        #[arg(long, conflicts_with = "app")]
+        lib: bool,
     },
     /// Update an installed package from its original publisher
     #[command(disable_version_flag = true)]
@@ -95,37 +92,36 @@ enum PackageCommand {
         /// Exact release version (defaults to the latest published version)
         #[arg(long, value_name = "MAJOR.MINOR.PATCH")]
         version: Option<String>,
-        #[arg(long = "type", value_name = "TYPE", default_value = "app", value_parser = ["app", "lib"])]
-        kind: String,
+        /// Select an App (the default)
+        #[arg(long, conflicts_with = "lib")]
+        app: bool,
+        /// Select a Lib
+        #[arg(long, conflicts_with = "app")]
+        lib: bool,
     },
     /// Remove a package, retaining its data and dependencies
-    Remove {
+    Uninstall {
         /// Package short name or canonical publisher/name
         target: String,
         /// Local identity hosting the packages (defaults to the configured identity)
         #[arg(short, long)]
         id: Option<String>,
-        #[arg(long = "type", value_name = "TYPE", default_value = "app", value_parser = ["app", "lib"])]
-        kind: String,
+        /// Select an App (the default)
+        #[arg(long, conflicts_with = "lib")]
+        app: bool,
+        /// Select a Lib
+        #[arg(long, conflicts_with = "app")]
+        lib: bool,
     },
     /// List installed packages (both types by default)
     List {
-        /// Query packages currently loaded by Pishoo
-        #[arg(long)]
-        loaded: bool,
         /// Local identity hosting the packages (defaults to the configured identity)
         #[arg(short, long)]
         id: Option<String>,
-        #[arg(long = "type", value_name = "TYPE", value_parser = ["app", "lib"])]
-        kind: Option<String>,
-    },
-    /// Validate a local signed WEBC through the selected Pishoo service
-    Check {
-        file: PathBuf,
-        #[arg(short, long)]
-        id: Option<String>,
-        #[arg(long = "type", value_parser = ["app", "lib"], required = true)]
-        kind: String,
+        #[arg(long, conflicts_with = "lib")]
+        app: bool,
+        #[arg(long, conflicts_with = "app")]
+        lib: bool,
     },
     /// Show an installed package, including its exact dependencies
     Info {
@@ -134,8 +130,12 @@ enum PackageCommand {
         /// Local identity hosting the packages (defaults to the configured identity)
         #[arg(short, long)]
         id: Option<String>,
-        #[arg(long = "type", value_name = "TYPE", default_value = "app", value_parser = ["app", "lib"])]
-        kind: String,
+        /// Select an App (the default)
+        #[arg(long, conflicts_with = "lib")]
+        app: bool,
+        /// Select a Lib
+        #[arg(long, conflicts_with = "app")]
+        lib: bool,
     },
 }
 
@@ -182,7 +182,7 @@ async fn run(options: Options) -> Result<(), Error> {
         Options::Discover(options) => genmeta_discover::run(options).await,
         Options::Doctor { options } => genmeta_doctor::run(options).await?,
         Options::Identity(options) => genmeta_identity::run(options).await?,
-        Options::Package { command } => match command {
+        Options::Package(command) => match command {
             PackageCommand::Build {
                 path,
                 output,
@@ -192,35 +192,69 @@ async fn run(options: Options) -> Result<(), Error> {
             PackageCommand::Publish { file, id } => upload::run(file, id).await?,
             PackageCommand::Install {
                 target,
-                file,
                 id,
                 version,
-                kind,
+                app: _,
+                lib,
             } => {
-                if let Some(file) = file {
-                    let value = install::local_package(Some(&target), &file, id, &kind).await?;
-                    println!("{}", value);
-                } else {
-                    install::run("install", Some(target), id, version, Some(kind)).await?;
-                }
+                let kind = if lib { "lib" } else { "app" }.to_owned();
+                install::run("install", Some(target), id, version, Some(kind)).await?;
             }
             PackageCommand::Update {
                 target,
                 id,
                 version,
-                kind,
-            } => install::run("update", Some(target), id, version, Some(kind)).await?,
-            PackageCommand::Remove { target, id, kind } => {
-                install::run("remove", Some(target), id, None, Some(kind)).await?
+                app: _,
+                lib,
+            } => {
+                install::run(
+                    "update",
+                    Some(target),
+                    id,
+                    version,
+                    Some(if lib { "lib" } else { "app" }.into()),
+                )
+                .await?
             }
-            PackageCommand::Info { target, id, kind } => {
-                install::run("info", Some(target), id, None, Some(kind)).await?
+            PackageCommand::Uninstall {
+                target,
+                id,
+                app: _,
+                lib,
+            } => {
+                install::run(
+                    "remove",
+                    Some(target),
+                    id,
+                    None,
+                    Some(if lib { "lib" } else { "app" }.into()),
+                )
+                .await?
             }
-            PackageCommand::List { id, kind, loaded } => {
-                install::run(if loaded { "loaded" } else { "list" }, None, id, None, kind).await?
+            PackageCommand::Info {
+                target,
+                id,
+                app: _,
+                lib,
+            } => {
+                install::run(
+                    "info",
+                    Some(target),
+                    id,
+                    None,
+                    Some(if lib { "lib" } else { "app" }.into()),
+                )
+                .await?
             }
-            PackageCommand::Check { file, id, kind } => {
-                println!("{}", install::local_package(None, &file, id, &kind).await?);
+            PackageCommand::List { id, app, lib } => {
+                let kind = if lib {
+                    Some("lib".into())
+                } else if app {
+                    Some("app".into())
+                } else {
+                    None
+                };
+                install::run("list", None, id, None, kind).await?
             }
         },
         Options::Server { command } => server::run(command).await?,
@@ -311,9 +345,8 @@ mod tests {
             vec!["discover"],
             vec!["nslookup"],
             vec!["proxy"],
-            vec!["package"],
-            vec!["package", "publish"],
-            vec!["package", "build"],
+            vec!["publish"],
+            vec!["build"],
             vec!["doctor", "net"],
         ] {
             for (flag, kind) in [
@@ -345,13 +378,12 @@ mod tests {
 
     #[test]
     fn launcher_accepts_pack_defaults_and_explicit_paths() {
-        let options = Options::try_parse_from(["genmeta", "package", "build"]).unwrap();
+        let options = Options::try_parse_from(["genmeta", "build"]).unwrap();
         assert!(
-            matches!(options, Options::Package { command: PackageCommand::Build { path, output: None, id: None, no_build: false } } if path == std::path::Path::new("."))
+            matches!(options, Options::Package(PackageCommand::Build { path, output: None, id: None, no_build: false }) if path == std::path::Path::new("."))
         );
         let options = Options::try_parse_from([
             "genmeta",
-            "package",
             "build",
             "project with spaces/wasmer.toml",
             "-o",
@@ -361,12 +393,12 @@ mod tests {
         ])
         .unwrap();
         assert!(
-            matches!(options, Options::Package { command: PackageCommand::Build { path, output: Some(output), id: Some(id), no_build: false } }
+            matches!(options, Options::Package(PackageCommand::Build { path, output: Some(output), id: Some(id), no_build: false })
             if path == std::path::Path::new("project with spaces/wasmer.toml")
                 && output == std::path::Path::new("out file.webc") && id == "dev.dhttp.net")
         );
         for arg in ["--force", "--unsigned", "--kind", "--home", "--upload"] {
-            assert!(Options::try_parse_from(["genmeta", "package", "build", arg]).is_err());
+            assert!(Options::try_parse_from(["genmeta", "build", arg]).is_err());
         }
     }
 }
