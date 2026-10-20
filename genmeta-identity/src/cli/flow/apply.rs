@@ -571,7 +571,7 @@ async fn offer_server_activation(
         super::site::ServerConfigState::Disabled | super::site::ServerConfigState::Missing => {
             let enabled = crate::cli::prompt::prompt_enable_server()
                 .await
-                .require_interactive("`genmeta identity ensite --id IDENTITY`")
+                .require_interactive("`genmeta listen --id IDENTITY all`")
                 .map_err(|source| Error::ServerActivationPrompt { source })?;
             if enabled {
                 let welcome =
@@ -603,7 +603,7 @@ async fn offer_server_activation(
 
 fn print_server_disabled_hint(identity: &str) {
     super::transcript::print_line(format!(
-        "Server is not enabled. Enable it with `genmeta identity ensite --id {identity}`."
+        "Server is not enabled. Enable it with `genmeta listen --id {identity} all`."
     ));
 }
 

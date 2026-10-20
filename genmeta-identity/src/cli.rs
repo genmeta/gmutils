@@ -1,3 +1,5 @@
+pub use flow::site::run_listen;
+
 pub mod flow;
 pub mod prompt;
 pub mod validator;
@@ -188,14 +190,6 @@ pub struct Apply {
     pub verify_code: Option<String>,
 }
 
-/// Change an identity server configuration
-#[derive(Parser, Debug, Clone)]
-pub struct SiteCommand {
-    /// Identity whose server configuration should be changed
-    #[arg(long, value_name = "IDENTITY")]
-    pub id: String,
-}
-
 /// Renew identities
 #[derive(Parser, Debug, Clone)]
 pub struct Renew {
@@ -361,17 +355,6 @@ pub enum Options {
     Apply(Apply),
     Renew(Renew),
     Default(Default),
-    #[command(about = "Enable an identity server configuration")]
-    Ensite(SiteCommand),
-    #[command(about = "Disable an identity server configuration")]
-    Dissite(SiteCommand),
-    /// Show or change the local server listening scope
-    Listen {
-        #[arg(long)]
-        id: String,
-        #[arg(value_parser = ["off", "internal", "external", "both", "0", "1", "2", "3"])]
-        scope: Option<String>,
-    },
     Info(Info),
     List(List),
     Version {},
@@ -379,15 +362,7 @@ pub enum Options {
 
 impl Options {
     pub fn writes_home(&self) -> bool {
-        matches!(
-            self,
-            Self::Apply(_)
-                | Self::Renew(_)
-                | Self::Default(_)
-                | Self::Ensite(_)
-                | Self::Dissite(_)
-                | Self::Listen { scope: Some(_), .. }
-        )
+        matches!(self, Self::Apply(_) | Self::Renew(_) | Self::Default(_))
     }
 
     pub async fn run(
@@ -401,11 +376,6 @@ impl Options {
             Options::Renew(cmd) => flow::run_renew(cmd, dhttp_home, home_scope, cert_server).await,
             Options::Default(cmd) => {
                 flow::run_default(cmd, dhttp_home, home_scope, cert_server).await
-            }
-            Options::Ensite(cmd) => flow::run_ensite(cmd, dhttp_home).await,
-            Options::Dissite(cmd) => flow::run_dissite(cmd, dhttp_home).await,
-            Options::Listen { id, scope } => {
-                flow::site::run_listen(id, scope.as_deref(), dhttp_home).await
             }
             Options::Info(cmd) => flow::run_info(cmd, dhttp_home, cert_server).await,
             Options::List(cmd) => flow::run_list(cmd, dhttp_home, cert_server).await,
@@ -565,37 +535,11 @@ mod tests {
     }
 
     #[test]
-    fn site_commands_require_id() {
-        assert!(Options::try_parse_from(["genmeta", "ensite", "--id", "alice.smith"]).is_ok());
-        assert!(Options::try_parse_from(["genmeta", "dissite", "--id", "alice.smith"]).is_ok());
-        assert!(
-            Cli::try_parse_from(["genmeta", "--global", "ensite", "--id", "alice.smith"]).is_ok()
-        );
-        assert!(
-            Cli::try_parse_from(["genmeta", "dissite", "--global", "--id", "alice.smith"]).is_ok()
-        );
-        assert!(Options::try_parse_from(["genmeta", "ensite"]).is_err());
-        assert!(Options::try_parse_from(["genmeta", "dissite"]).is_err());
-        assert!(Options::try_parse_from(["genmeta", "ensite", "alice.smith"]).is_err());
-        assert!(Options::try_parse_from(["genmeta", "dissite", "alice.smith"]).is_err());
-
-        let command = Options::command();
-        assert_eq!(
-            command
-                .find_subcommand("ensite")
-                .and_then(clap::Command::get_about)
-                .map(ToString::to_string)
-                .as_deref(),
-            Some("Enable an identity server configuration")
-        );
-        assert_eq!(
-            command
-                .find_subcommand("dissite")
-                .and_then(clap::Command::get_about)
-                .map(ToString::to_string)
-                .as_deref(),
-            Some("Disable an identity server configuration")
-        );
+    fn identity_commands_do_not_expose_server_configuration() {
+        for command in ["ensite", "dissite", "listen"] {
+            assert!(Options::try_parse_from(["genmeta", command, "--id", "alice.smith"]).is_err());
+            assert!(Options::command().find_subcommand(command).is_none());
+        }
     }
 
     fn local_identity_with_dhttp_ski() -> Identity {
@@ -818,8 +762,6 @@ mod tests {
             ["genmeta", "apply", "alice.smith"].as_slice(),
             ["genmeta", "renew", "alice.smith"].as_slice(),
             ["genmeta", "default", "alice.smith"].as_slice(),
-            ["genmeta", "ensite", "--id", "alice.smith"].as_slice(),
-            ["genmeta", "dissite", "--id", "alice.smith"].as_slice(),
         ] {
             let cli = Cli::try_parse_from(argv).unwrap();
             assert!(cli.options.writes_home());

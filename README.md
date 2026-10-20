@@ -25,6 +25,8 @@ Available commands:
 | `genmeta identity` | Create, apply, inspect, and renew Unified Identities and certificates. |
 | `genmeta access` | Manage DHttp API access-control rules. |
 | `genmeta curl` | Send DHttp requests with a curl-like interface. |
+| `genmeta listen` | Query or change a local identity's listening mode, including off. |
+| `genmeta forward` | Query or change a running identity's HTTP forwarding rules. |
 | `genmeta proxy` | Run a local forward proxy that forwards HTTP requests to DHttp endpoints. |
 | `genmeta nslookup` | Resolve DDns names and discover reachable DHttp addresses. |
 | `genmeta discover` | Discover nearby DHttp endpoints over mDNS. |
@@ -133,12 +135,15 @@ Use `genmeta --help`, `genmeta identity --help`, and `genmeta doctor --help`
 for command groups. `--version` and `-V` are available for the launcher and
 these groups; the `version` subcommand is also supported.
 
-`genmeta identity ensite --id NAME` and `dissite --id NAME` update Pishoo's
-`db/config.db` for the selected user or global home. `ensite` explicitly creates
-missing configuration and enables the server; `dissite` sets `enabled=false`
-while preserving its listening scope and proxy rules. Legacy v1 configurations
-without `enabled` still use listen=0 to disable hosting. A running Pishoo process
-serving that home automatically discovers configured identities and applies changes.
+`genmeta listen --id NAME [loopback|internal|external|all|off]` queries or
+updates Pishoo's local `db/config.db`; add `--global` to select the system home.
+Omitting the mode only reads existing configuration. Specifying a mode creates
+missing configuration. `off` stops the identity; other modes enable its selected
+scope. `all` includes loopback, LAN and public scopes. No previous scope is retained
+while off. Forwarding rules use `genmeta forward --id NAME [LOCATION [TARGET]]`,
+which calls `/std/sys/forward` on the running identity service. These are top-level
+commands; the old identity ensite/dissite/listen and server proxy commands are removed.
+A running Pishoo process automatically discovers and applies saved changes.
 Interactive identity application creates configuration and a welcome page only
 when the user accepts server activation. Declining, or noninteractive application,
 creates neither. Existing server configuration is preserved. Pishoo skips identities
@@ -286,17 +291,17 @@ under the same short name. Update Pishoo first if this capability is missing.
 Pishoo provides the host APIs and `pishoo reload`; management lives in gmutils:
 
 ```sh
-genmeta identity ensite --id alice.smith
-genmeta identity dissite --id alice.smith
-genmeta identity listen --id alice.smith internal
+genmeta listen --id alice.smith all
+genmeta listen --id alice.smith off
+genmeta listen --id alice.smith internal
 pishoo reload
-genmeta server proxy --id alice.smith /api 127.0.0.1:8080
-genmeta server proxy --id alice.smith remove /api
+genmeta forward --id alice.smith /api 127.0.0.1:8080
+genmeta forward --id alice.smith remove /api
 genmeta install alice.smith/example --version 1.0.0 --lib --id alice.smith
 genmeta list --id alice.smith
 ```
 
-Identity settings are edited locally, including when listening is disabled.
+Listening configuration is edited locally, including when listening is off.
 Proxy changes and package operations call the running host and retain its authorization,
 validation, dependency and atomic-install rules. Installation and updates select published store releases and resolve exact dependencies through the host. Local artifacts are used only for build and publish.
 `genmeta build` now builds and signs directly; `--no-build` packages existing
