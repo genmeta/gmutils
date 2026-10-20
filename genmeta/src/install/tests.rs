@@ -714,7 +714,7 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
             &endpoint,
             &owner,
             http::Method::PATCH,
-            "/std/sys/proxies",
+            "/std/sys/forward",
             br#"{"location":"/api","proxy_pass":"127.0.0.1:8080"}"#.to_vec(),
             "application/json"
         )

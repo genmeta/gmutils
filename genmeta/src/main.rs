@@ -27,11 +27,8 @@ enum Options {
     Identity(genmeta_identity::Cli),
     #[command(flatten)]
     Package(PackageCommand),
-    /// Manage Pishoo reverse proxy configuration
-    Server {
-        #[command(subcommand)]
-        command: server::Command,
-    },
+    #[command(flatten)]
+    Server(server::Command),
     Nslookup(genmeta_nslookup::Options),
     Proxy(genmeta_proxy::Options),
     Version {},
@@ -257,7 +254,7 @@ async fn run(options: Options) -> Result<(), Error> {
                 install::run("list", None, id, None, kind).await?
             }
         },
-        Options::Server { command } => server::run(command).await?,
+        Options::Server(command) => server::run(command).await?,
         Options::Nslookup(options) => genmeta_nslookup::run(options).await?,
         Options::Proxy(options) => genmeta_proxy::run(options).await?,
         Options::Version {} => println!("{}", env!("CARGO_PKG_VERSION")),
@@ -305,23 +302,61 @@ mod tests {
     }
 
     #[test]
-    fn launcher_accepts_identity_site_commands() {
-        let enable =
-            Options::try_parse_from(["genmeta", "identity", "ensite", "--id", "alice.smith"]);
-        let disable =
-            Options::try_parse_from(["genmeta", "identity", "dissite", "--id", "alice.smith"]);
-        let global = Options::try_parse_from([
-            "genmeta",
-            "identity",
-            "--global",
-            "ensite",
-            "--id",
-            "alice.smith",
-        ]);
-
-        assert!(enable.is_ok(), "{enable:?}");
-        assert!(disable.is_ok(), "{disable:?}");
-        assert!(global.is_ok(), "{global:?}");
+    fn launcher_exposes_listen_and_forward_as_top_level_commands() {
+        use super::server::Command;
+        for mode in ["loopback", "internal", "external", "all", "off"] {
+            let command =
+                Options::try_parse_from(["genmeta", "listen", "--id", "alice.smith", mode])
+                    .unwrap();
+            assert!(
+                matches!(command, Options::Server(Command::Listen { mode: Some(saved), global: false, .. }) if saved == mode)
+            );
+        }
+        assert!(matches!(
+            Options::try_parse_from(["genmeta", "listen", "--global", "--id", "alice.smith"])
+                .unwrap(),
+            Options::Server(Command::Listen {
+                mode: None,
+                global: true,
+                ..
+            })
+        ));
+        assert!(matches!(
+            Options::try_parse_from([
+                "genmeta",
+                "forward",
+                "--id",
+                "alice.smith",
+                "/api",
+                "127.0.0.1:8080"
+            ])
+            .unwrap(),
+            Options::Server(Command::Forward { .. })
+        ));
+        assert!(Options::try_parse_from(["genmeta", "listen"]).is_err());
+        for mode in ["0", "1", "2", "3", "both", "enable", "disable"] {
+            assert!(
+                Options::try_parse_from(["genmeta", "listen", "--id", "alice.smith", mode])
+                    .is_err()
+            );
+        }
+        for command in ["ensite", "dissite", "listen"] {
+            assert!(
+                Options::try_parse_from(["genmeta", "identity", command, "--id", "alice.smith"])
+                    .is_err()
+            );
+        }
+        assert!(Options::try_parse_from(["genmeta", "server", "proxy"]).is_err());
+        let mut command = Options::command();
+        for name in ["listen", "forward"] {
+            assert!(command.find_subcommand(name).is_some());
+        }
+        assert!(command.find_subcommand("server").is_none());
+        let help = command.render_long_help().to_string();
+        assert!(
+            help.contains("listen") && help.contains("forward"),
+            "{help}"
+        );
     }
 
     #[test]

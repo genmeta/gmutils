@@ -24,7 +24,7 @@ use dhttp_home::{DhttpHome, HomeScope};
 
 use crate::{
     cert_server::CertServer,
-    cli::{Apply, Default, Error, Info, List, Renew, SiteCommand},
+    cli::{Apply, Default, Error, Info, List, Renew},
 };
 
 pub(crate) async fn run_apply(
@@ -34,17 +34,6 @@ pub(crate) async fn run_apply(
     cert_server: &CertServer,
 ) -> Result<(), Error> {
     apply::run(command, dhttp_home, home_scope, cert_server).await
-}
-
-pub(crate) async fn run_ensite(command: &SiteCommand, dhttp_home: &DhttpHome) -> Result<(), Error> {
-    site::run_ensite(command, dhttp_home).await
-}
-
-pub(crate) async fn run_dissite(
-    command: &SiteCommand,
-    dhttp_home: &DhttpHome,
-) -> Result<(), Error> {
-    site::run_dissite(command, dhttp_home).await
 }
 
 pub(crate) async fn run_renew(
