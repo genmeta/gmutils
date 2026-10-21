@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.9.0-preview.4] - 2026-10-21
+
+### Changed
+
+- Manage unified signed `.pkg` packages through top-level build, publish, install,
+  update and uninstall commands; installed queries use install --list/--info.
+- Separate local listen internal/external/all/off from authenticated HTTP mount
+  and unmount. Unmount matches both location and upstream and confirms deletion.
+- Use query-based ACL management and one root GET policy per App.
+- Use `.volume/sys/setting/database` for local listening configuration and stop
+  creating a default welcome site during identity activation.
+
+### Fixed
+
+- Preserve certificate-log history when moving legacy logs into the current log directory.
+- Consume both closing braces in curl `%{header{name}}` write-out tokens.
+- Return `/app/<name>/` entry URLs after installation and unchanged-version checks.
+- Validate ACL requests against the same pinned daccess revision as current Pishoo.
+- Update command help and onboarding examples to current package, contact and ACL APIs.
+
+### Release versions
+
+- genmeta: 0.9.0-preview.3 → 0.9.0-preview.4.
+- genmeta-identity: 0.5.0-preview.3 → 0.5.0-preview.4.
+- genmeta-access: 0.5.0-preview.2 → 0.5.0-preview.3.
+- genmeta-curl: 0.8.0-preview.2 → 0.8.0-preview.3.
+- Other command crates keep their existing versions.
+
 ## [0.9.0-preview.3] - 2026-10-15
 
 ### Changed

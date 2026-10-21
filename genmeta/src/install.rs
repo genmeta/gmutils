@@ -138,11 +138,7 @@ fn validate_detail(value: &Value) -> Result<(), Whatever> {
     Ok(())
 }
 
-async fn resolve<F, Fut>(
-    target: &str,
-    version: Option<&str>,
-    mut get: F,
-) -> Result<Value, Whatever>
+async fn resolve<F, Fut>(target: &str, version: Option<&str>, mut get: F) -> Result<Value, Whatever>
 where
     F: FnMut(String) -> Fut,
     Fut: Future<Output = Result<Vec<u8>, Whatever>>,
@@ -404,7 +400,7 @@ fn success(result: &Value, release: &Value, identity: &str) -> Result<Value, Wha
             "App installation response has no valid saved entry. {UNKNOWN}"
         );
         output["entry_url"] = json!(format!(
-            "https://{identity}/{}/",
+            "https://{identity}/app/{}/",
             release["name"].as_str().unwrap()
         ));
     }
@@ -496,7 +492,7 @@ async fn catalog(
 ) -> Result<Option<Value>, Whatever> {
     let path = match target {
         Some(target) => format!("/std/sys/pkg?name={}", target.rsplit('/').next().unwrap()),
-        None => format!("/std/sys/pkg/list"),
+        None => "/std/sys/pkg/list".to_owned(),
     };
     tokio::time::timeout(RESOLUTION_TIMEOUT, async {
         let response = endpoint.get(uri(endpoint.name(), &path)?)
@@ -652,9 +648,7 @@ pub(super) async fn run(
             .whatever_context("Local credentials have no valid owner hash")?;
     let owner = ski.owner_hash().clone();
     if operation == "list" {
-        let packages = catalog(&endpoint, &owner, None, false)
-            .await?
-            .unwrap();
+        let packages = catalog(&endpoint, &owner, None, false).await?.unwrap();
         println!(
             "{}",
             serde_json::to_string_pretty(&packages).whatever_context("Cannot encode catalog")?
@@ -692,14 +686,8 @@ pub(super) async fn run(
     })
     .await?;
     let output = if check_install_version(operation, current.as_ref(), &release)? {
-        let mut output = json!({"id":release["id"],"version":release["version"],"identity":endpoint.name(),"unchanged":true});
-        if current.as_ref().is_some_and(|value| value["entry"] == "/") {
-            output["entry_url"] = json!(format!(
-                "https://{}/{}/",
-                endpoint.name(),
-                release["name"].as_str().unwrap()
-            ));
-        }
+        let mut output = success(current.as_ref().unwrap(), &release, endpoint.name())?;
+        output["unchanged"] = true.into();
         output
     } else {
         eprintln!(

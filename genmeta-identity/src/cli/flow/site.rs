@@ -54,10 +54,10 @@ pub enum Error {
 impl ServerConfig {
     pub(crate) fn for_profile(profile: &IdentityProfile) -> Self {
         Self {
-            path: if profile.join(".volume/sys/setting/.db").exists()
+            path: if profile.join(".volume/sys/setting/database").exists()
                 || !profile.config_db_path().exists()
             {
-                profile.join(".volume/sys/setting/.db")
+                profile.join(".volume/sys/setting/database")
             } else {
                 profile.config_db_path()
             },
@@ -96,7 +96,7 @@ impl ServerConfig {
         let version: i64 = version
             .try_get_by_index(0)
             .map_err(|_| invalid("invalid schema version"))?;
-        if !matches!(version, 1 | 2 | 3) {
+        if !matches!(version, 1..=3) {
             return Err(invalid("supported schema versions are 1, 2 and 3"));
         }
         let kv = db
@@ -503,7 +503,7 @@ mod tests {
             Err(Error::InvalidConfiguration { .. })
         ));
         db.close().await.unwrap();
-        fs::remove_file(profile.join(".volume/sys/setting/.db"))
+        fs::remove_file(profile.join(".volume/sys/setting/database"))
             .await
             .unwrap();
         assert_eq!(config.state().await.unwrap(), ServerConfigState::Missing);
@@ -511,9 +511,11 @@ mod tests {
             config.disable().await,
             Err(Error::MissingConfiguration { .. })
         ));
-        assert!(!profile.join(".volume/sys/setting/.db").exists());
+        assert!(!profile.join(".volume/sys/setting/database").exists());
         assert_eq!(config.enable().await.unwrap(), ConfigChange::Changed);
         assert_eq!(config.state().await.unwrap(), ServerConfigState::Enabled);
+        assert!(!profile.join(".volume/sys/file").exists());
+        assert!(!profile.join("app").exists());
     }
 
     #[tokio::test]
@@ -563,10 +565,25 @@ mod tests {
         run_listen("alice.smith", Some("all"), &home).await.unwrap();
         run_listen("alice.smith", Some("off"), &home).await.unwrap();
         assert_eq!(config.listen(&db).await.unwrap(), "off");
-        for sql in ["SELECT value FROM setting WHERE key='theme'", "SELECT proxy_pass FROM proxy_location WHERE location='/api'"] {
-            assert!(db.query_one_raw(Statement::from_string(DatabaseBackend::Sqlite, sql)).await.unwrap().is_some());
+        for sql in [
+            "SELECT value FROM setting WHERE key='theme'",
+            "SELECT proxy_pass FROM proxy_location WHERE location='/api'",
+        ] {
+            assert!(
+                db.query_one_raw(Statement::from_string(DatabaseBackend::Sqlite, sql))
+                    .await
+                    .unwrap()
+                    .is_some()
+            );
         }
-        let version = db.query_one_raw(Statement::from_string(DatabaseBackend::Sqlite, "PRAGMA user_version")).await.unwrap().unwrap();
+        let version = db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "PRAGMA user_version",
+            ))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(version.try_get_by_index::<i64>(0).unwrap(), 3);
         db.close().await.unwrap();
     }
@@ -593,17 +610,17 @@ mod tests {
     async fn listen_creates_configuration_only_for_an_explicit_valid_mode() {
         let (root, profile, config) = fixture().await;
         let home = DhttpHome::new(root.path().to_path_buf());
-        fs::remove_file(profile.join(".volume/sys/setting/.db"))
+        fs::remove_file(profile.join(".volume/sys/setting/database"))
             .await
             .unwrap();
         assert!(run_listen("alice.smith", None, &home).await.is_err());
-        assert!(!profile.join(".volume/sys/setting/.db").exists());
+        assert!(!profile.join(".volume/sys/setting/database").exists());
         assert!(
             run_listen("alice.smith", Some("both"), &home)
                 .await
                 .is_err()
         );
-        assert!(!profile.join(".volume/sys/setting/.db").exists());
+        assert!(!profile.join(".volume/sys/setting/database").exists());
         run_listen("alice.smith", Some("internal"), &home)
             .await
             .unwrap();
@@ -621,10 +638,10 @@ mod tests {
         let (_root, profile, config) = fixture().await;
         assert!(config.create_disabled().await.is_err());
         assert_eq!(config.state().await.unwrap(), ServerConfigState::Disabled);
-        fs::remove_file(profile.join(".volume/sys/setting/.db"))
+        fs::remove_file(profile.join(".volume/sys/setting/database"))
             .await
             .unwrap();
-        fs::create_dir(profile.join(".volume/sys/setting/.db"))
+        fs::create_dir(profile.join(".volume/sys/setting/database"))
             .await
             .unwrap();
         assert!(matches!(

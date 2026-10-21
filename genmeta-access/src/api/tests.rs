@@ -150,7 +150,10 @@ async fn authenticated_api_crud_updates_service_and_json_contract() {
     assert!(run(&server, &["list", "--wide"]).await.unwrap().is_empty());
     let calls = server.calls.lock().unwrap();
     assert_eq!(calls[0].method, http::Method::POST);
-    assert_eq!(calls[0].uri.path(), "/std/acl/access/api");
+    assert_eq!(
+        calls[0].uri.path_and_query().unwrap().as_str(),
+        "/std/acl/access?api=%2Fapi"
+    );
     assert_eq!(
         calls[0].body,
         Some(json!({"method":"GET", "effect":"allow", "grantee":"*?"}))
@@ -159,7 +162,10 @@ async fn authenticated_api_crud_updates_service_and_json_contract() {
         .iter()
         .find(|call| call.method == http::Method::DELETE)
         .unwrap();
-    assert_eq!(delete.uri.path(), "/std/acl/allow/%2A%3F");
+    assert_eq!(
+        delete.uri.path_and_query().unwrap().as_str(),
+        "/std/acl/allow?name=%2A%3F"
+    );
     assert_eq!(delete.body, Some(json!({"method":"GET", "api":"/api"})));
 }
 
@@ -205,11 +211,15 @@ async fn root_and_nested_api_paths_round_trip_through_router() {
     }
     assert!(run(&server, &["list", "--wide"]).await.unwrap().is_empty());
     let calls = server.calls.lock().unwrap();
-    assert_eq!(calls[0].uri.path(), "/std/acl/access/%2F");
+    assert_eq!(
+        calls[0].uri.path_and_query().unwrap().as_str(),
+        "/std/acl/access?api=%2F"
+    );
     assert!(
         calls
             .iter()
-            .any(|call| call.uri.path() == "/std/acl/access/api%2Fusers")
+            .any(|call| call.uri.path_and_query().unwrap().as_str()
+                == "/std/acl/access?api=%2Fapi%2Fusers")
     );
 }
 
@@ -338,8 +348,12 @@ async fn forbidden_and_pending_responses_never_report_success_or_retry() {
     for (status, body) in [
         (StatusCode::FORBIDDEN, "no permission"),
         (
+            StatusCode::BAD_REQUEST,
+            r#"{"error":"need_review","review_id":12,"status_url":"/std/acl/status?id=12"}"#,
+        ),
+        (
             StatusCode::ACCEPTED,
-            r#"{"status_url":"/std/acl/review/12/status"}"#,
+            r#"{"error":"need_review","review_id":12,"status_url":"/std/acl/status?id=12"}"#,
         ),
     ] {
         let script = scripted(status, body);

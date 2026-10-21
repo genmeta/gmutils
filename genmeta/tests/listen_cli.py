@@ -11,7 +11,7 @@ with tempfile.TemporaryDirectory(prefix='review-cli-') as root:
         assert (p.returncode==0)==ok,(args,p.returncode,p.stdout,p.stderr)
         return p
     run('listen','--id','alice.smith','internal')
-    dbpath=profile/'.volume/sys/setting/.db'
+    dbpath=profile/'.volume/sys/setting/database'
     def kv():
         with sqlite3.connect(dbpath) as db:return db.execute("SELECT value FROM setting WHERE key='listen'").fetchone()
     assert kv()==('internal',)

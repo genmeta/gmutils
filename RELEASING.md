@@ -1,51 +1,74 @@
-# Release preparation for v0.9.0-preview.3
+# Release preparation for v0.9.0-preview.4
 
 | Package | Published version | Prepared version |
 | --- | --- | --- |
-| genmeta | 0.9.0-preview.2 | 0.9.0-preview.3 |
-| genmeta-identity | 0.5.0-preview.2 | 0.5.0-preview.3 |
-| Other workspace command crates | current preview.2 versions | unchanged |
+| genmeta | 0.9.0-preview.3 | 0.9.0-preview.4 |
+| genmeta-access | 0.5.0-preview.2 | 0.5.0-preview.3 |
+| genmeta-curl | 0.8.0-preview.2 | 0.8.0-preview.3 |
+| genmeta-identity | 0.5.0-preview.3 | 0.5.0-preview.4 |
+| Other workspace command crates | current versions | unchanged |
+
+The previous launcher, access and identity versions are already published. Keep
+these new versions and workspace dependency requirements together; the publish
+workflow deliberately skips versions already on crates.io.
 
 ## Scope and compatibility
 
-Require explicit server activation during identity apply, preserve enabled/listen
-semantics, and provide the management/package commands removed from Pishoo.
-Identity activation and listening edit the local config.db so disabled services
-can be restored. Proxy and package operations use authenticated host APIs.
+This release targets the current Pishoo unified Pkg, listen/mount and query-based
+ACL APIs. Package commands are top-level build/publish/install/update/uninstall;
+installed queries use install --list/--info. Signed source files use .pkg. No
+legacy App/Lib package flags, package/server grouping, forward or unlisten aliases
+are restored. App entry URLs use /app/NAME/.
 
-Use Pishoo v0.9.0-preview.3 for the complete opt-in lifecycle and mDNS cleanup.
-System service start/stop/restart/status remain systemctl/Homebrew operations.
-Package builds sign locally without requiring a running Pishoo service. Publication
-uses the store API; host compatibility and dependency checks run during store-backed
-installation/update. genmeta does not launch pishoo-pack or pishoo app/lib check.
+Listen edits .volume/sys/setting/database locally, including when the identity is
+off. It accepts internal/external/all/off, and off retains mounts. Mount/unmount
+use the authenticated running Pishoo /std/sys/mount API. Unmount matches both
+location and proxy_pass; off and unmount require confirmation or --yes.
 
-## Validation
+Identity activation creates only explicit listening configuration. It no longer
+creates a default welcome site. Certificate logging preserves history when moving
+an existing real logs directory into log. Curl header write-out tokens consume
+both closing braces, including Pishoo-Viewer-Name on App HEAD responses.
 
-Run nightly formatting, commitlint, strict Clippy, locked workspace tests,
-documentation, MSRV and crate/DEB/RPM/Homebrew dry runs before tagging. The registry
-lockfile uses published dependencies without sibling Cargo patches. Run Cargo
-with --manifest-path from outside ancestor local overrides while keeping sources
-in the current checkout.
+Runtime dependencies use published registry releases without sibling Cargo
+patches. The access CLI's test-only daccess dependency is pinned to the same
+revision as Pishoo so its contract tests exercise the current HTTP routes.
 
-Regressions cover browser-only application, enabled/listen compatibility, literal
-build arguments, input-file protection, authenticated HTTP/3 upload and host errors.
-Publish genmeta-identity 0.5.0-preview.3 before genmeta 0.9.0-preview.3. The existing
-workflow skips unchanged crate versions already present on crates.io.
+## Validation on 2026-10-21
 
-## Publication
+- Locked, all-feature workspace tests pass. Both normally ignored HTTP/3 host and
+  publication contract tests were run separately with OpenSSL 3 and local UDP.
+- Strict all-target/all-feature Clippy and nightly formatting pass.
+- Warning-denied workspace documentation builds.
+- All four changed crates pass the multi-package cargo publish --dry-run --locked
+  verification using a temporary registry; no crate was uploaded.
+- Real running-Pishoo acceptance covers installed queries, dependency/author
+  removal protection, mount/unmount and HTTP forwarding, ACL operations, all four
+  listening modes and restoration, curl, proxy, nslookup and discover. See
+  [Pishoo command validation](docs/pishoo-validation.md).
+- Existing package catalogs, ACL rules, mounts and listening settings were restored.
+  SSL and App/Lib files were hash-checked unchanged. Existing background contact
+  retry timestamps/counters continued advancing; no contact/message test data
+  was created or restored over that background activity.
 
-After successful CI and rebase merge, create annotated tag v0.9.0-preview.3 at the
-checked commit. Existing workflows publish crates, Linux DEB/RPM and macOS Homebrew
-preview artifacts. Trusted Publishing remains required for existing crates; API
-tokens remain limited to first publication. Public APT verification remains enabled.
+The online store was still serving the legacy App/Lib protocol during validation.
+Its new /store/v1/packages routes returned 403. Store-backed install/update success
+and a new-package live uninstall cycle await that rollout; per the user's decision
+these are external follow-up checks, not blockers for this CLI commit. The local
+HTTP/3 fixture verifies install, unchanged-version handling, identity-conditional
+uninstall, post-delete absence and host errors without publishing a real package.
 
-Windows/Scoop release artifacts remain deferred. This preparation does not create
-a tag, publish artifacts or deploy/restart production services.
+## Before tagging
 
-## Preparation results (2026-10-15)
+Run the repository CI on Linux, macOS and Windows, including the 1.94.0 MSRV job
+and DEB/RPM/Homebrew artifact checks. Those platform jobs were not replaced by a
+local macOS test. Check the new store protocol once its rollout completes.
 
-- Locked workspace tests and nightly formatting passed.
-- Strict nightly Clippy passed for all targets/features with warnings denied.
-- genmeta-identity and genmeta passed cargo publish --dry-run --locked, including
-  package verification against the temporary registry. No crates were uploaded.
-- Conventional Commits checks passed locally; platform/artifact checks remain CI gates.
+After CI and review/merge, create annotated tag v0.9.0-preview.4 at the checked
+commit. Existing workflows publish crates, Linux DEB/RPM and macOS Homebrew preview
+artifacts. The publish workflow orders access/curl/identity before the launcher.
+Trusted Publishing remains required for existing crates; first-publication tokens
+remain limited to new crates. Public APT verification stays enabled.
+
+This preparation does not push a tag, publish artifacts, deploy the store, replace
+the Homebrew-installed CLI, or restart production services for a new host build.

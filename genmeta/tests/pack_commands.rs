@@ -39,20 +39,44 @@ fn identity(home: &Path) {
 
 fn project(path: &Path, kind: &str, repository: &str) {
     std::fs::create_dir_all(path).unwrap();
-    let content = match kind {"app" => "entry='/'", "lib" => "host={}", _ => "entry='/'\nhost={}"};
-    let mapping = if kind == "lib" {""} else {"[fs]\n'/public'='public'\n"};
-    let module = if kind == "app" {""} else {"[[module]]\nname='backend'\nsource='lib.wasm'\n"};
+    let content = match kind {
+        "app" => "entry='/'",
+        "lib" => "host={}",
+        _ => "entry='/'\nhost={}",
+    };
+    let mapping = if kind == "lib" {
+        ""
+    } else {
+        "[fs]\n'/public'='public'\n"
+    };
+    let module = if kind == "app" {
+        ""
+    } else {
+        "[[module]]\nname='backend'\nsource='lib.wasm'\n"
+    };
     std::fs::write(path.join("wasmer.toml"),format!("[package]\nname='alice.dhttp.net/hello'\nversion='1.0.0'\ndescription='Test package'\nlicense='MIT'\n{repository}\n[package.pishoo]\ntitle='Hello'\nchangelog='Initial release'\ndependencies=[]\n{content}\n{mapping}{module}")).unwrap();
     if kind != "lib" {
         std::fs::create_dir(path.join("public")).unwrap();
-        std::fs::write(path.join("public/index.html"),"<h1>Hello</h1>").unwrap();
+        std::fs::write(path.join("public/index.html"), "<h1>Hello</h1>").unwrap();
     }
     if kind != "app" {
-        let mut backend=include_bytes!("fixtures/wasi-http-read-request-then-respond.wasm").to_vec();
+        let mut backend =
+            include_bytes!("fixtures/wasi-http-read-request-then-respond.wasm").to_vec();
         let document=serde_json::to_vec(&json!({"openapi":"3.1.0","info":{"title":"Hello","version":"1.0.0"},"paths":{"/upload":{"post":{"operationId":"upload","summary":"Upload","responses":{"200":{"description":"OK"}}}}}})).unwrap();
-        let name=b"pishoo:openapi";let mut section=vec![name.len() as u8];section.extend(name);section.extend(document);backend.push(0);let mut n=section.len();while n>=128{backend.push((n as u8&127)|128);n >>=7;}backend.push(n as u8);backend.extend(section);std::fs::write(path.join("lib.wasm"),backend).unwrap();
+        let name = b"pishoo:openapi";
+        let mut section = vec![name.len() as u8];
+        section.extend(name);
+        section.extend(document);
+        backend.push(0);
+        let mut n = section.len();
+        while n >= 128 {
+            backend.push((n as u8 & 127) | 128);
+            n >>= 7;
+        }
+        backend.push(n as u8);
+        backend.extend(section);
+        std::fs::write(path.join("lib.wasm"), backend).unwrap();
     }
-
 }
 
 fn pack(home: &Path, cwd: &Path, args: &[&OsStr]) -> Output {
@@ -133,9 +157,24 @@ fn invalid_declarations_and_missing_artifacts_do_not_publish() {
             "version='1.0.0-preview'",
             "MAJOR.MINOR.PATCH",
         ),
-        ("app", "entry='/'", "entry='/'\nhost={}", "require a backend"),
-        ("app", "title='Hello'", "title='Hello'\nkind='app'", "unknown package.pishoo"),
-        ("lib", "host={}", "entry='/'\nhost={}", "entry requires public resources"),
+        (
+            "app",
+            "entry='/'",
+            "entry='/'\nhost={}",
+            "require a backend",
+        ),
+        (
+            "app",
+            "title='Hello'",
+            "title='Hello'\nkind='app'",
+            "unknown package.pishoo",
+        ),
+        (
+            "lib",
+            "host={}",
+            "entry='/'\nhost={}",
+            "entry requires public resources",
+        ),
         (
             "lib",
             "dependencies=[]",
@@ -160,17 +199,18 @@ fn invalid_declarations_and_missing_artifacts_do_not_publish() {
         );
         assert!(!app.join("dist").exists());
     }
-    for (kind, missing) in [
-        ("app", "public/index.html"),
-        ("lib", "lib.wasm"),
-    ] {
+    for (kind, missing) in [("app", "public/index.html"), ("lib", "lib.wasm")] {
         let dir = tempfile::tempdir().unwrap();
         let app = dir.path().join("project");
         project(&app, kind, "");
         std::fs::remove_file(app.join(missing)).unwrap();
         fails(
             &pack(&dir.path().join("empty-home/.dhttp"), &app, &[]),
-            if kind == "app" {"frontend requires"} else {"build artifact"},
+            if kind == "app" {
+                "frontend requires"
+            } else {
+                "build artifact"
+            },
         );
         assert!(!app.join("dist").exists());
     }

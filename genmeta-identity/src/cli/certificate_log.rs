@@ -88,11 +88,29 @@ pub(crate) async fn write_after_commit(
         },
     )?;
 
-    let directory = profile.logs_dir();
+    let directory = profile.join("log");
+    let legacy = profile.logs_dir();
+    if !directory.exists() && legacy.exists() {
+        let metadata = tokio::fs::symlink_metadata(&legacy)
+            .await
+            .context(write_certificate_log_error::CreateDirectorySnafu { path: &legacy })?;
+        if !metadata.file_type().is_dir() {
+            return Err(WriteCertificateLogError::CreateDirectory {
+                path: legacy,
+                source: std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "legacy log directory must be a real directory",
+                ),
+            });
+        }
+        tokio::fs::rename(&legacy, &directory)
+            .await
+            .context(write_certificate_log_error::CreateDirectorySnafu { path: &directory })?;
+    }
     tokio::fs::create_dir_all(&directory)
         .await
         .context(write_certificate_log_error::CreateDirectorySnafu { path: &directory })?;
-    let path = profile.cert_log_path();
+    let path = profile.join("log/cert.log");
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -168,7 +186,7 @@ mod tests {
         write_after_commit(&fixture.profile, CertificateAction::Apply)
             .await
             .unwrap();
-        let bytes = tokio::fs::read(fixture.profile.cert_log_path())
+        let bytes = tokio::fs::read(fixture.profile.join("log/cert.log"))
             .await
             .unwrap();
         assert_eq!(bytes.iter().filter(|byte| **byte == b'\n').count(), 1);
@@ -182,7 +200,7 @@ mod tests {
     #[tokio::test]
     async fn logging_failure_does_not_remove_committed_material() {
         let fixture = committed_identity_fixture("log-failure").await;
-        tokio::fs::create_dir_all(fixture.profile.cert_log_path())
+        tokio::fs::create_dir_all(fixture.profile.join("log/cert.log"))
             .await
             .unwrap();
         assert!(
@@ -192,5 +210,54 @@ mod tests {
         );
         assert!(fixture.profile.ssl_dir().join("fullchain.crt").exists());
         assert!(fixture.profile.ssl_dir().join("privkey.pem").exists());
+    }
+
+    #[tokio::test]
+    async fn legacy_logs_move_to_log_without_losing_history() {
+        let fixture = committed_identity_fixture("legacy-logs").await;
+        let legacy = fixture.profile.logs_dir();
+        tokio::fs::create_dir_all(&legacy).await.unwrap();
+        tokio::fs::write(legacy.join("cert.log"), b"previous record\n")
+            .await
+            .unwrap();
+        write_after_commit(&fixture.profile, CertificateAction::Renew)
+            .await
+            .unwrap();
+        assert!(!legacy.exists());
+        let content = tokio::fs::read_to_string(fixture.profile.join("log/cert.log"))
+            .await
+            .unwrap();
+        assert!(content.starts_with("previous record\n"));
+        assert_eq!(content.lines().count(), 2);
+        assert!(content.contains(" RENEW "));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn legacy_log_symlink_is_rejected_without_moving_its_target() {
+        let fixture = committed_identity_fixture("legacy-log-link").await;
+        let target = fixture.home_path.join("other-logs");
+        tokio::fs::create_dir(&target).await.unwrap();
+        tokio::fs::write(target.join("keep"), b"unchanged")
+            .await
+            .unwrap();
+        let legacy = fixture.profile.logs_dir();
+        std::os::unix::fs::symlink(&target, &legacy).unwrap();
+        assert!(
+            write_after_commit(&fixture.profile, CertificateAction::Renew)
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::fs::symlink_metadata(legacy)
+                .await
+                .unwrap()
+                .is_symlink()
+        );
+        assert_eq!(
+            tokio::fs::read(target.join("keep")).await.unwrap(),
+            b"unchanged"
+        );
+        assert!(!fixture.profile.join("log").exists());
     }
 }
