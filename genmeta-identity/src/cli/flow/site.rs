@@ -40,7 +40,7 @@ pub enum Error {
     },
     #[snafu(display("Pishoo configuration is not a regular file: {}", path.display()))]
     NotRegularFile { path: PathBuf },
-    #[snafu(display("Pishoo configuration is missing at {}; use `genmeta listen --id NAME all` to create it", path.display()))]
+    #[snafu(display("Pishoo configuration is missing at {}; use `genmeta listen --id NAME internal` to create it", path.display()))]
     MissingConfiguration { path: PathBuf },
     #[snafu(display("failed to access Pishoo configuration database {}", path.display()))]
     Database {
@@ -54,7 +54,13 @@ pub enum Error {
 impl ServerConfig {
     pub(crate) fn for_profile(profile: &IdentityProfile) -> Self {
         Self {
-            path: profile.config_db_path(),
+            path: if profile.join(".volume/sys/setting/.db").exists()
+                || !profile.config_db_path().exists()
+            {
+                profile.join(".volume/sys/setting/.db")
+            } else {
+                profile.config_db_path()
+            },
         }
     }
 
@@ -90,8 +96,37 @@ impl ServerConfig {
         let version: i64 = version
             .try_get_by_index(0)
             .map_err(|_| invalid("invalid schema version"))?;
-        if version != 1 {
-            return Err(invalid("supported schema version is 1"));
+        if !matches!(version, 1 | 2 | 3) {
+            return Err(invalid("supported schema versions are 1, 2 and 3"));
+        }
+        let kv = db
+            .query_all_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "PRAGMA table_info(setting)",
+            ))
+            .await
+            .context(error::DatabaseSnafu { path: &self.path })?;
+        if !kv.is_empty() {
+            let row = db
+                .query_one_raw(Statement::from_string(
+                    DatabaseBackend::Sqlite,
+                    "SELECT value FROM setting WHERE key='listen'",
+                ))
+                .await
+                .context(error::DatabaseSnafu { path: &self.path })?;
+            let listen = match row {
+                None => "off".to_owned(),
+                Some(row) => row
+                    .try_get::<String>("", "value")
+                    .map_err(|_| invalid("invalid listen KV"))?,
+            };
+            if !matches!(
+                listen.as_str(),
+                "loopback" | "internal" | "external" | "all" | "off"
+            ) {
+                return Err(invalid("invalid listen mode"));
+            }
+            return Ok(listen);
         }
         let rows = db
             .query_all_raw(Statement::from_string(
@@ -232,9 +267,8 @@ impl ServerConfig {
             let result = async {
                 let tx = db.begin().await.context(error::DatabaseSnafu { path: &self.path })?;
                 for sql in [
-                    "CREATE TABLE settings (listen TEXT NOT NULL CHECK(listen IN ('loopback','internal','external','all','off')))",
-                    "INSERT INTO settings(listen) VALUES('off')",
-                    "CREATE TABLE proxy_locations(location TEXT NOT NULL PRIMARY KEY, proxy_pass TEXT NOT NULL)",
+                    "CREATE TABLE setting(key TEXT PRIMARY KEY NOT NULL,value TEXT NOT NULL)",
+                    "CREATE TABLE proxy_location(location TEXT NOT NULL PRIMARY KEY,proxy_pass TEXT NOT NULL)",
                     "PRAGMA user_version = 1",
                 ] {
                     tx.execute_unprepared(sql).await.context(error::DatabaseSnafu { path: &self.path })?;
@@ -259,36 +293,19 @@ async fn write_listen(db: &impl ConnectionTrait, path: &Path, target: &str) -> R
     let columns = db
         .query_all_raw(Statement::from_string(
             DatabaseBackend::Sqlite,
-            "PRAGMA table_info(settings)",
+            "PRAGMA table_info(setting)",
         ))
         .await
         .context(error::DatabaseSnafu { path })?;
-    let current = columns.len() == 1
-        && columns[0].try_get::<String>("", "type").ok().as_deref() == Some("TEXT");
-    if !current {
-        db.execute_unprepared("CREATE TABLE settings_listen (listen TEXT NOT NULL CHECK(listen IN ('loopback','internal','external','all','off')))")
-            .await.context(error::DatabaseSnafu { path })?;
-        db.execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "INSERT INTO settings_listen(listen) VALUES(?)",
-            [target.into()],
-        ))
-        .await
-        .context(error::DatabaseSnafu { path })?;
-        db.execute_unprepared("DROP TABLE settings")
-            .await
-            .context(error::DatabaseSnafu { path })?;
-        db.execute_unprepared("ALTER TABLE settings_listen RENAME TO settings")
+    if columns.is_empty() {
+        db.execute_unprepared("CREATE TABLE setting(key TEXT PRIMARY KEY NOT NULL,value TEXT NOT NULL); DROP TABLE settings; ALTER TABLE proxy_locations RENAME TO proxy_location;").await.context(error::DatabaseSnafu{path})?;
+    }
+    if target == "off" {
+        db.execute_unprepared("DELETE FROM setting WHERE key='listen'")
             .await
             .context(error::DatabaseSnafu { path })?;
     } else {
-        db.execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "UPDATE settings SET listen=?",
-            [target.into()],
-        ))
-        .await
-        .context(error::DatabaseSnafu { path })?;
+        db.execute_raw(Statement::from_sql_and_values(DatabaseBackend::Sqlite,"INSERT INTO setting VALUES('listen',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[target.into()])).await.context(error::DatabaseSnafu{path})?;
     }
     Ok(())
 }
@@ -364,7 +381,7 @@ pub async fn run_listen(
         .await?;
     let config = ServerConfig::for_profile(&profile);
     if let Some(mode) = scope {
-        if !matches!(mode, "loopback" | "internal" | "external" | "all" | "off") {
+        if !matches!(mode, "internal" | "external" | "all" | "off") {
             return Err(Error::InvalidConfiguration {
                 path: config.path.clone(),
                 message: "invalid listening scope".into(),
@@ -382,16 +399,7 @@ pub async fn run_listen(
             .await
             .context(error::DatabaseSnafu { path: &config.path })?;
         let listen = config.listen(&tx).await?;
-        let target = match scope {
-            None => listen.as_str(),
-            Some(value @ ("loopback" | "internal" | "external" | "all" | "off")) => value,
-            Some(_) => {
-                return Err(Error::InvalidConfiguration {
-                    path: config.path.clone(),
-                    message: "invalid listening scope".into(),
-                });
-            }
-        };
+        let target = scope.unwrap_or(&listen);
         if scope.is_some() {
             write_listen(&tx, &config.path, target).await?;
         }
@@ -440,16 +448,14 @@ mod tests {
     async fn changes_listen_without_losing_proxies_and_off_discards_scope() {
         let (_root, _profile, config) = fixture().await;
         let db = config.open().await.unwrap();
-        db.execute_unprepared(
-            "INSERT INTO proxy_locations VALUES('/app', 'http://127.0.0.1:8080')",
-        )
-        .await
-        .unwrap();
+        db.execute_unprepared("INSERT INTO proxy_location VALUES('/app', 'http://127.0.0.1:8080')")
+            .await
+            .unwrap();
         assert_eq!(config.state().await.unwrap(), ServerConfigState::Disabled);
         assert_eq!(config.enable().await.unwrap(), ConfigChange::Changed);
         assert_eq!(config.state().await.unwrap(), ServerConfigState::Enabled);
         for scope in ["loopback", "internal", "external", "all"] {
-            db.execute_unprepared(&format!("UPDATE settings SET listen='{scope}'"))
+            db.execute_unprepared(&format!("INSERT INTO setting VALUES('listen','{scope}') ON CONFLICT(key) DO UPDATE SET value=excluded.value"))
                 .await
                 .unwrap();
             assert_eq!(config.enable().await.unwrap(), ConfigChange::Unchanged);
@@ -461,7 +467,7 @@ mod tests {
         let row = db
             .query_one_raw(Statement::from_string(
                 DatabaseBackend::Sqlite,
-                "SELECT proxy_pass FROM proxy_locations",
+                "SELECT proxy_pass FROM proxy_location",
             ))
             .await
             .unwrap()
@@ -476,7 +482,7 @@ mod tests {
     async fn invalid_or_missing_configuration_is_not_modified() {
         let (_root, profile, config) = fixture().await;
         let db = config.open().await.unwrap();
-        db.execute_unprepared("PRAGMA user_version=2")
+        db.execute_unprepared("PRAGMA user_version=99")
             .await
             .unwrap();
         assert!(matches!(
@@ -487,21 +493,25 @@ mod tests {
             config.disable().await,
             Err(Error::InvalidConfiguration { .. })
         ));
-        db.execute_unprepared("PRAGMA user_version=1; INSERT INTO settings VALUES('off')")
-            .await
-            .unwrap();
+        db.execute_unprepared(
+            "PRAGMA user_version=1; INSERT INTO setting VALUES('listen','invalid')",
+        )
+        .await
+        .unwrap();
         assert!(matches!(
             config.enable().await,
             Err(Error::InvalidConfiguration { .. })
         ));
         db.close().await.unwrap();
-        fs::remove_file(profile.config_db_path()).await.unwrap();
+        fs::remove_file(profile.join(".volume/sys/setting/.db"))
+            .await
+            .unwrap();
         assert_eq!(config.state().await.unwrap(), ServerConfigState::Missing);
         assert!(matches!(
             config.disable().await,
             Err(Error::MissingConfiguration { .. })
         ));
-        assert!(!profile.config_db_path().exists());
+        assert!(!profile.join(".volume/sys/setting/.db").exists());
         assert_eq!(config.enable().await.unwrap(), ConfigChange::Changed);
         assert_eq!(config.state().await.unwrap(), ServerConfigState::Enabled);
     }
@@ -510,7 +520,7 @@ mod tests {
     async fn legacy_enabled_migrates_to_a_single_named_mode() {
         let (_root, _profile, config) = fixture().await;
         let db = config.open().await.unwrap();
-        db.execute_unprepared("DROP TABLE settings; CREATE TABLE settings(listen INTEGER, enabled INTEGER); INSERT INTO settings VALUES(1,0)").await.unwrap();
+        db.execute_unprepared("DROP TABLE setting; ALTER TABLE proxy_location RENAME TO proxy_locations; CREATE TABLE settings(listen INTEGER, enabled INTEGER); INSERT INTO settings VALUES(1,0)").await.unwrap();
         assert_eq!(config.state().await.unwrap(), ServerConfigState::Disabled);
         assert_eq!(config.enable().await.unwrap(), ConfigChange::Changed);
         assert_eq!(config.listen(&db).await.unwrap(), "all");
@@ -524,7 +534,7 @@ mod tests {
     async fn local_listen_enables_named_modes_without_needing_http() {
         let (root, profile, config) = fixture().await;
         let home = DhttpHome::new(root.path().to_path_buf());
-        for mode in ["loopback", "internal", "external", "all", "off"] {
+        for mode in ["internal", "external", "all", "off"] {
             run_listen("alice.smith", Some(mode), &home).await.unwrap();
             let db = config.open().await.unwrap();
             assert_eq!(config.listen(&db).await.unwrap(), mode);
@@ -538,10 +548,27 @@ mod tests {
             );
             db.close().await.unwrap();
         }
-        for mode in ["0", "1", "both", "ALL"] {
+        for mode in ["0", "1", "both", "ALL", "loopback", "auto", "list"] {
             assert!(run_listen("alice.smith", Some(mode), &home).await.is_err());
         }
         assert!(!profile.ssl_dir().exists());
+    }
+
+    #[tokio::test]
+    async fn listen_off_preserves_v3_mounts_and_other_settings() {
+        let (root, _profile, config) = fixture().await;
+        let home = DhttpHome::new(root.path().to_path_buf());
+        let db = config.open().await.unwrap();
+        db.execute_unprepared("PRAGMA user_version=3; INSERT INTO setting VALUES('theme','dark'); INSERT INTO proxy_location VALUES('/api','http://127.0.0.1:8080')").await.unwrap();
+        run_listen("alice.smith", Some("all"), &home).await.unwrap();
+        run_listen("alice.smith", Some("off"), &home).await.unwrap();
+        assert_eq!(config.listen(&db).await.unwrap(), "off");
+        for sql in ["SELECT value FROM setting WHERE key='theme'", "SELECT proxy_pass FROM proxy_location WHERE location='/api'"] {
+            assert!(db.query_one_raw(Statement::from_string(DatabaseBackend::Sqlite, sql)).await.unwrap().is_some());
+        }
+        let version = db.query_one_raw(Statement::from_string(DatabaseBackend::Sqlite, "PRAGMA user_version")).await.unwrap().unwrap();
+        assert_eq!(version.try_get_by_index::<i64>(0).unwrap(), 3);
+        db.close().await.unwrap();
     }
 
     #[tokio::test]
@@ -549,7 +576,7 @@ mod tests {
         let (_root, _profile, config) = fixture().await;
         let db = config.open().await.unwrap();
         db.execute_unprepared(
-            "DROP TABLE settings; CREATE TABLE settings(listen INTEGER); INSERT INTO settings VALUES(0)",
+            "DROP TABLE setting; ALTER TABLE proxy_location RENAME TO proxy_locations; CREATE TABLE settings(listen INTEGER); INSERT INTO settings VALUES(0)",
         )
         .await
         .unwrap();
@@ -566,21 +593,23 @@ mod tests {
     async fn listen_creates_configuration_only_for_an_explicit_valid_mode() {
         let (root, profile, config) = fixture().await;
         let home = DhttpHome::new(root.path().to_path_buf());
-        fs::remove_file(profile.config_db_path()).await.unwrap();
+        fs::remove_file(profile.join(".volume/sys/setting/.db"))
+            .await
+            .unwrap();
         assert!(run_listen("alice.smith", None, &home).await.is_err());
-        assert!(!profile.config_db_path().exists());
+        assert!(!profile.join(".volume/sys/setting/.db").exists());
         assert!(
             run_listen("alice.smith", Some("both"), &home)
                 .await
                 .is_err()
         );
-        assert!(!profile.config_db_path().exists());
-        run_listen("alice.smith", Some("loopback"), &home)
+        assert!(!profile.join(".volume/sys/setting/.db").exists());
+        run_listen("alice.smith", Some("internal"), &home)
             .await
             .unwrap();
         assert_eq!(config.state().await.unwrap(), ServerConfigState::Enabled);
         let db = config.open().await.unwrap();
-        assert_eq!(config.listen(&db).await.unwrap(), "loopback");
+        assert_eq!(config.listen(&db).await.unwrap(), "internal");
         run_listen("alice.smith", Some("off"), &home).await.unwrap();
         assert_eq!(config.state().await.unwrap(), ServerConfigState::Disabled);
         db.close().await.unwrap();
@@ -592,8 +621,12 @@ mod tests {
         let (_root, profile, config) = fixture().await;
         assert!(config.create_disabled().await.is_err());
         assert_eq!(config.state().await.unwrap(), ServerConfigState::Disabled);
-        fs::remove_file(profile.config_db_path()).await.unwrap();
-        fs::create_dir(profile.config_db_path()).await.unwrap();
+        fs::remove_file(profile.join(".volume/sys/setting/.db"))
+            .await
+            .unwrap();
+        fs::create_dir(profile.join(".volume/sys/setting/.db"))
+            .await
+            .unwrap();
         assert!(matches!(
             config.enable().await,
             Err(Error::NotRegularFile { .. })
