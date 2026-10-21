@@ -67,22 +67,20 @@ fn valid_hash(value: &Value) -> bool {
     })
 }
 
-fn validate_input(target: &str, version: Option<&str>, kind: &str) -> Result<(), Whatever> {
+fn validate_input(target: &str, version: Option<&str>) -> Result<(), Whatever> {
     ensure_whatever!(
         valid_target(target),
-        "TARGET must be a valid short name or canonical publisher/name; local paths, .webc files, URLs, and name@version are not supported"
+        "TARGET must be a valid short name or canonical publisher/name; local paths, .pkg files, URLs, and name@version are not supported"
     );
     ensure_whatever!(
         version.is_none_or(valid_version),
         "Version must be MAJOR.MINOR.PATCH without leading zeros"
     );
-    ensure_whatever!(matches!(kind, "app" | "lib"), "Kind must be app or lib");
     Ok(())
 }
 
 fn validate_release(
     value: &Value,
-    kind: &str,
     expected: Option<&str>,
     version: Option<&str>,
 ) -> Result<(), Whatever> {
@@ -90,16 +88,16 @@ fn validate_release(
     let publisher = value["publisher"].as_str().unwrap_or("");
     let name = value["name"].as_str().unwrap_or("");
     let release = value["version"].as_str().unwrap_or("");
-    let collection = if kind == "app" { "apps" } else { "libs" };
+    let collection = "packages";
     ensure_whatever!(
-        id.contains('/')
+        value.get("kind").is_none()
+            && id.contains('/')
             && valid_target(id)
             && id == format!("{publisher}/{name}")
             && expected.is_none_or(|expected| id == expected)
-            && value["kind"] == kind
             && valid_version(release)
             && version.is_none_or(|version| release == version),
-        "Store package identity, kind, or version does not match; the store may not support the current package protocol"
+        "Store package identity or version does not match; the store may not support the current package protocol"
     );
     ensure_whatever!(
         value["status"] == "published",
@@ -112,13 +110,19 @@ fn validate_release(
             && valid_hash(&value["package_sha256"])
             && valid_hash(&value["publisher_owner_hash"])
             && value["download_path"]
-                == format!("/store/v1/{collection}/{id}/versions/{release}/{kind}.webc"),
+                == format!("/store/v1/{collection}/{id}/versions/{release}/package.pkg"),
         "Invalid store package size, digest, publisher owner hash, or download path"
     );
     Ok(())
 }
 
-fn validate_detail(value: &Value, kind: &str) -> Result<(), Whatever> {
+fn validate_detail(value: &Value) -> Result<(), Whatever> {
+    ensure_whatever!(
+        ["kind", "openapi", "host", "entry", "has_lib", "has_app"]
+            .iter()
+            .all(|key| value.get(*key).is_none()),
+        "Store details must contain package metadata only"
+    );
     // No fallback to the old OpenAPI package metadata contract.
     ensure_whatever!(
         ["title", "description", "changelog"]
@@ -131,27 +135,20 @@ fn validate_detail(value: &Value, kind: &str) -> Result<(), Whatever> {
                 .is_some_and(|items| items.len() <= 100),
         "Store details do not support the current manifest metadata protocol"
     );
-    if kind == "app" {
-        ensure_whatever!(
-            value.get("openapi").is_none(),
-            "Store App details contain OpenAPI and do not support the current package protocol"
-        );
-    }
     Ok(())
 }
 
 async fn resolve<F, Fut>(
     target: &str,
     version: Option<&str>,
-    kind: &str,
     mut get: F,
 ) -> Result<Value, Whatever>
 where
     F: FnMut(String) -> Fut,
     Fut: Future<Output = Result<Vec<u8>, Whatever>>,
 {
-    validate_input(target, version, kind)?;
-    let collection = if kind == "app" { "apps" } else { "libs" };
+    validate_input(target, version)?;
+    let collection = "packages";
     let mut remaining = RESOLUTION_BYTES;
     let id = if target.contains('/') {
         target.to_owned()
@@ -193,7 +190,7 @@ where
                 "Store resolution incomplete: inconsistent page length"
             );
             for item in items {
-                validate_release(item, kind, None, None)
+                validate_release(item, None, None)
                     .whatever_context("Store resolution incomplete: invalid catalog entry")?;
                 let id = item["id"].as_str().unwrap();
                 // The real catalog returns one latest release per full ID. An overlap
@@ -213,7 +210,7 @@ where
         }
         ensure_whatever!(
             !matches.is_empty(),
-            "No published {kind} named {target} was found in the store"
+            "No published package named {target} was found in the store"
         );
         ensure_whatever!(
             matches.len() == 1,
@@ -230,22 +227,21 @@ where
     );
     let bytes = get(path).await?;
     let value = decode_resolution(&bytes, &mut remaining)?;
-    validate_release(&value, kind, Some(&id), version)?;
-    validate_detail(&value, kind)?;
+    validate_release(&value, Some(&id), version)?;
+    validate_detail(&value)?;
     Ok(value)
 }
 
 async fn resolve_with_deadline<F, Fut>(
     target: &str,
     version: Option<&str>,
-    kind: &str,
     get: F,
 ) -> Result<Value, Whatever>
 where
     F: FnMut(String) -> Fut,
     Fut: Future<Output = Result<Vec<u8>, Whatever>>,
 {
-    tokio::time::timeout(RESOLUTION_TIMEOUT, resolve(target, version, kind, get))
+    tokio::time::timeout(RESOLUTION_TIMEOUT, resolve(target, version, get))
         .await
         .whatever_context("Store resolution incomplete: the 120-second deadline was exceeded")?
 }
@@ -390,18 +386,19 @@ async fn init_network() -> Result<(), Whatever> {
 }
 
 fn install_body(release: &Value) -> Value {
-    json!({"publisher": release["publisher"], "version": release["version"]})
+    json!({"author":release["publisher"],"name":release["name"],"version":release["version"]})
 }
 
 fn success(result: &Value, release: &Value, identity: &str) -> Result<Value, Whatever> {
     ensure_whatever!(
-        ["id", "kind", "version"]
+        ["id", "version"]
             .iter()
             .all(|key| result[*key] == release[*key]),
-        "Installation response id/kind/version does not match the selected package. {UNKNOWN}"
+        "Installation response id/version does not match the selected package. {UNKNOWN}"
     );
-    let mut output = json!({"id": result["id"], "kind": result["kind"], "version": result["version"], "identity": identity});
-    if result["kind"] == "app" {
+    let mut output =
+        json!({"id": result["id"], "version": result["version"], "identity": identity});
+    if result["has_app"] == true {
         ensure_whatever!(
             result["entry"] == "/",
             "App installation response has no valid saved entry. {UNKNOWN}"
@@ -444,14 +441,7 @@ async fn install(
     let bytes = serde_json::to_vec(&install_body(release))
         .whatever_context("Failed to encode installation JSON")?;
     let (mut writer, receive) = endpoint
-        .put(uri(
-            endpoint.name(),
-            &format!(
-                "/std/sys/{}?name={}",
-                release["kind"].as_str().unwrap(),
-                release["name"].as_str().unwrap()
-            ),
-        )?)
+        .post(uri(endpoint.name(), "/std/sys/pkg/install")?)
         .expect_remote_owner_hash(owner.clone())
         .header(
             header::ACCEPT,
@@ -501,16 +491,12 @@ async fn wait_for_install(
 async fn catalog(
     endpoint: &dhttp::Endpoint,
     owner: &OwnerHash,
-    kind: &str,
     target: Option<&str>,
     require_removal_support: bool,
 ) -> Result<Option<Value>, Whatever> {
     let path = match target {
-        Some(target) => format!(
-            "/std/sys/{kind}?name={}",
-            target.rsplit('/').next().unwrap()
-        ),
-        None => format!("/std/sys/{kind}/list"),
+        Some(target) => format!("/std/sys/pkg?name={}", target.rsplit('/').next().unwrap()),
+        None => format!("/std/sys/pkg/list"),
     };
     tokio::time::timeout(RESOLUTION_TIMEOUT, async {
         let response = endpoint.get(uri(endpoint.name(), &path)?)
@@ -530,7 +516,7 @@ async fn catalog(
         let value: Value = serde_json::from_slice(&bytes)
             .whatever_context("Invalid installed package catalog")?;
         if let Some(target) = target {
-            validate_installed(&value, kind, Some(target))?;
+            validate_installed(&value, Some(target))?;
             if require_removal_support {
                 ensure_whatever!(package_id.as_ref().and_then(|header| header.to_str().ok()) == value["id"].as_str(),
                     "The service does not support identity-checked removal; update Pishoo before removing this package");
@@ -540,19 +526,17 @@ async fn catalog(
                 whatever!("Installed package catalog must be an array");
             };
             for item in items {
-                validate_installed(item, kind, None)?;
+                validate_installed(item, None)?;
             }
         }
         Ok(Some(value))
     }).await.whatever_context("Package query timed out; no package was changed")?
 }
 
-fn validate_installed(value: &Value, kind: &str, target: Option<&str>) -> Result<(), Whatever> {
+fn validate_installed(value: &Value, target: Option<&str>) -> Result<(), Whatever> {
     let id = value["id"].as_str().unwrap_or("");
     ensure_whatever!(
-        valid_target(id)
-            && value["kind"] == kind
-            && value["version"].as_str().is_some_and(valid_version),
+        valid_target(id) && value["version"].as_str().is_some_and(valid_version),
         "Invalid installed package identity, type or version"
     );
     if let Some(target) = target {
@@ -574,8 +558,7 @@ async fn remove(
     package: &Value,
 ) -> Result<Value, Whatever> {
     let id = package["id"].as_str().unwrap();
-    let kind = package["kind"].as_str().unwrap();
-    let path = format!("/std/sys/{kind}?name={}", id.rsplit('/').next().unwrap());
+    let path = format!("/std/sys/pkg?name={}", id.rsplit('/').next().unwrap());
     // The host checks the full identity again; a replacement publisher must
     // never be deleted just because it occupies the same short name.
     let condition =
@@ -596,9 +579,7 @@ async fn remove(
         "Package removal failed (HTTP {status}): {}",
         String::from_utf8_lossy(&bytes)
     );
-    Ok(
-        json!({"id":id,"kind":package["kind"],"identity":endpoint.name(),"removed":true,"data_retained":true}),
-    )
+    Ok(json!({"id":id,"identity":endpoint.name(),"removed":true,"data_retained":true}))
 }
 
 fn choose_release_target<'a>(
@@ -652,11 +633,10 @@ pub(super) async fn run(
     target: Option<String>,
     id: Option<String>,
     version: Option<String>,
-    kind: Option<String>,
 ) -> Result<(), Whatever> {
     let target = target.map(|target| normalize_target(&target, operation == "install"));
     if let Some(target) = &target {
-        validate_input(target, version.as_deref(), kind.as_deref().unwrap_or("app"))?;
+        validate_input(target, version.as_deref())?;
     }
     let home = DhttpHome::load(HomeScope::User)
         .whatever_context("Failed to load the identity home; configure an identity or use --id")?;
@@ -672,16 +652,9 @@ pub(super) async fn run(
             .whatever_context("Local credentials have no valid owner hash")?;
     let owner = ski.owner_hash().clone();
     if operation == "list" {
-        let mut packages = Vec::new();
-        for selected in ["app", "lib"] {
-            if kind.as_deref().is_some_and(|kind| kind != selected) {
-                continue;
-            }
-            let value = catalog(&endpoint, &owner, selected, None, false)
-                .await?
-                .unwrap();
-            packages.extend(value.as_array().unwrap().iter().cloned());
-        }
+        let packages = catalog(&endpoint, &owner, None, false)
+            .await?
+            .unwrap();
         println!(
             "{}",
             serde_json::to_string_pretty(&packages).whatever_context("Cannot encode catalog")?
@@ -689,11 +662,10 @@ pub(super) async fn run(
         return Ok(());
     }
     let target = target.as_deref().unwrap();
-    let kind = kind.as_deref().unwrap();
-    let current = catalog(&endpoint, &owner, kind, Some(target), operation == "remove").await?;
+    let current = catalog(&endpoint, &owner, Some(target), operation == "remove").await?;
     if matches!(operation, "info" | "remove") {
         let Some(current) = current else {
-            whatever!("Package {target} ({kind}) is not installed")
+            whatever!("Package {target} is not installed")
         };
         let output = if operation == "remove" {
             tokio::time::timeout(RESOLUTION_TIMEOUT, remove(&endpoint, &owner, &current))
@@ -711,17 +683,17 @@ pub(super) async fn run(
     }
     let selected = choose_release_target(operation, target, current.as_ref())?;
     eprintln!(
-        "Resolving {kind} {selected} from the store for identity {}",
+        "Resolving package {selected} from the store for identity {}",
         endpoint.name()
     );
-    let release = resolve_with_deadline(selected, version.as_deref(), kind, |path| {
+    let release = resolve_with_deadline(selected, version.as_deref(), |path| {
         let endpoint = &endpoint;
         async move { store_get(endpoint, &path).await }
     })
     .await?;
     let output = if check_install_version(operation, current.as_ref(), &release)? {
-        let mut output = json!({"id":release["id"],"kind":kind,"version":release["version"],"identity":endpoint.name(),"unchanged":true});
-        if kind == "app" {
+        let mut output = json!({"id":release["id"],"version":release["version"],"identity":endpoint.name(),"unchanged":true});
+        if current.as_ref().is_some_and(|value| value["entry"] == "/") {
             output["entry_url"] = json!(format!(
                 "https://{}/{}/",
                 endpoint.name(),
@@ -731,13 +703,12 @@ pub(super) async fn run(
         output
     } else {
         eprintln!(
-            "{} {} {} {} for identity {}",
+            "{} package {} {} for identity {}",
             if operation == "update" {
                 "Updating"
             } else {
                 "Installing"
             },
-            kind,
             release["id"].as_str().unwrap(),
             release["version"].as_str().unwrap(),
             endpoint.name()

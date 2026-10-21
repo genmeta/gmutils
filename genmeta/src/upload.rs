@@ -172,12 +172,10 @@ fn manifest_identity(bytes: &[u8]) -> Result<Value, Whatever> {
                 .split_once('/')
                 .whatever_context("manifest name must be publisher/name")?;
             let version = text(wapm, "version")?;
-            let kind = text(annotation, "kind")?;
-            if !matches!(kind, "app" | "lib") {
-                whatever!("manifest kind must be app or lib");
+            if annotation.get("kind").is_some() {
+                whatever!("legacy App/Lib packages are unsupported");
             }
-            let mut result =
-                json!({"id":id,"publisher":publisher,"name":name,"version":version,"kind":kind});
+            let mut result = json!({"id":id,"publisher":publisher,"name":name,"version":version});
             if let Some(repository) = wapm.get("repository") {
                 // Preserve it for comparison; the host validates its URL format.
                 result["repository"] = repository.clone();
@@ -334,13 +332,8 @@ fn version_path(metadata: &Value) -> Result<String, Whatever> {
     {
         whatever!("invalid normalized package identity or exact version");
     }
-    let collection = match text(metadata, "kind")? {
-        "app" => "apps",
-        "lib" => "libs",
-        _ => whatever!("invalid package kind"),
-    };
     Ok(format!(
-        "/store/v1/{collection}/{publisher}/{name}/versions/{version}"
+        "/store/v1/packages/{publisher}/{name}/versions/{version}"
     ))
 }
 
@@ -559,7 +552,10 @@ fn release_metadata(
 ) -> Result<Value, Whatever> {
     let release: Value =
         serde_json::from_slice(response.body()).whatever_context("invalid store release JSON")?;
-    for key in ["id", "publisher", "name", "kind", "version"] {
+    if release.get("kind").is_some() {
+        whatever!("store must return unified Pkg metadata");
+    }
+    for key in ["id", "publisher", "name", "version"] {
         if release[key] != metadata[key] {
             whatever!("store release {key} differs from signed package");
         }
@@ -567,11 +563,7 @@ fn release_metadata(
     if release["publisher_owner_hash"] != owner {
         whatever!("store release publisher owner_hash mismatch");
     }
-    let path = format!(
-        "{}/{}.webc",
-        version_path(metadata)?,
-        text(metadata, "kind")?
-    );
+    let path = format!("{}/package.pkg", version_path(metadata)?);
     if release["download_path"] != path {
         whatever!("store returned an unexpected download path");
     }
@@ -624,7 +616,7 @@ async fn confirm_release(
         whatever!("downloaded saved package digest or size differs from trusted store metadata");
     }
     let saved_metadata = inspect_package(saved).await?;
-    for key in ["id", "publisher", "name", "kind", "version"] {
+    for key in ["id", "publisher", "name", "version"] {
         if saved_metadata[key] != metadata[key] {
             whatever!("saved package identity differs from upload");
         }
@@ -642,7 +634,7 @@ async fn confirm_release(
 
 fn success(release: &Value, result: &str) -> Result<Value, Whatever> {
     Ok(
-        json!({"result":result,"id":release["id"],"kind":release["kind"],"version":release["version"],
+        json!({"result":result,"id":release["id"],"version":release["version"],
         "status":release["status"],"package_sha256":release["package_sha256"],
         "detail_url":store_uri(&version_path(release)?)?.to_string()}),
     )
