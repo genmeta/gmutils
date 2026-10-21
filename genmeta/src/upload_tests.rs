@@ -222,7 +222,7 @@ fn paths_and_protocol_proofs_are_exact() {
         let path = version_path(&metadata).unwrap();
         assert_eq!(
             path,
-            format!("/store/v1/packages/alice.dhttp.net/note/versions/1.0.0")
+            "/store/v1/packages/alice.dhttp.net/note/versions/1.0.0"
         );
         let proof = release(&metadata, &bytes, &"a".repeat(64));
         let response = http::Response::new(serde_json::to_vec(&proof).unwrap());

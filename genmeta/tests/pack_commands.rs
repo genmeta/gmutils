@@ -80,7 +80,10 @@ fn project(path: &Path, kind: &str, repository: &str) {
 }
 
 fn pack(home: &Path, cwd: &Path, args: &[&OsStr]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_genmeta"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_genmeta"));
+    #[cfg(windows)]
+    command.env("USERPROFILE", home.parent().unwrap());
+    command
         .env("HOME", home.parent().unwrap())
         .env("DHTTP_HOME", "/nonexistent-ignored-pishoo-home")
         .current_dir(cwd)

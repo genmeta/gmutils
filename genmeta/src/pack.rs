@@ -216,8 +216,17 @@ async fn build(
         .map(|directory| public_directory(directory, "", &mut count, &mut remaining, 0))
         .transpose()?;
     // Local-only loading; do not refresh OCSP or initialize a network.
+    // Match HOME on Unix with USERPROFILE on Windows. The Windows known-folder
+    // API ignores process-local overrides, so use it only as a fallback.
+    #[cfg(windows)]
+    let user_home = std::env::var_os("USERPROFILE")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir);
+    #[cfg(not(windows))]
+    let user_home = dirs::home_dir();
     let home = dhttp_home::DhttpHome::for_user_home_dir(
-        dirs::home_dir().ok_or("cannot locate user home directory")?,
+        user_home.ok_or("cannot locate user home directory")?,
     );
     let profile = home.identity_profile(publisher)?;
     let certificates = profile
