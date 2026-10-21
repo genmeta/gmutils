@@ -26,7 +26,7 @@ Available commands:
 | `genmeta access` | Manage DHttp API access-control rules. |
 | `genmeta curl` | Send DHttp requests with a curl-like interface. |
 | `genmeta listen` | Query or change a local identity's listening mode, including off. |
-| `genmeta forward` | Query or change a running identity's HTTP forwarding rules. |
+| `genmeta mount` / `genmeta unmount` | List, configure or remove HTTP mounts on a running identity. |
 | `genmeta proxy` | Run a local forward proxy that forwards HTTP requests to DHttp endpoints. |
 | `genmeta nslookup` | Resolve DDns names and discover reachable DHttp addresses. |
 | `genmeta discover` | Discover nearby DHttp endpoints over mDNS. |
@@ -135,14 +135,8 @@ Use `genmeta --help`, `genmeta identity --help`, and `genmeta doctor --help`
 for command groups. `--version` and `-V` are available for the launcher and
 these groups; the `version` subcommand is also supported.
 
-`genmeta listen --id NAME [loopback|internal|external|all|off]` queries or
-updates Pishoo's local `db/config.db`; add `--global` to select the system home.
-Omitting the mode only reads existing configuration. Specifying a mode creates
-missing configuration. `off` stops the identity; other modes enable its selected
-scope. `all` includes loopback, LAN and public scopes. No previous scope is retained
-while off. Forwarding rules use `genmeta forward --id NAME [LOCATION [TARGET]]`,
-which calls `/std/sys/forward` on the running identity service. These are top-level
-commands; the old identity ensite/dissite/listen and server proxy commands are removed.
+`genmeta listen --id NAME [internal|external|all|off]` queries or changes local listening. Omitting the mode reads existing configuration; explicit modes create missing configuration. `listen off` deletes the listen KV and leaves the identity stopped across restarts, preserving mounts. Stopping requires y/n confirmation; scripts use `--yes`. `genmeta mount [--id NAME] [PATH URL]` lists mounts or adds/updates one mount through `GET/PATCH /std/sys/mount`. `genmeta unmount [--id NAME] PATH URL [--yes]` uses `DELETE /std/sys/mount?location=PATH&proxy_pass=URL`, checking both values before deletion.
+
 A running Pishoo process automatically discovers and applies saved changes.
 Interactive identity application creates configuration and a welcome page only
 when the user accepts server activation. Declining, or noninteractive application,
@@ -292,11 +286,11 @@ Pishoo provides the host APIs and `pishoo reload`; management lives in gmutils:
 
 ```sh
 genmeta listen --id alice.smith all
-genmeta listen --id alice.smith off
+genmeta listen --id alice.smith off --yes
 genmeta listen --id alice.smith internal
 pishoo reload
-genmeta forward --id alice.smith /api 127.0.0.1:8080
-genmeta forward --id alice.smith remove /api
+genmeta mount --id alice.smith /api 127.0.0.1:8080
+genmeta unmount --id alice.smith /api 127.0.0.1:8080 --yes
 genmeta install alice.smith/example --version 1.0.0 --lib --id alice.smith
 genmeta list --id alice.smith
 ```

@@ -65,10 +65,13 @@ pub(crate) async fn maybe_create_welcome_service(
     let profile = dhttp_home
         .identity_profile((name.borrow()).as_full())
         .expect("validated identity name");
-    let config_db_path = profile.config_db_path();
+    let config_db_path = profile.join(".volume/sys/setting/.db");
     let welcome_page_path = profile.join(WELCOME_PAGE_PATH);
 
-    if path_exists(&config_db_path).await? || path_exists(&welcome_page_path).await? {
+    if path_exists(&profile.config_db_path()).await?
+        || path_exists(&config_db_path).await?
+        || path_exists(&welcome_page_path).await?
+    {
         return Ok(None);
     }
 
@@ -255,7 +258,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(created.config_db_path, profile.config_db_path());
+        assert_eq!(created.config_db_path, profile.join(".volume/sys/setting/.db"));
         assert_eq!(
             created.welcome_page_path,
             profile.join("file/welcome/index.html")
@@ -299,7 +302,7 @@ mod tests {
                 .is_none()
         );
         assert_eq!(fs::read_to_string(&path).await.unwrap(), "existing");
-        assert!(!profile.config_db_path().exists());
+        assert!(!profile.join(".volume/sys/setting/.db").exists());
     }
 
     #[cfg(unix)]
@@ -320,7 +323,7 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert!(!profile.config_db_path().exists());
+        assert!(!profile.join(".volume/sys/setting/.db").exists());
     }
 
     #[tokio::test]
