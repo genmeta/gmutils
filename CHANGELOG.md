@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Attempt `genmeta install workspace` once after Homebrew/DEB/RPM setup, using
+  the installation user's default identity. Missing prerequisites or failures
+  produce a manual-install hint without failing gmutils installation.
+
 - Manage unified signed `.pkg` packages through top-level build, publish, install,
   update and uninstall commands; installed queries use install --list/--info.
 - Separate local listen internal/external/all/off from authenticated HTTP mount
