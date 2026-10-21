@@ -31,7 +31,7 @@ Available commands:
 | `genmeta nslookup` | Resolve DDns names and discover reachable DHttp addresses. |
 | `genmeta discover` | Discover nearby DHttp endpoints over mDNS. |
 | `genmeta doctor` | Diagnose NAT and network connectivity. |
-| `genmeta build/publish/install/update/uninstall/list/info` | Build, publish and manage App/Lib packages. |
+| `genmeta build/publish/install/update/uninstall` | Build, publish and manage signed Pkg packages; query with `install --list` or `install --info`. |
 
 See the [DHttp utilities documentation](https://docs.dhttp.net/en/docs/core-components/utils) for detailed usage and examples.
 
@@ -105,10 +105,10 @@ Ordinary query names retain their namespace. Names are normalized through `dhttp
 ```bash
 genmeta install workspace
 genmeta install dev.dhttp.net/workspace --version 0.2.0 --id alice.smith
-genmeta install std.dhttp.net/message --lib
+genmeta install std.dhttp.net/message
 ```
 
-Installation defaults to App, the latest published version, and the configured
+Installation defaults to the latest published package version and the configured
 default identity. Bare installation names select the standard publisher: `workspace`
 means `std.dhttp.net/workspace`. Author names may omit `.dhttp.net`, so
 `alice/message` means `alice.dhttp.net/message`. Update, uninstall and info resolve
@@ -117,10 +117,10 @@ The selected identity's Pishoo service must already be running and enabled.
 Local credentials use the current account’s identity home. Installation accepts only published store releases; local package files, URLs and anonymous installation are not supported.
 
 The CLI authenticates `store.dhttp.net`, pins an exact version, and sends one
-authenticated `PUT /std/sys/app?name=NAME` or `PUT /std/sys/lib?name=NAME` request
-with JSON `{publisher, version}` to Pishoo. Pishoo
-verifies and installs the package and its exact Lib dependencies. Successful output is JSON on stdout;
-progress and diagnostics go to stderr. App results include `entry_url`.
+authenticated `POST /std/sys/pkg/install` request with JSON `{author, name, version}`
+to Pishoo. Pishoo verifies and installs the package and its exact package dependencies.
+Successful output is JSON on stdout; progress and diagnostics go to stderr.
+Packages containing static pages include `entry_url` in the result.
 Resolution has a 120-second deadline; installation waits up to 15 minutes.
 An interruption or timeout reports an unknown outcome and never retries the
 write automatically. Dependencies installed before a parent failure remain.
@@ -155,7 +155,7 @@ request/response output are independent of this log filter.
 `genmeta build PATH` executes the local manifest's `[build]` recipe and
 then signs its output locally. Building does not require a running Pishoo service.
 See [Package management](#package-management) for the recipe and all commands.
-For existing artifacts, `genmeta build --no-build PATH -o FILE.webc` retains the packaging-only
+For existing artifacts, `genmeta build --no-build PATH -o FILE.pkg` retains the packaging-only
 workflow. The signer uses the current account's `~/.dhttp`; `--id` checks the
 publisher and does not rewrite the manifest.
 
@@ -237,20 +237,16 @@ Package operations are top-level `genmeta` commands. The `package` grouping and
 former `pack` and `upload` command names have been removed.
 
 ```sh
-genmeta build ./profile -o ./dist/profile.webc
-genmeta publish ./dist/profile.webc
+genmeta build ./profile -o ./dist/profile.pkg
+genmeta publish ./dist/profile.pkg
 genmeta install std.dhttp.net/workspace --id sky.lee.dhttp.net
 genmeta update workspace --id sky.lee.dhttp.net
-genmeta list --id sky.lee.dhttp.net
-genmeta info message --lib --id sky.lee.dhttp.net
-genmeta uninstall alice.smith.dhttp.net/message --lib --id sky.lee.dhttp.net
+genmeta install --list --id sky.lee.dhttp.net
+genmeta install --info message --id sky.lee.dhttp.net
+genmeta uninstall alice.smith.dhttp.net/message --id sky.lee.dhttp.net
 ```
 
-`list` returns both installed types by default. Other management commands default
-to `--app`; `--lib` selects a backend. `--app` and `--lib` are mutually exclusive. `info`, `list` and `uninstall` query
-the identity's Pishoo service, not the store. Both full package IDs and short names
-are supported; a full ID must match the installed publisher. Removal retains data
-and dependencies; the host reports dependent App/Lib IDs when removal is blocked.
+Package identity is `author/name`; all management operations act on the entire package. A `.pkg` may contain a backend, static pages, or both, with one version and signature. `install --list`, `install --info` and `uninstall` query the selected identity's Pishoo service. Full package IDs must match the installed publisher; removal retains business data and dependencies.
 
 `install` leaves an identical installed version unchanged and directs version
 changes to `update`. `update` requires an installed package, stays with its current
@@ -273,7 +269,7 @@ The command runs in the source directory on every invocation. The optional
 build prevents signing. Recipe arguments are passed directly; no shell string is
 constructed. Build logs go to stderr; the final signed-package result is JSON on
 stdout. `--id` checks the generated publisher rather than rewriting it.
-For already-built artifacts use `genmeta build --no-build PATH -o FILE.webc` directly.
+For already-built artifacts use `genmeta build --no-build PATH -o FILE.pkg` directly.
 `publish` does not rebuild or change the signed package.
 
 The new removal command requires the Pishoo detail API's `Package-Id` response
@@ -291,8 +287,8 @@ genmeta listen --id alice.smith internal
 pishoo reload
 genmeta mount --id alice.smith /api 127.0.0.1:8080
 genmeta unmount --id alice.smith /api 127.0.0.1:8080 --yes
-genmeta install alice.smith/example --version 1.0.0 --lib --id alice.smith
-genmeta list --id alice.smith
+genmeta install alice.smith/example --version 1.0.0 --id alice.smith
+genmeta install --list --id alice.smith
 ```
 
 Listening configuration is edited locally, including when listening is off.

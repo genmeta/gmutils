@@ -1,22 +1,19 @@
 use super::*;
 
-fn release(publisher: &str, name: &str, kind: &str, version: &str) -> Value {
-    let collection = if kind == "app" { "apps" } else { "libs" };
-    let mut value = json!({
+fn release(publisher: &str, name: &str, _kind: &str, version: &str) -> Value {
+    let collection = "packages";
+    let value = json!({
         "id": format!("{publisher}/{name}"), "publisher": publisher, "name": name,
-        "kind": kind, "version": version, "status": "published", "size": 4096,
+        "version": version, "status": "published", "size": 4096,
         "package_sha256": "a".repeat(64), "publisher_owner_hash": "b".repeat(64),
-        "download_path": format!("/store/v1/{collection}/{publisher}/{name}/versions/{version}/{kind}.webc"),
+        "download_path": format!("/store/v1/{collection}/{publisher}/{name}/versions/{version}/package.pkg"),
         "title": "Package", "description": "Description", "changelog": "Initial release", "dependencies": [],
     });
-    if kind == "app" {
-        value["entry"] = json!("/");
-    }
     value
 }
 
 fn catalog(items: Vec<Value>, page: u64, total: u64) -> Vec<u8> {
-    serde_json::to_vec(&json!({"apps": items, "page": page, "page_size": 100, "total": total}))
+    serde_json::to_vec(&json!({"packages": items, "page": page, "page_size": 100, "total": total}))
         .unwrap()
 }
 
@@ -27,7 +24,7 @@ fn report(error: Whatever) -> String {
 #[test]
 fn input_accepts_only_store_names_and_exact_versions() {
     for name in ["workspace", "dev.dhttp.net/workspace", "dev.dhttp.net/chat"] {
-        assert!(validate_input(name, Some("0.2.0"), "app").is_ok());
+        assert!(validate_input(name, Some("0.2.0")).is_ok());
     }
     for name in [
         "",
@@ -47,7 +44,7 @@ fn input_accepts_only_store_names_and_exact_versions() {
         "workspace@0.2.0",
         "dev.dhttp.net/Workspace",
     ] {
-        assert!(validate_input(name, None, "app").is_err(), "{name}");
+        assert!(validate_input(name, None).is_err(), "{name}");
     }
     for version in [
         "",
@@ -64,13 +61,12 @@ fn input_accepts_only_store_names_and_exact_versions() {
         assert!(!valid_version(version), "{version}");
     }
     assert!(valid_version("18446744073709551615.0.0"));
-    assert!(validate_input("workspace", None, "backend").is_err());
 }
 
 #[tokio::test]
 async fn invalid_input_makes_no_requests() {
     assert!(
-        resolve("./workspace", None, "app", |_| async {
+        resolve("./workspace", None, |_| async {
             panic!("no network or file fallback")
         })
         .await
@@ -84,7 +80,7 @@ async fn unique_short_name_filters_fuzzy_matches_and_reads_latest_detail() {
     let mut similar = release("other.dhttp.net", "workspace-extra", "app", "10.0.0");
     similar["title"] = json!("workspace");
     let mut requests = Vec::new();
-    let result = resolve("workspace", None, "app", |path| {
+    let result = resolve("workspace", None, |path| {
         requests.push(path.clone());
         let bytes = if path.contains('?') {
             catalog(vec![similar.clone(), target.clone()], 1, 2)
@@ -99,8 +95,8 @@ async fn unique_short_name_filters_fuzzy_matches_and_reads_latest_detail() {
     assert_eq!(
         requests,
         [
-            "/store/v1/apps?q=workspace&page=1&page_size=100",
-            "/store/v1/apps/dev.dhttp.net/workspace"
+            "/store/v1/packages?q=workspace&page=1&page_size=100",
+            "/store/v1/packages/dev.dhttp.net/workspace"
         ]
     );
 }
@@ -113,7 +109,7 @@ async fn ambiguity_on_later_page_lists_full_ids_and_never_installs() {
     );
     let second = vec![release("second.dhttp.net", "workspace", "app", "0.2.0")];
     let mut calls = 0;
-    let error = resolve("workspace", None, "app", |_| {
+    let error = resolve("workspace", None, |_| {
         calls += 1;
         let bytes = if calls == 1 {
             catalog(first.clone(), 1, 101)
@@ -135,8 +131,8 @@ async fn ambiguity_on_later_page_lists_full_ids_and_never_installs() {
 #[tokio::test]
 async fn full_id_and_explicit_lib_version_use_only_exact_endpoint() {
     let target = release("dev.dhttp.net", "chat", "lib", "0.2.0");
-    let result = resolve("dev.dhttp.net/chat", Some("0.2.0"), "lib", |path| {
-        assert_eq!(path, "/store/v1/libs/dev.dhttp.net/chat/versions/0.2.0");
+    let result = resolve("dev.dhttp.net/chat", Some("0.2.0"), |path| {
+        assert_eq!(path, "/store/v1/packages/dev.dhttp.net/chat/versions/0.2.0");
         let bytes = serde_json::to_vec(&target).unwrap();
         async { Ok(bytes) }
     })
@@ -144,20 +140,20 @@ async fn full_id_and_explicit_lib_version_use_only_exact_endpoint() {
     .unwrap();
     assert_eq!(
         install_body(&result),
-        json!({"publisher":"dev.dhttp.net", "version":"0.2.0"})
+        json!({"author":"dev.dhttp.net","name":"chat", "version":"0.2.0"})
     );
 }
 
 #[tokio::test]
 async fn missing_legal_name_is_a_store_error_without_file_fallback() {
     let mut calls = 0;
-    let error = resolve("workspace", None, "app", |_| {
+    let error = resolve("workspace", None, |_| {
         calls += 1;
         async { Ok(catalog(vec![], 1, 0)) }
     })
     .await
     .unwrap_err();
-    assert!(report(error).contains("No published app"));
+    assert!(report(error).contains("No published package"));
     assert_eq!(calls, 1);
 }
 
@@ -172,7 +168,7 @@ async fn invalid_pagination_and_budgets_fail_closed() {
         json!({"libs":[], "page":1,"page_size":100,"total":0}),
     ] {
         assert!(
-            resolve("workspace", None, "app", |_| {
+            resolve("workspace", None, |_| {
                 let bytes = serde_json::to_vec(&value).unwrap();
                 async { Ok(bytes) }
             })
@@ -208,7 +204,7 @@ async fn failed_or_changed_later_page_does_not_establish_uniqueness() {
         .collect();
     for total in [100, 102] {
         let mut calls = 0;
-        let error = resolve("workspace", None, "app", |_| {
+        let error = resolve("workspace", None, |_| {
             calls += 1;
             let bytes = if calls == 1 {
                 catalog(first.clone(), 1, 101)
@@ -223,7 +219,7 @@ async fn failed_or_changed_later_page_does_not_establish_uniqueness() {
         assert_eq!(calls, 2);
     }
     let mut calls = 0;
-    let result = resolve("workspace", None, "app", |_| {
+    let result = resolve("workspace", None, |_| {
         calls += 1;
         let bytes = catalog(first.clone(), 1, 101);
         async move {
@@ -257,7 +253,6 @@ fn release_validation_rejects_withdrawn_and_mismatched_proofs() {
         assert!(
             validate_release(
                 &value_to_check,
-                "app",
                 Some("dev.dhttp.net/workspace"),
                 Some("0.2.0")
             )
@@ -268,33 +263,34 @@ fn release_validation_rejects_withdrawn_and_mismatched_proofs() {
     let mut legacy = base.clone();
     legacy.as_object_mut().unwrap().remove("title");
     legacy["openapi"] = json!({"info":{"title":"Legacy"}});
-    assert!(validate_detail(&legacy, "app").is_err());
+    assert!(validate_detail(&legacy).is_err());
     let mut legacy = base;
     legacy["openapi"] = json!({});
-    assert!(validate_detail(&legacy, "app").is_err());
+    assert!(validate_detail(&legacy).is_err());
 }
 
 #[test]
-fn success_requires_matching_identity_kind_version_and_saved_entry() {
-    let app = release("dev.dhttp.net", "workspace", "app", "0.2.0");
+fn success_requires_matching_identity_version_and_saved_entry() {
+    let release = release("dev.dhttp.net", "workspace", "app", "0.2.0");
+    let mut installed = release.clone();
+    installed["has_app"] = true.into();
+    installed["entry"] = "/".into();
     assert_eq!(
-        success(&app, &app, "alice.dhttp.net").unwrap(),
-        json!({
-            "id":"dev.dhttp.net/workspace", "kind":"app", "version":"0.2.0", "identity":"alice.dhttp.net", "entry_url":"https://alice.dhttp.net/workspace/"
-        })
+        success(&installed, &release, "alice.dhttp.net").unwrap(),
+        json!({"id":"dev.dhttp.net/workspace","version":"0.2.0","identity":"alice.dhttp.net","entry_url":"https://alice.dhttp.net/workspace/"})
     );
-    assert_eq!(install_body(&app).as_object().unwrap().len(), 2);
-    for key in ["id", "kind", "version", "entry"] {
-        let mut changed = app.clone();
-        changed[key] = json!("wrong");
-        assert!(
-            report(success(&changed, &app, "alice.dhttp.net").unwrap_err())
-                .contains("outcome is unknown")
-        );
+    assert_eq!(
+        install_body(&release),
+        json!({"author":"dev.dhttp.net","name":"workspace","version":"0.2.0"})
+    );
+    for key in ["id", "version", "entry"] {
+        let mut changed = installed.clone();
+        changed[key] = "wrong".into();
+        assert!(success(&changed, &release, "alice.dhttp.net").is_err());
     }
-    let lib = release("dev.dhttp.net", "chat", "lib", "0.2.0");
+    let backend = release.clone();
     assert!(
-        success(&lib, &lib, "alice.dhttp.net")
+        success(&backend, &release, "alice.dhttp.net")
             .unwrap()
             .get("entry_url")
             .is_none()
@@ -353,91 +349,48 @@ async fn identity_resolution_never_picks_the_first_directory_or_falls_back_to_an
 }
 
 #[test]
-fn package_cli_is_top_level_and_selects_app_or_lib() {
+fn package_cli_is_top_level_and_has_no_app_or_lib_selection() {
     use clap::Parser;
 
     use crate::{Options, PackageCommand};
     assert!(matches!(
         Options::try_parse_from(["genmeta", "install", "workspace"]).unwrap(),
         Options::Package(PackageCommand::Install {
-            app: false,
-            lib: false,
-            version: None,
-            id: None,
+            target: Some(_),
             ..
         })
     ));
-    for operation in ["install", "update", "uninstall", "info"] {
+    for operation in ["install", "update", "uninstall"] {
         assert!(
-            Options::try_parse_from([
-                "genmeta",
-                operation,
-                "alice/message",
-                "--lib",
-                "--id",
-                "alice"
-            ])
-            .is_ok()
+            Options::try_parse_from(["genmeta", operation, "alice/message", "--id", "alice"])
+                .is_ok()
         );
-        assert!(Options::try_parse_from(["genmeta", operation, "workspace", "--app"]).is_ok());
-        assert!(
-            Options::try_parse_from(["genmeta", operation, "workspace", "--app", "--lib"]).is_err()
-        );
-        assert!(
-            Options::try_parse_from(["genmeta", operation, "workspace", "--type", "app"]).is_err()
-        );
+        for removed in ["--app", "--lib"] {
+            assert!(Options::try_parse_from(["genmeta", operation, "workspace", removed]).is_err());
+        }
     }
-    assert!(matches!(
-        Options::try_parse_from(["genmeta", "list"]).unwrap(),
-        Options::Package(PackageCommand::List {
-            app: false,
-            lib: false,
-            ..
-        })
-    ));
+    assert!(Options::try_parse_from(["genmeta", "install", "--list"]).is_ok());
+    assert!(Options::try_parse_from(["genmeta", "install", "--info", "workspace"]).is_ok());
     for args in [
         vec!["genmeta", "package", "install", "workspace"],
-        vec!["genmeta", "remove", "workspace"],
-        vec!["genmeta", "check", "file.webc"],
-        vec!["genmeta", "list", "--loaded"],
         vec!["genmeta", "install"],
-        vec![
-            "genmeta",
-            "install",
-            "workspace",
-            "--file",
-            "workspace.webc",
-        ],
-        vec!["genmeta", "update", "workspace", "--file", "workspace.webc"],
-        vec!["genmeta", "install", "workspace", "extra"],
+        vec!["genmeta", "install", "workspace", "--file", "workspace.pkg"],
         vec!["genmeta", "uninstall", "workspace", "--version", "1.0.0"],
-        vec![
-            "genmeta",
-            "update",
-            "workspace",
-            "--store",
-            "other.dhttp.net",
-        ],
     ] {
         assert!(Options::try_parse_from(args).is_err());
     }
     let help = Options::try_parse_from(["genmeta", "install", "--help"])
         .unwrap_err()
         .to_string();
-    assert!(
-        help.contains("MAJOR.MINOR.PATCH")
-            && help.contains("--app")
-            && help.contains("--lib")
-            && help.contains("--id")
-    );
+    assert!(help.contains("--id") && !help.contains("--lib") && !help.contains("--app"));
 }
 
 #[test]
 fn installed_identity_and_update_preconditions() {
-    let current = json!({"id":"alice.dhttp.net/message","kind":"lib","version":"1.0.0"});
-    assert!(validate_installed(&current, "lib", Some("message")).is_ok());
-    assert!(validate_installed(&current, "lib", Some("std.dhttp.net/message")).is_err());
-    assert!(validate_installed(&current, "app", Some("message")).is_err());
+    let current = json!({"id":"alice.dhttp.net/message","version":"1.0.0"});
+    assert!(validate_installed(&current, Some("message")).is_ok());
+    assert!(validate_installed(&current, Some("std.dhttp.net/message")).is_err());
+    assert!(validate_installed(&current, Some("message")).is_ok());
     assert_eq!(
         choose_release_target("update", "message", Some(&current)).unwrap(),
         "alice.dhttp.net/message"
@@ -537,7 +490,7 @@ async fn response_body_is_bounded_and_preserves_plain_text_service_errors() {
 async fn resolution_deadline_covers_all_pages_instead_of_resetting_per_request() {
     let mut calls = 0;
     let start = tokio::time::Instant::now();
-    let error = resolve_with_deadline("workspace", None, "app", |_| {
+    let error = resolve_with_deadline("workspace", None, |_| {
         calls += 1;
         let page = calls;
         async move {
@@ -649,8 +602,8 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
                         assert_eq!(peer.name(), "alice.dhttp.net");
                         let method = request.method().clone();
                         let path = request.uri().path_and_query().unwrap().to_string();
-                        if path.starts_with("/std/sys/app?name=") || path.starts_with("/std/sys/lib?name=") {
-                            assert_eq!(method, http::Method::PUT);
+                        if path == "/std/sys/pkg/install" {
+                            assert_eq!(method, http::Method::POST);
                             assert_eq!(request.headers()[header::CONTENT_TYPE], "application/json");
                         }
                         let bytes = request.into_body().collect().await?.to_bytes();
@@ -658,12 +611,12 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
                             .lock()
                             .unwrap()
                             .push((method, path.clone(), bytes.to_vec()));
-                        let (status, value) = if path.starts_with("/std/sys/app?name=") {
+                        let (status, value) = if path == "/std/sys/pkg/install" && serde_json::from_slice::<Value>(&bytes).unwrap()["name"] == "demo" {
                             (
                                 StatusCode::OK,
-                                json!({"kind":"app","id":"alice.dhttp.net/demo","version":"1.0.0","entry":"/"}),
+                                json!({"has_app":true,"id":"alice.dhttp.net/demo","version":"1.0.0","entry":"/"}),
                             )
-                        } else if path.starts_with("/std/sys/lib?name=") {
+                        } else if path == "/std/sys/pkg/install" {
                             (
                                 StatusCode::BAD_REQUEST,
                                 json!({"error":"invalid signature"}),
@@ -697,16 +650,16 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
             .clone();
     let app = release("alice.dhttp.net", "demo", "app", "1.0.0");
     let result = install(&endpoint, &owner, &app).await.unwrap();
-    assert_eq!(result["kind"], "app");
-    let lib = release("alice.dhttp.net", "demo", "lib", "1.0.0");
+    assert!(result.get("kind").is_none());
+    let lib = release("alice.dhttp.net", "broken", "lib", "1.0.0");
     let error = install(&endpoint, &owner, &lib).await.unwrap_err();
     assert!(report(error).contains("invalid signature"));
     assert_eq!(
         requests.lock().unwrap()[0],
         (
-            http::Method::PUT,
-            "/std/sys/app?name=demo".into(),
-            br#"{"publisher":"alice.dhttp.net","version":"1.0.0"}"#.to_vec()
+            http::Method::POST,
+            "/std/sys/pkg/install".into(),
+            br#"{"author":"alice.dhttp.net","name":"demo","version":"1.0.0"}"#.to_vec()
         )
     );
     assert_eq!(

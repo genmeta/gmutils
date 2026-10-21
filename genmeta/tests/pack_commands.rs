@@ -39,39 +39,20 @@ fn identity(home: &Path) {
 
 fn project(path: &Path, kind: &str, repository: &str) {
     std::fs::create_dir_all(path).unwrap();
-    let content = if kind == "app" {
-        "entry='/'"
-    } else {
-        "host={}"
-    };
-    let mapping = if kind == "app" {
-        "'/public'='public'"
-    } else {
-        "'/metadata'='metadata'"
-    };
-    let module = if kind == "app" {
-        ""
-    } else {
-        "[[module]]\nname='backend'\nsource='lib.wasm'\n"
-    };
-    std::fs::write(path.join("wasmer.toml"), format!(
-        "[package]\nname='alice.dhttp.net/hello'\nversion='1.0.0'\ndescription='Test package'\nlicense='MIT'\n{repository}\n[package.pishoo]\nkind='{kind}'\ntitle='Hello'\nchangelog='Initial release'\ndependencies=[]\n{content}\n[fs]\n{mapping}\n{module}"
-    )).unwrap();
-    if kind == "app" {
+    let content = match kind {"app" => "entry='/'", "lib" => "host={}", _ => "entry='/'\nhost={}"};
+    let mapping = if kind == "lib" {""} else {"[fs]\n'/public'='public'\n"};
+    let module = if kind == "app" {""} else {"[[module]]\nname='backend'\nsource='lib.wasm'\n"};
+    std::fs::write(path.join("wasmer.toml"),format!("[package]\nname='alice.dhttp.net/hello'\nversion='1.0.0'\ndescription='Test package'\nlicense='MIT'\n{repository}\n[package.pishoo]\ntitle='Hello'\nchangelog='Initial release'\ndependencies=[]\n{content}\n{mapping}{module}")).unwrap();
+    if kind != "lib" {
         std::fs::create_dir(path.join("public")).unwrap();
-        std::fs::write(path.join("public/index.html"), "<h1>Hello</h1>").unwrap();
-    } else {
-        std::fs::create_dir(path.join("metadata")).unwrap();
-        std::fs::write(path.join("metadata/openapi.json"), serde_json::to_vec(&json!({
-            "openapi":"3.1.0","info":{"title":"Hello","version":"1.0.0"},
-            "paths":{"/upload":{"post":{"operationId":"upload","summary":"Upload","responses":{"200":{"description":"OK"}}}}}
-        })).unwrap()).unwrap();
-        std::fs::write(
-            path.join("lib.wasm"),
-            include_bytes!("fixtures/wasi-http-read-request-then-respond.wasm"),
-        )
-        .unwrap();
+        std::fs::write(path.join("public/index.html"),"<h1>Hello</h1>").unwrap();
     }
+    if kind != "app" {
+        let mut backend=include_bytes!("fixtures/wasi-http-read-request-then-respond.wasm").to_vec();
+        let document=serde_json::to_vec(&json!({"openapi":"3.1.0","info":{"title":"Hello","version":"1.0.0"},"paths":{"/upload":{"post":{"operationId":"upload","summary":"Upload","responses":{"200":{"description":"OK"}}}}}})).unwrap();
+        let name=b"pishoo:openapi";let mut section=vec![name.len() as u8];section.extend(name);section.extend(document);backend.push(0);let mut n=section.len();while n>=128{backend.push((n as u8&127)|128);n >>=7;}backend.push(n as u8);backend.extend(section);std::fs::write(path.join("lib.wasm"),backend).unwrap();
+    }
+
 }
 
 fn pack(home: &Path, cwd: &Path, args: &[&OsStr]) -> Output {
@@ -152,14 +133,9 @@ fn invalid_declarations_and_missing_artifacts_do_not_publish() {
             "version='1.0.0-preview'",
             "MAJOR.MINOR.PATCH",
         ),
-        ("app", "kind='app'", "kind='app'\nhost={}", "forbids host"),
-        (
-            "app",
-            "[fs]",
-            "[[module]]\nname='backend'\nsource='lib.wasm'\n[fs]",
-            "zero backend",
-        ),
-        ("lib", "host={}", "entry='/'\nhost={}", "forbids entry"),
+        ("app", "entry='/'", "entry='/'\nhost={}", "require a backend"),
+        ("app", "title='Hello'", "title='Hello'\nkind='app'", "unknown package.pishoo"),
+        ("lib", "host={}", "entry='/'\nhost={}", "entry requires public resources"),
         (
             "lib",
             "dependencies=[]",
@@ -186,7 +162,6 @@ fn invalid_declarations_and_missing_artifacts_do_not_publish() {
     }
     for (kind, missing) in [
         ("app", "public/index.html"),
-        ("lib", "metadata/openapi.json"),
         ("lib", "lib.wasm"),
     ] {
         let dir = tempfile::tempdir().unwrap();
@@ -195,7 +170,7 @@ fn invalid_declarations_and_missing_artifacts_do_not_publish() {
         std::fs::remove_file(app.join(missing)).unwrap();
         fails(
             &pack(&dir.path().join("empty-home/.dhttp"), &app, &[]),
-            "build artifact",
+            if kind == "app" {"frontend requires"} else {"build artifact"},
         );
         assert!(!app.join("dist").exists());
     }
@@ -208,7 +183,7 @@ fn invalid_files_and_existing_targets_preserve_old_content() {
     identity(&home);
     let app = dir.path().join("app");
     project(&app, "app", "");
-    let file = dir.path().join("old.webc");
+    let file = dir.path().join("old.pkg");
     std::fs::write(&file, "old content").unwrap();
     fails(
         &pack(&home, &app, &["-o".as_ref(), file.as_os_str()]),
@@ -265,13 +240,13 @@ fn app_and_lib_build_signed_packages_offline_without_a_host_service() {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use rcgen::PublicKeyData;
     use sha2::{Digest, Sha256};
-    for kind in ["app", "lib"] {
+    for kind in ["app", "lib", "both"] {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home/.dhttp");
         identity(&home);
         let input = dir.path().join(kind);
         project(&input, kind, "");
-        let output = input.join("dist/signed.webc");
+        let output = input.join("dist/signed.pkg");
         let result = pack(&home, &input, &["--output".as_ref(), output.as_os_str()]);
         assert!(
             result.status.success(),
@@ -328,20 +303,14 @@ fn app_and_lib_build_signed_packages_offline_without_a_host_service() {
             )
             .unwrap()
         );
-        if kind == "lib" {
+        if kind != "app" {
             let backend = package.get_atom("backend").unwrap();
             assert!(
                 backend
                     .windows(b"pishoo:openapi".len())
                     .any(|value| value == b"pishoo:openapi")
             );
-            assert!(
-                package
-                    .get_volume("metadata")
-                    .unwrap()
-                    .read_file("/openapi.json")
-                    .is_none()
-            );
+            assert!(package.get_volume("metadata").is_none());
         }
     }
 }

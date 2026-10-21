@@ -36,7 +36,7 @@ enum Options {
 
 #[derive(clap::Subcommand, Debug, Clone)]
 enum PackageCommand {
-    /// Build a local project and create a signed WEBC package
+    /// Build a local project and create a signed Pkg package
     #[command(version)]
     Build {
         /// Project directory or build manifest
@@ -46,16 +46,16 @@ enum PackageCommand {
         #[arg(long)]
         no_build: bool,
         /// Signed output file (defaults to the built manifest's dist directory)
-        #[arg(short, long, value_name = "FILE.webc")]
+        #[arg(short, long, value_name = "FILE.pkg")]
         output: Option<PathBuf>,
         /// Check the signing identity against the built manifest publisher
         #[arg(short, long, value_name = "PUBLISHER")]
         id: Option<String>,
     },
-    /// Publish a signed WEBC package to the trusted store
+    /// Publish a signed Pkg package to the trusted store
     #[command(version)]
     Publish {
-        /// Existing signed WEBC file
+        /// Existing signed .pkg file
         file: PathBuf,
         #[arg(short, long, value_name = "PUBLISHER")]
         id: Option<String>,
@@ -64,19 +64,20 @@ enum PackageCommand {
     #[command(disable_version_flag = true)]
     Install {
         /// Package short name or canonical publisher/name
-        target: String,
+        #[arg(required_unless_present_any=["list","info"],conflicts_with_all=["list","info"])]
+        target: Option<String>,
+        /// Query installed packages without installing or downloading
+        #[arg(long,conflicts_with_all=["target","info","version"])]
+        list: bool,
+        /// Query an installed package without installing or downloading
+        #[arg(long,value_name="NAME",conflicts_with_all=["target","list","version"])]
+        info: Option<String>,
         /// Local identity hosting the packages (defaults to the configured identity)
         #[arg(short, long)]
         id: Option<String>,
         /// Exact release version (defaults to the latest published version)
         #[arg(long, value_name = "MAJOR.MINOR.PATCH")]
         version: Option<String>,
-        /// Select an App (the default)
-        #[arg(long, conflicts_with = "lib")]
-        app: bool,
-        /// Select a Lib
-        #[arg(long, conflicts_with = "app")]
-        lib: bool,
     },
     /// Update an installed package from its original publisher
     #[command(disable_version_flag = true)]
@@ -89,12 +90,6 @@ enum PackageCommand {
         /// Exact release version (defaults to the latest published version)
         #[arg(long, value_name = "MAJOR.MINOR.PATCH")]
         version: Option<String>,
-        /// Select an App (the default)
-        #[arg(long, conflicts_with = "lib")]
-        app: bool,
-        /// Select a Lib
-        #[arg(long, conflicts_with = "app")]
-        lib: bool,
     },
     /// Remove a package, retaining its data and dependencies
     Uninstall {
@@ -103,36 +98,6 @@ enum PackageCommand {
         /// Local identity hosting the packages (defaults to the configured identity)
         #[arg(short, long)]
         id: Option<String>,
-        /// Select an App (the default)
-        #[arg(long, conflicts_with = "lib")]
-        app: bool,
-        /// Select a Lib
-        #[arg(long, conflicts_with = "app")]
-        lib: bool,
-    },
-    /// List installed packages (both types by default)
-    List {
-        /// Local identity hosting the packages (defaults to the configured identity)
-        #[arg(short, long)]
-        id: Option<String>,
-        #[arg(long, conflicts_with = "lib")]
-        app: bool,
-        #[arg(long, conflicts_with = "app")]
-        lib: bool,
-    },
-    /// Show an installed package, including its exact dependencies
-    Info {
-        /// Package short name or canonical publisher/name
-        target: String,
-        /// Local identity hosting the packages (defaults to the configured identity)
-        #[arg(short, long)]
-        id: Option<String>,
-        /// Select an App (the default)
-        #[arg(long, conflicts_with = "lib")]
-        app: bool,
-        /// Select a Lib
-        #[arg(long, conflicts_with = "app")]
-        lib: bool,
     },
 }
 
@@ -189,69 +154,26 @@ async fn run(options: Options) -> Result<(), Error> {
             PackageCommand::Publish { file, id } => upload::run(file, id).await?,
             PackageCommand::Install {
                 target,
+                list,
+                info,
                 id,
                 version,
-                app: _,
-                lib,
             } => {
-                let kind = if lib { "lib" } else { "app" }.to_owned();
-                install::run("install", Some(target), id, version, Some(kind)).await?;
+                if list {
+                    install::run("list", None, id, None).await?;
+                } else if let Some(name) = info {
+                    install::run("info", Some(name), id, None).await?;
+                } else {
+                    install::run("install", target, id, version).await?;
+                }
             }
             PackageCommand::Update {
                 target,
                 id,
                 version,
-                app: _,
-                lib,
-            } => {
-                install::run(
-                    "update",
-                    Some(target),
-                    id,
-                    version,
-                    Some(if lib { "lib" } else { "app" }.into()),
-                )
-                .await?
-            }
-            PackageCommand::Uninstall {
-                target,
-                id,
-                app: _,
-                lib,
-            } => {
-                install::run(
-                    "remove",
-                    Some(target),
-                    id,
-                    None,
-                    Some(if lib { "lib" } else { "app" }.into()),
-                )
-                .await?
-            }
-            PackageCommand::Info {
-                target,
-                id,
-                app: _,
-                lib,
-            } => {
-                install::run(
-                    "info",
-                    Some(target),
-                    id,
-                    None,
-                    Some(if lib { "lib" } else { "app" }.into()),
-                )
-                .await?
-            }
-            PackageCommand::List { id, app, lib } => {
-                let kind = if lib {
-                    Some("lib".into())
-                } else if app {
-                    Some("app".into())
-                } else {
-                    None
-                };
-                install::run("list", None, id, None, kind).await?
+            } => install::run("update", Some(target), id, version).await?,
+            PackageCommand::Uninstall { target, id } => {
+                install::run("remove", Some(target), id, None).await?
             }
         },
         Options::Server(command) => server::run(command).await?,

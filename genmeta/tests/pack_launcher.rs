@@ -17,7 +17,7 @@ fn source_recipe_receives_literal_arguments_without_shell_interpolation() {
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_genmeta"))
-        .args(["package", "build"])
+        .args(["build"])
         .arg(root.path())
         .output()
         .unwrap();
@@ -43,7 +43,7 @@ fn obsolete_pishoo_tools_on_path_are_never_called() {
     let output = Command::new(env!("CARGO_BIN_EXE_genmeta"))
         .env("PATH", root.path())
         .current_dir(root.path())
-        .args(["package", "build"])
+        .args(["build"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -61,7 +61,7 @@ fn no_build_never_runs_recipe_and_failure_emits_no_success_json() {
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_genmeta"))
         .current_dir(root.path())
-        .args(["package", "build", "--no-build"])
+        .args(["build", "--no-build"])
         .output()
         .unwrap();
     assert!(!output.status.success());
