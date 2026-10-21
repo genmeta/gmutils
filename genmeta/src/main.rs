@@ -302,14 +302,14 @@ mod tests {
     }
 
     #[test]
-    fn launcher_exposes_listen_and_forward_as_top_level_commands() {
+    fn launcher_exposes_listen_mount_and_unmount() {
         use super::server::Command;
-        for mode in ["loopback", "internal", "external", "all", "off"] {
-            let command =
+        for mode in ["internal", "external", "all", "off"] {
+            let parsed =
                 Options::try_parse_from(["genmeta", "listen", "--id", "alice.smith", mode])
                     .unwrap();
             assert!(
-                matches!(command, Options::Server(Command::Listen { mode: Some(saved), global: false, .. }) if saved == mode)
+                matches!(parsed, Options::Server(Command::Listen {mode: Some(saved), ..}) if saved == mode)
             );
         }
         assert!(matches!(
@@ -324,39 +324,47 @@ mod tests {
         assert!(matches!(
             Options::try_parse_from([
                 "genmeta",
-                "forward",
+                "mount",
                 "--id",
                 "alice.smith",
                 "/api",
                 "127.0.0.1:8080"
             ])
             .unwrap(),
-            Options::Server(Command::Forward { .. })
+            Options::Server(Command::Mount { .. })
         ));
-        assert!(Options::try_parse_from(["genmeta", "listen"]).is_err());
-        for mode in ["0", "1", "2", "3", "both", "enable", "disable"] {
-            assert!(
-                Options::try_parse_from(["genmeta", "listen", "--id", "alice.smith", mode])
-                    .is_err()
-            );
+        assert!(matches!(
+            Options::try_parse_from(["genmeta", "mount"]).unwrap(),
+            Options::Server(Command::Mount {
+                location: None,
+                target: None,
+                ..
+            })
+        ));
+        assert!(matches!(
+            Options::try_parse_from(["genmeta", "unmount", "/api", "127.0.0.1:8080", "--yes"])
+                .unwrap(),
+            Options::Server(Command::Unmount { yes: true, .. })
+        ));
+        for args in [
+            vec!["listen"],
+            vec!["listen", "--id", "alice.smith", "auto"],
+            vec!["listen", "--id", "alice.smith", "loopback"],
+            vec!["listen", "--id", "alice.smith", "list"],
+            vec!["unlisten", "--id", "alice.smith"],
+            vec!["forward"],
+            vec!["mount", "/api"],
+            vec!["unmount", "/api"],
+        ] {
+            assert!(Options::try_parse_from(std::iter::once("genmeta").chain(args)).is_err());
         }
-        for command in ["ensite", "dissite", "listen"] {
-            assert!(
-                Options::try_parse_from(["genmeta", "identity", command, "--id", "alice.smith"])
-                    .is_err()
-            );
-        }
-        assert!(Options::try_parse_from(["genmeta", "server", "proxy"]).is_err());
-        let mut command = Options::command();
-        for name in ["listen", "forward"] {
+        let command = Options::command();
+        for name in ["listen", "mount", "unmount"] {
             assert!(command.find_subcommand(name).is_some());
         }
-        assert!(command.find_subcommand("server").is_none());
-        let help = command.render_long_help().to_string();
-        assert!(
-            help.contains("listen") && help.contains("forward"),
-            "{help}"
-        );
+        for name in ["server", "unlisten", "forward"] {
+            assert!(command.find_subcommand(name).is_none());
+        }
     }
 
     #[test]
