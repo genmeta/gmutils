@@ -137,83 +137,84 @@ async fn build(
     let id = text(&wapm, "name")?;
     let (publisher, name) = id.split_once('/').unwrap();
     let version = text(&wapm, "version")?;
-    let kind = text(&annotation, "kind")?;
     if let Some(selected) = selected_id.as_ref()
         && dhttp_home::normalize_name(selected).as_deref() != Some(publisher)
     {
         return Err("--id differs from manifest publisher".into());
     }
-    let modules = config.get("module");
-    let mut backend = if kind == "app" {
-        if modules.is_some_and(|m| m.as_array().is_none_or(|v| !v.is_empty())) {
-            return Err("app must have zero backend modules".into());
-        }
-        Vec::new()
-    } else {
-        let module = modules
-            .and_then(toml::Value::as_array)
-            .filter(|v| v.len() == 1)
-            .ok_or("lib requires exactly one backend module")?;
-        if module[0].get("name").and_then(toml::Value::as_str) != Some("backend")
-            || module[0]
+    let modules = config
+        .get("module")
+        .map(|m| m.as_array().ok_or("module must be an array"))
+        .transpose()?;
+    let mut backend = Vec::new();
+    if let Some(modules) = modules {
+        if modules.len() != 1
+            || modules[0].get("name").and_then(toml::Value::as_str) != Some("backend")
+            || modules[0]
                 .as_table()
                 .is_none_or(|t| t.keys().any(|k| !matches!(k.as_str(), "name" | "source")))
         {
-            return Err("lib module must declare only name=backend and a local source".into());
+            return Err("package supports one optional backend module".into());
         }
-        let source = module[0]
+        let source = modules[0]
             .get("source")
             .and_then(toml::Value::as_str)
             .ok_or("missing backend source")?;
-        let source = local_content_path(project, source)?;
-        let bytes = read_bounded(&source, 64 * 1024 * 1024)?;
-        if bytes.get(..8) != Some(b"\0asm\x0d\0\x01\0") {
-            return Err("backend must be a built WASM component".into());
+        backend = read_bounded(&local_content_path(project, source)?, 64 * 1024 * 1024)?;
+        if backend.get(..8) != Some(b"\0asm\x0d\0\x01\0") {
+            return Err("backend must be a Component".into());
         }
-        bytes
-    };
-    let (mount, volume_name, required) = if kind == "app" {
-        ("/public", "public", "index.html")
+        backend = embedded_openapi(backend, None)?;
+        if !annotation["host"].is_object() {
+            return Err("backend requires host purposes".into());
+        }
+    } else if annotation.get("host").is_some() {
+        return Err("host purposes require a backend".into());
+    }
+    let directory = if let Some(fs) = config.get("fs") {
+        let fs = fs
+            .as_table()
+            .filter(|fs| fs.len() == 1)
+            .ok_or("only /public mapping is supported")?;
+        let source = fs
+            .get("/public")
+            .and_then(toml::Value::as_str)
+            .ok_or("only /public mapping is supported")?;
+        let directory = local_content_path(project, source)?;
+        if !directory.is_dir()
+            || !directory.join("index.html").is_file()
+            || annotation["entry"] != "/"
+        {
+            return Err("frontend requires public/index.html and entry /".into());
+        }
+        Some(directory)
     } else {
-        ("/metadata", "metadata", "openapi.json")
+        if annotation.get("entry").is_some() {
+            return Err("entry requires public resources".into());
+        }
+        None
     };
-    let fs = config
-        .get("fs")
-        .and_then(toml::Value::as_table)
-        .filter(|fs| fs.len() == 1)
-        .ok_or("require exactly one content mapping")?;
-    let directory = fs
-        .get(mount)
-        .and_then(toml::Value::as_str)
-        .ok_or("content mapping differs from package kind")?;
-    let directory = local_content_path(project, directory)?;
-    if !directory.is_dir() || (kind == "app" && !directory.join(required).is_file()) {
-        return Err(format!("missing build artifact: {mount}/{required}").into());
+    if backend.is_empty() && directory.is_none() {
+        return Err("package has no runtime content".into());
     }
-    if kind == "lib" {
-        let document = if directory.join("openapi.json").exists() {
-            Some(read_bounded(&directory.join("openapi.json"), 1024 * 1024)?)
-        } else {
-            None
-        };
-        backend = embedded_openapi(backend, document.as_deref())?;
-    }
-    let output = output.unwrap_or_else(|| {
-        project
-            .join("dist")
-            .join(format!("{name}-{version}-{kind}.webc"))
-    });
+    let output =
+        output.unwrap_or_else(|| project.join("dist").join(format!("{name}-{version}.pkg")));
     reject_url(output.as_os_str())?;
     if std::fs::symlink_metadata(&output).is_ok() {
         return Err(format!("output already exists: {}", output.display()).into());
     }
     let output = resolved_output(&output)?;
     let parent = output.parent().ok_or("output has no parent")?;
-    ensure_outside_mapping(&output, parent, &directory)?;
+    if let Some(directory) = &directory {
+        ensure_outside_mapping(&output, parent, directory)?;
+    }
     // Count the signature.json entry as part of the existing 4096-entry limit.
     let mut count = 1;
     let mut remaining = 64 * 1024 * 1024 - backend.len();
-    let content = public_directory(&directory, "", &mut count, &mut remaining, 0, kind == "lib")?;
+    let content = directory
+        .as_ref()
+        .map(|directory| public_directory(directory, "", &mut count, &mut remaining, 0))
+        .transpose()?;
     // Local-only loading; do not refresh OCSP or initialize a network.
     let home = dhttp_home::DhttpHome::for_user_home_dir(
         dirs::home_dir().ok_or("cannot locate user home directory")?,
@@ -231,14 +232,14 @@ async fn build(
         .key_provider
         .load_private_key(private_key)?;
     let mut manifest: webc::metadata::Manifest = serde_json::from_value(json!({
-        "package":{"wapm":wapm,"pishoo":annotation,"fs":[{"volume_name":volume_name,"mount_path":mount}]},
+        "package":{"wapm":wapm,"pishoo":annotation,"fs":if directory.is_some() {json!([{"volume_name":"public","mount_path":"/public"}])} else {json!([])}},
         "atoms":{"backend":{"kind":"https://webc.org/kind/wasm","signature":format!("sha256:{}",STANDARD.encode(Sha256::digest(&backend)))}}
     }))?;
-    if kind == "app" {
+    if backend.is_empty() {
         manifest.atoms.clear();
     }
     let atoms = || -> Result<_> {
-        Ok(if kind == "app" {
+        Ok(if backend.is_empty() {
             BTreeMap::new()
         } else {
             BTreeMap::from([(
@@ -247,11 +248,13 @@ async fn build(
             )])
         })
     };
-    let unsigned = Writer::default()
+    let mut writer = Writer::default()
         .write_manifest(&manifest)?
-        .write_atoms(atoms()?)?
-        .with_volume(volume_name, content)?
-        .finish(SignatureAlgorithm::None)?;
+        .write_atoms(atoms()?)?;
+    if let Some(content) = content {
+        writer.write_volume("public", content)?;
+    }
+    let unsigned = writer.finish(SignatureAlgorithm::None)?;
     let container = webc::Container::from_bytes_and_version(unsigned.clone(), webc::Version::V3)?;
     let reader = webc::v3::read::OwnedReader::parse(unsigned.clone())?;
     let index = reader.index();
@@ -303,11 +306,13 @@ async fn build(
     // Recheck after directory creation, before any temporary file is created.
     let parent = std::fs::canonicalize(parent)?;
     let output = parent.join(output.file_name().ok_or("missing output filename")?);
-    ensure_outside_mapping(&output, &parent, &std::fs::canonicalize(&directory)?)?;
+    if let Some(directory) = &directory {
+        ensure_outside_mapping(&output, &parent, &std::fs::canonicalize(directory)?)?;
+    }
     let mut temporary = tempfile::NamedTempFile::new_in(&parent)?;
     temporary.write_all(&bytes)?;
     temporary.as_file().sync_all()?;
-    let result = json!({"id":id,"kind":kind,"version":version,
+    let result = json!({"id":id,"version":version,
         "file":output.to_string_lossy(),"size":bytes.len(),
         "package_sha256":format!("{:x}", Sha256::digest(&bytes))});
     // persist_noclobber uses exclusive publication, including concurrent creators.
@@ -501,17 +506,13 @@ fn validate_metadata(wapm: &Value, annotation: &Value) -> Result<()> {
             );
         }
     }
-    let kind = text(annotation, "kind")?;
-    if !matches!(kind, "app" | "lib") {
-        return Err("kind must be app or lib".into());
-    }
     text(annotation, "title")?;
     text(annotation, "changelog")?;
     if annotation.as_object().is_none_or(|o| {
         o.keys().any(|k| {
             !matches!(
                 k.as_str(),
-                "kind" | "title" | "dependencies" | "changelog" | "entry" | "host"
+                "title" | "dependencies" | "changelog" | "entry" | "host"
             )
         })
     }) {
@@ -528,22 +529,18 @@ fn validate_metadata(wapm: &Value, annotation: &Value) -> Result<()> {
             || !valid_id(&dep_id)
             || !valid_version(text(dep, "version")?)
             || !ids.insert(dep_id.clone())
-            || (kind == "lib" && dep_id == id)
+            || dep_id == id
         {
             return Err("invalid, duplicate or self Lib dependency".into());
         }
     }
-    if kind == "app" {
-        if annotation["entry"] != "/" || annotation.get("host").is_some() {
-            return Err("app requires entry / and forbids host".into());
+    if let Some(entry) = annotation.get("entry") {
+        if entry != "/" {
+            return Err("invalid entry".into());
         }
-    } else {
-        if annotation.get("entry").is_some() {
-            return Err("lib forbids entry".into());
-        }
-        let host = annotation["host"]
-            .as_object()
-            .ok_or("lib requires explicit host purposes")?;
+    }
+    if let Some(host) = annotation.get("host") {
+        let host = host.as_object().ok_or("host purposes require an object")?;
         for (key, purpose) in host {
             if !matches!(
                 key.as_str(),
@@ -615,7 +612,7 @@ fn resolved_output(path: &Path) -> Result<PathBuf> {
 
 fn ensure_outside_mapping(output: &Path, parent: &Path, directory: &Path) -> Result<()> {
     if output.starts_with(directory) || parent.starts_with(directory) {
-        return Err("output and staging directory are inside a content mapping; use an external -o FILE.webc".into());
+        return Err("output and staging directory are inside a content mapping; use an external -o FILE.pkg".into());
     }
     Ok(())
 }
@@ -674,7 +671,6 @@ fn public_directory(
     count: &mut usize,
     remaining: &mut usize,
     depth: usize,
-    omit_openapi: bool,
 ) -> Result<Directory<'static>> {
     if depth > 32 || std::fs::symlink_metadata(path)?.file_type().is_symlink() {
         return Err("content must contain real directories, depth <= 32".into());
@@ -690,9 +686,6 @@ fn public_directory(
             .file_name()
             .into_string()
             .map_err(|_| "invalid UTF-8 content filename")?;
-        if omit_openapi && relative.is_empty() && name == "openapi.json" {
-            continue;
-        }
         let logical = format!("{relative}/{name}");
         if logical.len() > 1024
             || name.is_empty()
@@ -711,7 +704,6 @@ fn public_directory(
                 count,
                 remaining,
                 depth + 1,
-                omit_openapi,
             )?)
         } else if kind.is_file() {
             let bytes = read_bounded(&entry.path(), (16 * 1024 * 1024).min(*remaining))?;

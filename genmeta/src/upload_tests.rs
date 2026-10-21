@@ -85,6 +85,7 @@ fn build(metadata: &Value, authority: Option<&dhttp::LocalAuthority>, content: &
         "description",
         "license",
         "repository",
+        "kind",
     ] {
         annotation.as_object_mut().unwrap().remove(key);
     }
@@ -202,12 +203,10 @@ fn release(metadata: &Value, bytes: &[u8], owner: &str) -> Value {
     value["publisher_owner_hash"] = owner.into();
     value["package_sha256"] = digest(bytes).into();
     value["size"] = bytes.len().into();
-    value["download_path"] = format!(
-        "{}/{}.webc",
-        version_path(metadata).unwrap(),
-        metadata["kind"].as_str().unwrap()
-    )
-    .into();
+    for key in ["kind", "entry", "host"] {
+        value.as_object_mut().unwrap().remove(key);
+    }
+    value["download_path"] = format!("{}/package.pkg", version_path(metadata).unwrap()).into();
     value["status"] = "published".into();
     if let Ok(envelope) = signature_envelope(bytes) {
         value["signer_certificates"] = envelope["certificates"].clone();
@@ -223,7 +222,7 @@ fn paths_and_protocol_proofs_are_exact() {
         let path = version_path(&metadata).unwrap();
         assert_eq!(
             path,
-            format!("/store/v1/{kind}s/alice.dhttp.net/note/versions/1.0.0")
+            format!("/store/v1/packages/alice.dhttp.net/note/versions/1.0.0")
         );
         let proof = release(&metadata, &bytes, &"a".repeat(64));
         let response = http::Response::new(serde_json::to_vec(&proof).unwrap());
@@ -439,7 +438,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
                 assert_eq!(remote.name(), "alice.dhttp.net");
                 if method == http::Method::GET {
                     gets.fetch_add(1, Ordering::SeqCst);
-                    let download = path.ends_with(".webc");
+                    let download = path.ends_with(".pkg");
                     let key = if download { path.rsplit_once('/').unwrap().0 } else { path.as_str() };
                     let saved = packages.lock().unwrap().get(key).cloned();
                     return Ok::<_, dhttp::BoxError>(match saved {
@@ -465,7 +464,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
                     } else { response(StatusCode::CONFLICT, json!({"error":"version_conflict","message":"different content"})) });
                 }
                 for dependency in metadata["dependencies"].as_array().unwrap() {
-                    let key = format!("/store/v1/libs/{}/{}/versions/{}", dependency["publisher"].as_str().unwrap(),
+                    let key = format!("/store/v1/packages/{}/{}/versions/{}", dependency["publisher"].as_str().unwrap(),
                         dependency["name"].as_str().unwrap(), dependency["version"].as_str().unwrap());
                     if saved.get(&key).is_none_or(|(_, release)| release["status"] != "published") {
                         return Ok(response(StatusCode::UNPROCESSABLE_ENTITY, json!({"error":"dependency_unavailable",
@@ -495,7 +494,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
     })).await.unwrap();
     let listening = tokio::spawn(listening);
     for kind in ["app", "lib"] {
-        let metadata = metadata(kind, "note", json!([]));
+        let metadata = metadata(kind, &format!("note-{kind}"), json!([]));
         let bytes = build(&metadata, Some(&authority), "test");
         let checked = inspect_package(&bytes).await.unwrap();
         verify_publisher(&checked, &package_certificates(&bytes).unwrap(), &authority).unwrap();
@@ -550,7 +549,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
     }
     let dependency = json!([{"publisher":"alice.dhttp.net","name":"backend","version":"1.0.0"}]);
     for kind in ["app", "lib"] {
-        let metadata = metadata(kind, "parent", dependency.clone());
+        let metadata = metadata(kind, &format!("parent-{kind}"), dependency.clone());
         let bytes = build(&metadata, Some(&authority), "parent");
         let error = publish(&client, &bytes, &metadata, &owner)
             .await
@@ -558,38 +557,11 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
             .to_string();
         assert!(error.contains("alice.dhttp.net/backend@1.0.0"), "{error}");
     }
-    // A same-name App cannot satisfy a Lib dependency.
-    let app = metadata("app", "backend", json!([]));
-    publish(
-        &client,
-        &build(&app, Some(&authority), "frontend"),
-        &app,
-        &owner,
-    )
-    .await
-    .unwrap();
-    let parent = metadata("app", "parent", dependency.clone());
-    assert!(
-        publish(
-            &client,
-            &build(&parent, Some(&authority), "parent"),
-            &parent,
-            &owner
-        )
-        .await
-        .is_err()
-    );
-    let lib = metadata("lib", "backend", json!([]));
-    publish(
-        &client,
-        &build(&lib, Some(&authority), "backend"),
-        &lib,
-        &owner,
-    )
-    .await
-    .unwrap();
+    // Any published Pkg can satisfy an exact package dependency.
+    let lib = metadata("app","backend",json!([]));
+    publish(&client,&build(&lib,Some(&authority),"frontend"),&lib,&owner).await.unwrap();
     for kind in ["app", "lib"] {
-        let parent = metadata(kind, "parent", dependency.clone());
+        let parent = metadata(kind, &format!("parent-{kind}"), dependency.clone());
         assert_eq!(
             publish(
                 &client,
@@ -622,7 +594,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
     assert!(
         publish(
             &client,
-            &build(&lib, Some(&authority), "backend"),
+            &build(&lib, Some(&authority), "frontend"),
             &lib,
             &owner
         )
