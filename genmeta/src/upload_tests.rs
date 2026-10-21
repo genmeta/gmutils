@@ -558,8 +558,15 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
         assert!(error.contains("alice.dhttp.net/backend@1.0.0"), "{error}");
     }
     // Any published Pkg can satisfy an exact package dependency.
-    let lib = metadata("app","backend",json!([]));
-    publish(&client,&build(&lib,Some(&authority),"frontend"),&lib,&owner).await.unwrap();
+    let lib = metadata("app", "backend", json!([]));
+    publish(
+        &client,
+        &build(&lib, Some(&authority), "frontend"),
+        &lib,
+        &owner,
+    )
+    .await
+    .unwrap();
     for kind in ["app", "lib"] {
         let parent = metadata(kind, &format!("parent-{kind}"), dependency.clone());
         assert_eq!(

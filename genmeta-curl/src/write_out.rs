@@ -26,6 +26,10 @@ pub(crate) fn expand_write_out(fmt: &str, ctx: &WriteOutContext<'_>) -> String {
             Some('{') => {
                 chars.next();
                 let var: String = chars.by_ref().take_while(|&c| c != '}').collect();
+                // header{name} has an inner terminator and the token's outer one.
+                if var.starts_with("header{") && chars.peek() == Some(&'}') {
+                    chars.next();
+                }
                 let value = expand_variable(&var, ctx);
                 out.push_str(&value);
             }
@@ -63,5 +67,44 @@ fn expand_variable(var: &str, ctx: &WriteOutContext<'_>) -> String {
         "time_starttransfer" => format!("{:.6}", ctx.timing.time_starttransfer()),
         "size_download" => ctx.size_download.to_string(),
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adjacent_header_tokens_consume_both_closing_braces() {
+        let uri: Uri = "https://alice.dhttp.net/app/workspace/".parse().unwrap();
+        let method = Method::HEAD;
+        let timing = Timing::new();
+        let mut response_headers = HeaderMap::new();
+        response_headers.insert("pishoo-viewer-name", "alice.dhttp.net".parse().unwrap());
+        response_headers.insert("cache-control", "no-store".parse().unwrap());
+        let ctx = WriteOutContext {
+            status: 200,
+            uri: &uri,
+            method: &method,
+            http_version: http::Version::HTTP_3,
+            timing: &timing,
+            size_download: 0,
+            response_headers: &response_headers,
+        };
+        assert_eq!(
+            expand_write_out(
+                "%{response_code}|%{header{Pishoo-Viewer-Name}}|%{header{Cache-Control}}|%{header{missing}}|%{method}",
+                &ctx
+            ),
+            "200|alice.dhttp.net|no-store||HEAD"
+        );
+        assert_eq!(
+            expand_write_out("%% %{http_code} %{header{missing}}end", &ctx),
+            "% 200 end"
+        );
+        assert_eq!(
+            expand_write_out("%{header{cache-control}}}", &ctx),
+            "no-store}"
+        );
     }
 }

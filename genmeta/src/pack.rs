@@ -365,10 +365,10 @@ fn embedded_openapi(mut backend: Vec<u8>, source: Option<&[u8]>) -> Result<Vec<u
         .map(|range| &backend[range.clone()])
         .or(source)
         .ok_or("missing build artifact: embedded OpenAPI or /metadata/openapi.json")?;
-    if let (Some(range), Some(source)) = (embedded.as_ref(), source) {
-        if backend[range.clone()] != *source {
-            return Err("embedded OpenAPI differs from metadata/openapi.json".into());
-        }
+    if let (Some(range), Some(source)) = (embedded.as_ref(), source)
+        && backend[range.clone()] != *source
+    {
+        return Err("embedded OpenAPI differs from metadata/openapi.json".into());
     }
     let parsed: Value = serde_json::from_slice(document)?;
     if document.len() > 1024 * 1024
@@ -534,10 +534,10 @@ fn validate_metadata(wapm: &Value, annotation: &Value) -> Result<()> {
             return Err("invalid, duplicate or self Lib dependency".into());
         }
     }
-    if let Some(entry) = annotation.get("entry") {
-        if entry != "/" {
-            return Err("invalid entry".into());
-        }
+    if let Some(entry) = annotation.get("entry")
+        && entry != "/"
+    {
+        return Err("invalid entry".into());
     }
     if let Some(host) = annotation.get("host") {
         let host = host.as_object().ok_or("host purposes require an object")?;

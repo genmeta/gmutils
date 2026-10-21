@@ -277,7 +277,7 @@ fn success_requires_matching_identity_version_and_saved_entry() {
     installed["entry"] = "/".into();
     assert_eq!(
         success(&installed, &release, "alice.dhttp.net").unwrap(),
-        json!({"id":"dev.dhttp.net/workspace","version":"0.2.0","identity":"alice.dhttp.net","entry_url":"https://alice.dhttp.net/workspace/"})
+        json!({"id":"dev.dhttp.net/workspace","version":"0.2.0","identity":"alice.dhttp.net","entry_url":"https://alice.dhttp.net/app/workspace/"})
     );
     assert_eq!(
         install_body(&release),
@@ -606,11 +606,14 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
                             assert_eq!(method, http::Method::POST);
                             assert_eq!(request.headers()[header::CONTENT_TYPE], "application/json");
                         }
+                        if path == "/std/sys/pkg?name=demo" && method == http::Method::DELETE {
+                            assert_eq!(request.headers()["expected-package-id"], "alice.dhttp.net/demo");
+                        }
                         let bytes = request.into_body().collect().await?.to_bytes();
                         requests
                             .lock()
                             .unwrap()
-                            .push((method, path.clone(), bytes.to_vec()));
+                            .push((method.clone(), path.clone(), bytes.to_vec()));
                         let (status, value) = if path == "/std/sys/pkg/install" && serde_json::from_slice::<Value>(&bytes).unwrap()["name"] == "demo" {
                             (
                                 StatusCode::OK,
@@ -621,11 +624,25 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
                                 StatusCode::BAD_REQUEST,
                                 json!({"error":"invalid signature"}),
                             )
+                        } else if path == "/std/sys/pkg?name=demo" {
+                            assert!(bytes.is_empty());
+                            if method == http::Method::DELETE {
+                                (StatusCode::NO_CONTENT, Value::Null)
+                            } else if requests.lock().unwrap().iter().any(|(method, path, _)| method == http::Method::DELETE && path == "/std/sys/pkg?name=demo") {
+                                (StatusCode::NOT_FOUND, Value::Null)
+                            } else {
+                                (StatusCode::OK, json!({"has_app":true,"id":"alice.dhttp.net/demo","name":"demo","version":"1.0.0","entry":"/"}))
+                            }
+                        } else if path.starts_with("/std/sys/mount?") {
+                            assert_eq!(method, http::Method::DELETE);
+                            assert!(bytes.is_empty());
+                            (StatusCode::NO_CONTENT, Value::Null)
                         } else {
+                            assert_eq!(path, "/std/sys/mount");
                             (StatusCode::OK, json!([]))
                         };
                         let body = http_body_util::Full::new(bytes::Bytes::from(
-                            serde_json::to_vec(&value).unwrap(),
+                            if status == StatusCode::NO_CONTENT { Vec::new() } else { serde_json::to_vec(&value).unwrap() },
                         ))
                         .map_err(|never| match never {})
                         .boxed_unsync();
@@ -633,6 +650,7 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
                             http::Response::builder()
                                 .status(status)
                                 .header(header::CONTENT_TYPE, "application/json")
+                                .header("package-id", "alice.dhttp.net/demo")
                                 .body(body)
                                 .unwrap(),
                         )
@@ -667,7 +685,7 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
             &endpoint,
             &owner,
             http::Method::PATCH,
-            "/std/sys/forward",
+            "/std/sys/mount",
             br#"{"location":"/api","proxy_pass":"127.0.0.1:8080"}"#.to_vec(),
             "application/json"
         )
@@ -676,6 +694,64 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
         json!([])
     );
     assert_eq!(requests.lock().unwrap()[2].0, http::Method::PATCH);
+    host_exchange(
+        &endpoint,
+        &owner,
+        http::Method::GET,
+        "/std/sys/mount",
+        Vec::new(),
+        "application/json",
+    )
+    .await
+    .unwrap();
+    let unmount = "/std/sys/mount?location=%3D%20%2Fapi&proxy_pass=http%3A%2F%2F127.0.0.1%3A8080";
+    assert_eq!(
+        host_exchange(
+            &endpoint,
+            &owner,
+            http::Method::DELETE,
+            unmount,
+            Vec::new(),
+            "application/json"
+        )
+        .await
+        .unwrap(),
+        Value::Null
+    );
+    {
+        let calls = requests.lock().unwrap();
+        assert_eq!(calls.len(), 5);
+        assert_eq!(calls[2].1, "/std/sys/mount");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&calls[2].2).unwrap(),
+            json!({"location":"/api", "proxy_pass":"127.0.0.1:8080"})
+        );
+        assert_eq!(
+            calls[3],
+            (http::Method::GET, "/std/sys/mount".into(), Vec::new())
+        );
+        assert_eq!(calls[4], (http::Method::DELETE, unmount.into(), Vec::new()));
+    }
+    let saved = super::catalog(&endpoint, &owner, Some("alice.dhttp.net/demo"), true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(check_install_version("update", Some(&saved), &app).unwrap());
+    assert_eq!(
+        success(&saved, &app, endpoint.name()).unwrap()["entry_url"],
+        "https://alice.dhttp.net/app/demo/"
+    );
+    let removed = remove(&endpoint, &owner, &saved).await.unwrap();
+    assert_eq!(removed["id"], "alice.dhttp.net/demo");
+    assert_eq!(removed["removed"], true);
+    assert_eq!(removed["data_retained"], true);
+    assert!(
+        super::catalog(&endpoint, &owner, Some("alice.dhttp.net/demo"), false)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(requests.lock().unwrap().len(), 8);
     drop(listening);
 }
 

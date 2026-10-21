@@ -574,22 +574,10 @@ async fn offer_server_activation(
                 .require_interactive("`genmeta listen --id IDENTITY all`")
                 .map_err(|source| Error::ServerActivationPrompt { source })?;
             if enabled {
-                let welcome =
-                    super::welcome::maybe_create_welcome_service(dhttp_home, target.dhttp_name())
-                        .await;
-                match welcome {
-                    Ok(Some(_)) => super::transcript::print_block(
-                        &super::welcome::format_welcome_service_created(target.short_name()),
-                    ),
-                    Ok(None) => {}
-                    Err(error) => super::transcript::print_warning(&format!(
-                        "The identity was installed, but the sample welcome page could not be created: {error}"
-                    )),
-                }
                 let change = server.enable().await.map_err(server_error)?;
                 super::site::print_enable_result(target.short_name(), change);
                 super::transcript::print_line(format!(
-                    "Once Pishoo has loaded this identity, check it with `genmeta curl --id {} https://{}~/std/file/welcome/index.html`.",
+                    "Once Pishoo has loaded this identity, check it with `genmeta curl --id {} https://{}~/std/sys/listen`.",
                     target.short_name(),
                     target.short_name()
                 ));
@@ -949,12 +937,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn noninteractive_apply_does_not_create_server_configuration_or_welcome_page() {
+    async fn noninteractive_apply_does_not_create_server_configuration_or_default_files() {
         let fixture = ServerFixture::new("client").await;
         offer_server_activation(&fixture.home, &fixture.target, false)
             .await
             .unwrap();
         assert!(!fixture.profile().config_db_path().exists());
+        assert!(
+            !fixture
+                .profile()
+                .join(".volume/sys/setting/database")
+                .exists()
+        );
+        assert!(!fixture.profile().join(".volume/sys/file").exists());
         assert!(!fixture.profile().join("file/welcome/index.html").exists());
     }
 

@@ -136,7 +136,7 @@ impl<T: Transport> Api<'_, T> {
     async fn remove(&self, path: &str, method: &str, grantee: &str) -> Result<(), Error> {
         self.request(
             http::Method::DELETE,
-            &format!("/std/acl/allow/{}", urlencoding::encode(grantee)),
+            &format!("/std/acl/allow?name={}", urlencoding::encode(grantee)),
             Some(json!({ "method": method, "api": path })),
             StatusCode::NO_CONTENT,
         )
@@ -165,13 +165,7 @@ impl<T: Transport> Api<'_, T> {
 }
 
 fn access_path(path: &str) -> String {
-    // An encoded slash supplies a nonempty wildcard route for the root API.
-    let suffix = if path == "/" {
-        "%2F".into()
-    } else {
-        urlencoding::encode(&path[1..]).into_owned()
-    };
-    format!("/std/acl/access/{suffix}")
+    format!("/std/acl/access?api={}", urlencoding::encode(path))
 }
 
 fn render(rules: RulesByApi, method: Option<&Method>, wide: bool) -> String {

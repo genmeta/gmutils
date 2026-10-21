@@ -2,7 +2,7 @@
   <img src="https://media.dhttp.net/img/gmutils/gmutils.svg" width="900" alt="GMUTILS command-line tool family: identity, access, curl, nslookup, doctor, proxy, and discover">
 </p>
 <p align="center">
-  <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/version-0.9.0--preview.2-1f6feb?style=flat-square" alt="Version 0.9.0-preview.2"></a>
+  <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/version-0.9.0--preview.4-1f6feb?style=flat-square" alt="Version 0.9.0-preview.4"></a>
   <a href="https://doc.rust-lang.org/edition-guide/rust-2024/"><img src="https://img.shields.io/badge/Rust-2024-dea584?style=flat-square&amp;logo=rust&amp;logoColor=black" alt="Rust 2024 edition"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-00a51a?style=flat-square&amp;logo=apache&amp;logoColor=white" alt="Apache-2.0 license"></a>
   <a href="#install"><img src="https://img.shields.io/badge/Cargo-supported-dea584?style=flat-square&amp;logo=rust&amp;logoColor=black" alt="Cargo package supported"></a>
@@ -25,7 +25,7 @@ Available commands:
 | `genmeta identity` | Create, apply, inspect, and renew Unified Identities and certificates. |
 | `genmeta access` | Manage DHttp API access-control rules. |
 | `genmeta curl` | Send DHttp requests with a curl-like interface. |
-| `genmeta listen` | Query or change a local identity's listening mode, including off. |
+| `genmeta listen` | Query or change internal/external/all listening; off stops an identity. |
 | `genmeta mount` / `genmeta unmount` | List, configure or remove HTTP mounts on a running identity. |
 | `genmeta proxy` | Run a local forward proxy that forwards HTTP requests to DHttp endpoints. |
 | `genmeta nslookup` | Resolve DDns names and discover reachable DHttp addresses. |
@@ -33,7 +33,9 @@ Available commands:
 | `genmeta doctor` | Diagnose NAT and network connectivity. |
 | `genmeta build/publish/install/update/uninstall` | Build, publish and manage signed Pkg packages; query with `install --list` or `install --info`. |
 
-See the [DHttp utilities documentation](https://docs.dhttp.net/en/docs/core-components/utils) for detailed usage and examples.
+See [Pishoo command validation](docs/pishoo-validation.md) for the running-host acceptance matrix and release follow-up checks.
+
+See the [中文命令使用指南](docs/commands.zh-CN.md) for the current command reference, options, examples, and common workflows. The [DHttp utilities documentation](https://docs.dhttp.net/en/docs/core-components/utils) is also available online.
 
 ## Install
 
@@ -120,7 +122,8 @@ The CLI authenticates `store.dhttp.net`, pins an exact version, and sends one
 authenticated `POST /std/sys/pkg/install` request with JSON `{author, name, version}`
 to Pishoo. Pishoo verifies and installs the package and its exact package dependencies.
 Successful output is JSON on stdout; progress and diagnostics go to stderr.
-Packages containing static pages include `entry_url` in the result.
+Packages containing static pages include `entry_url` in the result, mounted at
+`https://IDENTITY/app/NAME/`.
 Resolution has a 120-second deadline; installation waits up to 15 minutes.
 An interruption or timeout reports an unknown outcome and never retries the
 write automatically. Dependencies installed before a parent failure remain.
@@ -138,10 +141,11 @@ these groups; the `version` subcommand is also supported.
 `genmeta listen --id NAME [internal|external|all|off]` queries or changes local listening. Omitting the mode reads existing configuration; explicit modes create missing configuration. `listen off` deletes the listen KV and leaves the identity stopped across restarts, preserving mounts. Stopping requires y/n confirmation; scripts use `--yes`. `genmeta mount [--id NAME] [PATH URL]` lists mounts or adds/updates one mount through `GET/PATCH /std/sys/mount`. `genmeta unmount [--id NAME] PATH URL [--yes]` uses `DELETE /std/sys/mount?location=PATH&proxy_pass=URL`, checking both values before deletion.
 
 A running Pishoo process automatically discovers and applies saved changes.
-Interactive identity application creates configuration and a welcome page only
+Interactive identity application creates missing listening configuration only
 when the user accepts server activation. Declining, or noninteractive application,
-creates neither. Existing server configuration is preserved. Pishoo skips identities
-without config.db; credentials alone do not enable hosting.
+creates no server configuration. Existing configuration is preserved. The current
+configuration path is `.volume/sys/setting/database`; credentials alone do not
+enable hosting. Install an App or mount a local service to serve content.
 See [Identity to Workspace and contacts](docs/identity-workspace-contacts.md)
 for the complete command sequence, readiness checks, and contact approval flow.
 
@@ -178,8 +182,11 @@ genmeta access remove /api
 ```
 
 Rules are listed through `GET /std/acl/access`, written through
-`POST /std/acl/access/{api}`, and deleted through
-`DELETE /std/acl/allow/{grantee}` with the API and method in the JSON body.
+`POST /std/acl/access?api=PATH`, and deleted through
+`DELETE /std/acl/allow?name=GRANTEE` with the API and method in the JSON body.
+Path-specific reads use `GET /std/acl/access?api=PATH`; query values are URL encoded.
+For App visibility, set GET on `/app/NAME` for `*?`; the host applies that root
+policy to App GET/HEAD resources and deep links.
 The CLI never opens or migrates the access database. Pishoo/daccess owns
 persistence, authorization and the live policy cache. HTTP errors and pending
 approval responses are reported without treating the operation as completed.

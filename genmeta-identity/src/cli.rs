@@ -21,7 +21,7 @@ use dhttp_home::{
 #[cfg(test)]
 use dhttp_identity::certificate::CertificateChainKey;
 use dhttp_identity::name::DhttpName as Name;
-pub use flow::{install::Error as InstallError, welcome::WelcomeServiceError};
+pub use flow::install::Error as InstallError;
 use indicatif::ProgressStyle;
 use snafu::{ResultExt, Snafu, Whatever, whatever};
 use tokio::io;
@@ -71,8 +71,6 @@ pub enum Error {
     ParseIdentityKind {
         source: flow::kind::ParseIdentityKindError,
     },
-    #[snafu(transparent)]
-    WelcomeService { source: WelcomeServiceError },
     #[snafu(transparent)]
     LocalIdentity {
         source: crate::local_identity::Error,
