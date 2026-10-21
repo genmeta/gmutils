@@ -53,6 +53,10 @@ genmeta --version
 | `genmeta install --info` | 查看已安装包及其精确依赖 | 同上 |
 | `genmeta version` | 查看主程序版本 | 无 |
 
+## 安装后的 Workspace 初始化
+
+Homebrew、DEB、RPM 安装或升级 gmutils 后，自动为安装用户的默认身份尝试一次 `genmeta install workspace`。Linux sudo 安装使用发起用户的身份，其他安装使用当前账户；不扫描或代选其他账户。没有默认身份、Pishoo 不可达或安装失败时提示手动执行，gmutils 本身仍安装成功；不创建待办或自动重试任务。Cargo 安装没有安装后钩子，配置好身份和服务后需自行执行该命令。
+
 ## 使用约定
 
 ### 身份与配置目录

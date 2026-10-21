@@ -42,7 +42,9 @@ genmeta curl --id zero.ai -f https://zero.ai.dhttp.net/std/sys/listen
 
 ## 2. 安装 Workspace
 
-对尚未安装 Workspace 的身份执行：
+Homebrew、DEB、RPM 安装或升级 gmutils 后，会针对安装用户的默认身份自动尝试一次 `genmeta install workspace`。sudo 安装使用发起用户的凭据，其他安装使用当前账户；没有默认身份、Pishoo 未运行或请求失败时，只提示手动安装，不影响 gmutils 安装，也不后台补装。
+
+安装 gmutils 时还没准备好身份或服务，或要为其他身份安装时，执行：
 
 ```sh
 genmeta install std.dhttp.net/workspace --id zero.ai

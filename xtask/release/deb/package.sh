@@ -44,6 +44,7 @@ src="${XTASK_RELEASE_OUT_DIR:?}/src"
 rm -rf "$src"
 mkdir -p "$src/debian"
 cp -r xtask/deb/. "$src/debian/"
+cp genmeta/scripts/install-workspace.sh "$src/debian/install-workspace"
 printf 'gmutils (%s) unstable; urgency=low\n\n  * release %s\n\n -- Genmeta Tech Limited <developer@genmeta.net>  %s\n' \
     "${XTASK_RELEASE_PACKAGE_VERSION:?}" "${XTASK_RELEASE_SOURCE_VERSION:?}" "$(date -R)" > "$src/debian/changelog"
 product_source="$src/product-source"

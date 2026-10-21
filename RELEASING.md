@@ -25,6 +25,14 @@ off. It accepts internal/external/all/off, and off retains mounts. Mount/unmount
 use the authenticated running Pishoo /std/sys/mount API. Unmount matches both
 location and proxy_pass; off and unmount require confirmation or --yes.
 
+Homebrew post_install, DEB configure and RPM posttrans attempt
+`genmeta install workspace` once using the installation user's default identity.
+The shared hook runs as the invoking user for sudo installs and otherwise uses
+the current account. Missing default identity, an unreachable host or a failed
+request prints the manual command and does not fail gmutils installation.
+There is no background retry or pending-install state. Cargo has no install hook.
+This supersedes the previous manual-only default Workspace installation policy.
+
 Identity activation creates only explicit listening configuration. It no longer
 creates a default welcome site. Certificate logging preserves history when moving
 an existing real logs directory into log. Curl header write-out tokens consume
@@ -38,6 +46,8 @@ revision as Pishoo so its contract tests exercise the current HTTP routes.
 
 - Locked, all-feature workspace tests pass. Both normally ignored HTTP/3 host and
   publication contract tests were run separately with OpenSSL 3 and local UDP.
+- Installer-hook tests cover direct users, sudo delegation, missing prerequisites,
+  command failures and nonfatal completion without retries.
 - Strict all-target/all-feature Clippy and nightly formatting pass.
 - Warning-denied workspace documentation builds.
 - All four changed crates pass the multi-package cargo publish --dry-run --locked

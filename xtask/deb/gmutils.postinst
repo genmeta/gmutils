@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+case "${1:-}" in
+    configure)
+        helper=/usr/libexec/gmutils/install-workspace
+        if [ -x "$helper" ]; then
+            "$helper" /usr/bin/genmeta || true
+        else
+            printf '%s\n' 'gmutils: run genmeta install workspace after configuring your default identity and starting Pishoo.' >&2
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+exit 0

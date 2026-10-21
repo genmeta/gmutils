@@ -8,6 +8,11 @@ class {{homebrew.class}} < Formula
 
   def install
     bin.install "genmeta"
+    libexec.install "install-workspace"
+  end
+
+  def post_install
+    system libexec/"install-workspace", bin/"genmeta"
   end
 
   test do
