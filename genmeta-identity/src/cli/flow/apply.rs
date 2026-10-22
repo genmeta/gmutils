@@ -613,8 +613,6 @@ async fn install_and_finish(
         resolved,
         interactive,
     } = context;
-    #[cfg(not(unix))]
-    let _ = home_scope;
     let key_pem = key_material
         .key_pem()
         .expect("a certificate response requires the request key");
@@ -675,6 +673,13 @@ async fn install_and_finish(
 
     super::epilogue::run_lifecycle_epilogue(dhttp_home, resolved.target.dhttp_name(), interactive)
         .await?;
+    super::workspace::offer_install(
+        dhttp_home,
+        home_scope,
+        resolved.target.short_name(),
+        interactive,
+    )
+    .await;
     Ok(())
 }
 

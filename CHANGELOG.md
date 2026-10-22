@@ -4,9 +4,10 @@
 
 ### Changed
 
-- Attempt `genmeta install workspace` once after Homebrew/DEB/RPM setup, using
-  the installation user's default identity. Missing prerequisites or failures
-  produce a manual-install hint without failing gmutils installation.
+- Offer Workspace installation after interactive identity application, defaulting
+  to yes on Enter and using the applied name. Package installation and upgrades
+  no longer install Workspace. Skipped or failed installs print a manual command
+  without undoing the identity application.
 
 - Manage unified signed `.pkg` packages through top-level build, publish, install,
   update and uninstall commands; installed queries use install --list/--info.

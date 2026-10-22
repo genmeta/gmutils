@@ -41,13 +41,13 @@ See the [中文命令使用指南](docs/commands.zh-CN.md) for the current comma
 
 Use the official package repository for a system installation. Both methods install the `gmutils` package, which provides the `genmeta` command.
 
-Homebrew, DEB and RPM installation/upgrade hooks attempt `genmeta install workspace`
-once for the installation user's default identity. The identity must already be
-configured and its Pishoo service reachable. Linux sudo installations use the
-invoking user's credentials; other installations use the current account. The
-hook never guesses another account. Missing prerequisites or installation
-errors never fail gmutils setup and do not create a retry job. After configuring
-the default identity and starting Pishoo, run `genmeta install workspace` if needed.
+Installing or upgrading gmutils does not install Workspace. After a successful
+interactive `genmeta identity apply`, you are asked whether to install Workspace
+for that name; press Enter to accept or answer `n` to skip. Installation uses the
+newly applied identity and requires its Pishoo service to be reachable. Skipping
+or an installation failure leaves the identity installed and prints the manual
+command, `genmeta install workspace --id NAME`. Non-interactive applications skip
+Workspace installation; there is no background retry.
 
 ### Linux (Debian/Ubuntu)
 
@@ -90,8 +90,8 @@ With a current Rust toolchain, build and install the launcher from this checkout
 cargo install --path genmeta --locked
 ```
 
-Cargo has no package-manager post-install hook. Once the default identity and
-Pishoo are ready, run `genmeta install workspace` after installing from source.
+Source installations use the same Workspace prompt during `genmeta identity apply`.
+For an existing identity, start Pishoo and run `genmeta install workspace --id NAME`.
 
 ## Quick start
 

@@ -8,7 +8,7 @@
 genmeta identity apply zero.ai
 ```
 
-按提示完成身份认证。交互流程询问是否启用服务时默认选“是”；非交互申请目前仍保持关闭。若没有启用，执行：
+按提示完成身份认证。交互流程询问是否启用服务时默认选“是”，随后也会询问是否安装 Workspace，直接回车即安装，输入 `n` 跳过。安装需要对应的 Pishoo 服务已经运行并就绪；服务尚未就绪时可按后文手动安装。非交互申请跳过这些确认，不启用服务或安装 Workspace。若没有启用，执行：
 
 ```sh
 genmeta listen --id zero.ai all
@@ -42,9 +42,9 @@ genmeta curl --id zero.ai -f https://zero.ai.dhttp.net/std/sys/listen
 
 ## 2. 安装 Workspace
 
-Homebrew、DEB、RPM 安装或升级 gmutils 后，会针对安装用户的默认身份自动尝试一次 `genmeta install workspace`。sudo 安装使用发起用户的凭据，其他安装使用当前账户；没有默认身份、Pishoo 未运行或请求失败时，只提示手动安装，不影响 gmutils 安装，也不后台补装。
+安装或升级 gmutils 不再自动安装 Workspace。交互申请名字成功后，会询问是否为该名字安装，默认回车即安装；安装使用刚申请的身份，不受默认身份选择影响。拒绝、非交互申请或安装失败时给出手动安装命令，已经完成的身份申请仍然有效，也不后台补装。
 
-安装 gmutils 时还没准备好身份或服务，或要为其他身份安装时，执行：
+申请时跳过安装、Pishoo 尚未就绪，或要为已有身份安装时，执行：
 
 ```sh
 genmeta install std.dhttp.net/workspace --id zero.ai

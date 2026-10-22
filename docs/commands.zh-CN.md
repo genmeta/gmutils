@@ -53,9 +53,9 @@ genmeta --version
 | `genmeta install --info` | 查看已安装包及其精确依赖 | 同上 |
 | `genmeta version` | 查看主程序版本 | 无 |
 
-## 安装后的 Workspace 初始化
+## 申请名字时安装 Workspace
 
-Homebrew、DEB、RPM 安装或升级 gmutils 后，自动为安装用户的默认身份尝试一次 `genmeta install workspace`。Linux sudo 安装使用发起用户的身份，其他安装使用当前账户；不扫描或代选其他账户。没有默认身份、Pishoo 不可达或安装失败时提示手动执行，gmutils 本身仍安装成功；不创建待办或自动重试任务。Cargo 安装没有安装后钩子，配置好身份和服务后需自行执行该命令。
+安装或升级 gmutils 不再自动安装 Workspace。交互执行 `genmeta identity apply` 成功后，会询问是否为刚申请的名字安装 Workspace；默认选“是”，直接回车就执行 `genmeta install workspace --id NAME`，输入 `n` 跳过。安装使用本次申请的身份和身份目录，不依赖默认身份的选择；对应的 Pishoo 服务需已运行并启用。跳过、非交互运行或安装失败时提示手动安装，已经完成的身份申请仍然有效；不后台补装或自动重试。
 
 ## 使用约定
 
@@ -132,6 +132,7 @@ genmeta identity --global list
 
 - `apply --force` 可跳过本地已有可用／过期身份的替换确认；它不跳过远端身份认证。已有正常凭据时，日常维护使用 `renew`。
 - 交互申请成功后会询问是否启用服务；接受时才创建缺失的 `.volume/sys/setting/database` 监听配置，不创建默认欢迎页或 file 目录。拒绝或非交互申请不会创建服务配置，已有配置会保留。
+- 随后询问是否安装 Workspace，默认回车即安装，输入 `n` 跳过；非交互申请跳过安装。`--global` 申请时，安装也使用本次申请的系统身份目录。
 - `renew` 通常在证书剩余有效期不足 15 天时续期，否则跳过；`--force` 可提前续期。无效或不完整的本地身份即使使用 `--force`，也仍需有可读取的必要证书信息。
 - `renew --all` 与具体身份名互斥。`default --force` 允许选择尚未就绪的本地身份，不会修复其凭据；它必须与名称一起使用，不能与 `--verbose` 一起使用。
 

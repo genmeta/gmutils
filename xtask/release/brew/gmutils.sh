@@ -30,6 +30,5 @@ product_source="$out/product-source"
 prepare_product_source "$product_source"
 cargo build --release --locked --manifest-path "$product_source/genmeta/Cargo.toml" --target "$target" --bin genmeta
 cp "$product_source/target/$target/release/genmeta" "$out/staging/genmeta"
-cp genmeta/scripts/install-workspace.sh "$out/staging/install-workspace"
 tar -C "$out/staging" -czf "$out/gmutils-$version-$target.tar.gz" .
 rm -rf "$out/staging"
