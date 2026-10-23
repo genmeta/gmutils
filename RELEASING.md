@@ -25,14 +25,15 @@ off. It accepts internal/external/all/off, and off retains mounts. Mount/unmount
 use the authenticated running Pishoo /std/sys/mount API. Unmount matches both
 location and proxy_pass; off and unmount require confirmation or --yes.
 
-Package installation and upgrades do not install Workspace. After identity
-application with the server enabled, the CLI reloads Pishoo, waits for the applied
-identity to become reachable, then runs `genmeta install workspace --id NAME`
-without another confirmation. Installation uses the same identity home, including
-global applications. Disabled servers skip reload and installation. Failures retain
-the applied identity and print a warning. Only the read-only readiness check is
-retried; installation is submitted once. This replaces the package-manager
-Workspace install hooks.
+Package installation and upgrades do not install Workspace. After interactive
+identity application with the server enabled, the CLI asks whether to install
+Workspace, defaulting to yes on Enter. Confirmation precedes Pishoo reload, the
+readiness check and `genmeta install workspace --id NAME`. Installation uses the
+same identity home, including global applications. Disabled servers,
+non-interactive runs and declined or cancelled prompts skip reload and
+installation. Skips and failures print the manual install command; failures retain
+the applied identity. Only the read-only readiness check is retried; installation
+is submitted once. This replaces the package-manager Workspace install hooks.
 
 Package output abbreviates identities and URL hosts with `~`, and displays the
 standard publisher as `std`, including in JSON results. Protocol requests retain

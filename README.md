@@ -42,9 +42,10 @@ See the [中文命令使用指南](docs/commands.zh-CN.md) for the current comma
 Use the official package repository for a system installation. Both methods install the `gmutils` package, which provides the `genmeta` command.
 
 Installing or upgrading gmutils does not install Workspace. After a successful
-interactive `genmeta identity apply`, you are asked whether to install Workspace
-for that name; press Enter to accept or answer `n` to skip. Installation uses the
-newly applied identity and requires its Pishoo service to be reachable. Skipping
+interactive `genmeta identity apply` with the server enabled, you are asked whether
+to install Workspace for that name; press Enter to accept or answer `n` to skip.
+Installation uses the newly applied identity and requires its Pishoo service to be
+reachable. Skipping
 or an installation failure leaves the identity installed and prints the manual
 command, `genmeta install workspace --id NAME`. Non-interactive applications skip
 Workspace installation; there is no background retry.

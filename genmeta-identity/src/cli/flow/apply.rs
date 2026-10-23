@@ -666,7 +666,14 @@ async fn install_and_finish(
 
     super::epilogue::run_lifecycle_epilogue(dhttp_home, resolved.target.dhttp_name(), interactive)
         .await?;
-    super::workspace::finish_setup(dhttp_home, resolved.target.short_name(), server_enabled).await;
+    super::workspace::finish_setup(
+        dhttp_home,
+        home_scope,
+        resolved.target.short_name(),
+        server_enabled,
+        interactive,
+    )
+    .await;
     Ok(())
 }
 

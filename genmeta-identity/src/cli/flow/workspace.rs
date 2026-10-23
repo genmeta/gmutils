@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use dhttp_home::DhttpHome;
+use dhttp_home::{DhttpHome, HomeScope};
 use snafu::{ResultExt, Whatever, ensure_whatever};
 use tokio::process::Command;
 
@@ -129,10 +129,28 @@ async fn install(dhttp_home: &DhttpHome, identity: &str) -> Result<(), Whatever>
     .whatever_context("Workspace installation did not complete; check its status before retrying")
 }
 
-pub(crate) async fn finish_setup(dhttp_home: &DhttpHome, identity: &str, server_enabled: bool) {
+pub(crate) async fn finish_setup(
+    dhttp_home: &DhttpHome,
+    home_scope: HomeScope,
+    identity: &str,
+    server_enabled: bool,
+    interactive: bool,
+) {
+    let mut hint = format!(
+        "To install Workspace later, start or reload Pishoo for this name and run `genmeta install workspace --id {identity}`."
+    );
+    if home_scope == HomeScope::Global {
+        hint.push_str(&format!(
+            " Set DHTTP_HOME to {} for this global identity.",
+            dhttp_home.as_path().display()
+        ));
+    }
     finish_setup_with(
         server_enabled,
+        interactive,
         identity,
+        &hint,
+        crate::cli::prompt::prompt_install_workspace(),
         reload(),
         install(dhttp_home, identity),
     )
@@ -141,12 +159,30 @@ pub(crate) async fn finish_setup(dhttp_home: &DhttpHome, identity: &str, server_
 
 async fn finish_setup_with(
     server_enabled: bool,
+    interactive: bool,
     identity: &str,
+    hint: &str,
+    confirm: impl Future<Output = Result<bool, inquire::InquireError>>,
     reload: impl Future<Output = Result<(), Whatever>>,
     install: impl Future<Output = Result<(), Whatever>>,
 ) {
-    if !server_enabled {
+    if !server_enabled || !interactive {
+        transcript::print_line(hint);
         return;
+    }
+    match confirm.await {
+        Ok(true) => {}
+        Ok(false) => {
+            transcript::print_line(hint);
+            return;
+        }
+        Err(error) => {
+            transcript::print_warning(&format!(
+                "Identity installed, but Workspace installation was not confirmed: {error}"
+            ));
+            transcript::print_line(hint);
+            return;
+        }
     }
     transcript::print_line("Reloading Pishoo...");
     if let Err(error) = reload.await {
@@ -154,13 +190,16 @@ async fn finish_setup_with(
             "Identity installed, but Pishoo reload failed: {}",
             snafu::Report::from_error(error)
         ));
+        transcript::print_line(hint);
         return;
     }
+    transcript::print_line("Installing Workspace...");
     if let Err(error) = install.await {
         transcript::print_warning(&format!(
             "Identity installed, but Workspace installation did not complete: {}",
             snafu::Report::from_error(error)
         ));
+        transcript::print_line(hint);
         return;
     }
     transcript::print_line(format!(
@@ -175,22 +214,49 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn disabled_server_neither_reloads_nor_installs() {
-        finish_setup_with(
-            false,
-            "alice.smith",
-            async { panic!("must not reload a disabled server") },
-            async { panic!("must not install for a disabled server") },
-        )
-        .await;
+    async fn disabled_or_noninteractive_setup_neither_prompts_reloads_nor_installs() {
+        for (server_enabled, interactive) in [(false, true), (true, false), (false, false)] {
+            finish_setup_with(
+                server_enabled,
+                interactive,
+                "alice.smith",
+                "manual install hint",
+                async { panic!("must not prompt without an enabled server and terminal") },
+                async { panic!("must not reload without confirmation") },
+                async { panic!("must not install without confirmation") },
+            )
+            .await;
+        }
     }
 
     #[tokio::test]
-    async fn enabled_server_reloads_then_installs_once_without_confirmation() {
+    async fn declined_or_cancelled_prompt_neither_reloads_nor_installs() {
+        for answer in [Ok(false), Err(inquire::InquireError::OperationCanceled)] {
+            finish_setup_with(
+                true,
+                true,
+                "alice.smith",
+                "manual install hint",
+                async { answer },
+                async { panic!("must not reload without confirmation") },
+                async { panic!("must not install without confirmation") },
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn confirmation_precedes_reload_and_install() {
         let operations = RefCell::new(Vec::new());
         finish_setup_with(
             true,
+            true,
             "alice.smith",
+            "manual install hint",
+            async {
+                operations.borrow_mut().push("confirm");
+                Ok(true)
+            },
             async {
                 operations.borrow_mut().push("reload");
                 Ok(())
@@ -201,7 +267,7 @@ mod tests {
             },
         )
         .await;
-        assert_eq!(*operations.borrow(), ["reload", "install"]);
+        assert_eq!(*operations.borrow(), ["confirm", "reload", "install"]);
     }
 
     #[tokio::test]
@@ -210,7 +276,10 @@ mod tests {
             let attempts = Cell::new(0);
             finish_setup_with(
                 true,
+                true,
                 "alice.smith",
+                "manual install hint",
+                async { Ok(true) },
                 async {
                     ensure_whatever!(reload_succeeds, "Pishoo is unavailable");
                     Ok(())
