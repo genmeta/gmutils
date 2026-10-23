@@ -1,16 +1,25 @@
-# Release preparation for v0.9.0-preview.4
+# Release preparation for v0.9.0-preview.5
 
 | Package | Published version | Prepared version |
 | --- | --- | --- |
-| genmeta | 0.9.0-preview.3 | 0.9.0-preview.4 |
-| genmeta-access | 0.5.0-preview.2 | 0.5.0-preview.3 |
-| genmeta-curl | 0.8.0-preview.2 | 0.8.0-preview.3 |
-| genmeta-identity | 0.5.0-preview.3 | 0.5.0-preview.4 |
-| Other workspace command crates | current versions | unchanged |
+| genmeta | 0.9.0-preview.4 | 0.9.0-preview.5 |
+| genmeta-access | 0.5.0-preview.3 | 0.5.0-preview.4 |
+| genmeta-curl | 0.8.0-preview.3 | 0.8.0-preview.4 |
+| genmeta-discover | 0.5.0-preview.2 | 0.5.0-preview.3 |
+| genmeta-doctor | 0.5.0-preview.2 | 0.5.0-preview.3 |
+| genmeta-identity | 0.5.0-preview.4 | 0.5.0-preview.5 |
+| genmeta-nat | 0.6.0-preview.2 | 0.6.0-preview.3 |
+| genmeta-nslookup | 0.6.0-preview.2 | 0.6.0-preview.3 |
+| genmeta-proxy | 0.5.0-preview.2 | 0.5.0-preview.3 |
+| jade | not published by this workflow | 0.1.0 (bundled executable) |
 
-The previous launcher, access and identity versions are already published. Keep
-these new versions and workspace dependency requirements together; the publish
-workflow deliberately skips versions already on crates.io.
+The published versions above were checked against crates.io on 2026-10-23.
+Every Genmeta crate changed after v0.9.0-preview.4, so each receives a new preview
+version and workspace dependencies select those new versions. The publication
+order already places dependencies before dependents. Jade ships in the gmutils
+Debian and Homebrew packages and remains outside the crates.io publication list.
+The `release/v0.9.0-preview.5` branch and release commit prepare these changes;
+no tag is created or pushed by this preparation.
 
 ## Scope and compatibility
 
@@ -95,6 +104,20 @@ these application changes. On `E_PUBLISH_OUTCOME_UNKNOWN`, keep and retry the sa
 signed file after checking the reported state; do not rebuild or automatically
 repeat an upload. Do not reuse a version for changed runtime content.
 
+## Preview.5 release checks
+
+- `cargo test --workspace --locked --all-features --all-targets -- --test-threads=1`:
+  329 passed, no failures; three opt-in acceptance tests remain excluded from this
+  normal run. Earlier API and HTTP/3 acceptance results are recorded below.
+- Workspace formatting, strict all-target/all-feature Clippy and `git diff --check`
+  pass. The built launcher reports `genmeta 0.9.0-preview.5`.
+- All nine changed Genmeta crates pass `cargo publish --dry-run --locked --allow-dirty`
+  together, including compilation of packaged sources and temporary-registry
+  resolution of their new dependency versions. Each upload is explicitly skipped
+  by Cargo's dry-run mode.
+- The lockfile changes only the nine workspace versions; external dependencies
+  are unchanged. Versioned platform packaging and remote CI remain pre-tag gates.
+
 ## Validation on 2026-10-23
 
 - Jade regular tests, strict Clippy, formatting, stable Rust check and the local
@@ -103,10 +126,10 @@ repeat an upload. Do not reuse a version for changed runtime content.
 - All six applications build and sign through Jade with isolated test identities.
   Existing Workspace, Introduction, Profile, Message and Calendar tests pass;
   Journal has no unit tests and was verified by its actual Jade build.
-- A real amd64 Debian package was built with the release recipe and installed in
+- Before the preview.5 version bump, a real amd64 Debian package was built with the release recipe and installed in
   a disposable Debian container. Both commands run; the installed Jade creates
   and signs a static project successfully.
-- The native Apple Silicon Homebrew archive was built with the release recipe.
+- Before the preview.5 version bump, the native Apple Silicon Homebrew archive was built with the release recipe.
   Both Mach-O commands run after extraction, and Jade creates and signs a static
   project. The formula installs and tests both commands. The release workflow
   also packages Intel Macs; this local smoke test covers Apple Silicon.
@@ -144,10 +167,10 @@ Run the repository CI on Linux, macOS and Windows, including the 1.94.0 MSRV job
 and DEB/RPM/Homebrew artifact checks. Those platform jobs were not replaced by a
 local macOS test. Check the new store protocol once its rollout completes.
 
-After CI and review/merge, create annotated tag v0.9.0-preview.4 at the checked
+After CI and review/merge, create annotated tag v0.9.0-preview.5 at the checked
 commit. Existing workflows publish crates, Linux DEB/RPM and macOS Homebrew preview
-artifacts. The publish workflow orders access/curl/identity before the launcher.
-Trusted Publishing remains required for existing crates; first-publication tokens
+artifacts. The publish workflow orders all changed utility crates before the
+launcher and NAT before Doctor. Trusted Publishing remains required for existing crates; first-publication tokens
 remain limited to new crates. Public APT verification stays enabled.
 
 This preparation does not push a tag, publish artifacts, deploy the store, replace

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.0-preview.5] - 2026-10-23
+
 ### Changed
 
 - Extract project creation, builds and publication into the independent `jade`
@@ -20,6 +22,23 @@
   Workspace, then reload Pishoo and wait for readiness before installing it.
 - Abbreviate Genmeta package-management identities and URL hosts with `~`, and show standard
   package IDs as `std/name` in progress, diagnostics and JSON output.
+
+### Fixed
+
+- Read `author` metadata from store responses during package installation.
+
+### Release versions
+
+- genmeta: 0.9.0-preview.4 → 0.9.0-preview.5.
+- genmeta-access: 0.5.0-preview.3 → 0.5.0-preview.4.
+- genmeta-curl: 0.8.0-preview.3 → 0.8.0-preview.4.
+- genmeta-discover: 0.5.0-preview.2 → 0.5.0-preview.3.
+- genmeta-doctor: 0.5.0-preview.2 → 0.5.0-preview.3.
+- genmeta-identity: 0.5.0-preview.4 → 0.5.0-preview.5.
+- genmeta-nat: 0.6.0-preview.2 → 0.6.0-preview.3.
+- genmeta-nslookup: 0.6.0-preview.2 → 0.6.0-preview.3.
+- genmeta-proxy: 0.5.0-preview.2 → 0.5.0-preview.3.
+- Jade remains 0.1.0 and ships in gmutils DEB/Homebrew bundles; this release does not publish a Jade crate.
 
 ## [0.9.0-preview.4] - 2026-10-21
 
