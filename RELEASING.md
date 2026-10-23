@@ -59,8 +59,9 @@ an existing real logs directory into log. Curl header write-out tokens consume
 both closing braces, including Pishoo-Viewer-Name on App HEAD responses.
 
 Runtime dependencies use published registry releases without sibling Cargo
-patches. The access CLI's test-only daccess dependency is pinned to the same
-revision as Pishoo so its contract tests exercise the current HTTP routes. This source-only Git dev dependency has no registry version and is omitted from published crate manifests; runtime dependencies continue to use published releases.
+patches. The access CLI's test-only daccess dependency uses the same published
+crates.io version 0.2.0 as Pishoo, so its contract tests exercise the current HTTP
+routes. There is no Git source override for this dependency.
 
 ## Jade project
 
@@ -111,16 +112,16 @@ repeat an upload. Do not reuse a version for changed runtime content.
 ## Preview.5 release checks
 
 - `cargo test --workspace --locked --all-features --all-targets -- --test-threads=1`:
-  329 passed, no failures; three opt-in acceptance tests remain excluded from this
-  normal run. Earlier API and HTTP/3 acceptance results are recorded below.
+  passes, with environment-specific acceptance tests run separately. Real Rust
+  API, web/fullstack template and local HTTP/3 publication checks also pass.
 - Workspace formatting, strict all-target/all-feature Clippy and `git diff --check`
   pass. The built launcher reports `genmeta 0.9.0-preview.5`.
 - All nine changed Genmeta crates pass `cargo publish --dry-run --locked --allow-dirty`
   together, including compilation of packaged sources and temporary-registry
   resolution of their new dependency versions. Each upload is explicitly skipped
   by Cargo's dry-run mode.
-- The lockfile changes only the nine workspace versions; external dependencies
-  are unchanged. Versioned platform packaging and remote CI remain pre-tag gates.
+- The lockfile records the new workspace versions, ZIP dependencies and the
+  crates.io daccess 0.2.0 release. Platform packaging and remote CI remain pre-tag gates.
 
 ## Validation on 2026-10-23
 

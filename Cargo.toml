@@ -98,8 +98,8 @@ async-compression = { version = "0.4", features = [
 genmeta-access = { path = "genmeta-access", version = "0.5.0-preview.4" }
 dhttp = { version = "0.7.1", features = ["online-identity", "log"] }
 dhttp-identity = "0.3.0"
-# Source-only ACL contract tests pin the host revision; omit this dev dependency from published crates.
-access_control = { package = "daccess", git = "https://github.com/genmeta/daccess.git", rev = "76862af3b6a03d56ea68c6bdc4e7edb74805238b" }
+# ACL contract tests use the same crates.io release as Pishoo.
+access_control = { package = "daccess", version = "0.2.0" }
 dhttp-home = { version = "0.6.1" }
 ddns = { version = "0.8.0", package = "dyns", features = ["h3", "http", "mdns"] }
 qbase = { version = "0.7.0" }
