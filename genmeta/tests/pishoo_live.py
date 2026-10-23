@@ -130,7 +130,7 @@ try:
         assert '409' in p.stderr or 'depend' in p.stderr.lower(), p.stderr
     if original_packages:
         run('uninstall author mismatch', ['uninstall', 'gmutils-qa.dhttp.net/' + original_packages[0]['name'], '--id', identity], ok=False)
-    for command in [['install', './local.pkg'], ['install', 'https://invalid.example/pkg'],
+    for command in [['install', './local.waz'], ['install', 'https://invalid.example/pkg'],
             ['install', 'workspace', '--version', '01.0.0'], ['update', 'gmutils-qa-missing']]:
         run('invalid package input ' + ' '.join(command), [*command, '--id', identity], ok=False)
 
@@ -245,7 +245,7 @@ try:
                 print(operation + ': pending store rollout', flush=True)
             else:
                 value = json.loads(p.stdout)
-                assert value['unchanged'] and value['entry_url'] == 'https://' + host + '/app/' + package['name'] + '/'
+                assert value['unchanged'] and value['entry_url'] == 'https://' + host.removesuffix('.dhttp.net') + '~/app/' + package['name'] + '/'
                 results.append({'name': operation + ' exact installed version', 'passed': True})
                 save()
 finally:

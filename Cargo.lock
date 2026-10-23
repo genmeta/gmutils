@@ -127,6 +127,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "arbitrary"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3bc62ac97cc33321f50863d514c3bc38a453947a8f9e781137e47c7401020aed"
+dependencies = [
+ "derive_arbitrary",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1069,8 +1078,9 @@ dependencies = [
 
 [[package]]
 name = "daccess"
-version = "0.1.1"
-source = "git+https://github.com/genmeta/daccess.git?rev=1bd97a7d2e8bd572cde700b1ec52c8ca8fca2ee4#1bd97a7d2e8bd572cde700b1ec52c8ca8fca2ee4"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ad584655bdac1828a98f2657f7460e3a76b32ad7204d435a84c49c2bc2093a2"
 dependencies = [
  "axum",
  "chrono",
@@ -1289,6 +1299,17 @@ name = "derive-where"
 version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e2b94854e8576378ccda7c8de8a66ed8b4e8acbd2c50ec3418ea6c8aaf4b567"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.8",
+]
+
+[[package]]
+name = "derive_arbitrary"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b034bd7d5f032402a2479444dcc6f74e36a03f31854d41680fb240ef682a1ac"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1791,6 +1812,12 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "foldhash"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
+
+[[package]]
+name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
@@ -1931,15 +1958,13 @@ dependencies = [
 
 [[package]]
 name = "genmeta"
-version = "0.9.0-preview.4"
+version = "0.9.0-preview.5"
 dependencies = [
- "base64 0.23.1",
  "bytes",
  "clap",
  "dhttp",
  "dhttp-home",
  "dhttp-identity",
- "dirs",
  "dyns",
  "futures",
  "genmeta-access",
@@ -1952,30 +1977,25 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
- "libc",
  "qbase",
  "qprotocol",
  "qrustls",
  "qtls",
- "rcgen",
- "rustix",
  "rustls-pemfile",
  "serde_json",
- "sha2 0.10.9",
  "snafu",
  "tempfile",
  "tokio",
- "toml",
  "tower",
  "tracing",
+ "tracing-subscriber",
  "url",
  "urlencoding",
- "webc",
 ]
 
 [[package]]
 name = "genmeta-access"
-version = "0.5.0-preview.3"
+version = "0.5.0-preview.4"
 dependencies = [
  "axum",
  "clap",
@@ -2001,7 +2021,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-curl"
-version = "0.8.0-preview.3"
+version = "0.8.0-preview.4"
 dependencies = [
  "async-compression",
  "bytes",
@@ -2028,7 +2048,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-discover"
-version = "0.5.0-preview.2"
+version = "0.5.0-preview.3"
 dependencies = [
  "clap",
  "dhttp",
@@ -2044,7 +2064,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-doctor"
-version = "0.5.0-preview.2"
+version = "0.5.0-preview.3"
 dependencies = [
  "clap",
  "genmeta-nat",
@@ -2055,7 +2075,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-identity"
-version = "0.5.0-preview.4"
+version = "0.5.0-preview.5"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -2095,7 +2115,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nat"
-version = "0.6.0-preview.2"
+version = "0.6.0-preview.3"
 dependencies = [
  "clap",
  "dhttp",
@@ -2113,7 +2133,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nslookup"
-version = "0.6.0-preview.2"
+version = "0.6.0-preview.3"
 dependencies = [
  "clap",
  "dhttp",
@@ -2130,7 +2150,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-proxy"
-version = "0.5.0-preview.2"
+version = "0.5.0-preview.3"
 dependencies = [
  "bytes",
  "clap",
@@ -2291,13 +2311,23 @@ checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
 name = "hashbrown"
+version = "0.15.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
+dependencies = [
+ "foldhash 0.1.5",
+ "serde",
+]
+
+[[package]]
+name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
  "allocator-api2",
  "equivalent",
- "foldhash",
+ "foldhash 0.2.0",
 ]
 
 [[package]]
@@ -2600,6 +2630,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "id-arena"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
+
+[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2719,6 +2755,50 @@ name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+
+[[package]]
+name = "jade"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "bytes",
+ "clap",
+ "dhttp",
+ "dhttp-home",
+ "dhttp-identity",
+ "dirs",
+ "dyns",
+ "futures",
+ "http",
+ "http-body",
+ "http-body-util",
+ "inquire",
+ "libc",
+ "qbase",
+ "qprotocol",
+ "qrustls",
+ "qtls",
+ "rcgen",
+ "rustix",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "snafu",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "urlencoding",
+ "wasmparser",
+ "webc",
+ "wit-parser",
+ "x509-parser",
+ "zip",
+]
 
 [[package]]
 name = "jiff"
@@ -5936,6 +6016,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasmparser"
+version = "0.244.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47b807c72e1bac69382b3a6fb3dbe8ea4c0ed87ff5629b8685ae6b9a611028fe"
+dependencies = [
+ "bitflags 2.13.2",
+ "hashbrown 0.15.5",
+ "indexmap 2.14.2",
+ "semver",
+ "serde",
+]
+
+[[package]]
 name = "web-sys"
 version = "0.3.105"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6326,6 +6419,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
+name = "wit-parser"
+version = "0.244.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecc8ac4bc1dc3381b7f59c34f00b67e18f910c2c0f50015669dde7def656a736"
+dependencies = [
+ "anyhow",
+ "id-arena",
+ "indexmap 2.14.2",
+ "log",
+ "semver",
+ "unicode-xid",
+ "wasmparser",
+]
+
+[[package]]
 name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6521,6 +6629,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "zip"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb2a05c7c36fde6c09b08576c9f7fb4cda705990f73b58fe011abf7dfb24168b"
+dependencies = [
+ "arbitrary",
+ "crc32fast",
+ "flate2",
+ "indexmap 2.14.2",
+ "memchr",
+ "zopfli",
+]
+
+[[package]]
 name = "zlib-rs"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6531,6 +6653,18 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zopfli"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aaf7fc5d30c28483d93805c4a5e12b05bbb52407fa67c5f8bd552374cd01fb11"
+dependencies = [
+ "bumpalo",
+ "crc32fast",
+ "log",
+ "simd-adler32",
+]
 
 [[package]]
 name = "zstd"

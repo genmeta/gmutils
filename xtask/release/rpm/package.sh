@@ -76,7 +76,6 @@ License:        Apache-2.0
 URL:            https://www.dhttp.net
 Vendor:         Genmeta Tech Limited
 Source0:        genmeta
-Source1:        install-workspace
 AutoReqProv:    no
 Requires:       glibc
 
@@ -92,16 +91,9 @@ Genmeta command-line tools for DHTTP/3, DNS, and identity management.
 %install
 rm -rf %{buildroot}
 install -D -m 0755 %{SOURCE0} %{buildroot}/usr/bin/genmeta
-install -D -m 0755 %{SOURCE1} %{buildroot}/usr/libexec/gmutils/install-workspace
-
-%posttrans
-if [ "\${1:-0}" -gt 0 ]; then
-    /usr/libexec/gmutils/install-workspace /usr/bin/genmeta || :
-fi
 
 %files
 /usr/bin/genmeta
-/usr/libexec/gmutils/install-workspace
 
 %changelog
 * %(date '+%a %b %d %Y') Genmeta Tech Limited <developer@genmeta.net> - ${RPM_VERSION}-${RPM_RELEASE}
@@ -146,7 +138,6 @@ mkdir -p "$topdir"/{SPECS,BUILD,BUILDROOT,SOURCES,SRPMS,RPMS}
 spec="$topdir/SPECS/gmutils.spec"
 write_spec "$spec"
 cp "$release_dir/genmeta" "$topdir/SOURCES/genmeta"
-cp "${XTASK_RELEASE_REPO_ROOT:?}/genmeta/scripts/install-workspace.sh" "$topdir/SOURCES/install-workspace"
 
 rpmbuild -bb \
     --target="$arch" \

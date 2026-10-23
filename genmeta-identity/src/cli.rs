@@ -324,6 +324,10 @@ impl Info {
 #[derive(Parser, Debug, Clone)]
 #[command(version, about)]
 pub struct Cli {
+    /// Enable debug logs
+    #[arg(long, global = true)]
+    pub verb: bool,
+
     #[arg(
         short = 'g',
         long,
@@ -385,7 +389,7 @@ impl Options {
     }
 }
 
-fn init_tracing() {
+fn init_tracing(verb: bool) {
     let indicatif_layer = IndicatifLayer::new()
         .with_span_field_formatter(hide_indicatif_span_fields(DefaultFields::new()))
         .with_progress_style(
@@ -398,7 +402,11 @@ fn init_tracing() {
                 .with_ansi(std::io::stderr().is_terminal())
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
                 .with_writer(indicatif_layer.get_stderr_writer())
-                .with_filter(LevelFilter::OFF),
+                .with_filter(if verb {
+                    LevelFilter::DEBUG
+                } else {
+                    LevelFilter::OFF
+                }),
         )
         .with(indicatif_layer.with_filter(IndicatifFilter::new(false)))
         .init();
@@ -409,7 +417,7 @@ fn cert_server_base_url() -> &'static str {
 }
 
 pub async fn run(options: Cli) -> Result<(), Error> {
-    init_tracing();
+    init_tracing(options.verb);
 
     let home_scope = options.home_scope();
     let dhttp_home = DhttpHome::load(home_scope).context(LoadDhttpHomeSnafu)?;

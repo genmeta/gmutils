@@ -16,6 +16,10 @@ use tracing_subscriber::prelude::*;
 #[derive(Parser, Debug, Clone)]
 #[command(name = "nslookup", version, about)]
 pub struct Options {
+    /// Enable debug logs
+    #[arg(long, global = true)]
+    verb: bool,
+
     /// Name to query (only a trailing ~ expands to .dhttp.net)
     #[arg(index = 1, value_parser = parse_query_name)]
     name: String,
@@ -84,7 +88,7 @@ pub enum Error {
 }
 
 /// Initialize tracing subscriber with stderr output.
-fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
+fn init_tracing(verb: bool) -> tracing_appender::non_blocking::WorkerGuard {
     let (stderr, guard) = tracing_appender::non_blocking(std::io::stderr());
     tracing_subscriber::registry()
         .with(
@@ -93,16 +97,11 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
                 .with_ansi(std::io::stderr().is_terminal())
                 .with_writer(stderr),
         )
-        .with(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
-                .from_env_lossy()
-                .add_directive(
-                    "netlink_packet_route=error"
-                        .parse()
-                        .expect("BUG: static tracing directive is valid"),
-                ),
-        )
+        .with(if verb {
+            tracing_subscriber::filter::LevelFilter::DEBUG
+        } else {
+            tracing_subscriber::filter::LevelFilter::OFF
+        })
         // .with(console_subscriber::spawn())
         .init();
     guard
@@ -150,7 +149,7 @@ async fn load_identity_profile(options: &Options) -> Result<Option<IdentityProfi
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
-    let _guard = init_tracing();
+    let _guard = init_tracing(options.verb);
     let identity_profile = load_identity_profile(&options).await?;
     // Validate a selected identity even though DNS lookup itself doesn't require credentials.
     if let Some(profile) = &identity_profile {

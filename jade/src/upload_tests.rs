@@ -1,34 +1,52 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use sha2::{Digest, Sha256};
 use webc::v3::{
     SignatureAlgorithm, Timestamps,
     write::{Directory, FileEntry, Writer},
 };
 
 use super::*;
-use crate::test_credentials as credentials;
+use crate::{
+    package::{bounded_read, manifest_identity},
+    test_credentials as credentials,
+};
+
+#[test]
+fn catalogue_preflight_rejects_the_legacy_store_protocol() {
+    let response = |value: Value| http::Response::new(serde_json::to_vec(&value).unwrap());
+    assert!(check_catalogue(&response(json!({"packages":[],"total":0}))).is_ok());
+    let package = json!({"author":"std.dhttp.net","author_owner_hash":"a".repeat(64),
+        "download_path":"/store/v1/packages/std.dhttp.net/profile/versions/1.0.0/package.waz"});
+    assert!(check_catalogue(&response(json!({"packages":[package.clone()],"total":1}))).is_ok());
+    let mut legacy = package;
+    legacy["publisher"] = legacy["author"].clone();
+    assert!(check_catalogue(&response(json!({"packages":[legacy],"total":1}))).is_err());
+    for invalid in [
+        json!({}),
+        json!({"packages":[],"total":1}),
+        json!({"packages":[{"publisher":"std.dhttp.net","download_path":"package.pkg"}],"total":1}),
+    ] {
+        assert!(check_catalogue(&response(invalid)).is_err());
+    }
+}
 
 #[test]
 fn upload_cli_accepts_only_the_designed_arguments() {
     use clap::Parser;
     for args in [
-        vec!["genmeta", "publish", "package.webc"],
-        vec!["genmeta", "publish", "package.webc", "-i", "alice"],
-        vec![
-            "genmeta",
-            "publish",
-            "package.webc",
-            "--id",
-            "alice.dhttp.net",
-        ],
+        vec!["jade", "publish", "package.waz"],
+        vec!["jade", "publish", "package.waz", "--json"],
     ] {
         assert!(matches!(
-            crate::Options::try_parse_from(args).unwrap(),
-            crate::Options::Package(crate::PackageCommand::Publish { .. })
+            crate::Cli::try_parse_from(args).unwrap().options,
+            crate::cli::Command::Publish { .. }
         ));
     }
-    assert!(crate::Options::try_parse_from(["genmeta", "publish"]).is_err());
+    assert!(crate::Cli::try_parse_from(["jade", "publish"]).is_err());
     for flag in [
+        "--id",
         "--kind",
         "--name",
         "--version",
@@ -38,14 +56,8 @@ fn upload_cli_accepts_only_the_designed_arguments() {
         "--home",
     ] {
         assert!(
-            crate::Options::try_parse_from([
-                "genmeta",
-                "publish",
-                "package.webc",
-                flag,
-                "override"
-            ])
-            .is_err(),
+            crate::Cli::try_parse_from(["jade", "publish", "package.waz", flag, "override"])
+                .is_err(),
             "{flag}"
         );
     }
@@ -54,7 +66,7 @@ fn upload_cli_accepts_only_the_designed_arguments() {
         ("--version", clap::error::ErrorKind::DisplayVersion),
     ] {
         assert_eq!(
-            crate::Options::try_parse_from(["genmeta", "publish", flag])
+            crate::Cli::try_parse_from(["jade", "publish", flag])
                 .unwrap_err()
                 .kind(),
             kind
@@ -63,23 +75,46 @@ fn upload_cli_accepts_only_the_designed_arguments() {
 }
 
 fn metadata(kind: &str, name: &str, dependencies: Value) -> Value {
-    let mut value = json!({"id":format!("alice.dhttp.net/{name}"),"publisher":"alice.dhttp.net","name":name,
+    let mut value = json!({"id":format!("alice.dhttp.net/{name}"),"author":"alice.dhttp.net","name":name,
         "version":"1.0.0","kind":kind,"title":"Upload test","description":"Test package","license":"MIT",
         "changelog":"Initial release; compatible data","dependencies":dependencies});
     if kind == "app" {
         value["entry"] = "/".into();
-    } else {
-        value["host"] = json!({});
     }
     value
 }
 
 fn build(metadata: &Value, authority: Option<&dhttp::LocalAuthority>, content: &str) -> Vec<u8> {
+    let internal = build_projection(metadata, None, content);
+    let container =
+        webc::Container::from_bytes_and_version(internal.into(), webc::Version::V3).unwrap();
+    let mut files = crate::archive::waz_export(&container).unwrap();
+    if let Some(authority) = authority {
+        let payload = crate::archive::waz_payload(&files);
+        let mut input = b"pishoo-waz-signature-v1\0".to_vec();
+        for i in (0..payload.len()).step_by(2) {
+            input.push(u8::from_str_radix(&payload[i..i + 2], 16).unwrap());
+        }
+        let signature = authority
+            .sign(qtls::SignatureScheme::ECDSA_NISTP256_SHA256, &input)
+            .unwrap();
+        files.insert("signature.json".into(), serde_json::to_vec(&json!({"version":1,
+            "certificates":authority.certificates().iter().map(|c|STANDARD.encode(c.as_ref())).collect::<Vec<_>>(),
+            "signature":STANDARD.encode(signature)})).unwrap());
+    }
+    crate::archive::waz_write(&files).unwrap()
+}
+
+fn build_projection(
+    metadata: &Value,
+    authority: Option<&dhttp::LocalAuthority>,
+    content: &str,
+) -> Vec<u8> {
     let kind = metadata["kind"].as_str().unwrap();
     let mut annotation = metadata.clone();
     for key in [
         "id",
-        "publisher",
+        "author",
         "name",
         "version",
         "description",
@@ -89,90 +124,67 @@ fn build(metadata: &Value, authority: Option<&dhttp::LocalAuthority>, content: &
     ] {
         annotation.as_object_mut().unwrap().remove(key);
     }
+    if let Some(dependencies) = annotation["dependencies"].as_array_mut() {
+        for dependency in dependencies {
+            if let Some(fields) = dependency.as_object_mut()
+                && let Some(author) = fields.remove("author")
+            {
+                fields.insert("publisher".into(), author);
+            }
+        }
+    }
     let mut wapm = json!({"name":metadata["id"],"version":metadata["version"],"description":metadata["description"],"license":"MIT"});
     if let Some(repository) = metadata.get("repository") {
         wapm["repository"] = repository.clone();
     }
     let mut manifest: webc::metadata::Manifest = serde_json::from_value(json!({"package":{
-        "wapm":wapm,
-        "pishoo":annotation,"fs":[{"volume_name":if kind == "app" {"public"} else {"metadata"},
-            "mount_path":if kind == "app" {"/public"} else {"/metadata"}}]}}))
-    .unwrap();
-    let (volume, filename, data) = if kind == "app" {
-        ("public", "index.html", content.as_bytes().to_vec())
-    } else {
-        let backend = include_bytes!("../tests/fixtures/upload-handler.wasm");
-        manifest.atoms =
-            serde_json::from_value(json!({"backend":{"kind":"https://webc.org/kind/wasm",
-            "signature":format!("sha256:{}",STANDARD.encode(Sha256::digest(backend)))}}))
-            .unwrap();
-        (
-            "metadata",
-            "openapi.json",
-            serde_json::to_vec(&json!({"openapi":"3.1.0","info":{
-            "title":"Upload API","description":content,"version":"1.0.0","license":{"name":"MIT"}},
-            "x-pishoo":{"access-groups":{"read":{"title":"Read","operations":["readPage"]}}},
-            "paths":{"/page":{"get":{"operationId":"readPage","summary":"Read page",
-                "x-pishoo":{"access-group":"read"},"responses":{"200":{"description":"OK"}}}}}}))
-            .unwrap(),
+        "wapm":wapm,"pishoo":annotation,"fs":if kind=="app" {json!([{"volume_name":"public","mount_path":"/public"}])} else {json!([])}
+    }})).unwrap();
+    let backend = if kind == "lib" {
+        let doc=serde_json::to_vec(&json!({"openapi":"3.1.0","info":{"title":"Upload API","description":content,"version":"1.0.0"},
+            "paths":{"/page":{"get":{"operationId":"readPage","summary":"Read page","responses":{"200":{"description":"OK"}}}}}})).unwrap();
+        let backend = crate::pack::embedded_openapi(
+            include_bytes!("../tests/fixtures/upload-handler.wasm").to_vec(),
+            Some(&doc),
         )
+        .unwrap();
+        manifest.atoms=serde_json::from_value(json!({"backend":{"kind":"https://webc.org/kind/wasm","signature":format!("sha256:{}",STANDARD.encode(Sha256::digest(&backend)))}})).unwrap();
+        backend
+    } else {
+        Vec::new()
     };
     let make = || {
-        Writer::default()
+        let mut writer = Writer::default()
             .write_manifest(&manifest)
             .unwrap()
             .write_atoms(if kind == "lib" {
                 BTreeMap::from([(
                     "backend".parse().unwrap(),
-                    FileEntry::borrowed(
-                        include_bytes!("../tests/fixtures/upload-handler.wasm"),
-                        Timestamps::default(),
-                    ),
+                    FileEntry::borrowed(&backend, Timestamps::default()),
                 )])
             } else {
                 BTreeMap::new()
             })
-            .unwrap()
-            .with_volume(
-                volume,
-                Directory::new(
-                    BTreeMap::from([(filename.parse().unwrap(), data.clone().into())]),
-                    Timestamps::default(),
-                ),
-            )
-            .unwrap()
+            .unwrap();
+        if kind == "app" {
+            writer
+                .write_volume(
+                    "public",
+                    Directory::new(
+                        BTreeMap::from([(
+                            "index.html".parse().unwrap(),
+                            content.as_bytes().to_vec().into(),
+                        )]),
+                        Timestamps::default(),
+                    ),
+                )
+                .unwrap();
+        }
+        writer
     };
     let unsigned = make().finish(SignatureAlgorithm::None).unwrap().to_vec();
-    let Some(authority) = authority else {
-        return unsigned;
-    };
-    let payload = payload_digest(&unsigned).unwrap();
-    let mut input = b"pishoo-webc-signature-v1\0".to_vec();
-    for offset in (0..64).step_by(2) {
-        input.push(u8::from_str_radix(&payload[offset..offset + 2], 16).unwrap());
-    }
-    let signature = authority
-        .sign(qtls::SignatureScheme::ECDSA_NISTP256_SHA256, &input)
-        .unwrap();
-    let envelope = json!({"version":1,"certificates":authority.certificates().iter().map(|c|STANDARD.encode(c.as_ref())).collect::<Vec<_>>(),
-        "signature":STANDARD.encode(signature)});
-    let bytes = make()
-        .with_volume(
-            "pishoo-signature",
-            Directory::new(
-                BTreeMap::from([(
-                    "signature.json".parse().unwrap(),
-                    serde_json::to_vec(&envelope).unwrap().into(),
-                )]),
-                Timestamps::default(),
-            ),
-        )
-        .unwrap()
-        .finish(SignatureAlgorithm::None)
-        .unwrap()
-        .to_vec();
-    assert_eq!(payload_digest(&bytes).unwrap(), payload);
-    bytes
+    assert!(authority.is_none());
+    unsigned
 }
 
 fn local(name: &str, owner: &str) -> dhttp::LocalAuthority {
@@ -200,13 +212,13 @@ fn local(name: &str, owner: &str) -> dhttp::LocalAuthority {
 
 fn release(metadata: &Value, bytes: &[u8], owner: &str) -> Value {
     let mut value = metadata.clone();
-    value["publisher_owner_hash"] = owner.into();
+    value["author_owner_hash"] = owner.into();
     value["package_sha256"] = digest(bytes).into();
     value["size"] = bytes.len().into();
     for key in ["kind", "entry", "host"] {
         value.as_object_mut().unwrap().remove(key);
     }
-    value["download_path"] = format!("{}/package.pkg", version_path(metadata).unwrap()).into();
+    value["download_path"] = format!("{}/package.waz", version_path(metadata).unwrap()).into();
     value["status"] = "published".into();
     if let Ok(envelope) = signature_envelope(bytes) {
         value["signer_certificates"] = envelope["certificates"].clone();
@@ -230,16 +242,16 @@ fn paths_and_protocol_proofs_are_exact() {
         for (key, invalid) in [
             ("id", json!("alice.dhttp.net/other")),
             ("kind", json!("bogus")),
-            ("publisher", json!("bob.dhttp.net")),
+            ("author", json!("bob.dhttp.net")),
             ("version", json!("2.0.0")),
             ("status", json!("pending")),
             ("status", json!("yanked")),
             ("size", json!(0)),
             ("size", json!(PACKAGE_LIMIT + 1)),
             ("package_sha256", json!("xyz")),
-            ("publisher_owner_hash", json!("b".repeat(64))),
-            ("download_path", json!("https://evil.example/package.webc")),
-            ("download_path", json!(format!("{path}/../app.webc"))),
+            ("author_owner_hash", json!("b".repeat(64))),
+            ("download_path", json!("https://evil.example/package.waz")),
+            ("download_path", json!(format!("{path}/../app.waz"))),
         ] {
             let mut bad = proof.clone();
             bad[key] = invalid;
@@ -291,11 +303,11 @@ fn parses_manifest_without_treating_it_as_verified_and_preserves_payload_identit
             payload_digest(&build(&metadata, Some(&alice), "different")).unwrap()
         );
         let chain = package_certificates(&original).unwrap();
-        assert!(verify_publisher(&metadata, &chain, &alice).is_ok());
-        assert!(verify_publisher(&metadata, &chain, &rotated).is_err());
+        assert!(verify_author(&metadata, &chain, &alice).is_ok());
+        assert!(verify_author(&metadata, &chain, &rotated).is_err());
         let mut wrong = metadata.clone();
-        wrong["publisher"] = "bob.dhttp.net".into();
-        assert!(verify_publisher(&wrong, &chain, &alice).is_err());
+        wrong["author"] = "bob.dhttp.net".into();
+        assert!(verify_author(&wrong, &chain, &alice).is_err());
     }
     for bytes in [vec![], b"not webc".to_vec(), b"\0webc003\x02".to_vec()] {
         assert!(manifest_identity(&bytes).is_err());
@@ -303,10 +315,30 @@ fn parses_manifest_without_treating_it_as_verified_and_preserves_payload_identit
 }
 
 #[tokio::test]
+async fn packages_omit_host_and_ignore_legacy_declarations() {
+    let authority = local("alice.dhttp.net", &"a".repeat(64));
+    for kind in ["app", "lib"] {
+        for host in [
+            None,
+            Some(json!({"unknown-capability":""})),
+            Some(json!(false)),
+        ] {
+            let mut metadata = metadata(kind, "note", json!([]));
+            if let Some(host) = host {
+                metadata["host"] = host;
+            }
+            let bytes = build(&metadata, Some(&authority), "test");
+            let inspected = inspect_package(&bytes).await.unwrap();
+            assert!(inspected.get("host").is_none());
+        }
+    }
+}
+
+#[tokio::test]
 async fn snapshot_is_bounded_and_survives_original_replacement() {
     let directory = tempfile::tempdir().unwrap();
     assert!(read_snapshot(directory.path()).await.is_err());
-    let path = directory.path().join("input.webc");
+    let path = directory.path().join("input.waz");
     std::fs::write(&path, b"original").unwrap();
     let snapshot = read_snapshot(&path).await.unwrap();
     std::fs::write(&path, b"changed").unwrap();
@@ -437,20 +469,27 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
                 let remote = request.extensions().get::<dhttp::HandshakeSummary>().unwrap().remote.clone().unwrap();
                 assert_eq!(remote.name(), "alice.dhttp.net");
                 if method == http::Method::GET {
+                    if path == "/store/v1/packages" {
+                        let saved = packages.lock().unwrap();
+                        return Ok::<_, dhttp::BoxError>(response(StatusCode::OK, json!({
+                            "packages":saved.values().take(1).map(|(_, m)|m.clone()).collect::<Vec<_>>(),
+                            "total":saved.len()
+                        })));
+                    }
                     gets.fetch_add(1, Ordering::SeqCst);
-                    let download = path.ends_with(".pkg");
+                    let download = path.ends_with(".waz");
                     let key = if download { path.rsplit_once('/').unwrap().0 } else { path.as_str() };
                     let saved = packages.lock().unwrap().get(key).cloned();
                     return Ok::<_, dhttp::BoxError>(match saved {
                         None => response(StatusCode::NOT_FOUND, json!({"error":"not_found"})),
                         Some((_, metadata)) if download && metadata["status"] == "yanked" => response(StatusCode::GONE, json!({"error":"yanked"})),
-                        Some((bytes, _)) if download => http::Response::builder().header(header::CONTENT_TYPE, "application/webc").body(body(bytes)).unwrap(),
+                        Some((bytes, _)) if download => http::Response::builder().header(header::CONTENT_TYPE, "application/zip").body(body(bytes)).unwrap(),
                         Some((_, metadata)) => response(StatusCode::OK, metadata),
                     });
                 }
                 assert_eq!(method, http::Method::PUT);
                 puts.fetch_add(1, Ordering::SeqCst);
-                assert_eq!(request.headers()[header::CONTENT_TYPE], "application/webc");
+                assert_eq!(request.headers()[header::CONTENT_TYPE], "application/zip");
                 let bytes = request.into_body().collect().await?.to_bytes().to_vec();
                 let metadata = inspect_package(&bytes).await?;
                 assert_eq!(version_path(&metadata).unwrap(), path);
@@ -464,11 +503,11 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
                     } else { response(StatusCode::CONFLICT, json!({"error":"version_conflict","message":"different content"})) });
                 }
                 for dependency in metadata["dependencies"].as_array().unwrap() {
-                    let key = format!("/store/v1/packages/{}/{}/versions/{}", dependency["publisher"].as_str().unwrap(),
+                    let key = format!("/store/v1/packages/{}/{}/versions/{}", dependency["author"].as_str().unwrap(),
                         dependency["name"].as_str().unwrap(), dependency["version"].as_str().unwrap());
                     if saved.get(&key).is_none_or(|(_, release)| release["status"] != "published") {
                         return Ok(response(StatusCode::UNPROCESSABLE_ENTITY, json!({"error":"dependency_unavailable",
-                            "message":format!("Lib {}/{}@{} is missing or withdrawn", dependency["publisher"].as_str().unwrap(),
+                            "message":format!("Lib {}/{}@{} is missing or withdrawn", dependency["author"].as_str().unwrap(),
                                 dependency["name"].as_str().unwrap(), dependency["version"].as_str().unwrap())})));
                     }
                 }
@@ -497,31 +536,31 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
         let metadata = metadata(kind, &format!("note-{kind}"), json!([]));
         let bytes = build(&metadata, Some(&authority), "test");
         let checked = inspect_package(&bytes).await.unwrap();
-        verify_publisher(&checked, &package_certificates(&bytes).unwrap(), &authority).unwrap();
+        verify_author(&checked, &package_certificates(&bytes).unwrap(), &authority).unwrap();
         assert_eq!(
-            publish(&client, &bytes, &checked, &owner).await.unwrap()["result"],
+            publish(&client, &bytes, &checked, &owner).await.unwrap()["outcome"],
             "published"
         );
         assert_eq!(
-            publish(&client, &bytes, &checked, &owner).await.unwrap()["result"],
+            publish(&client, &bytes, &checked, &owner).await.unwrap()["outcome"],
             "already-published"
         );
         let rotated_package = build(&metadata, Some(&rotated_authority), "test");
         assert!(
-            verify_publisher(
+            verify_author(
                 &checked,
                 &package_certificates(&rotated_package).unwrap(),
                 &authority
             )
             .is_err()
         );
-        // A CLI run loads one publisher endpoint. Same-name endpoints share a
+        // A CLI run loads one author endpoint. Same-name endpoints share a
         // connection pool, so test resigning with its retained real credentials.
         let resigned = build(&metadata, Some(&authority), "test");
         assert_ne!(digest(&bytes), digest(&resigned));
         let before = gets.load(Ordering::SeqCst);
         assert_eq!(
-            publish(&client, &resigned, &checked, &owner).await.unwrap()["result"],
+            publish(&client, &resigned, &checked, &owner).await.unwrap()["outcome"],
             "already-published"
         );
         assert_eq!(
@@ -547,7 +586,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
         *tampered.last_mut().unwrap() ^= 1;
         assert!(inspect_package(&tampered).await.is_err());
     }
-    let dependency = json!([{"publisher":"alice.dhttp.net","name":"backend","version":"1.0.0"}]);
+    let dependency = json!([{"author":"alice.dhttp.net","name":"backend","version":"1.0.0"}]);
     for kind in ["app", "lib"] {
         let metadata = metadata(kind, &format!("parent-{kind}"), dependency.clone());
         let bytes = build(&metadata, Some(&authority), "parent");
@@ -577,7 +616,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
                 &owner
             )
             .await
-            .unwrap()["result"],
+            .unwrap()["outcome"],
             "published"
         );
     }
@@ -627,9 +666,9 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
             "never repeat PUT automatically"
         );
         if name == "lost" || name == "trailer" {
-            assert_eq!(result.unwrap()["result"], "published");
+            assert_eq!(result.unwrap()["outcome"], "published");
         } else if name == "unsaved" {
-            assert!(result.unwrap_err().to_string().contains("发布结果未知"));
+            assert_eq!(result.unwrap_err().code, "E_PUBLISH_OUTCOME_UNKNOWN");
         } else {
             assert!(result.unwrap_err().to_string().contains("307"));
         }
@@ -641,7 +680,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
     let mut snapshot_metadata = metadata("app", "snapshot", json!([]));
     snapshot_metadata["repository"] = "https://github.com/genmeta/upload-test".into();
     let snapshot_bytes = build(&snapshot_metadata, Some(&authority), "original");
-    let input = root.path().join("snapshot.webc");
+    let input = root.path().join("snapshot.waz");
     std::fs::write(&input, &snapshot_bytes).unwrap();
     let snapshot = read_snapshot(&input).await.unwrap();
     let checked = inspect_package(&snapshot).await.unwrap();
@@ -694,11 +733,32 @@ async fn publication_inspection_is_local_and_requires_an_intact_signed_container
             .await
             .is_err()
     );
-    let mut tampered = bytes;
-    let offset = tampered
-        .windows(b"offline page".len())
-        .position(|bytes| bytes == b"offline page")
-        .unwrap();
-    tampered[offset] ^= 1;
+    let mut files = crate::archive::waz_read(&bytes).unwrap();
+    files.get_mut("public/index.html").unwrap()[0] ^= 1;
+    let tampered = crate::archive::waz_write(&files).unwrap();
     assert!(inspect_package(&tampered).await.is_err());
+    assert!(inspect_package(b"\0webc003").await.is_err());
+}
+
+#[tokio::test]
+async fn a_valid_container_with_a_forged_signature_is_rejected_locally() {
+    let authority = local("alice.dhttp.net", &"a".repeat(64));
+    let metadata = metadata("app", "forged", json!([]));
+    let bytes = build(&metadata, Some(&authority), "signed content");
+    let mut files = crate::archive::waz_read(&bytes).unwrap();
+    let mut envelope: Value = serde_json::from_slice(&files["signature.json"]).unwrap();
+    let mut signature = STANDARD
+        .decode(envelope["signature"].as_str().unwrap())
+        .unwrap();
+    let last = signature.len() - 1;
+    signature[last] ^= 1;
+    envelope["signature"] = STANDARD.encode(signature).into();
+    files.insert(
+        "signature.json".into(),
+        serde_json::to_vec(&envelope).unwrap(),
+    );
+    let forged = crate::archive::waz_write(&files).unwrap();
+    assert!(crate::archive::waz_read(&forged).is_ok());
+    let error = inspect_package(&forged).await.unwrap_err();
+    assert_eq!(error.code, "E_SIGNATURE_INVALID");
 }

@@ -1,12 +1,12 @@
 use super::*;
 
-fn release(publisher: &str, name: &str, _kind: &str, version: &str) -> Value {
+fn release(author: &str, name: &str, _kind: &str, version: &str) -> Value {
     let collection = "packages";
     let value = json!({
-        "id": format!("{publisher}/{name}"), "publisher": publisher, "name": name,
+        "id": format!("{author}/{name}"), "author": author, "name": name,
         "version": version, "status": "published", "size": 4096,
-        "package_sha256": "a".repeat(64), "publisher_owner_hash": "b".repeat(64),
-        "download_path": format!("/store/v1/{collection}/{publisher}/{name}/versions/{version}/package.pkg"),
+        "package_sha256": "a".repeat(64), "author_owner_hash": "b".repeat(64),
+        "download_path": format!("/store/v1/{collection}/{author}/{name}/versions/{version}/package.waz"),
         "title": "Package", "description": "Description", "changelog": "Initial release", "dependencies": [],
     });
     value
@@ -35,7 +35,7 @@ fn input_accepts_only_store_names_and_exact_versions() {
         "/workspace",
         "~/workspace",
         "C:\\workspace",
-        "workspace.webc",
+        "workspace.waz",
         "dev/workspace",
         "dev.dhttp.net/a/b",
         "https://github.com/a/b",
@@ -121,10 +121,7 @@ async fn ambiguity_on_later_page_lists_full_ids_and_never_installs() {
     .await
     .unwrap_err();
     let message = report(error);
-    assert!(
-        message.contains("first.dhttp.net/workspace")
-            && message.contains("second.dhttp.net/workspace")
-    );
+    assert!(message.contains("first~/workspace") && message.contains("second~/workspace"));
     assert_eq!(calls, 2);
 }
 
@@ -245,8 +242,8 @@ fn release_validation_rejects_withdrawn_and_mismatched_proofs() {
         ("size", json!(0)),
         ("size", json!(64 * 1024 * 1024 + 1)),
         ("package_sha256", json!("bad")),
-        ("publisher_owner_hash", json!("A".repeat(64))),
-        ("download_path", json!("https://example.com/app.webc")),
+        ("author_owner_hash", json!("A".repeat(64))),
+        ("download_path", json!("https://example.com/app.waz")),
     ] {
         let mut value_to_check = base.clone();
         value_to_check[key] = value;
@@ -271,30 +268,34 @@ fn release_validation_rejects_withdrawn_and_mismatched_proofs() {
 
 #[test]
 fn success_requires_matching_identity_version_and_saved_entry() {
-    let release = release("dev.dhttp.net", "workspace", "app", "0.2.0");
-    let mut installed = release.clone();
-    installed["has_app"] = true.into();
-    installed["entry"] = "/".into();
-    assert_eq!(
-        success(&installed, &release, "alice.dhttp.net").unwrap(),
-        json!({"id":"dev.dhttp.net/workspace","version":"0.2.0","identity":"alice.dhttp.net","entry_url":"https://alice.dhttp.net/app/workspace/"})
-    );
-    assert_eq!(
-        install_body(&release),
-        json!({"author":"dev.dhttp.net","name":"workspace","version":"0.2.0"})
-    );
-    for key in ["id", "version", "entry"] {
-        let mut changed = installed.clone();
-        changed[key] = "wrong".into();
-        assert!(success(&changed, &release, "alice.dhttp.net").is_err());
+    for (author, displayed_id) in [
+        ("dev.dhttp.net", "dev~/workspace"),
+        ("std.dhttp.net", "std/workspace"),
+    ] {
+        let release = release(author, "workspace", "app", "0.2.0");
+        let mut installed = release.clone();
+        installed["has_app"] = true.into();
+        installed["entry"] = "/".into();
+        assert_eq!(
+            display::package_output(success(&installed, &release, "alice.dhttp.net").unwrap()),
+            json!({"id":displayed_id,"version":"0.2.0","identity":"alice~","entry_url":"https://alice~/app/workspace/"})
+        );
+        assert_eq!(
+            install_body(&release),
+            json!({"author":author,"name":"workspace","version":"0.2.0"})
+        );
+        for key in ["id", "version", "entry"] {
+            let mut changed = installed.clone();
+            changed[key] = "wrong".into();
+            assert!(success(&changed, &release, "alice.dhttp.net").is_err());
+        }
+        let backend = release.clone();
+        assert!(
+            display::package_output(success(&backend, &release, "alice.dhttp.net").unwrap())
+                .get("entry_url")
+                .is_none()
+        );
     }
-    let backend = release.clone();
-    assert!(
-        success(&backend, &release, "alice.dhttp.net")
-            .unwrap()
-            .get("entry_url")
-            .is_none()
-    );
 }
 
 #[test]
@@ -374,7 +375,7 @@ fn package_cli_is_top_level_and_has_no_app_or_lib_selection() {
     for args in [
         vec!["genmeta", "package", "install", "workspace"],
         vec!["genmeta", "install"],
-        vec!["genmeta", "install", "workspace", "--file", "workspace.pkg"],
+        vec!["genmeta", "install", "workspace", "--file", "workspace.waz"],
         vec!["genmeta", "uninstall", "workspace", "--version", "1.0.0"],
     ] {
         assert!(Options::try_parse_from(args).is_err());
@@ -738,11 +739,12 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
         .unwrap();
     assert!(check_install_version("update", Some(&saved), &app).unwrap());
     assert_eq!(
-        success(&saved, &app, endpoint.name()).unwrap()["entry_url"],
-        "https://alice.dhttp.net/app/demo/"
+        display::package_output(success(&saved, &app, endpoint.name()).unwrap())["entry_url"],
+        "https://alice~/app/demo/"
     );
-    let removed = remove(&endpoint, &owner, &saved).await.unwrap();
-    assert_eq!(removed["id"], "alice.dhttp.net/demo");
+    let removed = display::package_output(remove(&endpoint, &owner, &saved).await.unwrap());
+    assert_eq!(removed["id"], "alice~/demo");
+    assert_eq!(removed["identity"], "alice~");
     assert_eq!(removed["removed"], true);
     assert_eq!(removed["data_retained"], true);
     assert!(
@@ -756,7 +758,7 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
 }
 
 #[test]
-fn abbreviated_publishers_expand_without_changing_installed_bare_names() {
+fn abbreviated_authors_expand_without_changing_installed_bare_names() {
     assert_eq!(
         normalize_target("workspace", true),
         "std.dhttp.net/workspace"
@@ -774,5 +776,9 @@ fn abbreviated_publishers_expand_without_changing_installed_bare_names() {
         normalize_target("alice.dhttp.net/message", true),
         "alice.dhttp.net/message"
     );
+    for id in ["std.dhttp.net/workspace", "alice.smith.dhttp.net/message"] {
+        assert_eq!(normalize_target(&display::package_id(id), true), id);
+        assert_eq!(normalize_target(&display::package_id(id), false), id);
+    }
     assert!(!valid_target(&normalize_target("@alice/message", true)));
 }

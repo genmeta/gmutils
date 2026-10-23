@@ -2,7 +2,7 @@
   <img src="https://media.dhttp.net/img/gmutils/gmutils.svg" width="900" alt="GMUTILS command-line tool family: identity, access, curl, nslookup, doctor, proxy, and discover">
 </p>
 <p align="center">
-  <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/version-0.9.0--preview.4-1f6feb?style=flat-square" alt="Version 0.9.0-preview.4"></a>
+  <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/version-0.9.0--preview.5-1f6feb?style=flat-square" alt="Version 0.9.0-preview.5"></a>
   <a href="https://doc.rust-lang.org/edition-guide/rust-2024/"><img src="https://img.shields.io/badge/Rust-2024-dea584?style=flat-square&amp;logo=rust&amp;logoColor=black" alt="Rust 2024 edition"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-00a51a?style=flat-square&amp;logo=apache&amp;logoColor=white" alt="Apache-2.0 license"></a>
   <a href="#install"><img src="https://img.shields.io/badge/Cargo-supported-dea584?style=flat-square&amp;logo=rust&amp;logoColor=black" alt="Cargo package supported"></a>
@@ -14,7 +14,7 @@
 
 gmutils is the Genmeta command-line tool family for DHttp networking. It gives an endpoint the tools it needs to create and use a Unified Identity, publish or reach services, control access, diagnose connectivity, and manage DHttp-based remote sessions.
 
-The `genmeta` launcher exposes the suite behind a consistent command surface: `genmeta <tool> [options]`. Most utilities are also published as individual crates for users who only need one command.
+The `genmeta` launcher exposes the suite behind a consistent command surface: `genmeta <tool> [options]`. Most utilities are also published as individual crates for users who only need one command. [Jade](jade/README.md) is a separate project and executable for creating, building and publishing packages.
 
 ## Utils
 
@@ -31,7 +31,8 @@ Available commands:
 | `genmeta nslookup` | Resolve DDns names and discover reachable DHttp addresses. |
 | `genmeta discover` | Discover nearby DHttp endpoints over mDNS. |
 | `genmeta doctor` | Diagnose NAT and network connectivity. |
-| `genmeta build/publish/install/update/uninstall` | Build, publish and manage signed Pkg packages; query with `install --list` or `install --info`. |
+| `jade create/build/publish` | Create projects, build and publish signed Pkg packages. |
+| `genmeta install/update/uninstall` | Manage installed packages; query with `install --list` or `install --info`. |
 
 See [Pishoo command validation](docs/pishoo-validation.md) for the running-host acceptance matrix and release follow-up checks.
 
@@ -41,13 +42,15 @@ See the [中文命令使用指南](docs/commands.zh-CN.md) for the current comma
 
 Use the official package repository for a system installation. Both methods install the `gmutils` package, which provides the `genmeta` command.
 
-Homebrew, DEB and RPM installation/upgrade hooks attempt `genmeta install workspace`
-once for the installation user's default identity. The identity must already be
-configured and its Pishoo service reachable. Linux sudo installations use the
-invoking user's credentials; other installations use the current account. The
-hook never guesses another account. Missing prerequisites or installation
-errors never fail gmutils setup and do not create a retry job. After configuring
-the default identity and starting Pishoo, run `genmeta install workspace` if needed.
+Installing or upgrading gmutils does not install Workspace. After a successful
+interactive `genmeta identity apply` with the server enabled, you are asked whether
+to install Workspace for that name; press Enter to accept or answer `n` to skip.
+Installation uses the newly applied identity and waits up to 30 seconds for
+Pishoo to serve it. Running Pishoo discovers enabled identities automatically;
+no reload or Homebrew/systemd service registration is required. Skipping
+or an installation failure leaves the identity installed and prints the manual
+command, `genmeta install workspace --id NAME`. Non-interactive applications skip
+Workspace installation; there is no background retry.
 
 ### Linux (Debian/Ubuntu)
 
@@ -90,8 +93,8 @@ With a current Rust toolchain, build and install the launcher from this checkout
 cargo install --path genmeta --locked
 ```
 
-Cargo has no package-manager post-install hook. Once the default identity and
-Pishoo are ready, run `genmeta install workspace` after installing from source.
+Source installations use the same Workspace prompt during `genmeta identity apply`.
+For an existing identity, start Pishoo and run `genmeta install workspace --id NAME`.
 
 ## Quick start
 
@@ -124,7 +127,7 @@ genmeta install std.dhttp.net/message
 Installation defaults to the latest published package version and the configured
 default identity. Bare installation names select the standard publisher: `workspace`
 means `std.dhttp.net/workspace`. Author names may omit `.dhttp.net`, so
-`alice/message` means `alice.dhttp.net/message`. Update, uninstall and info resolve
+`alice.smith/message` means `alice.smith.dhttp.net/message`. Update, uninstall and info resolve
 bare names against the installed catalog and preserve the registered publisher.
 The selected identity's Pishoo service must already be running and enabled.
 Local credentials use the current account’s identity home. Installation accepts only published store releases; local package files, URLs and anonymous installation are not supported.
@@ -133,6 +136,8 @@ The CLI authenticates `store.dhttp.net`, pins an exact version, and sends one
 authenticated `POST /std/sys/pkg/install` request with JSON `{author, name, version}`
 to Pishoo. Pishoo verifies and installs the package and its exact package dependencies.
 Successful output is JSON on stdout; progress and diagnostics go to stderr.
+Package output abbreviates identities as `alice.smith~` and package IDs as
+`alice.smith~/workspace`; the standard publisher appears as `std/workspace`.
 Packages containing static pages include `entry_url` in the result, mounted at
 `https://IDENTITY/app/NAME/`.
 Resolution has a 120-second deadline; installation waits up to 15 minutes.
@@ -140,7 +145,7 @@ An interruption or timeout reports an unknown outcome and never retries the
 write automatically. Dependencies installed before a parent failure remain.
 Installation does not grant access permissions.
 
-The store must support the current WEBC manifest metadata protocol. Older App
+The store must support the current WAZ ZIP package and manifest metadata protocol. Older App
 responses containing OpenAPI are rejected with a compatibility diagnostic.
 
 ## CLI help and identity listening
@@ -160,19 +165,19 @@ enable hosting. Install an App or mount a local service to serve content.
 See [Identity to Workspace and contacts](docs/identity-workspace-contacts.md)
 for the complete command sequence, readiness checks, and contact approval flow.
 
-Access and curl log warnings and errors by default, suppressing background
-NAT warnings. Set `RUST_LOG=debug` or
-`RUST_LOG=trace` to inspect transport diagnostics. Curl progress and `--verbose`
-request/response output are independent of this log filter.
+Commands suppress runtime logs by default, including background NAT messages.
+Pass `--verb` to enable debug logs, for example `genmeta --verb nslookup alice.smith~`.
+The flag also works on standalone tools. `RUST_LOG` alone does not enable logs.
+Command results, progress and errors remain visible; curl's `--verbose`
+request/response output is independent of debug logging.
 
 ## Build and sign a package
 
-`genmeta build PATH` executes the local manifest's `[build]` recipe and
-then signs its output locally. Building does not require a running Pishoo service.
-See [Package management](#package-management) for the recipe and all commands.
-For existing artifacts, `genmeta build --no-build PATH -o FILE.pkg` retains the packaging-only
-workflow. The signer uses the current account's `~/.dhttp`; `--id` checks the
-publisher and does not rewrite the manifest.
+`jade build PATH` reads `jade.toml`, runs native frontend or Rust API builds when
+needed, and signs the resulting package locally. Static resources and prebuilt
+Components use the same command. A running Pishoo service is not required.
+The default output is `build/NAME-VERSION.waz`; `--id` selects the signing identity.
+See [Jade](jade/README.md) for configuration, templates and JSON output.
 
 ## Access policies
 
@@ -182,7 +187,7 @@ the API; otherwise the default identity is used. `--global` selects the home
 scope for loading credentials. Pishoo must be running for that identity.
 
 ```bash
-genmeta access --id alice.pilot /api allow '*?' --method GET
+genmeta access --id alice.smith /api allow '*?' --method GET
 genmeta access /api review '**' --method POST
 genmeta access /api deny '?'
 genmeta access /api list
@@ -251,20 +256,39 @@ identity is used.
 
 ## Package management
 
-Package operations are top-level `genmeta` commands. The `package` grouping and
-former `pack` and `upload` command names have been removed.
+Project creation, builds and publication use the independent [Jade project](jade/README.md)
+and its `jade` executable. The gmutils Debian and Homebrew packages install both `genmeta`
+and `jade`. For a source installation, use `cargo install --path jade --locked`
+from this checkout. Installation, updates, queries and removal use `genmeta`.
+
+The development workflow uses `jade.toml` and existing native build tools.
 
 ```sh
-genmeta build ./profile -o ./dist/profile.pkg
-genmeta publish ./dist/profile.pkg
-genmeta install std.dhttp.net/workspace --id sky.lee.dhttp.net
-genmeta update workspace --id sky.lee.dhttp.net
-genmeta install --list --id sky.lee.dhttp.net
-genmeta install --info message --id sky.lee.dhttp.net
-genmeta uninstall alice.smith.dhttp.net/message --id sky.lee.dhttp.net
+# Static starter; no identity is needed until build.
+jade create ./hello --template static
+jade build ./hello --id alice.smith
+jade publish ./hello/build/hello-0.1.0.waz
+
+# Rust API starter; Jade invokes Cargo, with no developer-written build script.
+jade create ./service --template api
+rustup target add wasm32-wasip2
+jade build ./service --id alice.smith
+jade publish ./service/build/service-0.1.0.waz
+
+# Default fullstack starter; the Vite frontend calls the generated Rust /hello API.
+jade create ./application
+rustup target add wasm32-wasip2
+jade build ./application --id alice.smith
+jade publish ./application/build/application-0.1.0.waz
+
+genmeta install std.dhttp.net/workspace --id alice.smith
+genmeta update workspace --id alice.smith
+genmeta install --list --id alice.smith
+genmeta install --info message --id alice.smith
+genmeta uninstall alice.smith.dhttp.net/message --id alice.smith
 ```
 
-Package identity is `author/name`; all management operations act on the entire package. A `.pkg` may contain a backend, static pages, or both, with one version and signature. `install --list`, `install --info` and `uninstall` query the selected identity's Pishoo service. Full package IDs must match the installed publisher; removal retains business data and dependencies.
+Package identity is `author/name`; all management operations act on the entire package. A `.waz` is a standard ZIP and may contain a backend, static pages, or both, with one version and signature. Root-level README.md and CHANGELOG.md are included when present. See the [WAZ format](jade/FORMAT.md); old WEBC release files must be rebuilt. `install --list`, `install --info` and `uninstall` query the selected identity's Pishoo service. Full package IDs must match the installed publisher; removal retains business data and dependencies.
 
 `install` leaves an identical installed version unchanged and directs version
 changes to `update`. `update` requires an installed package, stays with its current
@@ -273,22 +297,24 @@ The CLI checks these conditions before using the existing store installation API
 the preflight is not an atomic compare-and-swap with concurrent administrators.
 Exact dependency/publisher checks and per-package transactions remain on the host.
 
-`build` uses the local signer and a recipe in
-the local `wasmer.toml`:
+`jade create PATH` generates a fullstack project by default. `--template` selects
+static, web, api or fullstack source files, and `--name` separates the package name
+from its folder.
+The API and fullstack starters implement GET `/hello`; generated
+READMEs include installation and `genmeta curl` examples with JSON responses.
 
-```toml
-[build]
-command = ["sh", "build.sh"]
-manifest = "dist/wasmer.toml"
-```
+`jade build [PATH]` accepts a directory or Jade configuration file. Frontend and
+backend sources are discovered automatically; `jade.toml` needs no path sections.
+Frontend build
+scripts run through npm/pnpm/Bun after installing dependencies, including build
+tools; Rust APIs compile through Cargo to WASI Components.
+Existing static directories and Components are collected directly. Build checks
+content and signatures, then atomically writes the package. `-o FILE --overwrite`
+replaces an explicit output. Results are human-readable by default; `--json`
+provides canonical IDs and stable diagnostic codes for scripts.
 
-The command runs in the source directory on every invocation. The optional
-`manifest` selects its generated package manifest within that directory. A failed
-build prevents signing. Recipe arguments are passed directly; no shell string is
-constructed. Build logs go to stderr; the final signed-package result is JSON on
-stdout. `--id` checks the generated publisher rather than rewriting it.
-For already-built artifacts use `genmeta build --no-build PATH -o FILE.pkg` directly.
-`publish` does not rebuild or change the signed package.
+`jade publish FILE` reads the author from the signed package, checks matching
+credentials and uploads the fixed snapshot. It does not rebuild the package.
 
 The new removal command requires the Pishoo detail API's `Package-Id` response
 header and sends `Expected-Package-Id` to prevent deleting a replacement publisher
@@ -302,7 +328,6 @@ Pishoo provides the host APIs and `pishoo reload`; management lives in gmutils:
 genmeta listen --id alice.smith all
 genmeta listen --id alice.smith off --yes
 genmeta listen --id alice.smith internal
-pishoo reload
 genmeta mount --id alice.smith /api 127.0.0.1:8080
 genmeta unmount --id alice.smith /api 127.0.0.1:8080 --yes
 genmeta install alice.smith/example --version 1.0.0 --id alice.smith
@@ -312,7 +337,10 @@ genmeta install --list --id alice.smith
 Listening configuration is edited locally, including when listening is off.
 Proxy changes and package operations call the running host and retain its authorization,
 validation, dependency and atomic-install rules. Installation and updates select published store releases and resolve exact dependencies through the host. Local artifacts are used only for build and publish.
-`genmeta build` now builds and signs directly; `--no-build` packages existing
-artifacts. Full signature and host compatibility checks run during install/update. No Pishoo
-CLI or pishoo-pack executable is needed. Service start/stop/restart/status belong
+`jade build` builds or collects declared artifacts and signs directly. Local
+signature and component checks run during build/publish; the host additionally
+checks runtime compatibility during install/update. No Pishoo CLI or pishoo-pack
+executable is needed. Service start/stop/restart/status belong
 to systemctl or brew services; gmutils does not wrap them.
+
+Store metadata uses `author`, `author_owner_hash` and `dependencies[].author`; catalog filters and update requests also use `author`. ZIP manifest dependencies also use `author`.

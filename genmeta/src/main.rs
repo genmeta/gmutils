@@ -1,16 +1,25 @@
-use std::path::PathBuf;
+use std::io::IsTerminal;
 
 use clap::Parser;
 use snafu::Whatever;
 
+mod display;
 mod install;
-mod pack;
 mod server;
 
 #[cfg(test)]
 #[path = "../tests/support/upload_credentials.rs"]
 mod test_credentials;
-mod upload;
+
+#[derive(Parser, Debug)]
+#[command(name = "genmeta", version, about)]
+struct Cli {
+    /// Enable debug logs
+    #[arg(long, global = true)]
+    verb: bool,
+    #[command(subcommand)]
+    options: Options,
+}
 
 #[derive(Parser, Debug, Clone)]
 #[command(version, about)]
@@ -36,30 +45,6 @@ enum Options {
 
 #[derive(clap::Subcommand, Debug, Clone)]
 enum PackageCommand {
-    /// Build a local project and create a signed Pkg package
-    #[command(version)]
-    Build {
-        /// Project directory or build manifest
-        #[arg(default_value = ".")]
-        path: PathBuf,
-        /// Sign already-built artifacts without running the source build
-        #[arg(long)]
-        no_build: bool,
-        /// Signed output file (defaults to the built manifest's dist directory)
-        #[arg(short, long, value_name = "FILE.pkg")]
-        output: Option<PathBuf>,
-        /// Check the signing identity against the built manifest publisher
-        #[arg(short, long, value_name = "PUBLISHER")]
-        id: Option<String>,
-    },
-    /// Publish a signed Pkg package to the trusted store
-    #[command(version)]
-    Publish {
-        /// Existing signed .pkg file
-        file: PathBuf,
-        #[arg(short, long, value_name = "PUBLISHER")]
-        id: Option<String>,
-    },
     /// Install a published package and its exact dependencies
     #[command(disable_version_flag = true)]
     Install {
@@ -130,7 +115,21 @@ fn install_process_crypto_provider() {
 async fn main() -> Result<(), Error> {
     install_process_crypto_provider();
 
-    let options = Options::parse();
+    let Cli { verb, options } = Cli::parse();
+    if matches!(
+        options,
+        Options::Package(_) | Options::Server(_) | Options::Version {}
+    ) {
+        tracing_subscriber::fmt()
+            .with_max_level(if verb {
+                tracing::level_filters::LevelFilter::DEBUG
+            } else {
+                tracing::level_filters::LevelFilter::OFF
+            })
+            .with_ansi(std::io::stderr().is_terminal())
+            .with_writer(std::io::stderr)
+            .init();
+    }
 
     run(options).await.inspect_err(|error| {
         tracing::debug!(?error, "Exit with error");
@@ -145,13 +144,6 @@ async fn run(options: Options) -> Result<(), Error> {
         Options::Doctor { options } => genmeta_doctor::run(options).await?,
         Options::Identity(options) => genmeta_identity::run(options).await?,
         Options::Package(command) => match command {
-            PackageCommand::Build {
-                path,
-                output,
-                id,
-                no_build,
-            } => pack::run(path, output, id, no_build).await?,
-            PackageCommand::Publish { file, id } => upload::run(file, id).await?,
             PackageCommand::Install {
                 target,
                 list,
@@ -188,7 +180,47 @@ async fn run(options: Options) -> Result<(), Error> {
 mod tests {
     use clap::{CommandFactory, Parser};
 
-    use super::{Options, PackageCommand, install_process_crypto_provider};
+    use super::{Cli, Options, install_process_crypto_provider};
+
+    #[test]
+    fn debug_flag_is_global_and_propagates_to_nested_commands() {
+        for command in [
+            vec!["access", "list"],
+            vec!["curl", "https://example.com/"],
+            vec!["discover"],
+            vec!["doctor", "net"],
+            vec!["identity", "list"],
+            vec!["id", "apply", "alice.smith"],
+            vec!["nslookup", "localhost", "system"],
+            vec!["proxy"],
+            vec!["install", "--list"],
+            vec!["update", "workspace"],
+            vec!["uninstall", "workspace"],
+            vec!["listen", "--id", "alice.smith"],
+            vec!["mount"],
+            vec!["unmount", "/api", "127.0.0.1:8080"],
+            vec!["version"],
+        ] {
+            let default =
+                Cli::try_parse_from(std::iter::once("genmeta").chain(command.iter().copied()))
+                    .unwrap();
+            assert!(!default.verb, "{command:?}");
+            for args in [
+                [vec!["genmeta", "--verb"], command.clone()].concat(),
+                [vec!["genmeta"], command.clone(), vec!["--verb"]].concat(),
+            ] {
+                let parsed = Cli::try_parse_from(&args).unwrap();
+                assert!(parsed.verb, "{args:?}");
+                match parsed.options {
+                    Options::Identity(options) => assert!(options.verb, "{args:?}"),
+                    Options::Doctor {
+                        options: genmeta_doctor::Options::Net(options),
+                    } => assert!(options.verb, "{args:?}"),
+                    _ => {}
+                }
+            }
+        }
+    }
 
     #[test]
     fn installs_rustls_crypto_provider() {
@@ -310,8 +342,6 @@ mod tests {
             vec!["discover"],
             vec!["nslookup"],
             vec!["proxy"],
-            vec!["publish"],
-            vec!["build"],
             vec!["doctor", "net"],
         ] {
             for (flag, kind) in [
@@ -342,28 +372,14 @@ mod tests {
     }
 
     #[test]
-    fn launcher_accepts_pack_defaults_and_explicit_paths() {
-        let options = Options::try_parse_from(["genmeta", "build"]).unwrap();
-        assert!(
-            matches!(options, Options::Package(PackageCommand::Build { path, output: None, id: None, no_build: false }) if path == std::path::Path::new("."))
-        );
-        let options = Options::try_parse_from([
-            "genmeta",
-            "build",
-            "project with spaces/wasmer.toml",
-            "-o",
-            "out file.webc",
-            "-i",
-            "dev.dhttp.net",
-        ])
-        .unwrap();
-        assert!(
-            matches!(options, Options::Package(PackageCommand::Build { path, output: Some(output), id: Some(id), no_build: false })
-            if path == std::path::Path::new("project with spaces/wasmer.toml")
-                && output == std::path::Path::new("out file.webc") && id == "dev.dhttp.net")
-        );
-        for arg in ["--force", "--unsigned", "--kind", "--home", "--upload"] {
-            assert!(Options::try_parse_from(["genmeta", "build", arg]).is_err());
+    fn launcher_keeps_project_commands_in_the_standalone_jade_binary() {
+        let command = Options::command();
+        for name in ["jade", "create", "build", "publish"] {
+            assert!(command.find_subcommand(name).is_none());
+            assert!(Options::try_parse_from(["genmeta", name]).is_err());
+        }
+        for name in ["install", "update", "uninstall"] {
+            assert!(command.find_subcommand(name).is_some());
         }
     }
 }

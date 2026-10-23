@@ -1,12 +1,61 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.9.0-preview.5] - 2026-10-23
+
+### Changed
+
+- Discover frontend sources and static entries automatically, matching backend discovery; remove `[frontend]` configuration and use each frontend build project’s `dist/` output.
+
+- Extract project creation, builds and publication into the independent `jade`
+  Cargo package and executable: `jade create/build/publish`. Keep installation
+  and host management in `genmeta`.
+- Implement Jade's `jade.toml` workflow, native npm/pnpm/Bun and Rust API builds,
+  automatic OpenAPI embedding, local signature verification and atomic package
+  output in `build/`. Create needs no identity; publish uses the signed author.
+  Human summaries are the default, with canonical JSON results via `--json`.
+- Include both `genmeta` and `jade` executables in the gmutils Debian and Homebrew packages.
+  Applications build and publish locally with Jade. Reject legacy store catalogues
+  before uploading a package.
+- Suppress runtime logs across all commands by default; require `--verb` to enable
+  debug logging, independently of `RUST_LOG` and command-specific verbose output.
+- After interactive identity application with the server enabled, offer to install
+  Workspace, then reload Pishoo and wait for readiness before installing it.
+- Abbreviate Genmeta package-management identities and URL hosts with `~`, and show standard
+  package IDs as `std/name` in progress, diagnostics and JSON output.
+
+### Fixed
+
+- Read `author` metadata from store responses during package installation.
+- Build standard ZIP `.waz` releases with a signed JSON manifest and optional
+  root README.md/CHANGELOG.md, rejecting the previous WEBC release format.
+- Default `jade create` to a working frontend and Rust API. Install frontend build
+  dependencies, discover backend sources, and explain missing WASI toolchains.
+- Keep the Workspace installation choice explicit and wait for host readiness
+  without hiding the manual recovery command when activation fails.
+
+### Release versions
+
+- genmeta: 0.9.0-preview.4 → 0.9.0-preview.5.
+- genmeta-access: 0.5.0-preview.3 → 0.5.0-preview.4.
+- genmeta-curl: 0.8.0-preview.3 → 0.8.0-preview.4.
+- genmeta-discover: 0.5.0-preview.2 → 0.5.0-preview.3.
+- genmeta-doctor: 0.5.0-preview.2 → 0.5.0-preview.3.
+- genmeta-identity: 0.5.0-preview.4 → 0.5.0-preview.5.
+- genmeta-nat: 0.6.0-preview.2 → 0.6.0-preview.3.
+- genmeta-nslookup: 0.6.0-preview.2 → 0.6.0-preview.3.
+- genmeta-proxy: 0.5.0-preview.2 → 0.5.0-preview.3.
+- Jade remains 0.1.0 and ships in gmutils DEB/Homebrew bundles; this release does not publish a Jade crate.
+
 ## [0.9.0-preview.4] - 2026-10-21
 
 ### Changed
 
-- Attempt `genmeta install workspace` once after Homebrew/DEB/RPM setup, using
-  the installation user's default identity. Missing prerequisites or failures
-  produce a manual-install hint without failing gmutils installation.
+- Offer Workspace installation after interactive identity application, defaulting
+  to yes on Enter and using the applied name. Package installation and upgrades
+  no longer install Workspace. Skipped or failed installs print a manual command
+  without undoing the identity application.
 
 - Manage unified signed `.pkg` packages through top-level build, publish, install,
   update and uninstall commands; installed queries use install --list/--info.

@@ -6,9 +6,11 @@
 
 SHA-256: `4b210be20b4da473675e546b84deff326381e1d244c6c4dfa8f2e3cb37b4cfa0`.
 
-The upload tests wrap it in the current manifest-based Lib format and sign with
-new temporary credentials. Pishoo check compiles it without executing the guest.
-App fixtures are generated directly as zero-atom public-only WEBCs.
+The upload tests embed OpenAPI into this Component, wrap it in the unified Pkg
+format and sign with new temporary credentials. Static fixtures are generated as
+frontend-only ZIP packages. Package tests also use
+`wasi-http-read-request-then-respond.wasm` to exercise the HTTP entry point and
+public/backend combinations. All package inspection and signature checks are local.
 
 `../support/upload_credentials.rs` adapts the existing DHTTP OpenSSL test helper
 to assign explicit test owner hashes. All private keys and OCSP responses are

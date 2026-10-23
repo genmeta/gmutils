@@ -51,19 +51,12 @@ pub enum Error {
     },
 }
 
-fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
+fn init_tracing(verb: bool) -> tracing_appender::non_blocking::WorkerGuard {
     let (stderr, guard) = tracing_appender::non_blocking(std::io::stderr());
-    let filter = tracing_subscriber::EnvFilter::builder()
-        .with_default_directive(tracing_subscriber::filter::LevelFilter::WARN.into())
-        .from_env_lossy();
-    let filter = if std::env::var_os("RUST_LOG").is_none() {
-        filter.add_directive(
-            "dhttp::network::interfaces::nat=error"
-                .parse()
-                .expect("static tracing directive is valid"),
-        )
+    let filter = if verb {
+        tracing_subscriber::filter::LevelFilter::DEBUG
     } else {
-        filter
+        tracing_subscriber::filter::LevelFilter::OFF
     };
     tracing_subscriber::registry()
         .with(
@@ -78,7 +71,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
 }
 
 pub async fn run(options: Options) -> Result<(), Error> {
-    let _guard = init_tracing();
+    let _guard = init_tracing(options.verb);
     let home = DhttpHome::load(options.home_scope()).context(error::LoadHomeSnafu)?;
     let output = run_for_home(&home, options).await?;
     if !output.is_empty() {

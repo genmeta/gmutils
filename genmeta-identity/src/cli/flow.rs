@@ -18,6 +18,7 @@ pub(crate) mod renew;
 pub(crate) mod site;
 pub(crate) mod target;
 pub(crate) mod transcript;
+pub(crate) mod workspace;
 
 use dhttp_home::{DhttpHome, HomeScope};
 

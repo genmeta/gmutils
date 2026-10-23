@@ -17,6 +17,10 @@ use tracing_subscriber::prelude::*;
 #[derive(Parser, Debug, Clone)]
 #[command(version, about)]
 pub struct Options {
+    /// Enable debug logs
+    #[arg(long, global = true)]
+    pub verb: bool,
+
     /// Proxy listen address patterns
     #[arg(long = "listen", visible_alias = "bind", value_name = "bind", default_values = ["127.0.0.1:16080", "[::1]:16080"])]
     pub listens: Vec<BindPattern>,
@@ -254,16 +258,11 @@ fn init_tracing(options: &Options) -> Result<tracing_appender::non_blocking::Wor
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
                 .with_writer(writer),
         )
-        .with(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
-                .from_env_lossy()
-                .add_directive(
-                    "netlink_packet_route=error"
-                        .parse()
-                        .expect("BUG: static tracing directive is valid"),
-                ),
-        )
+        .with(if options.verb {
+            tracing_subscriber::filter::LevelFilter::DEBUG
+        } else {
+            tracing_subscriber::filter::LevelFilter::OFF
+        })
         .init();
     Ok(guard)
 }

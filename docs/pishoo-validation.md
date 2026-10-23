@@ -30,7 +30,7 @@ were created.
 ```sh
 cargo build --locked -p genmeta
 GENMETA_TEST_BINARY="$PWD/target/debug/genmeta" python3 genmeta/tests/pishoo_live.py \
-  --id YOUR_TEST_ID --peer ANOTHER_TEST_ID --output /tmp/pishoo-live.json
+  --id alice.smith --peer bob.jones --output /tmp/pishoo-live.json
 ```
 
 Use dedicated test identities with a running reachable Pishoo. The runner cycles
@@ -50,7 +50,7 @@ online store. The real HTTP/3 tests own global trust roots and run separately:
 ```sh
 cargo test --locked --workspace --all-features --all-targets -- --test-threads=1
 cargo test --locked -p genmeta install::tests::host_api_commands_authenticate_and_preserve_methods_bodies_and_errors -- --ignored --exact
-cargo test --locked -p genmeta upload::tests::real_http3_publish_retry_dependencies_and_read_only_recovery -- --ignored --exact
+cargo test --locked -p jade upload::tests::real_http3_publish_retry_dependencies_and_read_only_recovery -- --ignored --exact
 ```
 
 The two explicit HTTP/3 tests require OpenSSL 3 on PATH and permission to bind
