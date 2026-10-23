@@ -30,27 +30,17 @@ rustls = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-base64 = { workspace = true }
 dhttp-identity = { workspace = true }
-sha2 = "0.10"
-tempfile = "3"
-qtls = { workspace = true }
-dirs = { workspace = true }
 url = "2"
-rustix = { version = "1", features = ["fs"] }
-toml = "1"
 urlencoding = { workspace = true }
-webc = { version = "=12.0.1", default-features = false, features = ["v3"] }
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
 
 [dev-dependencies]
+qtls = { workspace = true }
+tempfile = "3"
 bytes = { workspace = true }
 futures = { workspace = true }
 qbase = { workspace = true }
 qprotocol = { workspace = true }
-rcgen = "0.14"
 rustls-pemfile = "2"
 http-body = "1"
 tower = { version = "0.5", features = ["util"] }

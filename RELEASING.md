@@ -15,8 +15,9 @@ workflow deliberately skips versions already on crates.io.
 ## Scope and compatibility
 
 This release targets the current Pishoo unified Pkg, listen/mount and query-based
-ACL APIs. Package commands are top-level build/publish/install/update/uninstall;
-installed queries use install --list/--info. Signed source files use .pkg. No
+ACL APIs. Package creation, build and publication use the separate Jade executable
+(`jade create/build/publish`); `genmeta` provides install/update/uninstall and
+installed queries via install --list/--info. Signed source files use .waz. No
 legacy App/Lib package flags, package/server grouping, forward or unlisten aliases
 are restored. App entry URLs use /app/NAME/.
 
@@ -47,6 +48,60 @@ both closing braces, including Pishoo-Viewer-Name on App HEAD responses.
 Runtime dependencies use published registry releases without sibling Cargo
 patches. The access CLI's test-only daccess dependency is pinned to the same
 revision as Pishoo so its contract tests exercise the current HTTP routes.
+
+## Jade project
+
+Jade lives in `jade/` with its own manifest, executable, README, fixtures and tests.
+Build and test it with `cargo build -p jade --locked` and
+`cargo test -p jade --locked`. Install from this checkout with
+`cargo install --path jade --locked`. Workspace CI includes Jade; the existing
+gmutils distribution recipes and explicit crates.io publication list continue
+to release the Genmeta utilities. Jade can be built and installed independently.
+
+Jade implements the `create/build/publish` workflow described in the
+[implementation plan](jade/IMPLEMENTATION_PLAN.md): `jade.toml`, native frontend
+builds, Rust HTTP API templates with built-in Cargo invocation, local content and
+signature checks, and human/JSON result reporting. Publish uses the signed
+package's author; package output defaults to `.jade/`. Runtime templates and local
+HTTP/3 publication have dedicated acceptance checks; platform CI remains a release
+gate.
+
+### Application pipelines
+
+The six independent repositories in `pishoo-projects` use
+[jade-app.yml](.github/workflows/jade-app.yml). Their callers pin both the reusable
+workflow and `jade-ref` to the same full gmutils commit. Push that commit before
+pushing the application callers. The workflow builds Jade from that revision,
+uses Rust 1.97.1, Bun 1.4.3, Node 24 and the checksum-verified WASI SDK 33, runs the
+application's existing tests, then executes `jade build`. Branches, pull requests
+and manual branch runs use an isolated self-signed test identity and cannot
+publish. A `vVERSION` annotated tag must match `jade.toml` and native manifests.
+
+Before pushing release tags, create a `release` GitHub environment in each
+application repository, restrict it to approved version tags and require a
+reviewer. Store `DHTTP_AUTHOR_CERT` (PEM certificate chain) and `DHTTP_AUTHOR_KEY`
+(PEM private key) as environment secrets for the manifest's exact author.
+`DHTTP_AUTHOR_OCSP` is optional base64 DER; DHTTP refreshes missing or expired
+responses. The standard applications use `std.dhttp.net`; Journal uses
+`alice.smith.dhttp.net`. The workflow never reads a developer's identity directory.
+Public network configuration can be supplied as repository variables
+`DHTTP_ROOT_CA_PEM`, `DHTTP_BOOTSTRAP_URL`, `DHTTP_NAME_SERVICE`,
+`DHTTP_MDNS_SERVICE_DOMAIN` and `DHTTP_CA_SERVICE`; unset values use the DHTTP
+dependency's defaults. The test `ci` environment must contain no signing secrets.
+
+The signed `.waz`, build result, SHA256SUMS and provenance are uploaded as workflow
+artifacts before publication. Jade sends those exact bytes once and verifies the
+saved version. `publish.json` is retained even on failure. On
+`E_PUBLISH_OUTCOME_UNKNOWN`, recover that artifact and retry the same package after
+checking the receipt; do not automatically rebuild or retry an upload.
+
+Release order: deploy the registry's existing `author`/`.waz` implementation first;
+then Profile 0.3.0 and Message 0.2.1; then Introduction 0.1.0; then Workspace 0.3.2.
+Calendar 0.1.2 and Journal 0.1.2 can follow independently. The 2026-10-23 read-only
+production probe still returned `publisher` and `.pkg`; Jade now rejects that
+catalogue before sending any upload. No registry deployment or data migration is
+part of these application changes. Each application's `RELEASING.md` records its
+tag and exact dependencies.
 
 ## Validation on 2026-10-21
 

@@ -10,6 +10,18 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  jade-acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust and the component target
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: rustup target add wasm32-wasip2
+      - name: Build and rebuild the Rust API template
+        run: cargo test -p jade --locked --test pack_commands rust_api_template_builds_without_developer_build_scripts -- --ignored --exact
+      - name: Exercise publication against the local HTTP/3 store
+        run: cargo test -p jade --locked upload::tests::real_http3_publish_retry_dependencies_and_read_only_recovery -- --ignored --exact
+
   build:
     strategy:
       matrix:

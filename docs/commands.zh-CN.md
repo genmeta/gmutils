@@ -1,6 +1,6 @@
 # gmutils 命令使用指南
 
-本文按当前仓库源码整理，核对日期：2026-10-20。主程序 `genmeta` 的版本为 `0.9.0-preview.3`，各工具子模块有各自的版本号。安装方式见 [README](../README.md#install)。
+本文按当前仓库源码整理，核对日期：2026-10-23。主程序 `genmeta` 的版本为 `0.9.0-preview.4`，独立项目 `jade` 的版本为 `0.1.0`，各工具子模块有各自的版本号。安装方式见 [README](../README.md#install) 和 [Jade](../jade/README.md)。
 
 `gmutils` 是工具集名称，统一命令入口是：
 
@@ -11,7 +11,9 @@ genmeta <命令> --help
 genmeta --version
 ```
 
-示例中的 `alice.smith`、`friend.name`、路径和包版本均为占位示例，使用前替换为自己的值。申请身份、修改监听、授权、发布和安装等命令会实际改变状态，按需执行。
+项目创建、构建与发布使用独立的 `jade create/build/publish` 命令，查看帮助用 `jade --help`。
+
+主身份示例统一使用 `alice.smith`；联系人或身份不匹配等需要第二个不同身份的场景使用 `bob.jones`。名称、路径和包版本均为占位示例，使用前替换为自己的值。申请身份、修改监听、授权、发布和安装等命令会实际改变状态，按需执行。
 
 ## 目录
 
@@ -26,7 +28,7 @@ genmeta --version
 - [名称解析：nslookup](#名称解析nslookup)
 - [局域网发现：discover](#局域网发现discover)
 - [网络诊断：doctor](#网络诊断doctor)
-- [包构建与发布：build、publish](#包构建与发布buildpublish)
+- [包创建、构建与发布：jade create/build/publish](#包创建构建与发布jade-createbuildpublish)
 - [包安装与管理：install、update、uninstall、list、info](#包安装与管理installupdateuninstalllistinfo)
 - [常见操作流程](#常见操作流程)
 - [独立工具与源码入口](#独立工具与源码入口)
@@ -44,9 +46,9 @@ genmeta --version
 | `genmeta nslookup` | 通过 mDNS、H3 或系统 DNS 查询地址 | 对应解析源可用 |
 | `genmeta discover` | 持续发现局域网中的 DHTTP 服务 | 局域网支持 mDNS |
 | `genmeta doctor net` | 检测 NAT、接口和公网地址映射 | 网络允许进行探测 |
-| `genmeta jade create` | 在新目录创建静态项目模板 | 指定发布者名称，无需凭据或网络 |
-| `genmeta jade build` | 执行项目构建并签名生成 WEBC 包 | 本地项目、构建工具和发布者凭据 |
-| `genmeta jade publish` | 将已签名 WEBC 包发布到商店 | 本地发布者凭据，商店可达 |
+| `jade create` | 在新目录创建静态、前端或 Rust API 模板 | 无需身份凭据 |
+| `jade build` | 构建或收集产物，校验并签名生成 WEBC 包 | 本地项目、所需工具链和作者凭据 |
+| `jade publish` | 将指定签名包发布到商店 | 包内作者的本地凭据，商店可达 |
 | `genmeta install` | 安装商店中已发布的 App 或 Lib 及其精确依赖 | 本地身份的 Pishoo 已运行并启用，商店可达 |
 | `genmeta update` | 从原发布者更新已安装的包 | 同上，且包已安装 |
 | `genmeta uninstall` | 卸载包，保留数据和依赖 | 本地身份的 Pishoo 已运行并启用 |
@@ -380,82 +382,66 @@ genmeta doctor net --id alice.smith --global
 
 ## 包创建、构建与发布：jade create/build/publish
 
-项目开发命令统一使用 `genmeta jade`；顶层 `genmeta build`、`genmeta publish` 已移除。安装管理命令仍位于顶层。
+项目创建、构建与发布由独立项目 [Jade](../jade/README.md) 提供，直接使用 `jade` 可执行命令。Jade 与 `genmeta` 并列，不再作为它的子命令。在仓库根目录执行 `cargo install --path jade --locked` 安装；安装和运行端管理继续使用 `genmeta`。
 
-### create：创建静态项目
+Jade 使用 `jade.toml`，支持静态页面、npm/pnpm 前端构建、Rust HTTP API 和已有 Component。构建与发布均执行内容及签名检查。设计与验收标准见 [实施规划](../jade/IMPLEMENTATION_PLAN.md)。
+
+### create：创建项目
 
 ```sh
-genmeta jade create ./hello --id alice.smith~
-genmeta jade build --no-build ./hello
-genmeta jade publish ./hello/dist/hello-0.1.0.waz
+jade create ./hello
+jade create ./frontend --template web
+jade create ./service --template api
+jade create ./application --template fullstack
+jade create "My Project" --name my-project
 ```
 
-`PATH` 必填，末级目录名作为包名，必须以小写字母开头，仅含小写字母、数字和连字符，最长 63 字符。`-i/--id` 必填，发布者规范化后写入 manifest，创建时无需本地凭据。父目录需已存在，目标目录必须是新路径；已有文件或目录不会覆盖。
-
-模板包含 `wasmer.toml`、`public/index.html` 和忽略 `dist/` 的 `.gitignore`，初始版本为 `0.1.0`。编辑静态页面后使用 `jade build --no-build` 打包签名；需要源码构建时自行添加 `[build]` 配方。
+`PATH` 必填，父目录需已存在，目标路径须为新目录。默认以目录名作为包名；`--name` 可独立指定小写字母开头、最多 63 个小写字母/数字/连字符的名称。创建无需身份凭据，模板生成配置、源码、`.gitignore` 和准备说明。
 
 ### build：构建并签名
 
 ```sh
-genmeta jade build [PATH] [--no-build] [-o FILE.waz] [--id PUBLISHER]
+jade build [PATH] [--id AUTHOR] [-o FILE.waz] [--overwrite]
 ```
 
-- `PATH` 为项目目录或 manifest 文件，默认当前目录；传目录时查找 `wasmer.toml`。
-- 默认执行 manifest 的 `[build].command`，再签名。命令在该 manifest 所在目录运行，失败就停止，不签名。
-- `[build].manifest` 可指定构建后生成的包 manifest，必须位于项目目录内。
-- `--no-build` 跳过构建，直接对已有产物打包签名。
-- `-o/--output` 指定输出路径；默认是最终包 manifest 所在目录下的 `dist/NAME-VERSION.waz`。已存在的输出文件不会被覆盖，输出不能落在打包的内容目录内。
-- `-i/--id` 校验发布者与 manifest 一致；签名使用当前账户的本地发布者凭据，无需运行 Pishoo 或初始化网络。
-
-构建配方示例：
-
-```toml
-[build]
-command = ["sh", "build.sh"]
-manifest = "dist/wasmer.toml"
-```
-
-`command` 是程序和参数数组。需要 Shell 语法时显式调用 Shell，例如上面的 `sh`。
-
-最小静态 App 的包 manifest 示例，配合已有 `public/index.html` 使用：
+`PATH` 为项目目录或 Jade 配置文件，默认当前目录的 `jade.toml`。最小静态配置：
 
 ```toml
 [package]
-name = "alice.smith.dhttp.net/hello"
-version = "1.0.0"
+name = "hello"
+version = "0.1.0"
 description = "Hello DHTTP"
 license = "Apache-2.0"
 
-[package.pishoo]
-title = "Hello"
-changelog = "Initial release"
-entry = "/"
-dependencies = []
-
-[fs]
-"/public" = "public"
+[frontend]
+path = "public"
 ```
+
+有有效 build 脚本的前端工程使用 npm/pnpm 构建，资源目录由可选的 `frontend.output` 指定，默认相对于前端路径的 `dist/`。无 build 脚本时直接收集包含 `index.html` 的静态目录。
+
+Rust 后端使用 `backend.path = "api"` 指向 API 模板工程。安装 `wasm32-wasip2` 目标后，开发者只需编写路由和业务 Rust 代码；Jade 调用 Cargo，模板 SDK 提供 HTTP 绑定，Jade 根据路由声明生成并嵌入 OpenAPI，无需另写构建脚本。已有 Component 可直接通过 backend.path 指定。完整配置见 [Jade README](../jade/README.md)。
+
+签名身份依次取 `--id`、`package.author`、DHTTP 默认身份；显式身份须符合配置约束。均未指定时自动选择唯一可用身份，多候选在交互终端中选择。非交互和 JSON 模式通过 `E_IDENTITY_REQUIRED` 提示补充 `--id`。凭据使用 dhttp-home 的目录约定，支持 `DHTTP_HOME`。
+
+包默认写入 `.jade/NAME-VERSION.waz`，与前端资源输出分开。重复构建可以原子更新同包、同版本、同 owner 的有效产物；失败保留旧包。显式 `-o` 文件已存在时需加 `--overwrite`。
 
 ```sh
-# 有 [build] 配方的源码项目
-genmeta jade build ./hello -o ./dist/hello.waz --id alice.smith
-
-# 已有构建产物，例如上面的最小 App
-genmeta jade build --no-build ./hello -o ./dist/hello.waz --id alice.smith
+jade build ./hello --id alice.smith
+jade build ./hello --json
+jade build ./hello -o ./hello.waz --overwrite --id alice.smith
 ```
-
-一个 `.waz` 可包含静态页面、后端模块或两者。静态页面使用 `/public` 映射，必须包含 `index.html`；后端使用名为 `backend` 的已构建 WASM component，并显式声明 `host` 用途。OpenAPI 从 component 中读取。必须显式写出 `dependencies` 数组，无依赖时填 `[]`；每项依赖都需声明精确的发布者、名称和版本。
-
-包名使用规范化的 `publisher/name`，版本为 `MAJOR.MINOR.PATCH`，最终包不能超过 64 MiB。构建日志写 stderr，成功结果以 JSON 写 stdout，包含包 ID、版本、文件、大小和 SHA-256。
 
 ### publish：发布已签名包
 
 ```sh
-genmeta jade publish FILE.waz [--id PUBLISHER]
-genmeta jade publish ./dist/hello.waz --id alice.smith
+jade publish ./hello/.jade/hello-0.1.0.waz
 ```
 
-读取单个本地已签名 WEBC v3 常规文件，验证包及发布者凭据后上传到受信任的 `store.dhttp.net`。文件上限 64 MiB。省略 `--id` 时使用包内发布者；显式身份必须匹配包内发布者。发布不重新构建或改写包，成功输出 JSON，不依赖本机 Pishoo。
+publish 从包中取得作者，加载匹配凭据，在联网前完成容器、签名和身份绑定检查，再向固定商店上传一次文件快照。证书更换后重新 build。相同内容的同版本重复发布视为成功，不同内容返回版本冲突；响应丢失后只读核验，无法确认时返回 `E_PUBLISH_OUTCOME_UNKNOWN`。
+
+`.waz` 使用 WEBC v3，MIME 为 `application/webc`，可同时包含静态页面和后端组件。完整包上限 64 MiB。`payload_sha256` 表示内容摘要，`package_sha256` 表示包含签名的完整文件摘要。
+
+三个命令默认输出人类可读摘要。`--json` 在 stdout 输出一个完整结果文档，错误同样具有稳定结构；进度、构建工具输出和诊断写 stderr。机器结果使用完整身份，终端可缩写为 `alice.smith~`；`--verb` 开启调试日志。退出码为成功 0、运行失败或发布结果未知 1、参数错误 2、取消 130。
 
 ## 包安装与管理：install、update、uninstall、list、info
 
@@ -569,7 +555,7 @@ genmeta curl --verb --id alice.smith -v https://alice.smith.dhttp.net/
 
 ## 独立工具与源码入口
 
-统一使用 `genmeta` 即可。仓库也提供以下独立二进制入口；系统安装包提供统一入口，独立工具是否可用取决于安装方式：
+运行端管理使用 `genmeta`，项目开发与发布使用独立安装的 `jade`。仓库还提供以下二进制入口；独立工具是否可用取决于安装方式：
 
 | 独立程序 | 对应功能 |
 | --- | --- |
@@ -580,12 +566,14 @@ genmeta curl --verb --id alice.smith -v https://alice.smith.dhttp.net/
 | `genmeta-discover` | `genmeta discover` |
 | `genmeta-doctor net` | `genmeta doctor net` |
 | `genmeta-nat` | NAT 诊断，即 `genmeta doctor net` 的实现 |
+| `jade` | 独立的项目创建、构建与发布入口：`jade create/build/publish` |
 
 `genmeta-access` 当前是库 crate，通过统一入口 `genmeta access` 调用。
 
 维护文档时，以这些源码中的参数声明和执行逻辑为准：
 
 - [统一入口与包命令](../genmeta/src/main.rs)
+- [Jade 独立入口](../jade/src/main.rs)与 [开发命令](../jade/src/cli.rs)
 - [监听与转发](../genmeta/src/server.rs)
 - [身份管理](../genmeta-identity/src/cli.rs)
 - [访问控制](../genmeta-access/src/cli.rs)
@@ -594,4 +582,4 @@ genmeta curl --verb --id alice.smith -v https://alice.smith.dhttp.net/
 - [名称解析](../genmeta-nslookup/src/lib.rs)
 - [局域网发现](../genmeta-discover/src/lib.rs)
 - [诊断入口](../genmeta-doctor/src/lib.rs)与 [NAT 实现](../genmeta-nat/src/lib.rs)
-- [构建与签名](../genmeta/src/pack.rs)、[发布](../genmeta/src/upload.rs)、[安装与包管理](../genmeta/src/install.rs)
+- [构建与签名](../jade/src/pack.rs)、[发布](../jade/src/upload.rs)、[安装与包管理](../genmeta/src/install.rs)

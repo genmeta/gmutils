@@ -5,14 +5,11 @@ use snafu::Whatever;
 
 mod display;
 mod install;
-mod jade;
-mod pack;
 mod server;
 
 #[cfg(test)]
 #[path = "../tests/support/upload_credentials.rs"]
 mod test_credentials;
-mod upload;
 
 #[derive(Parser, Debug)]
 #[command(name = "genmeta", version, about)]
@@ -37,12 +34,6 @@ enum Options {
     },
     #[command(visible_alias = "id")]
     Identity(genmeta_identity::Cli),
-    /// Create projects, build signed packages, and publish releases
-    #[command(version)]
-    Jade {
-        #[command(subcommand)]
-        command: jade::Command,
-    },
     #[command(flatten)]
     Package(PackageCommand),
     #[command(flatten)]
@@ -127,7 +118,7 @@ async fn main() -> Result<(), Error> {
     let Cli { verb, options } = Cli::parse();
     if matches!(
         options,
-        Options::Jade { .. } | Options::Package(_) | Options::Server(_) | Options::Version {}
+        Options::Package(_) | Options::Server(_) | Options::Version {}
     ) {
         tracing_subscriber::fmt()
             .with_max_level(if verb {
@@ -152,7 +143,6 @@ async fn run(options: Options) -> Result<(), Error> {
         Options::Discover(options) => genmeta_discover::run(options).await,
         Options::Doctor { options } => genmeta_doctor::run(options).await?,
         Options::Identity(options) => genmeta_identity::run(options).await?,
-        Options::Jade { command } => jade::run(command).await?,
         Options::Package(command) => match command {
             PackageCommand::Install {
                 target,
@@ -190,7 +180,7 @@ async fn run(options: Options) -> Result<(), Error> {
 mod tests {
     use clap::{CommandFactory, Parser};
 
-    use super::{Cli, Options, install_process_crypto_provider, jade};
+    use super::{Cli, Options, install_process_crypto_provider};
 
     #[test]
     fn debug_flag_is_global_and_propagates_to_nested_commands() {
@@ -206,9 +196,6 @@ mod tests {
             vec!["install", "--list"],
             vec!["update", "workspace"],
             vec!["uninstall", "workspace"],
-            vec!["jade", "create", "hello", "--id", "alice~"],
-            vec!["jade", "build"],
-            vec!["jade", "publish", "workspace.waz"],
             vec!["listen", "--id", "alice.smith"],
             vec!["mount"],
             vec!["unmount", "/api", "127.0.0.1:8080"],
@@ -355,10 +342,6 @@ mod tests {
             vec!["discover"],
             vec!["nslookup"],
             vec!["proxy"],
-            vec!["jade", "publish"],
-            vec!["jade", "build"],
-            vec!["jade", "create"],
-            vec!["jade"],
             vec!["doctor", "net"],
         ] {
             for (flag, kind) in [
@@ -389,52 +372,14 @@ mod tests {
     }
 
     #[test]
-    fn launcher_accepts_jade_build_defaults_and_explicit_paths() {
-        let options = Options::try_parse_from(["genmeta", "jade", "build"]).unwrap();
-        assert!(
-            matches!(options, Options::Jade { command: jade::Command::Build { path, output: None, id: None, no_build: false } } if path == std::path::Path::new("."))
-        );
-        let options = Options::try_parse_from([
-            "genmeta",
-            "jade",
-            "build",
-            "project with spaces/wasmer.toml",
-            "-o",
-            "out file.waz",
-            "-i",
-            "dev.dhttp.net",
-        ])
-        .unwrap();
-        assert!(
-            matches!(options, Options::Jade { command: jade::Command::Build { path, output: Some(output), id: Some(id), no_build: false } }
-            if path == std::path::Path::new("project with spaces/wasmer.toml")
-                && output == std::path::Path::new("out file.waz") && id == "dev.dhttp.net")
-        );
-        for arg in ["--force", "--unsigned", "--kind", "--home", "--upload"] {
-            assert!(Options::try_parse_from(["genmeta", "jade", "build", arg]).is_err());
-        }
-    }
-
-    #[test]
-    fn launcher_groups_project_commands_under_jade() {
+    fn launcher_keeps_project_commands_in_the_standalone_jade_binary() {
         let command = Options::command();
-        let jade = command.find_subcommand("jade").unwrap();
-        for name in ["create", "build", "publish"] {
-            assert!(jade.find_subcommand(name).is_some());
+        for name in ["jade", "create", "build", "publish"] {
             assert!(command.find_subcommand(name).is_none());
             assert!(Options::try_parse_from(["genmeta", name]).is_err());
         }
         for name in ["install", "update", "uninstall"] {
             assert!(command.find_subcommand(name).is_some());
-            assert!(jade.find_subcommand(name).is_none());
         }
-        assert!(Options::try_parse_from(["genmeta", "jade"]).is_err());
-        assert!(Options::try_parse_from(["genmeta", "jade", "create", "hello"]).is_err());
-        assert!(matches!(
-            Options::try_parse_from(["genmeta", "jade", "build", "--no-build"]).unwrap(),
-            Options::Jade {
-                command: jade::Command::Build { no_build: true, .. }
-            }
-        ));
     }
 }

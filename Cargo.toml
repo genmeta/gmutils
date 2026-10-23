@@ -2,6 +2,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "jade",
     "genmeta",
     "genmeta-access",
     "genmeta-curl",

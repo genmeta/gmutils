@@ -4,13 +4,21 @@
 
 ### Changed
 
-- Group project creation, builds and publication under `genmeta jade create/build/publish`;
-  replace the top-level `build` and `publish` commands and add a static project scaffold.
+- Extract project creation, builds and publication into the independent `jade`
+  Cargo package and executable: `jade create/build/publish`. Keep installation
+  and host management in `genmeta`.
+- Implement Jade's `jade.toml` workflow, native npm/pnpm/Bun and Rust API builds,
+  automatic OpenAPI embedding, local signature verification and atomic package
+  output in `.jade/`. Create needs no identity; publish uses the signed author.
+  Human summaries are the default, with canonical JSON results via `--json`.
+- Add reusable application CI with version-tag validation, isolated test signing,
+  environment-scoped release credentials and saved package/receipt artifacts.
+  Reject legacy store catalogues before uploading a package.
 - Suppress runtime logs across all commands by default; require `--verb` to enable
   debug logging, independently of `RUST_LOG` and command-specific verbose output.
 - After interactive identity application with the server enabled, offer to install
   Workspace, then reload Pishoo and wait for readiness before installing it.
-- Abbreviate package CLI identities and URL hosts with `~`, and show standard
+- Abbreviate Genmeta package-management identities and URL hosts with `~`, and show standard
   package IDs as `std/name` in progress, diagnostics and JSON output.
 
 ## [0.9.0-preview.4] - 2026-10-21

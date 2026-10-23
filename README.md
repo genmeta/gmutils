@@ -14,7 +14,7 @@
 
 gmutils is the Genmeta command-line tool family for DHttp networking. It gives an endpoint the tools it needs to create and use a Unified Identity, publish or reach services, control access, diagnose connectivity, and manage DHttp-based remote sessions.
 
-The `genmeta` launcher exposes the suite behind a consistent command surface: `genmeta <tool> [options]`. Most utilities are also published as individual crates for users who only need one command.
+The `genmeta` launcher exposes the suite behind a consistent command surface: `genmeta <tool> [options]`. Most utilities are also published as individual crates for users who only need one command. [Jade](jade/README.md) is a separate project and executable for creating, building and publishing packages.
 
 ## Utils
 
@@ -31,7 +31,7 @@ Available commands:
 | `genmeta nslookup` | Resolve DDns names and discover reachable DHttp addresses. |
 | `genmeta discover` | Discover nearby DHttp endpoints over mDNS. |
 | `genmeta doctor` | Diagnose NAT and network connectivity. |
-| `genmeta jade create/build/publish` | Create projects, build and publish signed Pkg packages. |
+| `jade create/build/publish` | Create projects, build and publish signed Pkg packages. |
 | `genmeta install/update/uninstall` | Manage installed packages; query with `install --list` or `install --info`. |
 
 See [Pishoo command validation](docs/pishoo-validation.md) for the running-host acceptance matrix and release follow-up checks.
@@ -172,12 +172,11 @@ request/response output is independent of debug logging.
 
 ## Build and sign a package
 
-`genmeta jade build PATH` executes the local manifest's `[build]` recipe and
-then signs its output locally. Building does not require a running Pishoo service.
-See [Package management](#package-management) for the recipe and all commands.
-For existing artifacts, `genmeta jade build --no-build PATH -o FILE.waz` retains the packaging-only
-workflow. The signer uses the current account's `~/.dhttp`; `--id` checks the
-publisher and does not rewrite the manifest.
+`jade build PATH` reads `jade.toml`, runs native frontend or Rust API builds when
+needed, and signs the resulting package locally. Static resources and prebuilt
+Components use the same command. A running Pishoo service is not required.
+The default output is `.jade/NAME-VERSION.waz`; `--id` selects the signing identity.
+See [Jade](jade/README.md) for configuration, templates and JSON output.
 
 ## Access policies
 
@@ -256,27 +255,31 @@ identity is used.
 
 ## Package management
 
-Project creation, builds and publication use `genmeta jade`. Installation, updates,
-queries and removal remain top-level `genmeta` commands. The former top-level
-`build` and `publish` commands have been removed.
+Project creation, builds and publication use the independent [Jade project](jade/README.md)
+and its `jade` executable. Install it separately with `cargo install --path jade --locked`
+from this checkout. Installation, updates, queries and removal use `genmeta`.
+
+The development workflow uses `jade.toml` and existing native build tools.
 
 ```sh
-# Static starter: creates wasmer.toml, public/index.html and .gitignore.
-genmeta jade create ./hello --id alice~
-genmeta jade build --no-build ./hello
-genmeta jade publish ./hello/dist/hello-0.1.0.waz
+# Static starter; no identity is needed until build.
+jade create ./hello
+jade build ./hello --id alice.smith
+jade publish ./hello/.jade/hello-0.1.0.waz
 
-# Existing source project with a build recipe.
-genmeta jade build ./profile -o ./dist/profile.waz
-genmeta jade publish ./dist/profile.waz
-genmeta install std.dhttp.net/workspace --id sky.lee.dhttp.net
-genmeta update workspace --id sky.lee.dhttp.net
-genmeta install --list --id sky.lee.dhttp.net
-genmeta install --info message --id sky.lee.dhttp.net
-genmeta uninstall alice.smith.dhttp.net/message --id sky.lee.dhttp.net
+# Rust API starter; Jade invokes Cargo, with no developer-written build script.
+jade create ./service --template api
+rustup target add wasm32-wasip2
+jade build ./service --id alice.smith
+jade publish ./service/.jade/service-0.1.0.waz
+genmeta install std.dhttp.net/workspace --id alice.smith
+genmeta update workspace --id alice.smith
+genmeta install --list --id alice.smith
+genmeta install --info message --id alice.smith
+genmeta uninstall alice.smith.dhttp.net/message --id alice.smith
 ```
 
-Package identity is `author/name`; all management operations act on the entire package. A `.waz` (Wasm Archive Zip) may contain a backend, static pages, or both, with one version and signature. `install --list`, `install --info` and `uninstall` query the selected identity's Pishoo service. Full package IDs must match the installed publisher; removal retains business data and dependencies.
+Package identity is `author/name`; all management operations act on the entire package. A `.waz` currently uses a WEBC v3 container and may contain a backend, static pages, or both, with one version and signature. `install --list`, `install --info` and `uninstall` query the selected identity's Pishoo service. Full package IDs must match the installed publisher; removal retains business data and dependencies.
 
 `install` leaves an identical installed version unchanged and directs version
 changes to `update`. `update` requires an installed package, stays with its current
@@ -285,27 +288,18 @@ The CLI checks these conditions before using the existing store installation API
 the preflight is not an atomic compare-and-swap with concurrent administrators.
 Exact dependency/publisher checks and per-package transactions remain on the host.
 
-`jade create PATH --id PUBLISHER` creates a new static project without loading
-credentials. The directory name becomes the package name; existing paths are
-rejected. Edit `public/index.html`, then use `jade build --no-build` to sign it.
-For a source build, add a `[build]` recipe to its manifest.
+`jade create PATH` generates a new project. `--template` selects static, web, api
+or fullstack source files, and `--name` separates the package name from its folder.
 
-`jade build` uses the local signer and a recipe in
-the local `wasmer.toml`:
+`jade build [PATH]` accepts a directory or Jade configuration file. Frontend build
+scripts run through npm/pnpm; Rust APIs compile through Cargo to WASI Components.
+Existing static directories and Components are collected directly. Build checks
+content and signatures, then atomically writes the package. `-o FILE --overwrite`
+replaces an explicit output. Results are human-readable by default; `--json`
+provides canonical IDs and stable diagnostic codes for scripts.
 
-```toml
-[build]
-command = ["sh", "build.sh"]
-manifest = "dist/wasmer.toml"
-```
-
-The command runs in the source directory on every invocation. The optional
-`manifest` selects its generated package manifest within that directory. A failed
-build prevents signing. Recipe arguments are passed directly; no shell string is
-constructed. Build logs go to stderr; the final signed-package result is JSON on
-stdout. `--id` checks the generated publisher rather than rewriting it.
-For already-built artifacts use `genmeta jade build --no-build PATH -o FILE.waz` directly.
-`jade publish` does not rebuild or change the signed package.
+`jade publish FILE` reads the author from the signed package, checks matching
+credentials and uploads the fixed snapshot. It does not rebuild the package.
 
 The new removal command requires the Pishoo detail API's `Package-Id` response
 header and sends `Expected-Package-Id` to prevent deleting a replacement publisher
@@ -329,7 +323,10 @@ genmeta install --list --id alice.smith
 Listening configuration is edited locally, including when listening is off.
 Proxy changes and package operations call the running host and retain its authorization,
 validation, dependency and atomic-install rules. Installation and updates select published store releases and resolve exact dependencies through the host. Local artifacts are used only for build and publish.
-`genmeta jade build` now builds and signs directly; `--no-build` packages existing
-artifacts. Full signature and host compatibility checks run during install/update. No Pishoo
-CLI or pishoo-pack executable is needed. Service start/stop/restart/status belong
+`jade build` builds or collects declared artifacts and signs directly. Local
+signature and component checks run during build/publish; the host additionally
+checks runtime compatibility during install/update. No Pishoo CLI or pishoo-pack
+executable is needed. Service start/stop/restart/status belong
 to systemctl or brew services; gmutils does not wrap them.
+
+Store metadata uses `author`, `author_owner_hash` and `dependencies[].author`; catalog filters and update requests also use `author`. Signed manifest dependency keys remain `publisher`.
