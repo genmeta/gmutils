@@ -126,7 +126,7 @@ genmeta install std.dhttp.net/message
 Installation defaults to the latest published package version and the configured
 default identity. Bare installation names select the standard publisher: `workspace`
 means `std.dhttp.net/workspace`. Author names may omit `.dhttp.net`, so
-`alice/message` means `alice.dhttp.net/message`. Update, uninstall and info resolve
+`alice.smith/message` means `alice.smith.dhttp.net/message`. Update, uninstall and info resolve
 bare names against the installed catalog and preserve the registered publisher.
 The selected identity's Pishoo service must already be running and enabled.
 Local credentials use the current account’s identity home. Installation accepts only published store releases; local package files, URLs and anonymous installation are not supported.
@@ -186,7 +186,7 @@ the API; otherwise the default identity is used. `--global` selects the home
 scope for loading credentials. Pishoo must be running for that identity.
 
 ```bash
-genmeta access --id alice.pilot /api allow '*?' --method GET
+genmeta access --id alice.smith /api allow '*?' --method GET
 genmeta access /api review '**' --method POST
 genmeta access /api deny '?'
 genmeta access /api list

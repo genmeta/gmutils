@@ -30,7 +30,7 @@ were created.
 ```sh
 cargo build --locked -p genmeta
 GENMETA_TEST_BINARY="$PWD/target/debug/genmeta" python3 genmeta/tests/pishoo_live.py \
-  --id YOUR_TEST_ID --peer ANOTHER_TEST_ID --output /tmp/pishoo-live.json
+  --id alice.smith --peer bob.jones --output /tmp/pishoo-live.json
 ```
 
 Use dedicated test identities with a running reachable Pishoo. The runner cycles

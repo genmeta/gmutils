@@ -121,7 +121,7 @@ genmeta id <子命令> [参数]
 
 ```sh
 genmeta identity apply
-genmeta identity apply alice.smith --email alice@example.com --device-name laptop
+genmeta identity apply alice.smith --email alice.smith@example.com --device-name laptop
 genmeta identity list -v
 genmeta identity info alice.smith
 genmeta identity default alice.smith
@@ -191,7 +191,7 @@ genmeta access [选项] remove <PATH>...
 
 | GRANTEE | 含义 |
 | --- | --- |
-| `friend.name.dhttp.net` 或 `'friend.name~'` | 指定联系人；一般需先登记为联系人，身份自身除外 |
+| `bob.jones.dhttp.net` 或 `'bob.jones~'` | 指定联系人；一般需先登记为联系人，身份自身除外 |
 | `'team@issuer.name~'` | 签发者名下的组 |
 | `'**'` | 有名身份 |
 | `'?'` | 匿名访问者 |
@@ -201,7 +201,7 @@ genmeta access [选项] remove <PATH>...
 genmeta access --id alice.smith /api allow '*?' --method GET
 genmeta access --id alice.smith /api review '**' --method POST
 genmeta access --id alice.smith /api deny '?'
-genmeta access --id alice.smith /api allow 'friend.name~' --method POST
+genmeta access --id alice.smith /api allow 'bob.jones~' --method POST
 genmeta access --id alice.smith /api list
 genmeta access --id alice.smith list --wide
 genmeta access --id alice.smith /api remove '*?' --method GET
@@ -515,7 +515,7 @@ genmeta curl --id alice.smith -f https://alice.smith.dhttp.net/std/sys/listen
 
 ```sh
 genmeta mount --id alice.smith /api 127.0.0.1:8080
-genmeta access --id alice.smith /api allow 'friend.name~' --method GET
+genmeta access --id alice.smith /api allow 'bob.jones~' --method GET
 genmeta mount --id alice.smith
 genmeta access --id alice.smith /api list
 ```
