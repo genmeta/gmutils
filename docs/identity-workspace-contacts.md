@@ -14,7 +14,7 @@ genmeta identity apply alice.smith
 genmeta listen --id alice.smith all
 ```
 
-已经运行的 Pishoo 会自动发现身份并应用配置，无需重启。只有尚未运行时才启动：
+已经运行的 Pishoo 会自动发现身份并应用配置，无需 reload 或重启。申请流程最多等待 30 秒确认该身份服务就绪，再提交一次 Workspace 安装；前台进程和系统服务都适用。只有尚未运行时才启动：
 
 ```sh
 # macOS 已安装服务时

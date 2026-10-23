@@ -358,7 +358,8 @@ async fn regular_file_exists(path: &Path) -> Result<bool, Error> {
     }
 }
 
-pub(crate) const SERVICE_HINT: &str = "systemctl reload pishoo";
+pub(crate) const SERVICE_HINT: &str =
+    "Running Pishoo applies listening changes automatically. Start Pishoo if it is not running.";
 
 /// Local configuration remains usable when HTTP listening is off.
 pub async fn run_listen(
