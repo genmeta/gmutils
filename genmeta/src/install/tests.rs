@@ -1,12 +1,12 @@
 use super::*;
 
-fn release(publisher: &str, name: &str, _kind: &str, version: &str) -> Value {
+fn release(author: &str, name: &str, _kind: &str, version: &str) -> Value {
     let collection = "packages";
     let value = json!({
-        "id": format!("{publisher}/{name}"), "publisher": publisher, "name": name,
+        "id": format!("{author}/{name}"), "author": author, "name": name,
         "version": version, "status": "published", "size": 4096,
-        "package_sha256": "a".repeat(64), "publisher_owner_hash": "b".repeat(64),
-        "download_path": format!("/store/v1/{collection}/{publisher}/{name}/versions/{version}/package.waz"),
+        "package_sha256": "a".repeat(64), "author_owner_hash": "b".repeat(64),
+        "download_path": format!("/store/v1/{collection}/{author}/{name}/versions/{version}/package.waz"),
         "title": "Package", "description": "Description", "changelog": "Initial release", "dependencies": [],
     });
     value
@@ -242,7 +242,7 @@ fn release_validation_rejects_withdrawn_and_mismatched_proofs() {
         ("size", json!(0)),
         ("size", json!(64 * 1024 * 1024 + 1)),
         ("package_sha256", json!("bad")),
-        ("publisher_owner_hash", json!("A".repeat(64))),
+        ("author_owner_hash", json!("A".repeat(64))),
         ("download_path", json!("https://example.com/app.waz")),
     ] {
         let mut value_to_check = base.clone();
@@ -268,11 +268,11 @@ fn release_validation_rejects_withdrawn_and_mismatched_proofs() {
 
 #[test]
 fn success_requires_matching_identity_version_and_saved_entry() {
-    for (publisher, displayed_id) in [
+    for (author, displayed_id) in [
         ("dev.dhttp.net", "dev~/workspace"),
         ("std.dhttp.net", "std/workspace"),
     ] {
-        let release = release(publisher, "workspace", "app", "0.2.0");
+        let release = release(author, "workspace", "app", "0.2.0");
         let mut installed = release.clone();
         installed["has_app"] = true.into();
         installed["entry"] = "/".into();
@@ -282,7 +282,7 @@ fn success_requires_matching_identity_version_and_saved_entry() {
         );
         assert_eq!(
             install_body(&release),
-            json!({"author":publisher,"name":"workspace","version":"0.2.0"})
+            json!({"author":author,"name":"workspace","version":"0.2.0"})
         );
         for key in ["id", "version", "entry"] {
             let mut changed = installed.clone();
@@ -758,7 +758,7 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
 }
 
 #[test]
-fn abbreviated_publishers_expand_without_changing_installed_bare_names() {
+fn abbreviated_authors_expand_without_changing_installed_bare_names() {
     assert_eq!(
         normalize_target("workspace", true),
         "std.dhttp.net/workspace"

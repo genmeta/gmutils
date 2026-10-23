@@ -32,17 +32,17 @@ fn valid_name(name: &str) -> bool {
 
 fn valid_target(target: &str) -> bool {
     match target.split_once('/') {
-        Some((publisher, name)) => {
-            dhttp_home::normalize_name(publisher).as_deref() == Some(publisher) && valid_name(name)
+        Some((author, name)) => {
+            dhttp_home::normalize_name(author).as_deref() == Some(author) && valid_name(name)
         }
         None => valid_name(target),
     }
 }
 
 fn normalize_target(target: &str, standard_bare: bool) -> String {
-    if let Some((publisher, name)) = target.split_once('/') {
-        if let Some(publisher) = dhttp_home::normalize_name(publisher) {
-            return format!("{publisher}/{name}");
+    if let Some((author, name)) = target.split_once('/') {
+        if let Some(author) = dhttp_home::normalize_name(author) {
+            return format!("{author}/{name}");
         }
     } else if standard_bare && valid_name(target) {
         return format!("std.dhttp.net/{target}");
@@ -72,7 +72,7 @@ fn valid_hash(value: &Value) -> bool {
 fn validate_input(target: &str, version: Option<&str>) -> Result<(), Whatever> {
     ensure_whatever!(
         valid_target(target),
-        "TARGET must be a valid short name or canonical publisher/name; local paths, .waz files, URLs, and name@version are not supported"
+        "TARGET must be a valid short name or canonical author/name; local paths, .waz files, URLs, and name@version are not supported"
     );
     ensure_whatever!(
         version.is_none_or(valid_version),
@@ -87,7 +87,7 @@ fn validate_release(
     version: Option<&str>,
 ) -> Result<(), Whatever> {
     let id = value["id"].as_str().unwrap_or("");
-    let publisher = value["publisher"].as_str().unwrap_or("");
+    let author = value["author"].as_str().unwrap_or("");
     let name = value["name"].as_str().unwrap_or("");
     let release = value["version"].as_str().unwrap_or("");
     let collection = "packages";
@@ -95,7 +95,7 @@ fn validate_release(
         value.get("kind").is_none()
             && id.contains('/')
             && valid_target(id)
-            && id == format!("{publisher}/{name}")
+            && id == format!("{author}/{name}")
             && expected.is_none_or(|expected| id == expected)
             && valid_version(release)
             && version.is_none_or(|version| release == version),
@@ -111,10 +111,10 @@ fn validate_release(
             .as_u64()
             .is_some_and(|s| s > 0 && s <= 64 * 1024 * 1024)
             && valid_hash(&value["package_sha256"])
-            && valid_hash(&value["publisher_owner_hash"])
+            && valid_hash(&value["author_owner_hash"])
             && value["download_path"]
                 == format!("/store/v1/{collection}/{id}/versions/{release}/package.waz"),
-        "Invalid store package size, digest, publisher owner hash, or download path"
+        "Invalid store package size, digest, author owner hash, or download path"
     );
     Ok(())
 }
@@ -389,7 +389,7 @@ async fn init_network() -> Result<(), Whatever> {
 }
 
 fn install_body(release: &Value) -> Value {
-    json!({"author":release["publisher"],"name":release["name"],"version":release["version"]})
+    json!({"author":release["author"],"name":release["name"],"version":release["version"]})
 }
 
 fn success(result: &Value, release: &Value, identity: &str) -> Result<Value, Whatever> {
@@ -564,7 +564,7 @@ async fn remove(
 ) -> Result<Value, Whatever> {
     let id = package["id"].as_str().unwrap();
     let path = format!("/std/sys/pkg?name={}", id.rsplit('/').next().unwrap());
-    // The host checks the full identity again; a replacement publisher must
+    // The host checks the full identity again; a replacement author must
     // never be deleted just because it occupies the same short name.
     let condition =
         http::HeaderValue::from_str(id).whatever_context("Invalid package removal precondition")?;
@@ -602,7 +602,7 @@ fn choose_release_target<'a>(
         let id = current["id"].as_str().unwrap();
         ensure_whatever!(
             id.contains('/'),
-            "Legacy package {} has no publisher; remove it explicitly before installing a published package",
+            "Legacy package {} has no author; remove it explicitly before installing a published package",
             display::package_id(id)
         );
         Ok(id)
