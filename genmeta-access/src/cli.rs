@@ -36,6 +36,10 @@ where
     after_help = "Path operations:\n  <path> allow <GRANTEE>    Allow a grantee\n  <path> deny <GRANTEE>     Deny a grantee\n  <path> review <GRANTEE>   Require approval\n  <path> list               List policies at this exact prefix\n  <path> remove <GRANTEE>... | --all\n  <path> clear              Delete all policies at this exact prefix\n\nUse genmeta access <path> <operation> --help for operation options.\n\nExamples:\n  genmeta access /api allow '*?' --method GET\n  genmeta access /api review '**'\n  genmeta access /api list\n  genmeta access /api remove '*?' --method GET\n  genmeta access list --wide\n\nGrantees: a registered contact name, group@issuer, ** (named), ? (anonymous), *? (all).\nPaths are literal API prefixes without queries or wildcards."
 )]
 pub struct Options {
+    /// Enable debug logs
+    #[arg(long, global = true)]
+    pub(crate) verb: bool,
+
     #[arg(
         long,
         global = true,

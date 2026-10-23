@@ -35,24 +35,10 @@ pub(crate) fn init_console(options: &Options) -> ConsoleGuard {
     let indicatif_layer = IndicatifLayer::new()
         .with_span_field_formatter(hide_indicatif_span_fields(DefaultFields::new()));
     let (stderr, guard) = tracing_appender::non_blocking(indicatif_layer.get_stderr_writer());
-    let level = if options.silent && !options.show_error && std::env::var_os("RUST_LOG").is_none() {
+    let filter = if options.verb {
+        tracing_subscriber::filter::LevelFilter::DEBUG
+    } else {
         tracing_subscriber::filter::LevelFilter::OFF
-    } else {
-        tracing_subscriber::filter::LevelFilter::WARN
-    };
-    let filter = tracing_subscriber::EnvFilter::builder()
-        .with_default_directive(level.into())
-        .from_env_lossy();
-    let filter = if level != tracing_subscriber::filter::LevelFilter::OFF
-        && std::env::var_os("RUST_LOG").is_none()
-    {
-        filter.add_directive(
-            "dhttp::network::interfaces::nat=error"
-                .parse()
-                .expect("static tracing directive is valid"),
-        )
-    } else {
-        filter
     };
     tracing_subscriber::registry()
         .with(
@@ -186,7 +172,7 @@ mod tests {
             .with(
                 tracing_subscriber::fmt::layer()
                     .with_writer(std::io::sink)
-                    .with_filter(tracing_subscriber::filter::LevelFilter::WARN),
+                    .with_filter(tracing_subscriber::filter::LevelFilter::OFF),
             )
             .with(layer.with_filter(IndicatifFilter::new(false)));
 

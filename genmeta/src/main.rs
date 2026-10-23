@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{io::IsTerminal, path::PathBuf};
 
 use clap::Parser;
 use snafu::Whatever;
@@ -12,6 +12,16 @@ mod server;
 #[path = "../tests/support/upload_credentials.rs"]
 mod test_credentials;
 mod upload;
+
+#[derive(Parser, Debug)]
+#[command(name = "genmeta", version, about)]
+struct Cli {
+    /// Enable debug logs
+    #[arg(long, global = true)]
+    verb: bool,
+    #[command(subcommand)]
+    options: Options,
+}
 
 #[derive(Parser, Debug, Clone)]
 #[command(version, about)]
@@ -131,7 +141,21 @@ fn install_process_crypto_provider() {
 async fn main() -> Result<(), Error> {
     install_process_crypto_provider();
 
-    let options = Options::parse();
+    let Cli { verb, options } = Cli::parse();
+    if matches!(
+        options,
+        Options::Package(_) | Options::Server(_) | Options::Version {}
+    ) {
+        tracing_subscriber::fmt()
+            .with_max_level(if verb {
+                tracing::level_filters::LevelFilter::DEBUG
+            } else {
+                tracing::level_filters::LevelFilter::OFF
+            })
+            .with_ansi(std::io::stderr().is_terminal())
+            .with_writer(std::io::stderr)
+            .init();
+    }
 
     run(options).await.inspect_err(|error| {
         tracing::debug!(?error, "Exit with error");
@@ -189,7 +213,49 @@ async fn run(options: Options) -> Result<(), Error> {
 mod tests {
     use clap::{CommandFactory, Parser};
 
-    use super::{Options, PackageCommand, install_process_crypto_provider};
+    use super::{Cli, Options, PackageCommand, install_process_crypto_provider};
+
+    #[test]
+    fn debug_flag_is_global_and_propagates_to_nested_commands() {
+        for command in [
+            vec!["access", "list"],
+            vec!["curl", "https://example.com/"],
+            vec!["discover"],
+            vec!["doctor", "net"],
+            vec!["identity", "list"],
+            vec!["id", "apply", "alice.smith"],
+            vec!["nslookup", "localhost", "system"],
+            vec!["proxy"],
+            vec!["install", "--list"],
+            vec!["update", "workspace"],
+            vec!["uninstall", "workspace"],
+            vec!["build"],
+            vec!["publish", "workspace.pkg"],
+            vec!["listen", "--id", "alice.smith"],
+            vec!["mount"],
+            vec!["unmount", "/api", "127.0.0.1:8080"],
+            vec!["version"],
+        ] {
+            let default =
+                Cli::try_parse_from(std::iter::once("genmeta").chain(command.iter().copied()))
+                    .unwrap();
+            assert!(!default.verb, "{command:?}");
+            for args in [
+                [vec!["genmeta", "--verb"], command.clone()].concat(),
+                [vec!["genmeta"], command.clone(), vec!["--verb"]].concat(),
+            ] {
+                let parsed = Cli::try_parse_from(&args).unwrap();
+                assert!(parsed.verb, "{args:?}");
+                match parsed.options {
+                    Options::Identity(options) => assert!(options.verb, "{args:?}"),
+                    Options::Doctor {
+                        options: genmeta_doctor::Options::Net(options),
+                    } => assert!(options.verb, "{args:?}"),
+                    _ => {}
+                }
+            }
+        }
+    }
 
     #[test]
     fn installs_rustls_crypto_provider() {

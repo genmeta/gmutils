@@ -19,6 +19,10 @@ pub(crate) const ACCEPT_ENCODING: &str = "deflate, gzip, zstd";
 #[derive(Parser, Debug, Clone)]
 #[command(version, about)]
 pub struct Options {
+    /// Enable debug logs
+    #[arg(long, global = true)]
+    pub(crate) verb: bool,
+
     /// URL to request
     pub(crate) uri: Uri,
 

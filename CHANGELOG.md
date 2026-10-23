@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Suppress runtime logs across all commands by default; require `--verb` to enable
+  debug logging, independently of `RUST_LOG` and command-specific verbose output.
 - After interactive identity application with the server enabled, offer to install
   Workspace, then reload Pishoo and wait for readiness before installing it.
 - Abbreviate package CLI identities and URL hosts with `~`, and show standard

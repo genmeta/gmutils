@@ -19,6 +19,10 @@ use tracing_subscriber::prelude::*;
 #[derive(Parser, Debug, Clone)]
 #[command(name = "discover", version, about)]
 pub struct Options {
+    /// Enable debug logs
+    #[arg(long, global = true)]
+    verb: bool,
+
     /// Domain name to discover (e.g. _dhttp.local)
     #[arg(value_name = "DOMAIN", default_value = "")]
     domain: String,
@@ -40,7 +44,7 @@ fn domain_with_default_mdns_service(domain: &str) -> String {
     }
 }
 
-fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
+fn init_tracing(verb: bool) -> tracing_appender::non_blocking::WorkerGuard {
     let (stderr, guard) = tracing_appender::non_blocking(std::io::stderr());
     tracing_subscriber::registry()
         .with(
@@ -49,25 +53,20 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
                 .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
                 .with_writer(stderr),
         )
-        .with(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
-                .from_env_lossy()
-                .add_directive(
-                    "netlink_packet_route=error"
-                        .parse()
-                        .expect("BUG: static tracing directive is valid"),
-                ),
-        )
+        .with(if verb {
+            tracing_subscriber::filter::LevelFilter::DEBUG
+        } else {
+            tracing_subscriber::filter::LevelFilter::OFF
+        })
         .init();
     guard
 }
 
 pub async fn run(options: Options) {
-    let _guard = init_tracing();
+    let _guard = init_tracing(options.verb);
 
     if let Err(error) = dhttp::DhttpNetwork::init().await {
-        tracing::error!(%error, "failed to initialize interfaces");
+        eprintln!("Failed to initialize interfaces: {error}");
         return;
     }
     let mut sockets = Vec::new();

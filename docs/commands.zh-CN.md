@@ -544,13 +544,14 @@ genmeta doctor net -v
 genmeta curl --id alice.smith -v -f https://alice.smith.dhttp.net/
 ```
 
-以上按需逐条运行；`discover` 为持续发现，Ctrl+C 结束后再执行下一条。`access` 和 `curl` 默认只记录 warning/error，需要底层传输日志时可使用：
+以上按需逐条运行；`discover` 为持续发现，Ctrl+C 结束后再执行下一条。所有命令默认关闭运行日志，包括 NAT 探测日志；需要 debug 日志时显式添加 `--verb`：
 
 ```sh
-RUST_LOG=debug genmeta curl --id alice.smith -v https://alice.smith.dhttp.net/
+genmeta --verb nslookup 'alice.smith~' h3
+genmeta curl --verb --id alice.smith -v https://alice.smith.dhttp.net/
 ```
 
-`curl -v` 的请求／响应输出与 `RUST_LOG` 控制的底层日志相互独立。默认连接超时为 5 秒，必要时可用 `--connect-timeout 15` 调整。
+`--verb` 也适用于独立工具；仅设置 `RUST_LOG` 不会开启日志。命令结果、进度和错误仍正常显示。`curl -v` 的请求／响应输出与 debug 日志相互独立。默认连接超时为 5 秒，必要时可用 `--connect-timeout 15` 调整。
 
 ## 独立工具与源码入口
 

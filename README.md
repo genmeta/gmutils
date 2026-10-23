@@ -163,10 +163,11 @@ enable hosting. Install an App or mount a local service to serve content.
 See [Identity to Workspace and contacts](docs/identity-workspace-contacts.md)
 for the complete command sequence, readiness checks, and contact approval flow.
 
-Access and curl log warnings and errors by default, suppressing background
-NAT warnings. Set `RUST_LOG=debug` or
-`RUST_LOG=trace` to inspect transport diagnostics. Curl progress and `--verbose`
-request/response output are independent of this log filter.
+Commands suppress runtime logs by default, including background NAT messages.
+Pass `--verb` to enable debug logs, for example `genmeta --verb nslookup alice.smith~`.
+The flag also works on standalone tools. `RUST_LOG` alone does not enable logs.
+Command results, progress and errors remain visible; curl's `--verbose`
+request/response output is independent of debug logging.
 
 ## Build and sign a package
 
