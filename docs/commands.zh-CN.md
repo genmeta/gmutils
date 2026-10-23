@@ -485,6 +485,8 @@ genmeta uninstall hello --id alice.smith
 
 成功结果写 stdout，格式为 JSON；进度和诊断写 stderr。App 安装结果包含 `entry_url`。商店版本解析期限为 120 秒，安装请求最多等待 15 分钟。中断或超时可能意味着结果未知，CLI 不自动重试写操作；先检查已安装目录和服务日志。父包安装失败时，此前已安装的依赖会保留。
 
+包管理输出中的身份使用 `alice.smith~`，包 ID 使用 `alice.smith~/hello`，标准发布者简写为 `std/workspace`；应用入口显示为 `https://alice.smith~/app/workspace/`。
+
 安装包不会自动授予 API 访问权限。商店和 Pishoo 需支持当前 WEBC manifest 协议；卸载还要求 Pishoo 支持包详情响应中的 `Package-Id` 校验。
 
 ## 常见操作流程

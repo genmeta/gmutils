@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use snafu::Whatever;
 
+mod display;
 mod install;
 mod pack;
 mod server;

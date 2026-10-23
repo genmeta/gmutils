@@ -229,14 +229,18 @@ async fn build(
         user_home.ok_or("cannot locate user home directory")?,
     );
     let profile = home.identity_profile(publisher)?;
-    let certificates = profile
-        .load_certs()
-        .await
-        .map_err(|e| format!("missing or invalid local credentials for {publisher}: {e}"))?;
-    let private_key = profile
-        .load_key()
-        .await
-        .map_err(|e| format!("missing or invalid local credentials for {publisher}: {e}"))?;
+    let certificates = profile.load_certs().await.map_err(|e| {
+        format!(
+            "missing or invalid local credentials for {}: {e}",
+            crate::display::publisher(publisher)
+        )
+    })?;
+    let private_key = profile.load_key().await.map_err(|e| {
+        format!(
+            "missing or invalid local credentials for {}: {e}",
+            crate::display::publisher(publisher)
+        )
+    })?;
     let signing_key = qtls::default_provider()
         .key_provider
         .load_private_key(private_key)?;
@@ -334,7 +338,10 @@ async fn build(
     })?;
     #[cfg(unix)]
     std::fs::File::open(&parent)?.sync_all()?;
-    println!("{}", serde_json::to_string(&result)?);
+    println!(
+        "{}",
+        serde_json::to_string(&crate::display::package_output(result))?
+    );
     Ok(())
 }
 

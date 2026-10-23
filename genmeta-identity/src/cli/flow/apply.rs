@@ -550,7 +550,7 @@ async fn offer_server_activation(
     dhttp_home: &DhttpHome,
     target: &IdentityTarget,
     interactive: bool,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     let server_error = |source| Error::InstalledServerConfiguration { source };
     let profile = dhttp_home
         .resolve_identity_profile_exactly((target.dhttp_name()).as_full())
@@ -560,13 +560,12 @@ async fn offer_server_activation(
     let server = super::site::ServerConfig::for_profile(&profile);
 
     match server.state().await.map_err(server_error)? {
-        super::site::ServerConfigState::Enabled => {
-            super::transcript::print_line("Server is already enabled for this name.");
-        }
+        super::site::ServerConfigState::Enabled => Ok(true),
         super::site::ServerConfigState::Disabled | super::site::ServerConfigState::Missing
             if !interactive =>
         {
             print_server_disabled_hint(target.short_name());
+            Ok(false)
         }
         super::site::ServerConfigState::Disabled | super::site::ServerConfigState::Missing => {
             let enabled = crate::cli::prompt::prompt_enable_server()
@@ -574,19 +573,13 @@ async fn offer_server_activation(
                 .require_interactive("`genmeta listen --id IDENTITY all`")
                 .map_err(|source| Error::ServerActivationPrompt { source })?;
             if enabled {
-                let change = server.enable().await.map_err(server_error)?;
-                super::site::print_enable_result(target.short_name(), change);
-                super::transcript::print_line(format!(
-                    "Once Pishoo has loaded this identity, check it with `genmeta curl --id {} https://{}~/std/sys/listen`.",
-                    target.short_name(),
-                    target.short_name()
-                ));
+                server.enable().await.map_err(server_error)?;
             } else {
                 print_server_disabled_hint(target.short_name());
             }
+            Ok(enabled)
         }
     }
-    Ok(())
 }
 
 fn print_server_disabled_hint(identity: &str) {
@@ -669,17 +662,11 @@ async fn install_and_finish(
         }
     }
 
-    offer_server_activation(dhttp_home, &resolved.target, interactive).await?;
+    let server_enabled = offer_server_activation(dhttp_home, &resolved.target, interactive).await?;
 
     super::epilogue::run_lifecycle_epilogue(dhttp_home, resolved.target.dhttp_name(), interactive)
         .await?;
-    super::workspace::offer_install(
-        dhttp_home,
-        home_scope,
-        resolved.target.short_name(),
-        interactive,
-    )
-    .await;
+    super::workspace::finish_setup(dhttp_home, resolved.target.short_name(), server_enabled).await;
     Ok(())
 }
 
@@ -944,9 +931,11 @@ mod tests {
     #[tokio::test]
     async fn noninteractive_apply_does_not_create_server_configuration_or_default_files() {
         let fixture = ServerFixture::new("client").await;
-        offer_server_activation(&fixture.home, &fixture.target, false)
-            .await
-            .unwrap();
+        assert!(
+            !offer_server_activation(&fixture.home, &fixture.target, false)
+                .await
+                .unwrap()
+        );
         assert!(!fixture.profile().config_db_path().exists());
         assert!(
             !fixture
@@ -964,9 +953,11 @@ mod tests {
         let profile = fixture.profile();
         let config = super::super::site::ServerConfig::for_profile(&profile);
         config.create_disabled().await.unwrap();
-        offer_server_activation(&fixture.home, &fixture.target, false)
-            .await
-            .unwrap();
+        assert!(
+            !offer_server_activation(&fixture.home, &fixture.target, false)
+                .await
+                .unwrap()
+        );
         assert_eq!(
             config.state().await.unwrap(),
             super::super::site::ServerConfigState::Disabled
@@ -979,9 +970,13 @@ mod tests {
         let config = super::super::site::ServerConfig::for_profile(&fixture.profile());
         config.create_disabled().await.unwrap();
         config.enable().await.unwrap();
-        offer_server_activation(&fixture.home, &fixture.target, true)
-            .await
-            .unwrap();
+        for interactive in [false, true] {
+            assert!(
+                offer_server_activation(&fixture.home, &fixture.target, interactive)
+                    .await
+                    .unwrap()
+            );
+        }
         assert_eq!(
             config.state().await.unwrap(),
             super::super::site::ServerConfigState::Enabled

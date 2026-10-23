@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- After identity application with the server enabled, reload Pishoo and install
+  Workspace automatically, waiting for readiness before submitting installation.
+- Abbreviate package CLI identities and URL hosts with `~`, and show standard
+  package IDs as `std/name` in progress, diagnostics and JSON output.
+
 ## [0.9.0-preview.4] - 2026-10-21
 
 ### Changed

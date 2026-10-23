@@ -121,10 +121,7 @@ async fn ambiguity_on_later_page_lists_full_ids_and_never_installs() {
     .await
     .unwrap_err();
     let message = report(error);
-    assert!(
-        message.contains("first.dhttp.net/workspace")
-            && message.contains("second.dhttp.net/workspace")
-    );
+    assert!(message.contains("first~/workspace") && message.contains("second~/workspace"));
     assert_eq!(calls, 2);
 }
 
@@ -271,30 +268,34 @@ fn release_validation_rejects_withdrawn_and_mismatched_proofs() {
 
 #[test]
 fn success_requires_matching_identity_version_and_saved_entry() {
-    let release = release("dev.dhttp.net", "workspace", "app", "0.2.0");
-    let mut installed = release.clone();
-    installed["has_app"] = true.into();
-    installed["entry"] = "/".into();
-    assert_eq!(
-        success(&installed, &release, "alice.dhttp.net").unwrap(),
-        json!({"id":"dev.dhttp.net/workspace","version":"0.2.0","identity":"alice.dhttp.net","entry_url":"https://alice.dhttp.net/app/workspace/"})
-    );
-    assert_eq!(
-        install_body(&release),
-        json!({"author":"dev.dhttp.net","name":"workspace","version":"0.2.0"})
-    );
-    for key in ["id", "version", "entry"] {
-        let mut changed = installed.clone();
-        changed[key] = "wrong".into();
-        assert!(success(&changed, &release, "alice.dhttp.net").is_err());
+    for (publisher, displayed_id) in [
+        ("dev.dhttp.net", "dev~/workspace"),
+        ("std.dhttp.net", "std/workspace"),
+    ] {
+        let release = release(publisher, "workspace", "app", "0.2.0");
+        let mut installed = release.clone();
+        installed["has_app"] = true.into();
+        installed["entry"] = "/".into();
+        assert_eq!(
+            display::package_output(success(&installed, &release, "alice.dhttp.net").unwrap()),
+            json!({"id":displayed_id,"version":"0.2.0","identity":"alice~","entry_url":"https://alice~/app/workspace/"})
+        );
+        assert_eq!(
+            install_body(&release),
+            json!({"author":publisher,"name":"workspace","version":"0.2.0"})
+        );
+        for key in ["id", "version", "entry"] {
+            let mut changed = installed.clone();
+            changed[key] = "wrong".into();
+            assert!(success(&changed, &release, "alice.dhttp.net").is_err());
+        }
+        let backend = release.clone();
+        assert!(
+            display::package_output(success(&backend, &release, "alice.dhttp.net").unwrap())
+                .get("entry_url")
+                .is_none()
+        );
     }
-    let backend = release.clone();
-    assert!(
-        success(&backend, &release, "alice.dhttp.net")
-            .unwrap()
-            .get("entry_url")
-            .is_none()
-    );
 }
 
 #[test]
@@ -738,11 +739,12 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
         .unwrap();
     assert!(check_install_version("update", Some(&saved), &app).unwrap());
     assert_eq!(
-        success(&saved, &app, endpoint.name()).unwrap()["entry_url"],
-        "https://alice.dhttp.net/app/demo/"
+        display::package_output(success(&saved, &app, endpoint.name()).unwrap())["entry_url"],
+        "https://alice~/app/demo/"
     );
-    let removed = remove(&endpoint, &owner, &saved).await.unwrap();
-    assert_eq!(removed["id"], "alice.dhttp.net/demo");
+    let removed = display::package_output(remove(&endpoint, &owner, &saved).await.unwrap());
+    assert_eq!(removed["id"], "alice~/demo");
+    assert_eq!(removed["identity"], "alice~");
     assert_eq!(removed["removed"], true);
     assert_eq!(removed["data_retained"], true);
     assert!(
@@ -774,5 +776,9 @@ fn abbreviated_publishers_expand_without_changing_installed_bare_names() {
         normalize_target("alice.dhttp.net/message", true),
         "alice.dhttp.net/message"
     );
+    for id in ["std.dhttp.net/workspace", "alice.smith.dhttp.net/message"] {
+        assert_eq!(normalize_target(&display::package_id(id), true), id);
+        assert_eq!(normalize_target(&display::package_id(id), false), id);
+    }
     assert!(!valid_target(&normalize_target("@alice/message", true)));
 }

@@ -2,17 +2,18 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     process::Stdio,
+    time::Duration,
 };
 
-use dhttp_home::{DhttpHome, HomeScope};
+use dhttp_home::DhttpHome;
 use snafu::{ResultExt, Whatever, ensure_whatever};
 use tokio::process::Command;
 
 use super::transcript;
 
-fn launcher_path(current_executable: &Path) -> PathBuf {
-    let name = format!("genmeta{}", std::env::consts::EXE_SUFFIX);
-    // Use the same installation for both the launcher and standalone identity CLI.
+fn executable_path(current_executable: &Path, name: &str) -> PathBuf {
+    let name = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+    // Prefer commands from the same installation, including the standalone CLI.
     let sibling = current_executable.with_file_name(&name);
     if sibling.is_file() {
         sibling
@@ -21,11 +22,19 @@ fn launcher_path(current_executable: &Path) -> PathBuf {
     }
 }
 
-fn install_command(launcher: &Path, dhttp_home: &DhttpHome, identity: &str) -> Command {
+fn reload_command(pishoo: &Path) -> Command {
+    let mut command = Command::new(pishoo);
+    command
+        .arg("reload")
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
+    command
+}
+
+fn identity_command(launcher: &Path, dhttp_home: &DhttpHome) -> Command {
     let mut command = Command::new(launcher);
     command
-        .args(["install", "workspace", "--id", identity])
-        // Package commands load the user home. Pin it to the home used by apply,
+        // Both commands load the user home. Pin it to apply's selected home,
         // including when the identity was saved with --global.
         .env("DHTTP_HOME", dhttp_home.as_path())
         .stdin(Stdio::null())
@@ -33,155 +42,286 @@ fn install_command(launcher: &Path, dhttp_home: &DhttpHome, identity: &str) -> C
     command
 }
 
-async fn install(dhttp_home: &DhttpHome, identity: &str) -> Result<(), Whatever> {
-    let executable =
-        std::env::current_exe().whatever_context("Failed to locate the genmeta executable")?;
-    let status = install_command(&launcher_path(&executable), dhttp_home, identity)
-        .status()
+fn readiness_command(launcher: &Path, dhttp_home: &DhttpHome, identity: &str) -> Command {
+    let mut command = identity_command(launcher, dhttp_home);
+    command
+        .args([
+            "curl",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--id",
+            identity,
+        ])
+        .arg(format!("https://{identity}~/std/sys/listen"));
+    command
+}
+
+fn install_command(launcher: &Path, dhttp_home: &DhttpHome, identity: &str) -> Command {
+    let mut command = identity_command(launcher, dhttp_home);
+    command.args(["install", "workspace", "--id", identity]);
+    command
+}
+
+async fn run_quiet(mut command: Command, timeout: Duration) -> Result<(), Whatever> {
+    // Capture successful command output so apply only shows its two status lines.
+    let output = tokio::time::timeout(timeout, command.output())
         .await
-        .whatever_context("Could not run genmeta install workspace; ensure genmeta is installed")?;
+        .whatever_context("Command timed out")?
+        .whatever_context("Could not run command")?;
     ensure_whatever!(
-        status.success(),
-        "genmeta install workspace failed ({status})"
+        output.status.success(),
+        "Command failed ({}): {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim()
     );
     Ok(())
 }
 
-pub(crate) async fn offer_install(
-    dhttp_home: &DhttpHome,
-    home_scope: HomeScope,
-    identity: &str,
-    interactive: bool,
-) {
-    let mut hint = format!(
-        "To install Workspace later, start or enable Pishoo for this name and run `genmeta install workspace --id {identity}`."
-    );
-    if home_scope == HomeScope::Global {
-        hint.push_str(&format!(
-            " Set DHTTP_HOME to {} for this global identity.",
-            dhttp_home.as_path().display()
-        ));
+async fn reload() -> Result<(), Whatever> {
+    let executable =
+        std::env::current_exe().whatever_context("Failed to locate the current executable")?;
+    run_quiet(
+        reload_command(&executable_path(&executable, "pishoo")),
+        Duration::from_secs(30),
+    )
+    .await
+}
+
+async fn wait_for_server<F, Fut>(mut check: F, delay: Duration) -> Result<(), Whatever>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<(), Whatever>>,
+{
+    let mut result = check().await;
+    for _ in 0..4 {
+        if result.is_ok() {
+            return result;
+        }
+        tokio::time::sleep(delay).await;
+        result = check().await;
     }
-    offer_install_with(
-        interactive,
-        &hint,
-        crate::cli::prompt::prompt_install_workspace(),
+    result
+}
+
+async fn install(dhttp_home: &DhttpHome, identity: &str) -> Result<(), Whatever> {
+    let executable =
+        std::env::current_exe().whatever_context("Failed to locate the genmeta executable")?;
+    let launcher = executable_path(&executable, "genmeta");
+    // Reload only sends a signal. Retry the read-only check until the identity
+    // is reachable, then submit installation once; writes must not be retried.
+    wait_for_server(
+        || {
+            run_quiet(
+                readiness_command(&launcher, dhttp_home, identity),
+                Duration::from_secs(5),
+            )
+        },
+        Duration::from_millis(500),
+    )
+    .await
+    .whatever_context("Pishoo did not become ready after reload")?;
+    run_quiet(
+        install_command(&launcher, dhttp_home, identity),
+        Duration::from_secs(20 * 60),
+    )
+    .await
+    .whatever_context("Workspace installation did not complete; check its status before retrying")
+}
+
+pub(crate) async fn finish_setup(dhttp_home: &DhttpHome, identity: &str, server_enabled: bool) {
+    finish_setup_with(
+        server_enabled,
+        identity,
+        reload(),
         install(dhttp_home, identity),
     )
     .await;
 }
 
-async fn offer_install_with(
-    interactive: bool,
-    hint: &str,
-    confirm: impl Future<Output = Result<bool, inquire::InquireError>>,
+async fn finish_setup_with(
+    server_enabled: bool,
+    identity: &str,
+    reload: impl Future<Output = Result<(), Whatever>>,
     install: impl Future<Output = Result<(), Whatever>>,
 ) {
-    if !interactive {
-        transcript::print_line(hint);
+    if !server_enabled {
         return;
     }
-    match confirm.await {
-        Ok(true) => match install.await {
-            Ok(()) => {
-                transcript::print_line("✔ Workspace successfully installed for this name.");
-                return;
-            }
-            Err(error) => transcript::print_warning(&format!(
-                "The identity was installed, but Workspace installation did not complete: {}",
-                snafu::Report::from_error(error)
-            )),
-        },
-        Ok(false) => {}
-        Err(error) => transcript::print_warning(&format!(
-            "The identity was installed, but Workspace installation was not confirmed: {error}"
-        )),
+    transcript::print_line("Reloading Pishoo...");
+    if let Err(error) = reload.await {
+        transcript::print_warning(&format!(
+            "Identity installed, but Pishoo reload failed: {}",
+            snafu::Report::from_error(error)
+        ));
+        return;
     }
-    transcript::print_line(hint);
+    if let Err(error) = install.await {
+        transcript::print_warning(&format!(
+            "Identity installed, but Workspace installation did not complete: {}",
+            snafu::Report::from_error(error)
+        ));
+        return;
+    }
+    transcript::print_line(format!(
+        "Workspace installed. Visit: https://{identity}~/app/workspace"
+    ));
 }
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
 
     use super::*;
 
     #[tokio::test]
-    async fn noninteractive_apply_neither_prompts_nor_installs() {
-        offer_install_with(
+    async fn disabled_server_neither_reloads_nor_installs() {
+        finish_setup_with(
             false,
-            "manual install hint",
-            async { panic!("must not prompt without a terminal") },
-            async { panic!("must not install without confirmation") },
+            "alice.smith",
+            async { panic!("must not reload a disabled server") },
+            async { panic!("must not install for a disabled server") },
         )
         .await;
     }
 
     #[tokio::test]
-    async fn declined_or_cancelled_prompt_does_not_install() {
-        for answer in [Ok(false), Err(inquire::InquireError::OperationCanceled)] {
-            offer_install_with(true, "manual install hint", async { answer }, async {
-                panic!("must not install without confirmation")
-            })
+    async fn enabled_server_reloads_then_installs_once_without_confirmation() {
+        let operations = RefCell::new(Vec::new());
+        finish_setup_with(
+            true,
+            "alice.smith",
+            async {
+                operations.borrow_mut().push("reload");
+                Ok(())
+            },
+            async {
+                operations.borrow_mut().push("install");
+                Ok(())
+            },
+        )
+        .await;
+        assert_eq!(*operations.borrow(), ["reload", "install"]);
+    }
+
+    #[tokio::test]
+    async fn reload_failure_skips_install_and_install_failure_is_not_retried() {
+        for reload_succeeds in [false, true] {
+            let attempts = Cell::new(0);
+            finish_setup_with(
+                true,
+                "alice.smith",
+                async {
+                    ensure_whatever!(reload_succeeds, "Pishoo is unavailable");
+                    Ok(())
+                },
+                async {
+                    attempts.set(attempts.get() + 1);
+                    snafu::whatever!("Installation failed");
+                },
+            )
             .await;
+            assert_eq!(attempts.get(), usize::from(reload_succeeds));
         }
     }
 
     #[tokio::test]
-    async fn accepted_prompt_installs_once_and_failure_is_nonfatal() {
-        for succeeds in [true, false] {
+    async fn readiness_retries_until_available_with_a_bounded_attempt_count() {
+        for ready_after in [1, 3, 6] {
             let attempts = Cell::new(0);
-            offer_install_with(true, "manual install hint", async { Ok(true) }, async {
-                attempts.set(attempts.get() + 1);
-                ensure_whatever!(succeeds, "Pishoo is unavailable");
-                Ok(())
-            })
+            let result = wait_for_server(
+                || async {
+                    attempts.set(attempts.get() + 1);
+                    ensure_whatever!(attempts.get() >= ready_after, "Server is loading");
+                    Ok(())
+                },
+                Duration::ZERO,
+            )
             .await;
-            assert_eq!(attempts.get(), 1);
+            assert_eq!(result.is_ok(), ready_after <= 5);
+            assert_eq!(attempts.get(), ready_after.min(5));
         }
     }
 
     #[test]
-    fn launcher_uses_the_same_installation_or_falls_back_to_path() {
+    fn commands_use_the_same_installation_or_fall_back_to_path() {
         let directory = tempfile::tempdir().unwrap();
-        let launcher = directory
-            .path()
-            .join(format!("genmeta{}", std::env::consts::EXE_SUFFIX));
-        std::fs::write(&launcher, "").unwrap();
-        assert_eq!(launcher_path(&launcher), launcher);
-        assert_eq!(
-            launcher_path(&directory.path().join("genmeta-identity")),
-            launcher
-        );
-        std::fs::remove_file(&launcher).unwrap();
-        assert_eq!(launcher_path(&launcher), launcher.file_name().unwrap());
+        for name in ["genmeta", "pishoo"] {
+            let executable = directory
+                .path()
+                .join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+            std::fs::write(&executable, "").unwrap();
+            assert_eq!(
+                executable_path(&directory.path().join("genmeta-identity"), name),
+                executable
+            );
+            std::fs::remove_file(&executable).unwrap();
+            assert_eq!(
+                executable_path(&executable, name),
+                executable.file_name().unwrap()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    fn script(directory: &Path, content: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let executable = directory.join("command with spaces");
+        std::fs::write(&executable, format!("#!/bin/sh\n{content}\n")).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        executable
     }
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn installer_receives_the_applied_identity_and_home_without_stdin() {
-        use std::os::unix::fs::PermissionsExt;
-
+    async fn commands_receive_the_applied_identity_and_home_without_stdin() {
         let directory = tempfile::tempdir().unwrap();
-        let launcher = directory.path().join("genmeta with spaces");
-        std::fs::write(
-            &launcher,
-            "#!/bin/sh\nprintf '%s\\n' \"$DHTTP_HOME\" \"$@\"\nif read -r input; then exit 1; fi\nexit 0\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let executable = script(
+            directory.path(),
+            "printf '%s\\n' \"$DHTTP_HOME\" \"$@\"\nif read -r input; then exit 1; fi\nexit 0",
+        );
         let home = DhttpHome::new(directory.path().join("global home"));
-        let output = install_command(&launcher, &home, "alice.smith")
+        for (mut command, arguments) in [
+            (
+                install_command(&executable, &home, "alice.smith"),
+                "install\nworkspace\n--id\nalice.smith\n",
+            ),
+            (
+                readiness_command(&executable, &home, "alice.smith"),
+                "curl\n--fail\n--silent\n--show-error\n--id\nalice.smith\nhttps://alice.smith~/std/sys/listen\n",
+            ),
+        ] {
+            let output = command.output().await.unwrap();
+            assert!(output.status.success());
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap(),
+                format!("{}\n{arguments}", home.as_path().display())
+            );
+        }
+        let output = reload_command(&executable)
+            .env_remove("DHTTP_HOME")
             .output()
             .await
             .unwrap();
         assert!(output.status.success());
-        assert_eq!(
-            String::from_utf8(output.stdout).unwrap(),
-            format!(
-                "{}\ninstall\nworkspace\n--id\nalice.smith\n",
-                home.as_path().display()
-            )
-        );
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), "\nreload\n");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn command_failure_and_timeout_are_reported() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = script(directory.path(), "echo 'permission denied' >&2\nexit 1");
+        let error = run_quiet(reload_command(&executable), Duration::from_secs(5))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("permission denied"));
+
+        let executable = script(directory.path(), "exec sleep 10");
+        let error = run_quiet(reload_command(&executable), Duration::from_millis(50))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("timed out"));
     }
 }

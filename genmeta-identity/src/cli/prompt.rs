@@ -144,14 +144,6 @@ pub(crate) async fn prompt_enable_server() -> Result<bool, inquire::InquireError
     )
 }
 
-pub(crate) async fn prompt_install_workspace() -> Result<bool, inquire::InquireError> {
-    sync!(
-        inquire::Confirm::new("Install Workspace for this name?")
-            .with_default(true)
-            .prompt()
-    )
-}
-
 pub(crate) async fn prompt_email_with_default(
     default: Option<&str>,
 ) -> Result<String, inquire::InquireError> {

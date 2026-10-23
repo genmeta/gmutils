@@ -245,7 +245,7 @@ try:
                 print(operation + ': pending store rollout', flush=True)
             else:
                 value = json.loads(p.stdout)
-                assert value['unchanged'] and value['entry_url'] == 'https://' + host + '/app/' + package['name'] + '/'
+                assert value['unchanged'] and value['entry_url'] == 'https://' + host.removesuffix('.dhttp.net') + '~/app/' + package['name'] + '/'
                 results.append({'name': operation + ' exact installed version', 'passed': True})
                 save()
 finally:

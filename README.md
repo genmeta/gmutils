@@ -133,6 +133,8 @@ The CLI authenticates `store.dhttp.net`, pins an exact version, and sends one
 authenticated `POST /std/sys/pkg/install` request with JSON `{author, name, version}`
 to Pishoo. Pishoo verifies and installs the package and its exact package dependencies.
 Successful output is JSON on stdout; progress and diagnostics go to stderr.
+Package output abbreviates identities as `alice.smith~` and package IDs as
+`alice.smith~/workspace`; the standard publisher appears as `std/workspace`.
 Packages containing static pages include `entry_url` in the result, mounted at
 `https://IDENTITY/app/NAME/`.
 Resolution has a 120-second deadline; installation waits up to 15 minutes.

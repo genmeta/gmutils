@@ -289,7 +289,7 @@ fn app_and_lib_build_signed_packages_offline_without_a_host_service() {
         identity(&home);
         let input = dir.path().join(kind);
         project(&input, kind, "");
-        let output = input.join("dist/signed.pkg");
+        let output = input.join("dist/signed.dhttp.net.pkg");
         let result = pack(&home, &input, &["--output".as_ref(), output.as_os_str()]);
         assert!(
             result.status.success(),
@@ -297,6 +297,14 @@ fn app_and_lib_build_signed_packages_offline_without_a_host_service() {
             String::from_utf8_lossy(&result.stderr)
         );
         let summary: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(summary["id"], "alice~/hello");
+        assert_eq!(
+            summary["file"],
+            std::fs::canonicalize(&output)
+                .unwrap()
+                .to_string_lossy()
+                .as_ref()
+        );
         let bytes = std::fs::read(&output).unwrap();
         assert_eq!(
             summary["package_sha256"],

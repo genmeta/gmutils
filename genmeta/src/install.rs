@@ -8,6 +8,8 @@ use serde_json::{Value, json};
 use snafu::{ResultExt, Whatever, ensure_whatever, whatever};
 use tokio::io::AsyncWriteExt;
 
+use crate::display;
+
 const STORE: &str = "store.dhttp.net";
 const STORE_OWNER: &str = "ffc3e50e1dfb7baca1cc07a7cbfcf8cb34a9bf5a9c25024fcf9a9786bb230746";
 const JSON_LIMIT: usize = 2 * 1024 * 1024;
@@ -101,7 +103,8 @@ fn validate_release(
     );
     ensure_whatever!(
         value["status"] == "published",
-        "Store release has been withdrawn or is not published: {id} {release}"
+        "Store release has been withdrawn or is not published: {} {release}",
+        display::package_id(id)
     );
     ensure_whatever!(
         value["size"]
@@ -211,7 +214,11 @@ where
         ensure_whatever!(
             matches.len() == 1,
             "Ambiguous package name; specify one of these full IDs: {}",
-            matches.into_iter().collect::<Vec<_>>().join(", ")
+            matches
+                .iter()
+                .map(|id| display::package_id(id))
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         matches.into_iter().next().unwrap()
     };
@@ -542,7 +549,9 @@ fn validate_installed(value: &Value, target: Option<&str>) -> Result<(), Whateve
             } else {
                 id.rsplit('/').next() == Some(target)
             },
-            "Installed package is {id}, not {target}; specify its full ID explicitly"
+            "Installed package is {}, not {}; specify its full ID explicitly",
+            display::package_id(id),
+            display::package_id(target)
         );
     }
     Ok(())
@@ -585,12 +594,16 @@ fn choose_release_target<'a>(
 ) -> Result<&'a str, Whatever> {
     if operation == "update" {
         let Some(current) = current else {
-            whatever!("Package {target} is not installed; use genmeta install");
+            whatever!(
+                "Package {} is not installed; use genmeta install",
+                display::package_id(target)
+            );
         };
         let id = current["id"].as_str().unwrap();
         ensure_whatever!(
             id.contains('/'),
-            "Legacy package {id} has no publisher; remove it explicitly before installing a published package"
+            "Legacy package {} has no publisher; remove it explicitly before installing a published package",
+            display::package_id(id)
         );
         Ok(id)
     } else {
@@ -609,8 +622,8 @@ fn check_install_version(
     ensure_whatever!(
         current["id"] == release["id"],
         "Name is already installed as {}; remove it explicitly before installing {}",
-        current["id"],
-        release["id"]
+        display::package_id(current["id"].as_str().unwrap()),
+        display::package_id(release["id"].as_str().unwrap())
     );
     if current["version"] == release["version"] {
         return Ok(true);
@@ -618,7 +631,7 @@ fn check_install_version(
     ensure_whatever!(
         operation == "update",
         "Package {} is already installed at {}; use genmeta update to change its version",
-        current["id"],
+        display::package_id(current["id"].as_str().unwrap()),
         current["version"]
     );
     Ok(false)
@@ -648,7 +661,8 @@ pub(super) async fn run(
             .whatever_context("Local credentials have no valid owner hash")?;
     let owner = ski.owner_hash().clone();
     if operation == "list" {
-        let packages = catalog(&endpoint, &owner, None, false).await?.unwrap();
+        let packages =
+            display::package_output(catalog(&endpoint, &owner, None, false).await?.unwrap());
         println!(
             "{}",
             serde_json::to_string_pretty(&packages).whatever_context("Cannot encode catalog")?
@@ -659,7 +673,7 @@ pub(super) async fn run(
     let current = catalog(&endpoint, &owner, Some(target), operation == "remove").await?;
     if matches!(operation, "info" | "remove") {
         let Some(current) = current else {
-            whatever!("Package {target} is not installed")
+            whatever!("Package {} is not installed", display::package_id(target))
         };
         let output = if operation == "remove" {
             tokio::time::timeout(RESOLUTION_TIMEOUT, remove(&endpoint, &owner, &current))
@@ -670,15 +684,16 @@ pub(super) async fn run(
         };
         println!(
             "{}",
-            serde_json::to_string_pretty(&output)
+            serde_json::to_string_pretty(&display::package_output(output))
                 .whatever_context("Cannot encode package result")?
         );
         return Ok(());
     }
     let selected = choose_release_target(operation, target, current.as_ref())?;
     eprintln!(
-        "Resolving package {selected} from the store for identity {}",
-        endpoint.name()
+        "Resolving package {} from the store for identity {}",
+        display::package_id(selected),
+        display::identity(endpoint.name())
     );
     let release = resolve_with_deadline(selected, version.as_deref(), |path| {
         let endpoint = &endpoint;
@@ -697,15 +712,16 @@ pub(super) async fn run(
             } else {
                 "Installing"
             },
-            release["id"].as_str().unwrap(),
+            display::package_id(release["id"].as_str().unwrap()),
             release["version"].as_str().unwrap(),
-            endpoint.name()
+            display::identity(endpoint.name())
         );
         wait_for_install(install(&endpoint, &owner, &release)).await?
     };
     println!(
         "{}",
-        serde_json::to_string(&output).whatever_context("Failed to encode success output")?
+        serde_json::to_string(&display::package_output(output))
+            .whatever_context("Failed to encode success output")?
     );
     Ok(())
 }

@@ -14,6 +14,8 @@ use sha2::{Digest, Sha256};
 use snafu::{FromString, OptionExt, ResultExt, Whatever, whatever};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
+use crate::display;
+
 const STORE_NAME: &str = "store.dhttp.net";
 const STORE_OWNER: &str = "ffc3e50e1dfb7baca1cc07a7cbfcf8cb34a9bf5a9c25024fcf9a9786bb230746";
 const PACKAGE_LIMIT: usize = 64 * 1024 * 1024;
@@ -30,14 +32,18 @@ pub(super) async fn run(file: PathBuf, id: Option<String>) -> Result<(), Whateve
         .parse()
         .whatever_context("invalid publisher identity")?;
     if selected.as_full() != publisher {
-        whatever!("--id must match the signed package publisher {publisher}");
+        whatever!(
+            "--id must match the signed package publisher {}",
+            display::publisher(publisher)
+        );
     }
     let home = DhttpHome::load(HomeScope::User).whatever_context("failed to locate DHTTP home")?;
     let profile = home
         .resolve_identity_profile(selected.as_full())
         .await
         .whatever_context(format!(
-            "missing local credentials for publisher {publisher}"
+            "missing local credentials for publisher {}",
+            display::publisher(publisher)
         ))?;
     let endpoint = tokio::time::timeout(
         METADATA_TIMEOUT,
@@ -58,7 +64,8 @@ pub(super) async fn run(file: PathBuf, id: Option<String>) -> Result<(), Whateve
     let output = publish(&endpoint, &bytes, &metadata, &owner).await?;
     println!(
         "{}",
-        serde_json::to_string(&output).whatever_context("failed to encode upload result")?
+        serde_json::to_string(&display::package_output(output))
+            .whatever_context("failed to encode upload result")?
     );
     Ok(())
 }

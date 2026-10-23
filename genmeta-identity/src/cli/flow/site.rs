@@ -358,16 +358,7 @@ async fn regular_file_exists(path: &Path) -> Result<bool, Error> {
     }
 }
 
-pub(crate) const SERVICE_HINT: &str = "Configuration saved. Run `pishoo reload` to re-read configured identities, or `pishoo reload --pid PID` for a foreground process. Manage the installed service with systemctl or brew services.";
-
-pub(crate) fn print_enable_result(identity: &str, change: ConfigChange) {
-    let message = match change {
-        ConfigChange::Changed => format!("Server enabled for {identity}."),
-        ConfigChange::Unchanged => format!("Server is already enabled for {identity}."),
-    };
-    super::transcript::print_line(message);
-    super::transcript::print_line(SERVICE_HINT);
-}
+pub(crate) const SERVICE_HINT: &str = "systemctl reload pishoo";
 
 /// Local configuration remains usable when HTTP listening is off.
 pub async fn run_listen(
