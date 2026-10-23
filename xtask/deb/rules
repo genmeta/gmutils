@@ -52,13 +52,14 @@ ifdef TRIPLE
 		export CARGO_ZIGBUILD_ZIG_PATH=/tmp/gmutils-aarch64-zig; \
 		export RUSTFLAGS="$$RUSTFLAGS -Z unstable-options -Clinker-flavor=gnu-lld-cc"; \
 	fi && \
-	cargo zigbuild $(CARGO_PROFILE_ARGS) --locked --manifest-path genmeta/Cargo.toml --target $(ZIG_TARGET) --bin genmeta
+	cargo zigbuild $(CARGO_PROFILE_ARGS) --locked --manifest-path Cargo.toml --target $(ZIG_TARGET) -p genmeta -p jade --bins
 endif
 
 override_dh_auto_install:
 ifdef TRIPLE
 	mkdir -p debian/gmutils/usr/bin
 	cp --sparse=never $(SOURCE_ROOT)/target/$(TRIPLE)/$(BUILD_PROFILE)/genmeta debian/gmutils/usr/bin/
+	cp --sparse=never $(SOURCE_ROOT)/target/$(TRIPLE)/$(BUILD_PROFILE)/jade debian/gmutils/usr/bin/
 	chmod 755 debian/gmutils/usr/bin/*
 endif
 

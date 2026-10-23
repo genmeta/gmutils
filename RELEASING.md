@@ -54,9 +54,12 @@ revision as Pishoo so its contract tests exercise the current HTTP routes.
 Jade lives in `jade/` with its own manifest, executable, README, fixtures and tests.
 Build and test it with `cargo build -p jade --locked` and
 `cargo test -p jade --locked`. Install from this checkout with
-`cargo install --path jade --locked`. Workspace CI includes Jade; the existing
-gmutils distribution recipes and explicit crates.io publication list continue
-to release the Genmeta utilities. Jade can be built and installed independently.
+`cargo install --path jade --locked`. Workspace CI includes Jade. The gmutils
+Debian and Homebrew packages install both the `genmeta` and `jade` commands;
+their version continues to follow `genmeta/Cargo.toml`. The existing release
+workflow builds both executables and checks the archive contents before
+publication. Homebrew supports Apple Silicon and Intel Macs and tests both
+installed commands. RPM/Scoop recipes and the crates.io publication list are unchanged.
 
 Jade implements the `create/build/publish` workflow described in the
 [implementation plan](jade/IMPLEMENTATION_PLAN.md): `jade.toml`, native frontend
@@ -66,42 +69,50 @@ package's author; package output defaults to `.jade/`. Runtime templates and loc
 HTTP/3 publication have dedicated acceptance checks; platform CI remains a release
 gate.
 
-### Application pipelines
+### Local application release
 
-The six independent repositories in `pishoo-projects` use
-[jade-app.yml](.github/workflows/jade-app.yml). Their callers pin both the reusable
-workflow and `jade-ref` to the same full gmutils commit. Push that commit before
-pushing the application callers. The workflow builds Jade from that revision,
-uses Rust 1.97.1, Bun 1.4.3, Node 24 and the checksum-verified WASI SDK 33, runs the
-application's existing tests, then executes `jade build`. Branches, pull requests
-and manual branch runs use an isolated self-signed test identity and cannot
-publish. A `vVERSION` annotated tag must match `jade.toml` and native manifests.
+Applications use local `jade build` and `jade publish`; there are no application
+release workflows. The six independent repositories are Workspace, Introduction,
+Profile, Message, Calendar and Journal under `pishoo-projects`. Their
+`RELEASING.md` files record exact versions, dependencies and commands.
 
-Before pushing release tags, create a `release` GitHub environment in each
-application repository, restrict it to approved version tags and require a
-reviewer. Store `DHTTP_AUTHOR_CERT` (PEM certificate chain) and `DHTTP_AUTHOR_KEY`
-(PEM private key) as environment secrets for the manifest's exact author.
-`DHTTP_AUTHOR_OCSP` is optional base64 DER; DHTTP refreshes missing or expired
-responses. The standard applications use `std.dhttp.net`; Journal uses
-`alice.smith.dhttp.net`. The workflow never reads a developer's identity directory.
-Public network configuration can be supplied as repository variables
-`DHTTP_ROOT_CA_PEM`, `DHTTP_BOOTSTRAP_URL`, `DHTTP_NAME_SERVICE`,
-`DHTTP_MDNS_SERVICE_DOMAIN` and `DHTTP_CA_SERVICE`; unset values use the DHTTP
-dependency's defaults. The test `ci` environment must contain no signing secrets.
-
-The signed `.waz`, build result, SHA256SUMS and provenance are uploaded as workflow
-artifacts before publication. Jade sends those exact bytes once and verifies the
-saved version. `publish.json` is retained even on failure. On
-`E_PUBLISH_OUTCOME_UNKNOWN`, recover that artifact and retry the same package after
-checking the receipt; do not automatically rebuild or retry an upload.
+Install gmutils through Debian or Homebrew, or build this checkout. Prepare Bun 1.4.2+
+and Node for source frontends; install the `wasm32-wasip2` Rust target and set
+`WASI_SDK_PATH` for SQLite backends. In each repository, run the existing tests,
+then `jade build`. Review `.jade/NAME-VERSION.waz` before running
+`jade publish .jade/NAME-VERSION.waz`. Jade reads the manifest's author and uses
+the matching local DHTTP credentials. Standard applications use `std.dhttp.net`;
+Journal uses `alice.smith.dhttp.net`. Local validation used isolated test signing
+identities; those test packages were saved outside the application repositories.
+Build locally with the real author identity before publishing.
 
 Release order: deploy the registry's existing `author`/`.waz` implementation first;
 then Profile 0.3.0 and Message 0.2.1; then Introduction 0.1.0; then Workspace 0.3.2.
 Calendar 0.1.2 and Journal 0.1.2 can follow independently. The 2026-10-23 read-only
-production probe still returned `publisher` and `.pkg`; Jade now rejects that
-catalogue before sending any upload. No registry deployment or data migration is
-part of these application changes. Each application's `RELEASING.md` records its
-tag and exact dependencies.
+production probe still returned `publisher` and `.pkg`; Jade rejects that catalogue
+before sending any upload. No registry deployment or data migration is part of
+these application changes. On `E_PUBLISH_OUTCOME_UNKNOWN`, keep and retry the same
+signed file after checking the reported state; do not rebuild or automatically
+repeat an upload. Do not reuse a version for changed runtime content.
+
+## Validation on 2026-10-23
+
+- Jade regular tests, strict Clippy, formatting, stable Rust check and the local
+  HTTP/3 publication contract pass. The earlier Rust API/host acceptance remains
+  recorded in `jade/IMPLEMENTATION_PLAN.md`.
+- All six applications build and sign through Jade with isolated test identities.
+  Existing Workspace, Introduction, Profile, Message and Calendar tests pass;
+  Journal has no unit tests and was verified by its actual Jade build.
+- A real amd64 Debian package was built with the release recipe and installed in
+  a disposable Debian container. Both commands run; the installed Jade creates
+  and signs a static project successfully.
+- The native Apple Silicon Homebrew archive was built with the release recipe.
+  Both Mach-O commands run after extraction, and Jade creates and signs a static
+  project. The formula installs and tests both commands. The release workflow
+  also packages Intel Macs; this local smoke test covers Apple Silicon.
+- No application pipelines, Git pushes, store uploads or registry deployments
+  were performed. Production still returned the old catalogue protocol in the
+  final read-only check.
 
 ## Validation on 2026-10-21
 

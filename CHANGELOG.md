@@ -11,9 +11,9 @@
   automatic OpenAPI embedding, local signature verification and atomic package
   output in `.jade/`. Create needs no identity; publish uses the signed author.
   Human summaries are the default, with canonical JSON results via `--json`.
-- Add reusable application CI with version-tag validation, isolated test signing,
-  environment-scoped release credentials and saved package/receipt artifacts.
-  Reject legacy store catalogues before uploading a package.
+- Include both `genmeta` and `jade` executables in the gmutils Debian and Homebrew packages.
+  Applications build and publish locally with Jade. Reject legacy store catalogues
+  before uploading a package.
 - Suppress runtime logs across all commands by default; require `--verb` to enable
   debug logging, independently of `RUST_LOG` and command-specific verbose output.
 - After interactive identity application with the server enabled, offer to install

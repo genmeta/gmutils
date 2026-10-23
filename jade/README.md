@@ -2,7 +2,8 @@
 
 Jade creates projects, builds and signs `.waz` packages, and publishes them to the
 Pishoo store. It is an independent executable in the gmutils workspace. Builds use
-local tools and credentials; a running Pishoo service is not required.
+local tools and credentials; a running Pishoo service is not required. The gmutils
+Debian and Homebrew packages include both the `genmeta` and `jade` commands.
 
 ```sh
 cargo install --path jade --locked

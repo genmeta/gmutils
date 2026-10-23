@@ -7,10 +7,11 @@ class {{homebrew.class}} < Formula
 {{homebrew.urls}}
 
   def install
-    bin.install "genmeta"
+    bin.install "genmeta", "jade"
   end
 
   test do
     system "#{bin}/genmeta", "version"
+    system "#{bin}/jade", "--version"
   end
 end

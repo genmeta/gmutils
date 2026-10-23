@@ -216,6 +216,21 @@ jobs:
           cargo xtask package --overwrite-manifest \
             deb "${deb_args[@]}"
 
+      - name: Verify both commands are included in Debian packages
+        run: |
+          set -euo pipefail
+          count=0
+          while IFS= read -r -d '' package; do
+            if [[ "$(dpkg-deb --field "$package" Package)" != gmutils ]]; then continue; fi
+            staging="$(mktemp -d)"
+            dpkg-deb --extract "$package" "$staging"
+            test -x "$staging/usr/bin/genmeta"
+            test -x "$staging/usr/bin/jade"
+            rm -rf "$staging"
+            count=$((count + 1))
+          done < <(find target -type f -name '*.deb' -print0)
+          test "$count" -gt 0
+
       - name: Publish S3 for deb artifacts
         id: apt_publish
         env:
@@ -527,6 +542,20 @@ jobs:
             brew \
               --target aarch64-apple-darwin \
               --target x86_64-apple-darwin
+
+      - name: Verify both commands are included in macOS archives
+        run: |
+          set -euo pipefail
+          count=0
+          while IFS= read -r -d '' package; do
+            staging="$(mktemp -d)"
+            tar -xzf "$package" -C "$staging"
+            test -x "$staging/genmeta"
+            test -x "$staging/jade"
+            rm -rf "$staging"
+            count=$((count + 1))
+          done < <(find target -type f -name 'gmutils-*-apple-darwin.tar.gz' -print0)
+          test "$count" -gt 0
 
       - name: Publish S3 for Homebrew artifacts
         env:

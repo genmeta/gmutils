@@ -256,7 +256,8 @@ identity is used.
 ## Package management
 
 Project creation, builds and publication use the independent [Jade project](jade/README.md)
-and its `jade` executable. Install it separately with `cargo install --path jade --locked`
+and its `jade` executable. The gmutils Debian and Homebrew packages install both `genmeta`
+and `jade`. For a source installation, use `cargo install --path jade --locked`
 from this checkout. Installation, updates, queries and removal use `genmeta`.
 
 The development workflow uses `jade.toml` and existing native build tools.

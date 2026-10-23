@@ -28,7 +28,8 @@ rm -rf "$out/staging"
 mkdir -p "$out/staging"
 product_source="$out/product-source"
 prepare_product_source "$product_source"
-cargo build --release --locked --manifest-path "$product_source/genmeta/Cargo.toml" --target "$target" --bin genmeta
+cargo build --release --locked --manifest-path "$product_source/Cargo.toml" --target "$target" -p genmeta -p jade --bins
 cp "$product_source/target/$target/release/genmeta" "$out/staging/genmeta"
+cp "$product_source/target/$target/release/jade" "$out/staging/jade"
 tar -C "$out/staging" -czf "$out/gmutils-$version-$target.tar.gz" .
 rm -rf "$out/staging"
