@@ -6,12 +6,14 @@
 
 ### Changed
 
+- Discover frontend sources and static entries automatically, matching backend discovery; remove `[frontend]` configuration and use each frontend build project’s `dist/` output.
+
 - Extract project creation, builds and publication into the independent `jade`
   Cargo package and executable: `jade create/build/publish`. Keep installation
   and host management in `genmeta`.
 - Implement Jade's `jade.toml` workflow, native npm/pnpm/Bun and Rust API builds,
   automatic OpenAPI embedding, local signature verification and atomic package
-  output in `.jade/`. Create needs no identity; publish uses the signed author.
+  output in `build/`. Create needs no identity; publish uses the signed author.
   Human summaries are the default, with canonical JSON results via `--json`.
 - Include both `genmeta` and `jade` executables in the gmutils Debian and Homebrew packages.
   Applications build and publish locally with Jade. Reject legacy store catalogues
@@ -26,6 +28,12 @@
 ### Fixed
 
 - Read `author` metadata from store responses during package installation.
+- Build standard ZIP `.waz` releases with a signed JSON manifest and optional
+  root README.md/CHANGELOG.md, rejecting the previous WEBC release format.
+- Default `jade create` to a working frontend and Rust API. Install frontend build
+  dependencies, discover backend sources, and explain missing WASI toolchains.
+- Keep the Workspace installation choice explicit and wait for host readiness
+  without hiding the manual recovery command when activation fails.
 
 ### Release versions
 

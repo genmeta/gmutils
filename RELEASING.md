@@ -18,14 +18,15 @@ Every Genmeta crate changed after v0.9.0-preview.4, so each receives a new previ
 version and workspace dependencies select those new versions. The publication
 order already places dependencies before dependents. Jade ships in the gmutils
 Debian and Homebrew packages and remains outside the crates.io publication list.
-The `release/v0.9.0-preview.5` branch and release commit prepare these changes;
+The `feat/waz-release-20261023` PR branch prepares these changes;
 no tag is created or pushed by this preparation.
 
 ## Scope and compatibility
 
 This release targets the current Pishoo unified Pkg, listen/mount and query-based
 ACL APIs. Package creation, build and publication use the separate Jade executable
-(`jade create/build/publish`); `genmeta` provides install/update/uninstall and
+(`jade create/build/publish`); frontend and backend source locations are discovered
+automatically without configuration sections. `genmeta` provides install/update/uninstall and
 installed queries via install --list/--info. Signed source files use .waz. No
 legacy App/Lib package flags, package/server grouping, forward or unlisten aliases
 are restored. App entry URLs use /app/NAME/.
@@ -37,10 +38,13 @@ location and proxy_pass; off and unmount require confirmation or --yes.
 
 Package installation and upgrades do not install Workspace. After interactive
 identity application with the server enabled, the CLI asks whether to install
-Workspace, defaulting to yes on Enter. Confirmation precedes Pishoo reload, the
-readiness check and `genmeta install workspace --id NAME`. Installation uses the
+Workspace, defaulting to yes on Enter. Confirmation precedes a read-only readiness
+check and `genmeta install workspace --id NAME`. Running Pishoo automatically
+discovers enabled identities; this flow does not call `pishoo reload` or require
+a system-managed service. The readiness check waits for up to 30 seconds.
+Installation uses the
 same identity home, including global applications. Disabled servers,
-non-interactive runs and declined or cancelled prompts skip reload and
+non-interactive runs and declined or cancelled prompts skip readiness checks and
 installation. Skips and failures print the manual install command; failures retain
 the applied identity. Only the read-only readiness check is retried; installation
 is submitted once. This replaces the package-manager Workspace install hooks.
@@ -56,7 +60,7 @@ both closing braces, including Pishoo-Viewer-Name on App HEAD responses.
 
 Runtime dependencies use published registry releases without sibling Cargo
 patches. The access CLI's test-only daccess dependency is pinned to the same
-revision as Pishoo so its contract tests exercise the current HTTP routes.
+revision as Pishoo so its contract tests exercise the current HTTP routes. This source-only Git dev dependency has no registry version and is omitted from published crate manifests; runtime dependencies continue to use published releases.
 
 ## Jade project
 
@@ -74,7 +78,7 @@ Jade implements the `create/build/publish` workflow described in the
 [implementation plan](jade/IMPLEMENTATION_PLAN.md): `jade.toml`, native frontend
 builds, Rust HTTP API templates with built-in Cargo invocation, local content and
 signature checks, and human/JSON result reporting. Publish uses the signed
-package's author; package output defaults to `.jade/`. Runtime templates and local
+package's author; package output defaults to `build/`. New `.waz` releases are standard ZIP files; update the store and host readers before publication. Old WEBC releases must be rebuilt. Runtime templates and local
 HTTP/3 publication have dedicated acceptance checks; platform CI remains a release
 gate.
 
@@ -88,8 +92,8 @@ Profile, Message, Calendar and Journal under `pishoo-projects`. Their
 Install gmutils through Debian or Homebrew, or build this checkout. Prepare Bun 1.4.2+
 and Node for source frontends; install the `wasm32-wasip2` Rust target and set
 `WASI_SDK_PATH` for SQLite backends. In each repository, run the existing tests,
-then `jade build`. Review `.jade/NAME-VERSION.waz` before running
-`jade publish .jade/NAME-VERSION.waz`. Jade reads the manifest's author and uses
+then `jade build`. Review `build/NAME-VERSION.waz` before running
+`jade publish build/NAME-VERSION.waz`. Jade reads the manifest's author and uses
 the matching local DHTTP credentials. Standard applications use `std.dhttp.net`;
 Journal uses `alice.smith.dhttp.net`. Local validation used isolated test signing
 identities; those test packages were saved outside the application repositories.
@@ -133,9 +137,9 @@ repeat an upload. Do not reuse a version for changed runtime content.
   Both Mach-O commands run after extraction, and Jade creates and signs a static
   project. The formula installs and tests both commands. The release workflow
   also packages Intel Macs; this local smoke test covers Apple Silicon.
-- No application pipelines, Git pushes, store uploads or registry deployments
-  were performed. Production still returned the old catalogue protocol in the
-  final read-only check.
+- PR branches are pushed for review. No application pipelines, store uploads or
+  registry deployments are run by this preparation. Production returned the old
+  catalogue protocol in the most recent read-only check.
 
 ## Validation on 2026-10-21
 

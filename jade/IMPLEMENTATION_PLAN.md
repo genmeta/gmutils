@@ -13,13 +13,14 @@ Jade 完成三件事：准备项目、生成签名包、发布指定包。首轮
 ```sh
 jade create hello
 cd hello
+rustup target add wasm32-wasip2
 jade build --id alice.smith
-jade publish .jade/hello-0.1.0.waz
+jade publish build/hello-0.1.0.waz
 ```
 
 | 命令 | 职责与选项 |
 | --- | --- |
-| `jade create PATH` | 创建新项目；`--name NAME` 指定包短名称，默认取目录名；`--template TEMPLATE` 选择初始文件，默认 static |
+| `jade create PATH` | 创建新项目；`--name NAME` 指定包短名称，默认取目录名；`--template TEMPLATE` 选择初始文件，默认 fullstack（前端和后端 API） |
 | `jade build [PATH]` | 构建、校验并签名；`--id AUTHOR` 选择身份，`-o/--output FILE` 指定包文件，`--overwrite` 允许替换显式指定的已有普通文件 |
 | `jade publish FILE` | 校验并上传指定签名包，使用包内作者对应的凭据 |
 
@@ -27,9 +28,9 @@ jade publish .jade/hello-0.1.0.waz
 
 build 的 PATH 可为项目目录或 Jade 配置文件，默认当前目录下的 `jade.toml`。CLI 相对路径以当前工作目录为基准，配置内路径以配置文件所在目录为基准。
 
-create 提供 static、web、api、fullstack 四个初始文件预设；fullstack 组合前后端模板。模板名称仅用于创建文件，生成的项目使用同一套配置与构建流程。create 生成 `.gitignore` 和工具链准备说明，无需身份凭据。
+create 提供 static、web、api、fullstack 四个初始文件预设；默认使用 fullstack，组合前后端模板。模板名称仅用于创建文件，生成的项目使用同一套配置与构建流程。create 生成 `.gitignore` 和工具链准备说明，无需身份凭据。
 
-包文件默认写入配置目录下的 `.jade/NAME-VERSION.waz`。`.jade/` 只存包文件和临时构建数据，可删除重建，并被版本控制和内容收集忽略。前端工具继续使用自己的输出目录，例如 `dist/`。
+包文件默认写入配置目录下的 `build/NAME-VERSION.waz`，Rust 编译缓存放在 `build/target/`。`build/` 只存包文件和临时构建数据，可删除重建，并被版本控制和内容收集忽略。旧版 `.jade/` 也不参与内容收集；已有项目需将 `/build/` 加入 `.gitignore`。前端工具继续使用自己的输出目录，例如 `dist/`。
 
 ## 3. 作者与身份
 
@@ -58,21 +59,16 @@ version = "0.1.0"
 description = "Hello application"
 license = "Apache-2.0"
 
-[frontend]
-path = "public"
 ```
 
-前端工程和 HTTP API 保留相同的 package 信息，改为声明源码目录：
+前端工程和 HTTP API 使用相同的 package 信息，不声明 `[frontend]` 或 `[backend]`。
+前端优先识别根目录、web/、app/ 下含有效 scripts.build 的 package.json，构建输出固定为该目录的 dist/。
+无构建工程时查找根目录、web/、app/、public/ 的 index.html；仍未找到时才查找 dist/、web/dist/、app/dist/。
+同一阶段有多个候选时报错，旧构建产物不会覆盖源码选择。
 
-```toml
-[frontend]
-path = "web"
-
-[backend]
-path = "api"
-```
-
-只需一端时保留对应一节。已有后端产物直接将 backend 的 path 指向 Component 文件。
+后端自动识别根目录的 Cargo.toml、api/Cargo.toml 或 lib/Cargo.toml；
+多个 Rust 工程时报错。无 Rust 源码时才使用根目录 lib.wasm，已有旧产物不影响源码构建。
+纯后端项目只需 package，不再配置 backend。
 
 ### 4.2 字段
 
@@ -86,38 +82,31 @@ path = "api"
 | `package.title` | 默认 name | 展示名称 |
 | `package.release-notes` | 默认 `Release VERSION` | 本次版本说明，VERSION 取当前版本 |
 | `package.repository` | 可选 | 源码仓库 HTTPS 地址 |
-| `frontend.path` | 声明 frontend 时必填 | 前端工程或静态资源目录 |
-| `frontend.output` | 默认 `dist` | 源码构建的资源输出目录，相对于 frontend.path |
-| `backend.path` | 声明 backend 时必填 | Rust API 工程目录或 Component 文件 |
-| `backend.host` | 默认空映射 | 宿主能力及用途说明 |
 | `dependencies` | 默认空数组 | 运行时包依赖，每项包含 author、name、version |
 
-至少声明 frontend 或 backend。除 host 为字符串映射、dependencies 为表数组外，字段均为字符串。配置错误定位到具体字段。
+至少存在可自动识别的前端或后端。除 dependencies 为表数组外，字段均为字符串。配置错误定位到具体字段。
 
 包名以小写字母开头，最多 63 个小写字母、数字或连字符。版本各段为无多余前导零的非负整数，取 u64 范围。包依赖使用精确版本，同一标识仅出现一次，并排除自依赖；源码依赖由 Cargo/npm 管理。
 
-能力和依赖按需声明：
+运行时包依赖按需声明：
 
 ```toml
-[backend.host]
-private-storage = "Store this application's documents"
-
 [[dependencies]]
 author = "std.dhttp.net"
 name = "message"
 version = "1.2.3"
 ```
 
-支持的宿主能力为 private-storage、request-identity、signatures，用途说明非空。编码器负责将 author、release-notes 等开发者字段转换为宿主字段：
+宿主能力不声明用途，也不与 imports 做声明比对；沙箱支持的接口检查保持。ZIP 清单与文件布局如下：
 
 | 配置或产物 | 包内表示 |
 | --- | --- |
-| 作者 + name | `package.wapm.name` |
-| version、description、license、repository | `package.wapm` 对应字段 |
-| title、release-notes | `package.pishoo.title`、`package.pishoo.changelog` |
-| dependencies | 显式数组；每项 author 映射为签名清单中的 publisher |
-| 静态资源 | `/public` 卷及 `package.pishoo.entry = "/"` |
-| Component 与 host | `atoms/backend` 及 `package.pishoo.host`，缺省 host 为空对象 |
+| author、name、version、description、license、repository | `manifest.json` 的 `package` 对应字段 |
+| title、release-notes | `package.title`、`package.release-notes` |
+| dependencies | 清单根级显式数组，每项使用 author、name、version |
+| 静态资源 | `public/` 文件目录，清单声明 `frontend = "public"` |
+| Component | `backend.wasm`，清单声明 `backend = "backend.wasm"` |
+| README.md、CHANGELOG.md | ZIP 根目录中的可选文档，自动按存在情况收集 |
 
 ## 5. 构建
 
@@ -125,18 +114,18 @@ version = "1.2.3"
 
 | 输入 | 处理方式 |
 | --- | --- |
-| 前端目录有有效的 `package.json` build 脚本 | 调用该脚本，收集 frontend.output 指向的资源目录 |
-| 前端目录无 build 脚本且包含 index.html | 直接收集静态资源，frontend.output 不适用 |
-| 后端目录符合 Rust SDK 模板约定 | Jade 直接调用 Cargo，按内置组件目标编译并从构建结果定位产物，取得 Component 和生成的 OpenAPI |
+| 前端目录有有效的 `package.json` build 脚本 | 安装依赖（含开发依赖），调用该脚本，收集该目录的 dist/ 资源 |
+| 前端目录无 build 脚本且包含 index.html | 直接收集静态资源 |
+| 后端目录符合 Rust API 模板约定 | Jade 直接调用 Cargo，按内置组件目标编译并从构建结果定位产物，取得 Component 和生成的 OpenAPI |
 | 后端路径为已有文件 | 按 Component 读取，检查宿主接口及内嵌 OpenAPI |
 
 错误的脚本声明或不支持的工程给出具体配置提示；仅有 package.json 或 Cargo.toml 不构成构建入口。Node 构建复用 packageManager 声明或唯一锁文件确定的 npm/pnpm/Bun，均未提供时用 npm；冲突在原生项目配置中解决。
 
-`jade create PATH --template api` 生成 Cargo 工程、SDK 依赖和示例接口。开发者编写路由、请求/响应类型和处理函数，然后执行 `jade build`。
+`jade create PATH --template api` 生成 Cargo 工程、wasip2 与 serde_json 依赖和示例接口。开发者编写路由、请求/响应类型和处理函数，然后执行 `jade build`。
 
-Jade 内置 Cargo 调用、组件编译目标和产物定位。API 模板附带最小 SDK，复用 wasip2 与 Serde，提供 HTTP 适配和路由声明；Jade 从同一份声明生成路由级 OpenAPI 并嵌入组件。开发者无需编写 build 脚本。详细请求/响应 schema 推导不在当前实现内。
+Jade 内置 Cargo 调用、组件编译目标和产物定位。API 模板在 `lib.rs` 中直接使用 wasip2 与 serde_json，实现 WASI HTTP 入口和 JSON 示例接口，不生成本地 SDK 模块。修改路由时同步更新文件内的 `ROUTES` 元数据；Jade 从该元数据生成路由级 OpenAPI 并嵌入组件。开发者无需编写 build 脚本。详细请求/响应 schema 推导不在当前实现内。
 
-源码工程使用已准备的工具链与依赖；静态项目直接打包。前端目录位于项目根目录时，其 dist 输出与 Jade 的 `.jade/` 输出相互独立。
+源码工程使用已准备的工具链；前端每次构建先通过所选包管理器同步依赖，包含开发依赖，无需手动安装项目依赖；静态项目直接打包。前端目录位于项目根目录时，其 dist 输出与 Jade 的 `build/` 输出相互独立。
 
 ### 5.2 封装与写出
 
@@ -146,9 +135,9 @@ Jade 内置 Cargo 调用、组件编译目标和产物定位。API 模板附带�
 → 验证完整包 → 原子写出
 ```
 
-只收集声明或构建生成的运行产物。目录包含普通文件和子目录；项目根目录的 `.jade/` 始终排除，其他显式包输出位于收集范围之外。文件顺序和元数据统一规范化，相同产物与元数据具有稳定的内容摘要。
+收集声明或构建生成的运行产物及可选根目录文档。目录包含普通文件和子目录；项目根目录的 `build/` 和旧版 `.jade/` 始终排除，其他显式包输出位于收集范围之外。根目录文档进入 ZIP 根目录，不重复作为前端资源收集。文件顺序和元数据统一规范化，相同产物与元数据具有稳定的内容摘要。
 
-发布包使用 `.waz`、WEBC v3、`application/webc` 和现有签名协议。后端以 `pishoo:openapi` 自定义段携带 OpenAPI 3.1.x 文档，上限 1 MiB。完整包上限 64 MiB，单个静态文件上限 16 MiB，内容条目预算 4096（含签名证明），包依赖最多 100 项。
+发布包使用标准 ZIP、`.waz` 后缀和 `application/zip`。JSON 清单、目录布局、文件摘要和签名域以 [WAZ v1](FORMAT.md) 为准；不接受旧 WEBC 发布包。后端以 `pishoo:openapi` 自定义段携带 OpenAPI 3.1.x 文档，上限 1 MiB。完整包和解压后总内容分别限制为 64 MiB，单个静态或文档文件上限 16 MiB，内容条目预算 4096（含签名证明），包依赖最多 100 项。项目根目录的 `README.md`、`CHANGELOG.md` 自动按存在情况纳入，无需声明。
 
 `payload_sha256` 标识元数据和运行内容，`package_sha256` 标识完整签名包字节。写出前验证容器、内容摘要、数字签名和作者绑定，记录实际完成的本地信任检查。
 
@@ -181,7 +170,7 @@ publish 读取指定包的固定快照，完成本地校验，使用包内作者
   "result": {
     "id": "alice.smith.dhttp.net/hello",
     "version": "0.1.0",
-    "file": "/absolute/project/.jade/hello-0.1.0.waz",
+    "file": "/absolute/project/build/hello-0.1.0.waz",
     "size": 12697,
     "package_sha256": "<64 lowercase hex characters>",
     "payload_sha256": "<64 lowercase hex characters>"
@@ -223,7 +212,7 @@ publish 的 outcome 为 published 或 already-published，摘要指向商店实�
 
 P0 与 P1 可并行，P2 使用确定的协议和 SDK，P3、P4 依次完成。复用现有包读写、摘要和验签逻辑，CLI 负责参数与渲染，核心逻辑返回类型化结果；模块随实现需要拆分。
 
-验收使用隔离身份、本地 HTTP/3 商店和隔离宿主。覆盖身份选择、JSON/非交互、取消、源码变化、构建失败、包内容与签名篡改、路径与覆盖、证书更换以及发布结果核验。根目录前端和静态目录包含项目根目录的场景均验证 `.jade/` 不参与收集。
+验收使用隔离身份、本地 HTTP/3 商店和隔离宿主。覆盖身份选择、JSON/非交互、取消、源码变化、构建失败、包内容与签名篡改、路径与覆盖、证书更换以及发布结果核验。根目录前端和静态目录包含项目根目录的场景均验证 `build/` 不参与收集。
 
 Linux、macOS、Windows 运行构建与常规测试；HTTP/3 契约测试在具备 OpenSSL 3 和本地 UDP 条件的 CI 作业中显式执行。验收记录保留环境、目标版本和结果。
 

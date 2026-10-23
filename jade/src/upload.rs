@@ -181,7 +181,7 @@ async fn put(
             )
             .header(
                 header::CONTENT_TYPE,
-                HeaderValue::from_static("application/webc"),
+                HeaderValue::from_static("application/zip"),
             )
             .header(header::ACCEPT, HeaderValue::from_static("application/json"))
             .header(
@@ -242,7 +242,7 @@ async fn get(
     };
     tokio::time::timeout(deadline, async {
         let mime = if package {
-            "application/webc"
+            "application/zip"
         } else {
             "application/json"
         };

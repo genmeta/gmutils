@@ -45,8 +45,9 @@ Use the official package repository for a system installation. Both methods inst
 Installing or upgrading gmutils does not install Workspace. After a successful
 interactive `genmeta identity apply` with the server enabled, you are asked whether
 to install Workspace for that name; press Enter to accept or answer `n` to skip.
-Installation uses the newly applied identity and requires its Pishoo service to be
-reachable. Skipping
+Installation uses the newly applied identity and waits up to 30 seconds for
+Pishoo to serve it. Running Pishoo discovers enabled identities automatically;
+no reload or Homebrew/systemd service registration is required. Skipping
 or an installation failure leaves the identity installed and prints the manual
 command, `genmeta install workspace --id NAME`. Non-interactive applications skip
 Workspace installation; there is no background retry.
@@ -144,7 +145,7 @@ An interruption or timeout reports an unknown outcome and never retries the
 write automatically. Dependencies installed before a parent failure remain.
 Installation does not grant access permissions.
 
-The store must support the current WEBC manifest metadata protocol. Older App
+The store must support the current WAZ ZIP package and manifest metadata protocol. Older App
 responses containing OpenAPI are rejected with a compatibility diagnostic.
 
 ## CLI help and identity listening
@@ -175,7 +176,7 @@ request/response output is independent of debug logging.
 `jade build PATH` reads `jade.toml`, runs native frontend or Rust API builds when
 needed, and signs the resulting package locally. Static resources and prebuilt
 Components use the same command. A running Pishoo service is not required.
-The default output is `.jade/NAME-VERSION.waz`; `--id` selects the signing identity.
+The default output is `build/NAME-VERSION.waz`; `--id` selects the signing identity.
 See [Jade](jade/README.md) for configuration, templates and JSON output.
 
 ## Access policies
@@ -264,15 +265,22 @@ The development workflow uses `jade.toml` and existing native build tools.
 
 ```sh
 # Static starter; no identity is needed until build.
-jade create ./hello
+jade create ./hello --template static
 jade build ./hello --id alice.smith
-jade publish ./hello/.jade/hello-0.1.0.waz
+jade publish ./hello/build/hello-0.1.0.waz
 
 # Rust API starter; Jade invokes Cargo, with no developer-written build script.
 jade create ./service --template api
 rustup target add wasm32-wasip2
 jade build ./service --id alice.smith
-jade publish ./service/.jade/service-0.1.0.waz
+jade publish ./service/build/service-0.1.0.waz
+
+# Default fullstack starter; the Vite frontend calls the generated Rust /hello API.
+jade create ./application
+rustup target add wasm32-wasip2
+jade build ./application --id alice.smith
+jade publish ./application/build/application-0.1.0.waz
+
 genmeta install std.dhttp.net/workspace --id alice.smith
 genmeta update workspace --id alice.smith
 genmeta install --list --id alice.smith
@@ -280,7 +288,7 @@ genmeta install --info message --id alice.smith
 genmeta uninstall alice.smith.dhttp.net/message --id alice.smith
 ```
 
-Package identity is `author/name`; all management operations act on the entire package. A `.waz` currently uses a WEBC v3 container and may contain a backend, static pages, or both, with one version and signature. `install --list`, `install --info` and `uninstall` query the selected identity's Pishoo service. Full package IDs must match the installed publisher; removal retains business data and dependencies.
+Package identity is `author/name`; all management operations act on the entire package. A `.waz` is a standard ZIP and may contain a backend, static pages, or both, with one version and signature. Root-level README.md and CHANGELOG.md are included when present. See the [WAZ format](jade/FORMAT.md); old WEBC release files must be rebuilt. `install --list`, `install --info` and `uninstall` query the selected identity's Pishoo service. Full package IDs must match the installed publisher; removal retains business data and dependencies.
 
 `install` leaves an identical installed version unchanged and directs version
 changes to `update`. `update` requires an installed package, stays with its current
@@ -289,11 +297,17 @@ The CLI checks these conditions before using the existing store installation API
 the preflight is not an atomic compare-and-swap with concurrent administrators.
 Exact dependency/publisher checks and per-package transactions remain on the host.
 
-`jade create PATH` generates a new project. `--template` selects static, web, api
-or fullstack source files, and `--name` separates the package name from its folder.
+`jade create PATH` generates a fullstack project by default. `--template` selects
+static, web, api or fullstack source files, and `--name` separates the package name
+from its folder.
+The API and fullstack starters implement GET `/hello`; generated
+READMEs include installation and `genmeta curl` examples with JSON responses.
 
-`jade build [PATH]` accepts a directory or Jade configuration file. Frontend build
-scripts run through npm/pnpm; Rust APIs compile through Cargo to WASI Components.
+`jade build [PATH]` accepts a directory or Jade configuration file. Frontend and
+backend sources are discovered automatically; `jade.toml` needs no path sections.
+Frontend build
+scripts run through npm/pnpm/Bun after installing dependencies, including build
+tools; Rust APIs compile through Cargo to WASI Components.
 Existing static directories and Components are collected directly. Build checks
 content and signatures, then atomically writes the package. `-o FILE --overwrite`
 replaces an explicit output. Results are human-readable by default; `--json`
@@ -314,7 +328,6 @@ Pishoo provides the host APIs and `pishoo reload`; management lives in gmutils:
 genmeta listen --id alice.smith all
 genmeta listen --id alice.smith off --yes
 genmeta listen --id alice.smith internal
-pishoo reload
 genmeta mount --id alice.smith /api 127.0.0.1:8080
 genmeta unmount --id alice.smith /api 127.0.0.1:8080 --yes
 genmeta install alice.smith/example --version 1.0.0 --id alice.smith
@@ -330,4 +343,4 @@ checks runtime compatibility during install/update. No Pishoo CLI or pishoo-pack
 executable is needed. Service start/stop/restart/status belong
 to systemctl or brew services; gmutils does not wrap them.
 
-Store metadata uses `author`, `author_owner_hash` and `dependencies[].author`; catalog filters and update requests also use `author`. Signed manifest dependency keys remain `publisher`.
+Store metadata uses `author`, `author_owner_hash` and `dependencies[].author`; catalog filters and update requests also use `author`. ZIP manifest dependencies also use `author`.

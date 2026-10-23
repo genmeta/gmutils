@@ -40,6 +40,7 @@ webc = { version = "=12.0.1", default-features = false, features = ["v3"] }
 wasmparser = "0.244"
 wit-parser = { version = "0.244", default-features = false, features = ["decoding"] }
 x509-parser = { workspace = true }
+zip = { version = "6", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

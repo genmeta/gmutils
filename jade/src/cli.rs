@@ -16,14 +16,17 @@ pub(super) enum Template {
 #[derive(clap::Subcommand, Debug)]
 pub(super) enum Command {
     /// Create a project in a new directory
-    #[command(version)]
+    #[command(
+        version,
+        after_help = "Examples:\n  jade create hello                             # Vite frontend + Rust API (default)\n  jade create website --template static         # Static HTML\n  jade create frontend --template web           # Vite frontend\n  jade create service --template api            # Rust HTTP API\n  jade create application --template fullstack  # Frontend calling a Rust API\n\nAPI and fullstack templates include GET /hello."
+    )]
     Create {
         path: PathBuf,
         /// Package name, independent of the directory name
         #[arg(long)]
         name: Option<String>,
         /// Initial source files to generate
-        #[arg(long, value_enum, default_value = "static")]
+        #[arg(long, value_enum, default_value = "fullstack")]
         template: Template,
     },
     /// Build sources or declared artifacts and sign a package
@@ -35,7 +38,7 @@ pub(super) enum Command {
         /// Signing identity; must match package.author when configured
         #[arg(short, long, value_name = "AUTHOR")]
         id: Option<String>,
-        /// Package output file (default .jade/NAME-VERSION.waz)
+        /// Package output file (default build/NAME-VERSION.waz)
         #[arg(short, long, value_name = "FILE.waz")]
         output: Option<PathBuf>,
         /// Replace an existing explicit output file
@@ -112,11 +115,10 @@ fn create(path: PathBuf, name: Option<String>, template: Template) -> Result<Val
         .prefix(".jade-create-")
         .tempdir_in(&parent)?;
     let root = temporary.path();
-    let mut config = json!({"package":{"name":name,"version":"0.1.0","description":format!("{name} application"),"license":"Apache-2.0"}});
-    let mut ignore = "/.jade/\n".to_owned();
+    let config = json!({"package":{"name":name,"version":"0.1.0","description":format!("{name} application"),"license":"Apache-2.0"}});
+    let mut ignore = format!("/{}/\n", crate::project::BUILD_DIR);
     match template {
         Template::Static => {
-            config["frontend"] = json!({"path":"public"});
             fs::create_dir(root.join("public"))?;
             fs::write(
                 root.join("public/index.html"),
@@ -126,7 +128,6 @@ fn create(path: PathBuf, name: Option<String>, template: Template) -> Result<Val
             )?;
         }
         Template::Web | Template::Fullstack => {
-            config["frontend"] = json!({"path":"web"});
             fs::create_dir_all(root.join("web/src"))?;
             fs::write(root.join("web/package.json"),serde_json::to_string_pretty(&json!({"name":name,"version":"0.1.0","private":true,"type":"module","scripts":{"dev":"vite","build":"vite build"},"devDependencies":{"vite":"^8.3.0"}})).map_err(|e|Error::new("E_INTERNAL",e))?)?;
             fs::write(
@@ -152,7 +153,6 @@ fn create(path: PathBuf, name: Option<String>, template: Template) -> Result<Val
         Template::Api => {}
     }
     if matches!(template, Template::Api | Template::Fullstack) {
-        config["backend"] = json!({"path":"api"});
         fs::create_dir_all(root.join("api/src"))?;
         fs::write(
             root.join("api/Cargo.toml"),
@@ -166,23 +166,17 @@ publish = false
 [workspace]
 
 [lib]
-path = "src/api.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
 wasip2 = "=1.0.4"
-serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
 "#
             ),
         )?;
         fs::write(
-            root.join("api/src/api.rs"),
-            include_str!("../templates/api/src/api.rs"),
-        )?;
-        fs::write(
-            root.join("api/src/sdk.rs"),
-            include_str!("../templates/api/src/sdk.rs"),
+            root.join("api/src/lib.rs"),
+            include_str!("../templates/api/src/lib.rs"),
         )?;
         ignore.push_str("/api/target/\n");
     }
@@ -193,12 +187,34 @@ serde_json = "1"
     fs::write(root.join(".gitignore"), ignore)?;
     let mut readme = format!("# {name}\n\n");
     if matches!(template, Template::Web | Template::Fullstack) {
-        readme.push_str("Prepare the frontend dependencies with `npm --prefix web install`. Edit files under `web/`.\n\n");
+        readme.push_str("Edit files under `web/`. `jade build` installs frontend dependencies, including build tools, before running the build script. Install Node.js and npm before building.\n\n");
     }
     if matches!(template, Template::Api | Template::Fullstack) {
-        readme.push_str("Install the component target with `rustup target add wasm32-wasip2`. Edit handlers and `sdk::api!` routes in `api/src/api.rs`. Jade invokes Cargo and embeds OpenAPI from those routes; no build script is needed. The bundled HTTP adapter is in `api/src/sdk.rs`.\n\n");
+        readme.push_str("Install the component target with `rustup target add wasm32-wasip2`. Edit handlers and the WASI HTTP entry point in `api/src/lib.rs`, and keep its `ROUTES` metadata in sync when changing routes. The template uses `wasip2` directly. Jade invokes Cargo and embeds OpenAPI from the route metadata; no build script is needed.\n\n");
     }
-    readme.push_str(&format!("Build with `jade build --id YOUR_IDENTITY`, then publish `.jade/{name}-0.1.0.waz` with `jade publish`. Provision signing credentials using the DHTTP identity tools.\n"));
+    readme.push_str(&format!("Build and publish using your signing identity (replace `alice.smith` below). Provision credentials using the DHTTP identity tools.\n\n```sh\njade build --id alice.smith\njade publish build/{name}-0.1.0.waz\n```\n\nSigned packages and Cargo's `target/` cache are written under `build/`.\n"));
+    readme.push_str("\nJade automatically includes root-level `README.md` and `CHANGELOG.md` when present. No declaration in `jade.toml` is needed; missing files are skipped.\n");
+    if matches!(template, Template::Api | Template::Fullstack) {
+        readme.push_str(&format!(
+            r#"
+## Call the backend API
+
+The starter in `api/src/lib.rs` implements GET `/hello`.
+Pishoo provides the HTTP listener and mounts this route under `/{name}`.
+After publishing, install the package on your running Pishoo service, then call it
+with `genmeta curl` (replace the author and host identities as needed):
+
+```sh
+genmeta install alice.smith.dhttp.net/{name} --id alice.smith
+genmeta curl --id alice.smith -f https://alice.smith.dhttp.net/{name}/hello
+# {{"message":"Hello from Rust"}}
+```
+"#
+        ));
+    }
+    if matches!(template, Template::Fullstack) {
+        readme.push_str(&format!("\nThe frontend in `web/src/main.js` calls `/{name}/hello` and displays the JSON response's `message`. Open the installed package's `entry_url` to try it. Vite's dev server serves only the frontend; API requests require the Pishoo service.\n"));
+    }
     fs::write(root.join("README.md"), readme)?;
     commit_directory(root, &target).map_err(|e| {
         Error::new(

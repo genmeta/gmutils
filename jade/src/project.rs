@@ -1,22 +1,26 @@
 //! Jade configuration and native source builds. No per-project build scripts.
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::HashSet,
     path::{Path, PathBuf},
     process::Stdio,
 };
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use crate::error::{Error, Result};
+
+pub(crate) const BUILD_DIR: &str = "build";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Manifest {
     pub package: Package,
-    pub frontend: Option<Frontend>,
-    pub backend: Option<Backend>,
+    #[serde(skip)]
+    pub frontend: Option<PathBuf>,
+    #[serde(skip)]
+    pub backend: Option<PathBuf>,
     #[serde(default)]
     pub dependencies: Vec<Dependency>,
 }
@@ -31,19 +35,6 @@ pub(crate) struct Package {
     pub title: Option<String>,
     pub release_notes: Option<String>,
     pub repository: Option<String>,
-}
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Frontend {
-    pub path: PathBuf,
-    pub output: Option<PathBuf>,
-}
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Backend {
-    pub path: PathBuf,
-    #[serde(default)]
-    pub host: BTreeMap<String, String>,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -63,7 +54,7 @@ pub(crate) fn read(path: &Path) -> Result<(PathBuf, Manifest)> {
     let source = crate::pack::read_bounded(&path, 1024 * 1024)
         .map_err(|e| Error::new("E_CONFIG_INVALID", e).context(json!({"file":path})))?;
     let source = std::str::from_utf8(&source).map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
-    let manifest: Manifest = toml::from_str(source).map_err(|e: toml::de::Error| {
+    let mut manifest: Manifest = toml::from_str(source).map_err(|e: toml::de::Error| {
         let mut context = json!({"file":path});
         if let Some(span) = e.span() {
             let prefix = &source[..span.start.min(source.len())];
@@ -79,9 +70,14 @@ pub(crate) fn read(path: &Path) -> Result<(PathBuf, Manifest)> {
         }
         Error::new("E_CONFIG_INVALID", format!("{}: {e}", path.display())).context(context)
     })?;
+    let path = std::fs::canonicalize(&path)?;
+    let root = path.parent().unwrap();
+    manifest.frontend = discover_frontend(root)?;
+    manifest.backend = discover_backend(root)?;
     if manifest.frontend.is_none() && manifest.backend.is_none() {
         return Err(
-            Error::new("E_CONFIG_INVALID", "Declare frontend or backend")
+            Error::new("E_CONFIG_INVALID", "No frontend or backend found")
+                .hint("Add index.html, public/index.html, a frontend package.json build script, or a Rust backend")
                 .context(json!({"file":path})),
         );
     }
@@ -91,10 +87,100 @@ pub(crate) fn read(path: &Path) -> Result<(PathBuf, Manifest)> {
         .as_deref()
         .unwrap_or("jade-validation.dhttp.net");
     let (wapm, annotation) = manifest.metadata(&crate::identity::normalize(author)?)?;
-    crate::pack::validate_metadata(&wapm, &annotation)
+    crate::pack::validate_metadata(&wapm, &annotation, manifest.backend.is_some())
         .map_err(|e| Error::new("E_CONFIG_INVALID", e).context(json!({"file":path})))?;
-    let path = std::fs::canonicalize(&path)?;
-    Ok((path.parent().unwrap().to_path_buf(), manifest))
+    Ok((root.to_path_buf(), manifest))
+}
+
+fn discover_frontend(root: &Path) -> Result<Option<PathBuf>> {
+    let mut candidates = Vec::new();
+    for source in [".", "web", "app"] {
+        let path = root.join(source);
+        if marker_exists(&path.join("package.json"))?
+            && node_package(&local_path(root, Path::new(source))?)?
+                .as_ref()
+                .and_then(|package| package.get("scripts"))
+                .and_then(|scripts| scripts.get("build"))
+                .is_some()
+        {
+            candidates.push(PathBuf::from(source));
+        }
+    }
+    // Source wins over static fallbacks, including stale dist outputs.
+    for sources in [
+        &[".", "web", "app", "public"][..],
+        &["dist", "web/dist", "app/dist"][..],
+    ] {
+        if !candidates.is_empty() {
+            break;
+        }
+        for source in sources {
+            if marker_exists(&root.join(source).join("index.html"))? {
+                candidates.push(PathBuf::from(source));
+            }
+        }
+    }
+    if candidates.len() > 1 {
+        return Err(Error::new(
+            "E_CONFIG_INVALID",
+            format!(
+                "Multiple frontend sources found: {}",
+                candidates
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )
+        .hint("Keep one frontend build project or one static entry directory"));
+    }
+    Ok(candidates.pop())
+}
+
+fn marker_exists(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(Error::new("E_CONFIG_INVALID", error)),
+    }
+}
+
+fn discover_backend(root: &Path) -> Result<Option<PathBuf>> {
+    let mut candidates = Vec::new();
+    for (marker, source) in [
+        ("Cargo.toml", "."),
+        ("api/Cargo.toml", "api"),
+        ("lib/Cargo.toml", "lib"),
+    ] {
+        match std::fs::symlink_metadata(root.join(marker)) {
+            Ok(_) => candidates.push((marker, PathBuf::from(source))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(Error::new("E_CONFIG_INVALID", error)),
+        }
+    }
+    if candidates.len() > 1 {
+        return Err(Error::new(
+            "E_CONFIG_INVALID",
+            format!(
+                "Multiple Rust backend sources found: {}",
+                candidates
+                    .iter()
+                    .map(|(marker, _)| *marker)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )
+        .hint("Keep one Rust backend source: Cargo.toml, api/Cargo.toml or lib/Cargo.toml"));
+    }
+    if let Some((_, source)) = candidates.pop() {
+        return Ok(Some(source));
+    }
+    // A prebuilt Component is a fallback; old build outputs must not mask source.
+    match std::fs::symlink_metadata(root.join("lib.wasm")) {
+        Ok(_) => Ok(Some(PathBuf::from("lib.wasm"))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(Error::new("E_CONFIG_INVALID", error)),
+    }
 }
 
 impl Manifest {
@@ -114,9 +200,6 @@ impl Manifest {
         if self.frontend.is_some() {
             annotation["entry"] = "/".into();
         }
-        if let Some(backend) = &self.backend {
-            annotation["host"] = json!(backend.host);
-        }
         Ok((wapm, annotation))
     }
 }
@@ -128,14 +211,52 @@ pub(crate) fn local_path(root: &Path, path: &Path) -> Result<PathBuf> {
     crate::pack::local_content_path(root, path).map_err(|e| Error::new("E_ARTIFACT_INVALID", e))
 }
 
-pub(crate) async fn frontend(root: &Path, config: &Frontend) -> Result<PathBuf> {
-    let path = local_path(root, &config.path)?;
+pub(crate) async fn frontend(root: &Path, source: &Path) -> Result<PathBuf> {
+    let path = local_path(root, source)?;
     if !path.is_dir() {
         return Err(Error::new(
             "E_ARTIFACT_INVALID",
-            "frontend.path must be a directory",
+            "Frontend source must be a directory",
         ));
     }
+    let package = node_package(&path)?;
+    let directory = if package
+        .as_ref()
+        .and_then(|p| p.get("scripts"))
+        .and_then(|s| s.get("build"))
+        .is_some()
+    {
+        let manager = node_manager(&path, package.as_ref().unwrap())?;
+        // Build tools such as Vite live in devDependencies, even for production builds.
+        let install_args: &[&str] = match manager {
+            "npm" => &["install", "--include=dev"],
+            "pnpm" => &["install", "--prod=false"],
+            _ => &["install"],
+        };
+        eprintln!(
+            "  Installing  frontend dependencies ({manager} {})",
+            install_args.join(" ")
+        );
+        run(manager, install_args, &path).await?;
+        eprintln!("  Building  frontend ({manager} run build)");
+        run(manager, &["run", "build"], &path).await?;
+        local_path(root, &path.join("dist"))?
+    } else {
+        path
+    };
+    if !directory.is_dir() || !directory.join("index.html").is_file() {
+        return Err(Error::new(
+            "E_ARTIFACT_INVALID",
+            format!(
+                "Frontend output requires index.html: {}",
+                directory.display()
+            ),
+        ));
+    }
+    Ok(directory)
+}
+
+fn node_package(path: &Path) -> Result<Option<Value>> {
     let package_path = path.join("package.json");
     let package = if package_path.exists() {
         let bytes = crate::pack::read_bounded(&package_path, 1024 * 1024)
@@ -157,38 +278,15 @@ pub(crate) async fn frontend(root: &Path, config: &Frontend) -> Result<PathBuf> 
         ));
     }
     let build = script.and_then(|s| s.get("build"));
-    let directory = if let Some(build) = build {
-        if build.as_str().is_none_or(|s| s.trim().is_empty()) {
-            return Err(Error::new(
-                "E_CONFIG_INVALID",
-                "package.json scripts.build must be a nonempty string",
-            ));
-        }
-        let manager = node_manager(&path, package.as_ref().unwrap())?;
-        eprintln!("  Building  frontend ({manager} run build)");
-        run(manager, &["run", "build"], &path).await?;
-        let output = config.output.as_deref().unwrap_or(Path::new("dist"));
-        local_path(root, &path.join(output))?
-    } else {
-        if config.output.is_some() {
-            return Err(Error::new(
-                "E_CONFIG_INVALID",
-                "frontend.output requires a package.json build script",
-            )
-            .hint("For static files, point frontend.path directly at the resource directory"));
-        }
-        path
-    };
-    if !directory.is_dir() || !directory.join("index.html").is_file() {
+    if let Some(build) = build
+        && build.as_str().is_none_or(|s| s.trim().is_empty())
+    {
         return Err(Error::new(
-            "E_ARTIFACT_INVALID",
-            format!(
-                "Frontend output requires index.html: {}",
-                directory.display()
-            ),
+            "E_CONFIG_INVALID",
+            "package.json scripts.build must be a nonempty string",
         ));
     }
-    Ok(directory)
+    Ok(package)
 }
 
 fn node_manager<'a>(path: &Path, package: &'a Value) -> Result<&'a str> {
@@ -259,14 +357,14 @@ async fn run(program: &str, args: &[&str], directory: &Path) -> Result<()> {
     if !status.success() {
         return Err(Error::new(
             "E_BUILD_FAILED",
-            format!("{program} build failed ({status})"),
+            format!("{program} {} failed ({status})", args.join(" ")),
         ));
     }
     Ok(())
 }
 
-pub(crate) async fn backend(root: &Path, config: &Backend, package: &Package) -> Result<Vec<u8>> {
-    let path = local_path(root, &config.path)?;
+pub(crate) async fn backend(root: &Path, source: &Path, package: &Package) -> Result<Vec<u8>> {
+    let path = local_path(root, source)?;
     let source = path.is_dir();
     let file = if source {
         cargo_build(root, &path).await?
@@ -276,13 +374,13 @@ pub(crate) async fn backend(root: &Path, config: &Backend, package: &Package) ->
     let mut bytes = crate::pack::read_bounded(&file, crate::package::PACKAGE_LIMIT)
         .map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
     if source {
-        let routes = sdk_routes(&bytes)?;
+        let routes = declared_routes(&bytes)?;
         let api_file = path.join("openapi.json");
         let document = match (routes, api_file.try_exists()?) {
             (Some(_), true) => {
                 return Err(Error::new(
                     "E_CONFIG_INVALID",
-                    "Choose one OpenAPI source: SDK routes or openapi.json",
+                    "Choose one OpenAPI source: route metadata or openapi.json",
                 ));
             }
             (Some(routes), false) => Some(openapi(&routes, package)?),
@@ -301,6 +399,107 @@ pub(crate) async fn backend(root: &Path, config: &Backend, package: &Package) ->
         }
     }
     Ok(bytes)
+}
+
+fn wasi_sdk_hint() -> &'static str {
+    if cfg!(windows) {
+        "Install WASI SDK from https://github.com/WebAssembly/wasi-sdk/releases and set WASI_SDK_PATH to the extracted SDK root (containing bin and share/wasi-sysroot). In PowerShell:\n  $env:WASI_SDK_PATH = 'C:\\path\\to\\wasi-sdk'\nThen retry jade build."
+    } else {
+        "Install WASI SDK from https://github.com/WebAssembly/wasi-sdk/releases and set WASI_SDK_PATH to the extracted SDK root (containing bin and share/wasi-sysroot):\n  export WASI_SDK_PATH=\"/path/to/wasi-sdk\"\nThen retry jade build."
+    }
+}
+
+#[derive(Default)]
+struct CargoDiagnostics {
+    wasi_target: bool,
+    missing_c_toolchain: bool,
+    missing_wasi_sysroot: bool,
+    missing_rust_target: bool,
+}
+
+impl CargoDiagnostics {
+    fn observe(&mut self, text: &str) {
+        let text = text.to_ascii_lowercase();
+        self.wasi_target |= text.contains("wasm32-wasi");
+        self.missing_wasi_sysroot |= text.contains("environment variable wasi_sysroot not defined");
+        for line in text.lines() {
+            self.missing_rust_target |=
+                line.contains("wasm32-wasip2") && line.contains("target may not be installed");
+            self.missing_c_toolchain |= line.contains("failed to find tool")
+                && (line.contains("\"clang\"") || line.contains("\"clang++\""));
+            if let Some((_, detail)) = line.split_once("fatal error:")
+                && (detail.contains("file not found")
+                    || detail.contains("no such file or directory"))
+            {
+                let header = detail
+                    .split([' ', '\t', '\'', '"', '<', '>', ':'])
+                    .find(|part| !part.is_empty());
+                self.missing_c_toolchain |= header.is_some_and(|header| {
+                    [
+                        "stdio.h",
+                        "stdlib.h",
+                        "string.h",
+                        "stdint.h",
+                        "stddef.h",
+                        "stdbool.h",
+                        "limits.h",
+                        "errno.h",
+                        "assert.h",
+                        "math.h",
+                        "time.h",
+                        "iostream",
+                        "vector",
+                        "string",
+                        "memory",
+                        "cstddef",
+                        "cstdio",
+                        "cstdlib",
+                        "cstdint",
+                    ]
+                    .contains(&header)
+                });
+            }
+        }
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.wasi_target |= other.wasi_target;
+        self.missing_c_toolchain |= other.missing_c_toolchain;
+        self.missing_wasi_sysroot |= other.missing_wasi_sysroot;
+        self.missing_rust_target |= other.missing_rust_target;
+    }
+
+    fn hint(&self) -> &'static str {
+        if self.missing_rust_target {
+            "Install the missing Rust target with: rustup target add wasm32-wasip2"
+        } else if self.missing_wasi_sysroot || (self.wasi_target && self.missing_c_toolchain) {
+            wasi_sdk_hint()
+        } else {
+            "Check the Cargo diagnostics above for the failing crate and error"
+        }
+    }
+}
+
+async fn forward_cargo_stderr(mut stderr: tokio::process::ChildStderr) -> Result<CargoDiagnostics> {
+    let mut diagnostics = CargoDiagnostics::default();
+    let mut output = tokio::io::stderr();
+    let mut buffer = [0; 8192];
+    let mut window = Vec::new();
+    loop {
+        let count = stderr.read(&mut buffer).await?;
+        if count == 0 {
+            break;
+        }
+        output.write_all(&buffer[..count]).await?;
+        window.extend_from_slice(&buffer[..count]);
+        diagnostics.observe(&String::from_utf8_lossy(&window));
+        // Retain only a small overlap to recognize diagnostics split across reads.
+        if window.len() > 2048 {
+            window.drain(..window.len() - 2048);
+        }
+    }
+    output.flush().await?;
+    Ok(diagnostics)
 }
 
 async fn cargo_build(root: &Path, path: &Path) -> Result<PathBuf> {
@@ -353,7 +552,7 @@ async fn cargo_build(root: &Path, path: &Path) -> Result<PathBuf> {
         .ok_or_else(|| {
             Error::new(
                 "E_CONFIG_INVALID",
-                "backend.path must select one Rust package",
+                "Backend source must contain one Rust package",
             )
         })?;
     let id = package["id"].as_str().unwrap_or_default();
@@ -377,7 +576,7 @@ async fn cargo_build(root: &Path, path: &Path) -> Result<PathBuf> {
         )
         .hint("Start with jade create PATH --template api, or provide a prebuilt Component"));
     }
-    let target_dir = root.join(".jade/target");
+    let target_dir = root.join(BUILD_DIR).join("target");
     crate::pack::resolved_output(&target_dir).map_err(|e| Error::new("E_OUTPUT_CONFLICT", e))?;
     let mut command = tokio::process::Command::new("cargo");
     command
@@ -396,7 +595,7 @@ async fn cargo_build(root: &Path, path: &Path) -> Result<PathBuf> {
         .current_dir(path)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
     // Native C dependencies use the same installed WASI toolchain as Cargo.
     // Application-specific flags stay in the application's Cargo configuration.
@@ -416,7 +615,8 @@ async fn cargo_build(root: &Path, path: &Path) -> Result<PathBuf> {
                     return Err(Error::new(
                         "E_TOOLCHAIN_UNAVAILABLE",
                         format!("WASI_SDK_PATH is missing {}", tool.display()),
-                    ));
+                    )
+                    .hint(wasi_sdk_hint()));
                 }
                 command.env(key, tool);
             }
@@ -426,46 +626,60 @@ async fn cargo_build(root: &Path, path: &Path) -> Result<PathBuf> {
         .spawn()
         .map_err(|e| Error::new("E_TOOLCHAIN_UNAVAILABLE", e))?;
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-    let mut output = None;
-    while let Some(line) = lines.next_line().await? {
-        if line.len() > 4 * 1024 * 1024 {
-            return Err(Error::new(
-                "E_BUILD_FAILED",
-                "Cargo diagnostic exceeds 4 MiB",
-            ));
-        }
-        match serde_json::from_str::<Value>(&line) {
-            Ok(message)
-                if message["reason"] == "compiler-artifact" && message["package_id"] == id =>
-            {
-                for file in message["filenames"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str)
+    let stderr = child.stderr.take().unwrap();
+    let stdout = async {
+        let mut output = None;
+        let mut diagnostics = CargoDiagnostics::default();
+        while let Some(line) = lines.next_line().await? {
+            if line.len() > 4 * 1024 * 1024 {
+                return Err(Error::new(
+                    "E_BUILD_FAILED",
+                    "Cargo diagnostic exceeds 4 MiB",
+                ));
+            }
+            match serde_json::from_str::<Value>(&line) {
+                Ok(message)
+                    if message["reason"] == "compiler-artifact" && message["package_id"] == id =>
                 {
-                    if Path::new(file).extension().is_some_and(|ext| ext == "wasm") {
-                        if output.is_some() {
-                            return Err(Error::new(
-                                "E_BUILD_FAILED",
-                                "Cargo returned multiple backend Components",
-                            ));
+                    for file in message["filenames"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                    {
+                        if Path::new(file).extension().is_some_and(|ext| ext == "wasm") {
+                            if output.is_some() {
+                                return Err(Error::new(
+                                    "E_BUILD_FAILED",
+                                    "Cargo returned multiple backend Components",
+                                ));
+                            }
+                            output = Some(PathBuf::from(file));
                         }
-                        output = Some(PathBuf::from(file));
                     }
                 }
-            }
-            Ok(message) => {
-                if let Some(rendered) = message["message"]["rendered"].as_str() {
-                    eprint!("{rendered}");
+                Ok(message) => {
+                    if let Some(rendered) = message["message"]["rendered"].as_str() {
+                        diagnostics.observe(rendered);
+                        eprint!("{rendered}");
+                    }
+                }
+                Err(_) => {
+                    diagnostics.observe(&line);
+                    eprintln!("{line}");
                 }
             }
-            Err(_) => eprintln!("{line}"),
         }
-    }
+        Ok((output, diagnostics))
+    };
+    let ((output, mut diagnostics), stderr_diagnostics) =
+        tokio::try_join!(stdout, forward_cargo_stderr(stderr))?;
+    diagnostics.merge(stderr_diagnostics);
     if !child.wait().await?.success() {
-        return Err(Error::new("E_BUILD_FAILED","Rust backend compilation failed")
-            .hint("Check the Cargo diagnostics; install the target with rustup target add wasm32-wasip2 if needed"));
+        return Err(
+            Error::new("E_BUILD_FAILED", "Rust backend compilation failed")
+                .hint(diagnostics.hint()),
+        );
     }
     let output = output.ok_or_else(|| {
         Error::new(
@@ -476,7 +690,7 @@ async fn cargo_build(root: &Path, path: &Path) -> Result<PathBuf> {
     local_path(root, &output)
 }
 
-fn sdk_routes(bytes: &[u8]) -> Result<Option<Value>> {
+fn declared_routes(bytes: &[u8]) -> Result<Option<Value>> {
     let mut routes = None;
     for item in wasmparser::Parser::new(0).parse_all(bytes) {
         if let wasmparser::Payload::CustomSection(section) =
@@ -486,11 +700,11 @@ fn sdk_routes(bytes: &[u8]) -> Result<Option<Value>> {
             if routes.is_some() || section.data().len() > 1024 * 1024 {
                 return Err(Error::new(
                     "E_ARTIFACT_INVALID",
-                    "Duplicate or oversized SDK route declarations",
+                    "Duplicate or oversized route declarations",
                 ));
             }
             routes = Some(serde_json::from_slice(section.data()).map_err(|e| {
-                Error::new("E_ARTIFACT_INVALID", format!("Invalid SDK routes: {e}"))
+                Error::new("E_ARTIFACT_INVALID", format!("Invalid route metadata: {e}"))
             })?);
         }
     }
@@ -500,21 +714,21 @@ fn sdk_routes(bytes: &[u8]) -> Result<Option<Value>> {
 fn openapi(routes: &Value, package: &Package) -> Result<Vec<u8>> {
     let routes = routes
         .as_array()
-        .ok_or_else(|| Error::new("E_ARTIFACT_INVALID", "SDK routes must be an array"))?;
+        .ok_or_else(|| Error::new("E_ARTIFACT_INVALID", "Route metadata must be an array"))?;
     let mut paths = serde_json::Map::new();
     for route in routes {
         let path = route["path"]
             .as_str()
-            .ok_or_else(|| Error::new("E_ARTIFACT_INVALID", "SDK route has no path"))?;
+            .ok_or_else(|| Error::new("E_ARTIFACT_INVALID", "Route has no path"))?;
         let method = route["method"]
             .as_str()
-            .ok_or_else(|| Error::new("E_ARTIFACT_INVALID", "SDK route has no method"))?;
+            .ok_or_else(|| Error::new("E_ARTIFACT_INVALID", "Route has no method"))?;
         let handler = route["handler"]
             .as_str()
-            .ok_or_else(|| Error::new("E_ARTIFACT_INVALID", "SDK route has no handler"))?;
+            .ok_or_else(|| Error::new("E_ARTIFACT_INVALID", "Route has no handler"))?;
         let item = paths.entry(path.to_owned()).or_insert_with(|| json!({}));
         if item.get(method).is_some() {
-            return Err(Error::new("E_ARTIFACT_INVALID", "Duplicate SDK route"));
+            return Err(Error::new("E_ARTIFACT_INVALID", "Duplicate route"));
         }
         item[method] = json!({"operationId":handler,"summary":handler.replace('_'," "),
             "responses":{"200":{"description":"Success","content":{"application/json":{"schema":{}}}}}});
@@ -526,7 +740,6 @@ fn openapi(routes: &Value, package: &Package) -> Result<Vec<u8>> {
 /// Validate structure and the host's HTTP entry point without executing guest code.
 pub(crate) fn validate_component(
     bytes: &[u8],
-    host: &Value,
     version: &str,
     author: &str,
     name: &str,
@@ -658,9 +871,6 @@ pub(crate) fn validate_component(
     {
         return Err(invalid("HTTP handler has an incompatible signature"));
     }
-    let host = host
-        .as_object()
-        .ok_or_else(|| invalid("Backend requires a host capability map"))?;
     for item in world.imports.values() {
         let wit_parser::WorldItem::Interface { id, .. } = item else {
             return Err(invalid("Unsupported top-level backend import"));
@@ -714,23 +924,6 @@ pub(crate) fn validate_component(
                 package
             )));
         }
-        let capability = match (
-            package.namespace.as_str(),
-            package.name.as_str(),
-            interface_name,
-        ) {
-            ("wasi", "filesystem", _) => Some("private-storage"),
-            ("pishoo", "identity", "request-identity") => Some("request-identity"),
-            ("pishoo", "identity", "signatures") => Some("signatures"),
-            _ => None,
-        };
-        if let Some(capability) = capability
-            && !host.contains_key(capability)
-        {
-            return Err(invalid(&format!(
-                "Imported host capability requires a purpose in backend.host.{capability}"
-            )));
-        }
     }
     Ok(())
 }
@@ -778,6 +971,148 @@ fn http_resource(resolve: &wit_parser::Resolve, mut ty: wit_parser::Type, name: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_frontends_without_a_frontend_section() {
+        for (source, build) in [
+            (".", true),
+            ("web", true),
+            ("app", true),
+            (".", false),
+            ("web", false),
+            ("app", false),
+            ("public", false),
+            ("dist", false),
+            ("web/dist", false),
+            ("app/dist", false),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let manifest_path = root.path().join("jade.toml");
+            let original =
+                "[package]\nname='hello'\nversion='1.0.0'\ndescription='Test'\nlicense='MIT'\n";
+            std::fs::write(&manifest_path, original).unwrap();
+            let directory = root.path().join(source);
+            std::fs::create_dir_all(&directory).unwrap();
+            if build {
+                std::fs::write(
+                    directory.join("package.json"),
+                    r#"{"scripts":{"build":"vite build"}}"#,
+                )
+                .unwrap();
+                // Sources must win over static templates and previous build output.
+                for stale in ["public", "dist", "web/dist", "app/dist"] {
+                    std::fs::create_dir_all(root.path().join(stale)).unwrap();
+                    std::fs::write(root.path().join(stale).join("index.html"), "stale").unwrap();
+                }
+            } else {
+                std::fs::write(directory.join("index.html"), "<h1>Static</h1>").unwrap();
+            }
+            let (_, manifest) = read(root.path()).unwrap();
+            assert_eq!(manifest.frontend.as_deref(), Some(Path::new(source)));
+            assert_eq!(
+                manifest.metadata("alice.dhttp.net").unwrap().1["entry"],
+                "/"
+            );
+            assert!(manifest.backend.is_none());
+            std::fs::write(
+                &manifest_path,
+                format!("{original}\n[frontend]\npath='{source}'\n"),
+            )
+            .unwrap();
+            assert!(
+                read(root.path())
+                    .unwrap_err()
+                    .to_string()
+                    .contains("unknown field")
+            );
+        }
+    }
+
+    #[test]
+    fn ambiguous_frontends_fail_instead_of_choosing_one() {
+        for (sources, marker, content) in [
+            (
+                [".", "web"],
+                "package.json",
+                r#"{"scripts":{"build":"vite build"}}"#,
+            ),
+            ([".", "public"], "index.html", "static"),
+            (["dist", "web/dist"], "index.html", "prebuilt"),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            for source in sources {
+                std::fs::create_dir_all(root.path().join(source)).unwrap();
+                std::fs::write(root.path().join(source).join(marker), content).unwrap();
+            }
+            let error = discover_frontend(&root.path().canonicalize().unwrap())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("Multiple frontend sources found"), "{error}");
+        }
+    }
+
+    #[test]
+    fn reads_backend_projects_without_a_backend_section() {
+        for source in [".", "api", "lib", "lib.wasm"] {
+            let root = tempfile::tempdir().unwrap();
+            std::fs::write(
+                root.path().join("jade.toml"),
+                "[package]\nname='hello'\nversion='1.0.0'\ndescription='Test'\nlicense='MIT'\n",
+            )
+            .unwrap();
+            if source == "lib.wasm" {
+                std::fs::write(root.path().join(source), b"\0asm\x0d\0\x01\0").unwrap();
+            } else {
+                let directory = root.path().join(source);
+                std::fs::create_dir_all(&directory).unwrap();
+                std::fs::write(
+                    directory.join("Cargo.toml"),
+                    "[package]\nname='hello'\nversion='1.0.0'\n",
+                )
+                .unwrap();
+                std::fs::write(root.path().join("lib.wasm"), "stale build output").unwrap();
+            }
+            let (_, manifest) = read(root.path()).unwrap();
+            assert_eq!(manifest.backend.as_deref(), Some(Path::new(source)));
+            assert!(
+                manifest
+                    .metadata("alice.dhttp.net")
+                    .unwrap()
+                    .1
+                    .get("host")
+                    .is_none()
+            );
+
+            let manifest_path = root.path().join("jade.toml");
+            let original = std::fs::read_to_string(&manifest_path).unwrap();
+            std::fs::write(&manifest_path, format!("{original}\n[backend]\npath='.'\n")).unwrap();
+            assert!(
+                read(root.path())
+                    .unwrap_err()
+                    .to_string()
+                    .contains("unknown field")
+            );
+        }
+    }
+
+    #[test]
+    fn ambiguous_backends_are_rejected_before_building() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("jade.toml"),
+            "[package]\nname='hello'\nversion='1.0.0'\ndescription='Test'\nlicense='MIT'\n",
+        )
+        .unwrap();
+        std::fs::create_dir(root.path().join("api")).unwrap();
+        std::fs::write(root.path().join("api/Cargo.toml"), "").unwrap();
+        std::fs::write(root.path().join("Cargo.toml"), "").unwrap();
+        let error = read(root.path()).unwrap_err().to_string();
+        assert!(
+            error.contains("Multiple Rust backend sources found"),
+            "{error}"
+        );
+        assert!(error.contains("Cargo.toml, api/Cargo.toml"), "{error}");
+    }
 
     #[test]
     fn package_manager_uses_bun_locks_and_rejects_ambiguous_locks() {

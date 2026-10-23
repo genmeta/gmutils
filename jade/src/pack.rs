@@ -26,17 +26,27 @@ pub(super) async fn run(
     let (project, config) = crate::project::read(&path)?;
     let author =
         crate::identity::select(id.as_deref(), config.package.author.as_deref(), machine).await?;
-    let (wapm, annotation) = config.metadata(&author)?;
-    validate_metadata(&wapm, &annotation).map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
-    let id = text(&wapm, "name").map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
+    let (mut wapm, annotation) = config.metadata(&author)?;
+    validate_metadata(&wapm, &annotation, config.backend.is_some())
+        .map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
+    let id = text(&wapm, "name")
+        .map_err(|e| Error::new("E_CONFIG_INVALID", e))?
+        .to_owned();
     let name = &config.package.name;
     let version = &config.package.version;
     let default_output = requested_output.is_none();
-    let output = requested_output
-        .unwrap_or_else(|| project.join(".jade").join(format!("{name}-{version}.waz")));
+    let output = requested_output.unwrap_or_else(|| {
+        project
+            .join(crate::project::BUILD_DIR)
+            .join(format!("{name}-{version}.waz"))
+    });
     reject_url(output.as_os_str()).map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
     let output = resolved_output(&output).map_err(|e| Error::new("E_OUTPUT_CONFLICT", e))?;
-    let excluded = project.join(".jade");
+    // Keep legacy build artifacts out of root-level static projects after upgrading.
+    let excluded = [
+        project.join(crate::project::BUILD_DIR),
+        project.join(".jade"),
+    ];
     let directory = match &config.frontend {
         Some(frontend) => Some(crate::project::frontend(&project, frontend).await?),
         None => None,
@@ -46,17 +56,17 @@ pub(super) async fn run(
         None => Vec::new(),
     };
     if !backend.is_empty() {
-        crate::project::validate_component(&backend, &annotation["host"], version, &author, name)?;
+        crate::project::validate_component(&backend, version, &author, name)?;
     }
     let parent = output
         .parent()
         .ok_or_else(|| Error::new("E_OUTPUT_CONFLICT", "Missing output directory"))?;
     if let Some(directory) = &directory {
-        if !output.starts_with(&excluded) {
+        if !excluded.iter().any(|path| output.starts_with(path)) {
             ensure_outside_mapping(&output, parent, directory)
                 .map_err(|e| Error::new("E_OUTPUT_CONFLICT", e))?;
         }
-        if directory.starts_with(&excluded) {
+        if excluded.iter().any(|path| directory.starts_with(path)) {
             return Err(Error::new(
                 "E_ARTIFACT_INVALID",
                 "Frontend resources cannot be in Jade's output directory",
@@ -65,9 +75,42 @@ pub(super) async fn run(
     }
     let mut count = 1;
     let mut remaining = 64 * 1024 * 1024 - backend.len();
+    let mut documents = BTreeMap::new();
+    let mut excluded_content = excluded.to_vec();
+    for name in ["README.md", "CHANGELOG.md"] {
+        let path = project.join(name);
+        excluded_content.push(path.clone());
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(Error::new("E_ARTIFACT_INVALID", error)),
+        }
+        let bytes = read_bounded(&path, (16 * 1024 * 1024).min(remaining))
+            .map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
+        remaining -= bytes.len();
+        count += 1;
+        documents.insert(
+            name.parse().map_err(|e| Error::new("E_INTERNAL", e))?,
+            DirEntry::File(FileEntry::owned(bytes, Timestamps::default())),
+        );
+        if name == "README.md" {
+            wapm["readme"] = json!({"volume":"metadata","path":"/README.md"});
+        }
+    }
+    let documents =
+        (!documents.is_empty()).then(|| Directory::new(documents, Timestamps::default()));
     let content = directory
         .as_ref()
-        .map(|directory| public_directory(directory, "", &mut count, &mut remaining, 0, &excluded))
+        .map(|directory| {
+            public_directory(
+                directory,
+                "",
+                &mut count,
+                &mut remaining,
+                0,
+                &excluded_content,
+            )
+        })
         .transpose()
         .map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
     let home = crate::identity::home()?;
@@ -84,6 +127,7 @@ pub(super) async fn run(
         &annotation,
         &backend,
         content,
+        documents,
         &certificates,
         &signing_key,
     )
@@ -192,6 +236,7 @@ fn encode(
     annotation: &Value,
     backend: &[u8],
     content: Option<Directory<'static>>,
+    documents: Option<Directory<'static>>,
     certificates: &[qtls::CertificateDer<'_>],
     signing_key: &std::sync::Arc<dyn rustls::sign::SigningKey>,
 ) -> Result<Vec<u8>> {
@@ -219,12 +264,18 @@ fn encode(
     if let Some(content) = content {
         writer.write_volume("public", content)?;
     }
+    if let Some(documents) = documents {
+        writer.write_volume("metadata", documents)?;
+    }
     let unsigned = writer.finish(SignatureAlgorithm::None)?;
     let container = webc::Container::from_bytes_and_version(unsigned.clone(), webc::Version::V3)?;
-    let reader = webc::v3::read::OwnedReader::parse(unsigned.clone())?;
-    let index = reader.index();
-    let digest = crate::package::payload_digest(&unsigned)?;
-    let input = crate::package::signature_input(&unsigned)?;
+    let mut files = crate::archive::waz_export(&container)
+        .map_err(|error| -> Box<dyn std::error::Error> { error })?;
+    let digest = crate::archive::waz_payload(&files);
+    let mut input = b"pishoo-waz-signature-v1\0".to_vec();
+    for offset in (0..digest.len()).step_by(2) {
+        input.push(u8::from_str_radix(&digest[offset..offset + 2], 16)?);
+    }
     let mut signature = None;
     for scheme in [
         qtls::SignatureScheme::RSA_PSS_SHA512,
@@ -240,33 +291,16 @@ fn encode(
     let envelope = json!({"version":1,
         "certificates":certificates.iter().map(|c|STANDARD.encode(c.as_ref())).collect::<Vec<_>>(),
         "signature":STANDARD.encode(signature.ok_or("unsupported signing key")?)});
-    let mut writer = Writer::default()
-        .write_raw_manifest(
-            unsigned[index.manifest.span.start + 41..index.manifest.span.end()].to_vec(),
-        )
-        .write_atoms(atoms()?)?;
-    for (name, volume) in container.volumes() {
-        writer.write_volume(&name, copy_directory(&volume, "/")?)?;
-    }
-    let bytes = writer
-        .with_volume(
-            "pishoo-signature",
-            Directory::new(
-                BTreeMap::from([(
-                    "signature.json".parse()?,
-                    serde_json::to_vec(&envelope)?.into(),
-                )]),
-                Timestamps::default(),
-            ),
-        )?
-        .finish(SignatureAlgorithm::None)?;
-    if bytes.len() > 64 * 1024 * 1024 {
-        return Err("package exceeds 64 MiB".into());
-    }
+    files.insert(
+        "signature.json".into(),
+        serde_json::to_vec_pretty(&envelope)?,
+    );
+    let bytes = crate::archive::waz_write(&files)
+        .map_err(|error| -> Box<dyn std::error::Error> { error })?;
     if crate::package::payload_digest(&bytes)? != digest {
         return Err("final package content differs from signed payload".into());
     }
-    Ok(bytes.to_vec())
+    Ok(bytes)
 }
 
 pub(crate) fn embedded_openapi(mut backend: Vec<u8>, source: Option<&[u8]>) -> Result<Vec<u8>> {
@@ -410,15 +444,13 @@ pub(super) fn valid_id(id: &str) -> bool {
     })
 }
 
-pub(crate) fn validate_metadata(wapm: &Value, annotation: &Value) -> Result<()> {
+pub(crate) fn validate_metadata(wapm: &Value, annotation: &Value, has_backend: bool) -> Result<()> {
     let id = text(wapm, "name")?;
     if !valid_id(id) {
         return Err("invalid normalized author/name".into());
     }
     let (author, name) = id.split_once('/').unwrap();
-    if name == "std"
-        || (name == "app" && author != "std.dhttp.net" && annotation.get("host").is_some())
-    {
+    if name == "std" || (name == "app" && author != "std.dhttp.net" && has_backend) {
         return Err("package name conflicts with a host namespace".into());
     }
     if !valid_version(text(wapm, "version")?) {
@@ -456,6 +488,7 @@ pub(crate) fn validate_metadata(wapm: &Value, annotation: &Value) -> Result<()> 
     }
     text(annotation, "title")?;
     text(annotation, "changelog")?;
+    // Ignore legacy host declarations; newly built packages omit the field.
     if annotation.as_object().is_none_or(|o| {
         o.keys().any(|k| {
             !matches!(
@@ -486,18 +519,6 @@ pub(crate) fn validate_metadata(wapm: &Value, annotation: &Value) -> Result<()> 
         && entry != "/"
     {
         return Err("invalid entry".into());
-    }
-    if let Some(host) = annotation.get("host") {
-        let host = host.as_object().ok_or("host purposes require an object")?;
-        for (key, purpose) in host {
-            if !matches!(
-                key.as_str(),
-                "private-storage" | "request-identity" | "signatures"
-            ) || purpose.as_str().is_none_or(|s| s.trim().is_empty())
-            {
-                return Err("unknown or unexplained host capability".into());
-            }
-        }
     }
     Ok(())
 }
@@ -599,7 +620,7 @@ fn public_directory(
     count: &mut usize,
     remaining: &mut usize,
     depth: usize,
-    excluded: &Path,
+    excluded: &[PathBuf],
 ) -> Result<Directory<'static>> {
     if depth > 32 || std::fs::symlink_metadata(path)?.file_type().is_symlink() {
         return Err("content must contain real directories, depth <= 32".into());
@@ -607,7 +628,7 @@ fn public_directory(
     let mut children = BTreeMap::new();
     for entry in std::fs::read_dir(path)? {
         let entry = entry?;
-        if entry.path() == excluded {
+        if excluded.contains(&entry.path()) {
             continue;
         }
         *count += 1;
@@ -646,27 +667,6 @@ fn public_directory(
             return Err("content symlinks and special files are unsupported".into());
         };
         children.insert(name.parse()?, item);
-    }
-    Ok(Directory::new(children, Timestamps::default()))
-}
-
-fn copy_directory(volume: &webc::Volume, path: &str) -> Result<Directory<'static>> {
-    let mut children = BTreeMap::new();
-    for (name, _, metadata) in volume.read_dir(path).ok_or("missing directory")? {
-        let child = format!("{}/{}", path.trim_end_matches('/'), name);
-        let entry = match metadata {
-            webc::Metadata::Dir { .. } => DirEntry::Dir(copy_directory(volume, &child)?),
-            webc::Metadata::File { .. } => DirEntry::File(FileEntry::owned(
-                volume
-                    .read_file(child.as_str())
-                    .ok_or("missing file")?
-                    .0
-                    .to_vec(),
-                Timestamps::default(),
-            )),
-            _ => return Err("unexpected package symlink".into()),
-        };
-        children.insert(name, entry);
     }
     Ok(Directory::new(children, Timestamps::default()))
 }

@@ -47,7 +47,7 @@ genmeta --version
 | `genmeta discover` | 持续发现局域网中的 DHTTP 服务 | 局域网支持 mDNS |
 | `genmeta doctor net` | 检测 NAT、接口和公网地址映射 | 网络允许进行探测 |
 | `jade create` | 在新目录创建静态、前端或 Rust API 模板 | 无需身份凭据 |
-| `jade build` | 构建或收集产物，校验并签名生成 WEBC 包 | 本地项目、所需工具链和作者凭据 |
+| `jade build` | 构建或收集产物，校验并签名生成 ZIP 格式的 .waz 包 | 本地项目、所需工具链和作者凭据 |
 | `jade publish` | 将指定签名包发布到商店 | 包内作者的本地凭据，商店可达 |
 | `genmeta install` | 安装商店中已发布的 App 或 Lib 及其精确依赖 | 本地身份的 Pishoo 已运行并启用，商店可达 |
 | `genmeta update` | 从原发布者更新已安装的包 | 同上，且包已安装 |
@@ -389,14 +389,34 @@ Jade 使用 `jade.toml`，支持静态页面、npm/pnpm 前端构建、Rust HTTP
 ### create：创建项目
 
 ```sh
-jade create ./hello
+jade create ./hello                             # 默认：Vite 前端 + Rust 后端 API
+jade create ./website --template static         # 静态页面
 jade create ./frontend --template web
-jade create ./service --template api
-jade create ./application --template fullstack
+jade create ./service --template api             # Rust HTTP API
+jade create ./application --template fullstack   # 前端调用 Rust 后端 API
 jade create "My Project" --name my-project
 ```
 
 `PATH` 必填，父目录需已存在，目标路径须为新目录。默认以目录名作为包名；`--name` 可独立指定小写字母开头、最多 63 个小写字母/数字/连字符的名称。创建无需身份凭据，模板生成配置、源码、`.gitignore` 和准备说明。
+
+默认模板为 `fullstack`，同时生成前端和后端 API；仅需静态页面、前端或后端时，分别指定 `--template static`、`web` 或 `api`。
+
+`api` 和 `fullstack` 模板的 `api/src/lib.rs` 包含 GET `/hello`，返回 `{"message":"Hello from Rust"}` JSON。全栈模板的 `web/src/main.js` 会请求 `/<包名>/hello` 并展示返回的消息。以下示例从新目录创建全栈应用（`alice.smith` 替换为自己的身份）：
+
+```sh
+jade create ./hello-api
+cd hello-api
+rustup target add wasm32-wasip2
+jade build --id alice.smith
+jade publish build/hello-api-0.1.0.waz
+
+# 安装到该身份正在运行的 Pishoo 服务，再调用后端
+genmeta install alice.smith.dhttp.net/hello-api --id alice.smith
+genmeta curl --id alice.smith -f https://alice.smith.dhttp.net/hello-api/hello
+# {"message":"Hello from Rust"}
+```
+
+Pishoo 提供后端 HTTP 监听，并将接口挂载在包名路径下；安装后打开返回的 `entry_url` 可查看前端调用效果。单独运行 Vite 开发服务器只提供前端，API 调用需要 Pishoo 服务。生成项目的 README 也包含这些步骤。
 
 ### build：构建并签名
 
@@ -413,17 +433,17 @@ version = "0.1.0"
 description = "Hello DHTTP"
 license = "Apache-2.0"
 
-[frontend]
-path = "public"
 ```
 
-有有效 build 脚本的前端工程使用 npm/pnpm 构建，资源目录由可选的 `frontend.output` 指定，默认相对于前端路径的 `dist/`。无 build 脚本时直接收集包含 `index.html` 的静态目录。
+前端自动查找根目录、`web/`、`app/` 下包含有效 `scripts.build` 的 `package.json`；无源码工程时查找根目录、`web/`、`app/`、`public/` 的 `index.html`，仍未找到才使用 `dist/`、`web/dist/` 或 `app/dist/`。同一阶段的多个候选会报错，无需 `[frontend]` 声明。
 
-Rust 后端使用 `backend.path = "api"` 指向 API 模板工程。安装 `wasm32-wasip2` 目标后，开发者只需编写路由和业务 Rust 代码；Jade 调用 Cargo，模板 SDK 提供 HTTP 绑定，Jade 根据路由声明生成并嵌入 OpenAPI，无需另写构建脚本。已有 Component 可直接通过 backend.path 指定。完整配置见 [Jade README](../jade/README.md)。
+有有效 build 脚本的前端工程会先通过 npm/pnpm/Bun 安装依赖（包含 Vite 等开发依赖），再运行 build 脚本；每次构建都会同步依赖，无需手动执行 npm install。包管理器优先取 `packageManager`，其次按锁文件识别，均未提供时使用 npm。构建脚本须将资源输出到前端工程目录下的 `dist/`。无 build 脚本时直接收集包含 `index.html` 的静态目录。Node.js、包管理器和 Rust 工具链仍需预先安装。
+
+Rust 后端自动从根目录的 `Cargo.toml`、`api/Cargo.toml` 或 `lib/Cargo.toml` 发现，多个 Rust 工程会报错。没有 Rust 源码时，使用根目录预编译的 `lib.wasm`；源码旁的旧产物不参与选择。安装 `wasm32-wasip2` 目标后，在 `api/src/lib.rs` 中直接使用 `wasip2` 实现 HTTP 入口和业务逻辑，修改路由时同步更新文件末尾的 `ROUTES` 元数据。Jade 调用 Cargo，并根据路由元数据生成和嵌入 OpenAPI，无需另写构建脚本，也无需 `[backend]` 或宿主能力用途声明。完整配置见 [Jade README](../jade/README.md)。
 
 签名身份依次取 `--id`、`package.author`、DHTTP 默认身份；显式身份须符合配置约束。均未指定时自动选择唯一可用身份，多候选在交互终端中选择。非交互和 JSON 模式通过 `E_IDENTITY_REQUIRED` 提示补充 `--id`。凭据使用 dhttp-home 的目录约定，支持 `DHTTP_HOME`。
 
-包默认写入 `.jade/NAME-VERSION.waz`，与前端资源输出分开。重复构建可以原子更新同包、同版本、同 owner 的有效产物；失败保留旧包。显式 `-o` 文件已存在时需加 `--overwrite`。
+包默认写入 `build/NAME-VERSION.waz`，Rust 编译缓存位于 `build/target/`，与前端的 `web/dist/` 或根目录 `dist/` 分开。内容收集会排除 `build/` 和旧版 `.jade/`；已有项目应将 `/build/` 加入 `.gitignore`。重复构建可以原子更新同包、同版本、同 owner 的有效产物；失败保留旧包。显式 `-o` 文件已存在时需加 `--overwrite`。
 
 ```sh
 jade build ./hello --id alice.smith
@@ -433,13 +453,15 @@ jade build ./hello -o ./hello.waz --overwrite --id alice.smith
 
 ### publish：发布已签名包
 
+`.waz` 使用标准 ZIP 格式（`application/zip`），包含 `manifest.json`、`signature.json` 以及前后端产物。项目根目录的 `README.md`、`CHANGELOG.md` 存在时自动打包，缺少时跳过，无需在 `jade.toml` 中声明；这些文档也受包签名保护。旧 WEBC 发布包不再接受，需要重新构建，并先更新商店和宿主读取端。格式详见 [WAZ 规范](../jade/FORMAT.md)。
+
 ```sh
-jade publish ./hello/.jade/hello-0.1.0.waz
+jade publish ./hello/build/hello-0.1.0.waz
 ```
 
 publish 从包中取得作者，加载匹配凭据，在联网前完成容器、签名和身份绑定检查，再向固定商店上传一次文件快照。证书更换后重新 build。相同内容的同版本重复发布视为成功，不同内容返回版本冲突；响应丢失后只读核验，无法确认时返回 `E_PUBLISH_OUTCOME_UNKNOWN`。
 
-`.waz` 使用 WEBC v3，MIME 为 `application/webc`，可同时包含静态页面和后端组件。完整包上限 64 MiB。`payload_sha256` 表示内容摘要，`package_sha256` 表示包含签名的完整文件摘要。
+`.waz` 使用标准 ZIP，MIME 为 `application/zip`，可同时包含静态页面、后端组件和可选文档。压缩包和解压后总内容分别限制为 64 MiB。`payload_sha256` 表示内容摘要，`package_sha256` 表示包含签名的完整文件摘要。
 
 三个命令默认输出人类可读摘要。`--json` 在 stdout 输出一个完整结果文档，错误同样具有稳定结构；进度、构建工具输出和诊断写 stderr。机器结果使用完整身份，终端可缩写为 `alice.smith~`；`--verb` 开启调试日志。退出码为成功 0、运行失败或发布结果未知 1、参数错误 2、取消 130。
 
@@ -487,7 +509,7 @@ genmeta uninstall hello --id alice.smith
 
 包管理输出中的身份使用 `alice.smith~`，包 ID 使用 `alice.smith~/hello`，标准发布者简写为 `std/workspace`；应用入口显示为 `https://alice.smith~/app/workspace/`。
 
-安装包不会自动授予 API 访问权限。商店和 Pishoo 需支持当前 WEBC manifest 协议；卸载还要求 Pishoo 支持包详情响应中的 `Package-Id` 校验。
+安装包不会自动授予 API 访问权限。商店和 Pishoo 需支持当前 WAZ ZIP 包协议；卸载还要求 Pishoo 支持包详情响应中的 `Package-Id` 校验。
 
 ## 常见操作流程
 

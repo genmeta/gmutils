@@ -80,13 +80,36 @@ fn metadata(kind: &str, name: &str, dependencies: Value) -> Value {
         "changelog":"Initial release; compatible data","dependencies":dependencies});
     if kind == "app" {
         value["entry"] = "/".into();
-    } else {
-        value["host"] = json!({});
     }
     value
 }
 
 fn build(metadata: &Value, authority: Option<&dhttp::LocalAuthority>, content: &str) -> Vec<u8> {
+    let internal = build_projection(metadata, None, content);
+    let container =
+        webc::Container::from_bytes_and_version(internal.into(), webc::Version::V3).unwrap();
+    let mut files = crate::archive::waz_export(&container).unwrap();
+    if let Some(authority) = authority {
+        let payload = crate::archive::waz_payload(&files);
+        let mut input = b"pishoo-waz-signature-v1\0".to_vec();
+        for i in (0..payload.len()).step_by(2) {
+            input.push(u8::from_str_radix(&payload[i..i + 2], 16).unwrap());
+        }
+        let signature = authority
+            .sign(qtls::SignatureScheme::ECDSA_NISTP256_SHA256, &input)
+            .unwrap();
+        files.insert("signature.json".into(), serde_json::to_vec(&json!({"version":1,
+            "certificates":authority.certificates().iter().map(|c|STANDARD.encode(c.as_ref())).collect::<Vec<_>>(),
+            "signature":STANDARD.encode(signature)})).unwrap());
+    }
+    crate::archive::waz_write(&files).unwrap()
+}
+
+fn build_projection(
+    metadata: &Value,
+    authority: Option<&dhttp::LocalAuthority>,
+    content: &str,
+) -> Vec<u8> {
     let kind = metadata["kind"].as_str().unwrap();
     let mut annotation = metadata.clone();
     for key in [
@@ -160,36 +183,8 @@ fn build(metadata: &Value, authority: Option<&dhttp::LocalAuthority>, content: &
         writer
     };
     let unsigned = make().finish(SignatureAlgorithm::None).unwrap().to_vec();
-    let Some(authority) = authority else {
-        return unsigned;
-    };
-    let payload = payload_digest(&unsigned).unwrap();
-    let mut input = b"pishoo-webc-signature-v1\0".to_vec();
-    for offset in (0..64).step_by(2) {
-        input.push(u8::from_str_radix(&payload[offset..offset + 2], 16).unwrap());
-    }
-    let signature = authority
-        .sign(qtls::SignatureScheme::ECDSA_NISTP256_SHA256, &input)
-        .unwrap();
-    let envelope = json!({"version":1,"certificates":authority.certificates().iter().map(|c|STANDARD.encode(c.as_ref())).collect::<Vec<_>>(),
-        "signature":STANDARD.encode(signature)});
-    let bytes = make()
-        .with_volume(
-            "pishoo-signature",
-            Directory::new(
-                BTreeMap::from([(
-                    "signature.json".parse().unwrap(),
-                    serde_json::to_vec(&envelope).unwrap().into(),
-                )]),
-                Timestamps::default(),
-            ),
-        )
-        .unwrap()
-        .finish(SignatureAlgorithm::None)
-        .unwrap()
-        .to_vec();
-    assert_eq!(payload_digest(&bytes).unwrap(), payload);
-    bytes
+    assert!(authority.is_none());
+    unsigned
 }
 
 fn local(name: &str, owner: &str) -> dhttp::LocalAuthority {
@@ -316,6 +311,26 @@ fn parses_manifest_without_treating_it_as_verified_and_preserves_payload_identit
     }
     for bytes in [vec![], b"not webc".to_vec(), b"\0webc003\x02".to_vec()] {
         assert!(manifest_identity(&bytes).is_err());
+    }
+}
+
+#[tokio::test]
+async fn packages_omit_host_and_ignore_legacy_declarations() {
+    let authority = local("alice.dhttp.net", &"a".repeat(64));
+    for kind in ["app", "lib"] {
+        for host in [
+            None,
+            Some(json!({"unknown-capability":""})),
+            Some(json!(false)),
+        ] {
+            let mut metadata = metadata(kind, "note", json!([]));
+            if let Some(host) = host {
+                metadata["host"] = host;
+            }
+            let bytes = build(&metadata, Some(&authority), "test");
+            let inspected = inspect_package(&bytes).await.unwrap();
+            assert!(inspected.get("host").is_none());
+        }
     }
 }
 
@@ -468,13 +483,13 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
                     return Ok::<_, dhttp::BoxError>(match saved {
                         None => response(StatusCode::NOT_FOUND, json!({"error":"not_found"})),
                         Some((_, metadata)) if download && metadata["status"] == "yanked" => response(StatusCode::GONE, json!({"error":"yanked"})),
-                        Some((bytes, _)) if download => http::Response::builder().header(header::CONTENT_TYPE, "application/webc").body(body(bytes)).unwrap(),
+                        Some((bytes, _)) if download => http::Response::builder().header(header::CONTENT_TYPE, "application/zip").body(body(bytes)).unwrap(),
                         Some((_, metadata)) => response(StatusCode::OK, metadata),
                     });
                 }
                 assert_eq!(method, http::Method::PUT);
                 puts.fetch_add(1, Ordering::SeqCst);
-                assert_eq!(request.headers()[header::CONTENT_TYPE], "application/webc");
+                assert_eq!(request.headers()[header::CONTENT_TYPE], "application/zip");
                 let bytes = request.into_body().collect().await?.to_bytes().to_vec();
                 let metadata = inspect_package(&bytes).await?;
                 assert_eq!(version_path(&metadata).unwrap(), path);
@@ -718,13 +733,11 @@ async fn publication_inspection_is_local_and_requires_an_intact_signed_container
             .await
             .is_err()
     );
-    let mut tampered = bytes;
-    let offset = tampered
-        .windows(b"offline page".len())
-        .position(|bytes| bytes == b"offline page")
-        .unwrap();
-    tampered[offset] ^= 1;
+    let mut files = crate::archive::waz_read(&bytes).unwrap();
+    files.get_mut("public/index.html").unwrap()[0] ^= 1;
+    let tampered = crate::archive::waz_write(&files).unwrap();
     assert!(inspect_package(&tampered).await.is_err());
+    assert!(inspect_package(b"\0webc003").await.is_err());
 }
 
 #[tokio::test]
@@ -732,52 +745,20 @@ async fn a_valid_container_with_a_forged_signature_is_rejected_locally() {
     let authority = local("alice.dhttp.net", &"a".repeat(64));
     let metadata = metadata("app", "forged", json!([]));
     let bytes = build(&metadata, Some(&authority), "signed content");
-    let container =
-        webc::Container::from_bytes_and_version(bytes.into(), webc::Version::V3).unwrap();
-    let raw = container
-        .get_volume("pishoo-signature")
-        .unwrap()
-        .read_file("/signature.json")
-        .unwrap()
-        .0;
-    let mut envelope: Value = serde_json::from_slice(&raw).unwrap();
+    let mut files = crate::archive::waz_read(&bytes).unwrap();
+    let mut envelope: Value = serde_json::from_slice(&files["signature.json"]).unwrap();
     let mut signature = STANDARD
         .decode(envelope["signature"].as_str().unwrap())
         .unwrap();
     let last = signature.len() - 1;
     signature[last] ^= 1;
     envelope["signature"] = STANDARD.encode(signature).into();
-    let mut writer = Writer::default()
-        .write_manifest(container.manifest())
-        .unwrap()
-        .write_atoms(BTreeMap::new())
-        .unwrap();
-    for (name, volume) in container.volumes() {
-        let data = if name == "pishoo-signature" {
-            serde_json::to_vec(&envelope).unwrap()
-        } else {
-            volume.read_file("/index.html").unwrap().0.to_vec()
-        };
-        let file = if name == "pishoo-signature" {
-            "signature.json"
-        } else {
-            "index.html"
-        };
-        writer
-            .write_volume(
-                &name,
-                Directory::new(
-                    BTreeMap::from([(file.parse().unwrap(), data.into())]),
-                    Timestamps::default(),
-                ),
-            )
-            .unwrap();
-    }
-    let forged = writer.finish(SignatureAlgorithm::None).unwrap();
-    webc::Container::from_bytes_and_version(forged.clone(), webc::Version::V3)
-        .unwrap()
-        .validate()
-        .unwrap();
+    files.insert(
+        "signature.json".into(),
+        serde_json::to_vec(&envelope).unwrap(),
+    );
+    let forged = crate::archive::waz_write(&files).unwrap();
+    assert!(crate::archive::waz_read(&forged).is_ok());
     let error = inspect_package(&forged).await.unwrap_err();
     assert_eq!(error.code, "E_SIGNATURE_INVALID");
 }

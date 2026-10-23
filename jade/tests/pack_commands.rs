@@ -10,20 +10,22 @@ use serde_json::json;
 #[path = "support/identity.rs"]
 mod test_identity;
 use test_identity::create as identity;
+#[allow(dead_code)]
+#[path = "../src/archive.rs"]
+mod archive;
+
+fn package(bytes: Vec<u8>) -> webc::Container {
+    assert!(bytes.starts_with(b"PK\x03\x04"));
+    webc::Container::from_bytes_and_version(
+        archive::waz_convert(&bytes).unwrap().into(),
+        webc::Version::V3,
+    )
+    .unwrap()
+}
 
 fn project(path: &Path, kind: &str, repository: &str) {
     std::fs::create_dir_all(path).unwrap();
-    let frontend = if kind == "lib" {
-        ""
-    } else {
-        "[frontend]\npath='public'\n"
-    };
-    let backend = if kind == "app" {
-        ""
-    } else {
-        "[backend]\npath='lib.wasm'\nhost={}\n"
-    };
-    std::fs::write(path.join("jade.toml"),format!("dependencies=[]\n[package]\nname='hello'\nauthor='alice.dhttp.net'\nversion='1.0.0'\ndescription='Test package'\nlicense='MIT'\ntitle='Hello'\nrelease-notes='Initial release'\n{repository}{frontend}{backend}")).unwrap();
+    std::fs::write(path.join("jade.toml"),format!("dependencies=[]\n[package]\nname='hello'\nauthor='alice.dhttp.net'\nversion='1.0.0'\ndescription='Test package'\nlicense='MIT'\ntitle='Hello'\nrelease-notes='Initial release'\n{repository}\n")).unwrap();
     if kind != "lib" {
         std::fs::create_dir(path.join("public")).unwrap();
         std::fs::write(path.join("public/index.html"), "<h1>Hello</h1>").unwrap();
@@ -75,13 +77,13 @@ fn fails(output: &Output, error: &str) {
 }
 
 #[test]
-fn jade_create_scaffolds_a_package_that_builds_with_local_credentials() {
+fn jade_create_static_scaffolds_a_package_that_builds_with_local_credentials() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home/.dhttp");
     let create = || {
         Command::new(env!("CARGO_BIN_EXE_jade"))
             .current_dir(dir.path())
-            .args(["--json", "create", "hello"])
+            .args(["--json", "create", "hello", "--template", "static"])
             .output()
             .unwrap()
     };
@@ -97,10 +99,12 @@ fn jade_create_scaffolds_a_package_that_builds_with_local_credentials() {
     let manifest = std::fs::read_to_string(app.join("jade.toml")).unwrap();
     let config: toml::Value = toml::from_str(&manifest).unwrap();
     assert_eq!(config["package"]["name"].as_str(), Some("hello"));
+    assert!(config.get("frontend").is_none());
+    assert!(config.get("backend").is_none());
     assert!(app.join("public/index.html").is_file());
     assert_eq!(
         std::fs::read_to_string(app.join(".gitignore")).unwrap(),
-        "/.jade/\n"
+        "/build/\n"
     );
     fails(&create(), "use a new path");
     assert_eq!(
@@ -115,12 +119,8 @@ fn jade_create_scaffolds_a_package_that_builds_with_local_credentials() {
         "{}",
         String::from_utf8_lossy(&built.stderr)
     );
-    let file = app.join(".jade/hello-0.1.0.waz");
-    let package = webc::Container::from_bytes_and_version(
-        std::fs::read(file).unwrap().into(),
-        webc::Version::V3,
-    )
-    .unwrap();
+    let file = app.join("build/hello-0.1.0.waz");
+    let package = package(std::fs::read(file).unwrap());
     package.validate().unwrap();
     assert!(package.get_volume("pishoo-signature").is_some());
     assert!(
@@ -187,7 +187,7 @@ fn urls_and_missing_credentials_and_id_mismatches_are_errors() {
         "differs from package.author",
     );
     fails(&pack(&home, &app, &[]), "credentials");
-    assert!(!app.join("dist").exists());
+    assert!(!app.join("build").exists());
 }
 
 #[test]
@@ -207,7 +207,7 @@ fn malformed_repository_is_rejected_before_loading_credentials() {
         project(&app, "app", &format!("repository={raw}"));
         let result = pack(&dir.path().join("empty-home/.dhttp"), &app, &[]);
         fails(&result, "repository");
-        assert!(!app.join("dist").exists());
+        assert!(!app.join("build").exists());
     }
 }
 
@@ -234,8 +234,8 @@ fn invalid_declarations_and_missing_artifacts_do_not_publish() {
         ),
         (
             "app",
-            "path='public'",
-            "path='public'\nbuilder='static'",
+            "dependencies=[]",
+            "[frontend]\npath='public'",
             "unknown field",
         ),
         (
@@ -260,7 +260,7 @@ fn invalid_declarations_and_missing_artifacts_do_not_publish() {
             &pack(&dir.path().join("empty-home/.dhttp"), &app, &[]),
             error,
         );
-        assert!(!app.join("dist").exists());
+        assert!(!app.join("build").exists());
     }
     for (kind, missing) in [("app", "public/index.html"), ("lib", "lib.wasm")] {
         let dir = tempfile::tempdir().unwrap();
@@ -270,13 +270,9 @@ fn invalid_declarations_and_missing_artifacts_do_not_publish() {
         std::fs::remove_file(app.join(missing)).unwrap();
         fails(
             &pack(&dir.path().join("empty-home/.dhttp"), &app, &[]),
-            if kind == "app" {
-                "index.html"
-            } else {
-                "No such file"
-            },
+            "No frontend or backend found",
         );
-        assert!(!app.join("dist").exists());
+        assert!(!app.join("build").exists());
     }
 }
 
@@ -306,7 +302,7 @@ fn invalid_files_and_existing_targets_preserve_old_content() {
         std::fs::write(&bad, "invalid").unwrap();
         fails(&pack(&home, &app, &[]), "invalid content file path");
         std::fs::remove_file(bad).unwrap();
-        assert!(!app.join("dist").exists());
+        assert!(!app.join("build").exists());
     }
     let large = app.join("public/large.bin");
     std::fs::File::create(&large)
@@ -314,7 +310,7 @@ fn invalid_files_and_existing_targets_preserve_old_content() {
         .set_len(16 * 1024 * 1024 + 1)
         .unwrap();
     fails(&pack(&home, &app, &[]), "size limit");
-    assert!(!app.join("dist").exists());
+    assert!(!app.join("build").exists());
 }
 
 #[cfg(unix)]
@@ -337,7 +333,7 @@ fn backend_fifo_is_rejected_without_waiting_for_a_writer() {
         &pack(&dir.path().join("empty-home/.dhttp"), &lib, &[]),
         "regular files",
     );
-    assert!(!lib.join("dist").exists());
+    assert!(!lib.join("build").exists());
 }
 
 #[test]
@@ -373,10 +369,10 @@ fn app_and_lib_build_signed_packages_offline_without_a_host_service() {
             summary["package_sha256"],
             format!("{:x}", Sha256::digest(&bytes))
         );
-        let package =
-            webc::Container::from_bytes_and_version(bytes.clone().into(), webc::Version::V3)
-                .unwrap();
+        let package = package(bytes.clone());
         package.validate().unwrap();
+        let manifest = serde_json::to_value(package.manifest()).unwrap();
+        assert!(manifest["package"]["pishoo"].get("host").is_none());
         let raw = package
             .get_volume("pishoo-signature")
             .unwrap()
@@ -387,23 +383,28 @@ fn app_and_lib_build_signed_packages_offline_without_a_host_service() {
         let signature = STANDARD
             .decode(envelope["signature"].as_str().unwrap())
             .unwrap();
-        let reader = webc::v3::read::OwnedReader::parse(bytes.clone()).unwrap();
-        let index = reader.index();
+        use std::io::Read;
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let mut paths = archive.file_names().map(str::to_owned).collect::<Vec<_>>();
+        paths.sort();
         let mut digest = Sha256::new();
-        digest.update(b"\0webc003");
-        for entry in std::iter::once(&index.manifest)
-            .chain(std::iter::once(&index.atoms))
-            .chain(
-                index
-                    .volumes
-                    .iter()
-                    .filter(|(name, _)| name.as_str() != "pishoo-signature")
-                    .map(|(_, entry)| entry),
-            )
+        digest.update(b"pishoo-waz-payload-v1\0");
+        for path in paths
+            .iter()
+            .filter(|path| path.as_str() != "signature.json")
         {
-            digest.update(&bytes[entry.span.start..entry.span.end()]);
+            let mut content = Vec::new();
+            archive
+                .by_name(path)
+                .unwrap()
+                .read_to_end(&mut content)
+                .unwrap();
+            digest.update((path.len() as u32).to_le_bytes());
+            digest.update(path.as_bytes());
+            digest.update((content.len() as u64).to_le_bytes());
+            digest.update(Sha256::digest(&content));
         }
-        let mut signed = b"pishoo-webc-signature-v1\0".to_vec();
+        let mut signed = b"pishoo-waz-signature-v1\0".to_vec();
         signed.extend_from_slice(&digest.finalize());
         let key = rcgen::KeyPair::from_pem(
             &std::fs::read_to_string(home.join("alice/ssl/privkey.pem")).unwrap(),
@@ -430,23 +431,127 @@ fn app_and_lib_build_signed_packages_offline_without_a_host_service() {
 }
 
 #[test]
-fn repeated_builds_are_atomic_and_root_static_projects_exclude_jade_output() {
+fn optional_project_documents_are_signed_for_frontend_backend_and_combined_packages() {
+    for kind in ["app", "lib", "both"] {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home/.dhttp");
+        identity(&home);
+        let app = dir.path().join(kind);
+        project(&app, kind, "");
+        let mut previous = None;
+        for names in [
+            vec![],
+            vec!["README.md"],
+            vec!["CHANGELOG.md"],
+            vec!["README.md", "CHANGELOG.md"],
+        ] {
+            for name in ["README.md", "CHANGELOG.md"] {
+                if names.contains(&name) {
+                    std::fs::write(app.join(name), format!("# {name}\nPackage documentation\n"))
+                        .unwrap();
+                } else if app.join(name).exists() {
+                    std::fs::remove_file(app.join(name)).unwrap();
+                }
+            }
+            let built = pack(&home, &app, &[]);
+            assert!(
+                built.status.success(),
+                "{}",
+                String::from_utf8_lossy(&built.stderr)
+            );
+            let result: serde_json::Value = serde_json::from_slice(&built.stdout).unwrap();
+            let digest = result["result"]["payload_sha256"].clone();
+            if let Some(previous) = previous.replace(digest.clone()) {
+                assert_ne!(
+                    digest, previous,
+                    "document changes must change the signed payload"
+                );
+            }
+            let bytes = std::fs::read(app.join("build/hello-1.0.0.waz")).unwrap();
+            let package = package(bytes);
+            package.validate().unwrap();
+            assert_eq!(package.get_atom("backend").is_some(), kind != "app");
+            assert_eq!(package.get_volume("public").is_some(), kind != "lib");
+            let documents = package.get_volume("metadata");
+            assert_eq!(documents.is_some(), !names.is_empty());
+            if let Some(documents) = documents {
+                assert_eq!(documents.read_dir("/").unwrap().len(), names.len());
+                for name in &names {
+                    assert_eq!(
+                        documents.read_file(format!("/{name}")).unwrap().0.as_ref(),
+                        std::fs::read(app.join(name)).unwrap()
+                    );
+                }
+            }
+            let manifest = serde_json::to_value(package.manifest()).unwrap();
+            assert_eq!(
+                manifest["package"]["wapm"].get("readme").is_some(),
+                names.contains(&"README.md")
+            );
+            assert!(
+                package
+                    .manifest()
+                    .filesystem()
+                    .unwrap()
+                    .unwrap_or_default()
+                    .iter()
+                    .all(|mapping| mapping.volume_name == "public")
+            );
+        }
+    }
+}
+
+#[test]
+fn invalid_project_documents_preserve_the_existing_package() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home/.dhttp");
     identity(&home);
     let app = dir.path().join("app");
     project(&app, "app", "");
-    let manifest = app.join("jade.toml");
-    std::fs::write(
-        &manifest,
-        std::fs::read_to_string(&manifest)
-            .unwrap()
-            .replace("path='public'", "path='.'"),
-    )
-    .unwrap();
+    let document = app.join("README.md");
+    std::fs::write(&document, "# Readme").unwrap();
+    let built = pack(&home, &app, &[]);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let output = app.join("build/hello-1.0.0.waz");
+    let before = std::fs::read(&output).unwrap();
+    std::fs::remove_file(&document).unwrap();
+    std::fs::create_dir(&document).unwrap();
+    fails(&pack(&home, &app, &[]), "regular files");
+    assert_eq!(std::fs::read(&output).unwrap(), before);
+    std::fs::remove_dir(&document).unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(app.join("public/index.html"), &document).unwrap();
+        fails(&pack(&home, &app, &[]), "regular files");
+        assert_eq!(std::fs::read(&output).unwrap(), before);
+        std::fs::remove_file(&document).unwrap();
+    }
+    std::fs::File::create(&document)
+        .unwrap()
+        .set_len(16 * 1024 * 1024 + 1)
+        .unwrap();
+    fails(&pack(&home, &app, &[]), "size limit");
+    assert_eq!(std::fs::read(output).unwrap(), before);
+}
+
+#[test]
+fn repeated_builds_are_atomic_and_root_static_projects_exclude_build_outputs() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home/.dhttp");
+    identity(&home);
+    let app = dir.path().join("app");
+    project(&app, "app", "");
+    std::fs::remove_dir_all(app.join("public")).unwrap();
     std::fs::write(app.join("index.html"), "<h1>First</h1>").unwrap();
+    std::fs::write(app.join("README.md"), "# Root project").unwrap();
+    std::fs::create_dir_all(app.join("build/target")).unwrap();
+    std::fs::write(app.join("build/target/not-a-resource"), "excluded").unwrap();
     std::fs::create_dir_all(app.join(".jade/target")).unwrap();
-    std::fs::write(app.join(".jade/target/not-a-resource"), "excluded").unwrap();
+    std::fs::write(app.join(".jade/target/legacy-artifact"), "excluded").unwrap();
     let first = pack(&home, &app, &[]);
     assert!(
         first.status.success(),
@@ -454,7 +559,7 @@ fn repeated_builds_are_atomic_and_root_static_projects_exclude_jade_output() {
         String::from_utf8_lossy(&first.stderr)
     );
     let first: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
-    let file = app.join(".jade/hello-1.0.0.waz");
+    let file = app.join("build/hello-1.0.0.waz");
     let second = pack(&home, &app, &[]);
     assert!(
         second.status.success(),
@@ -466,11 +571,31 @@ fn repeated_builds_are_atomic_and_root_static_projects_exclude_jade_output() {
         first["result"]["payload_sha256"],
         second["result"]["payload_sha256"]
     );
-    let container = webc::Container::from_bytes_and_version(
-        std::fs::read(&file).unwrap().into(),
-        webc::Version::V3,
-    )
-    .unwrap();
+    let container = package(std::fs::read(&file).unwrap());
+    assert!(
+        container
+            .get_volume("public")
+            .unwrap()
+            .read_file("/README.md")
+            .is_none()
+    );
+    assert_eq!(
+        container
+            .get_volume("metadata")
+            .unwrap()
+            .read_file("/README.md")
+            .unwrap()
+            .0
+            .as_ref(),
+        b"# Root project"
+    );
+    assert!(
+        container
+            .get_volume("public")
+            .unwrap()
+            .read_dir("/build")
+            .is_none()
+    );
     assert!(
         container
             .get_volume("public")
@@ -518,7 +643,7 @@ fn explicit_overwrite_and_noninteractive_identity_selection_are_explicit() {
         "{}",
         String::from_utf8_lossy(&first.stderr)
     );
-    assert!(!app.join(".jade/local.toml").exists());
+    assert!(!app.join("build/local.toml").exists());
     let file = dir.path().join("explicit.waz");
     std::fs::write(&file, "old").unwrap();
     fails(
@@ -535,8 +660,8 @@ fn explicit_overwrite_and_noninteractive_identity_selection_are_explicit() {
         "{}",
         String::from_utf8_lossy(&overwrite.stderr)
     );
-    assert!(std::fs::read(&file).unwrap().starts_with(b"\0webc003"));
-    let default = app.join(".jade/hello-1.0.0.waz");
+    assert!(std::fs::read(&file).unwrap().starts_with(b"PK\x03\x04"));
+    let default = app.join("build/hello-1.0.0.waz");
     std::fs::write(&default, "unrelated").unwrap();
     let rejected = pack(&home, &app, &[]);
     assert!(!rejected.status.success());
@@ -568,7 +693,71 @@ fn json_parameter_errors_are_one_document_with_usage_exit_code() {
 }
 
 #[test]
-#[ignore = "requires a Rust toolchain with wasm32-wasip2 and SDK dependencies"]
+#[ignore = "requires Node.js, npm and registry access for the Vite template dependencies"]
+fn web_template_builds_without_manual_dependency_installation() {
+    frontend_template_builds(Some("web"));
+}
+
+#[test]
+#[ignore = "requires Node.js, npm, registry access and a Rust toolchain with wasm32-wasip2"]
+fn default_fullstack_template_builds_without_manual_dependency_installation() {
+    frontend_template_builds(None);
+}
+
+fn frontend_template_builds(template: Option<&str>) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let home = root.join("home/.dhttp");
+    identity(&home);
+    let app = root.join("frontend");
+    let mut create = Command::new(env!("CARGO_BIN_EXE_jade"));
+    create.arg("create").arg(&app);
+    if let Some(template) = template {
+        create.args(["--template", template]);
+    }
+    let created = create.output().unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    assert!(!app.join("web/node_modules").exists());
+
+    let mut build = Command::new(env!("CARGO_BIN_EXE_jade"));
+    build
+        .current_dir(&app)
+        .env("DHTTP_HOME", &home)
+        .env("NODE_ENV", "production")
+        .env("npm_config_omit", "dev")
+        .env("npm_config_cache", root.join("npm-cache"))
+        .args(["--json", "build", "--id", "alice"]);
+    if let Some(toolchain) = std::env::var_os("JADE_TEST_RUST_TOOLCHAIN") {
+        build.env("RUSTUP_TOOLCHAIN", toolchain);
+    }
+    let built = build.output().unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&built.stdout).unwrap();
+    assert_eq!(result["status"], "ok");
+    assert!(app.join("web/node_modules/vite/package.json").is_file());
+    assert!(app.join("web/package-lock.json").is_file());
+    assert!(app.join("web/dist/index.html").is_file());
+    let package = std::fs::metadata(app.join("build/frontend-0.1.0.waz")).unwrap();
+    assert!(package.len() > 0);
+    assert_eq!(result["result"]["size"], package.len());
+    if template.is_none() {
+        assert!(
+            app.join("build/target/wasm32-wasip2/release/frontend.wasm")
+                .is_file()
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires a Rust toolchain with wasm32-wasip2 and template dependencies"]
 fn rust_api_template_builds_without_developer_build_scripts() {
     let directory = tempfile::tempdir().unwrap();
     let root = std::env::var_os("JADE_TEST_PROJECT_DIR")
@@ -591,6 +780,7 @@ fn rust_api_template_builds_without_developer_build_scripts() {
     );
     assert!(!app.join("api/build.rs").exists());
     assert!(!app.join("api/build.sh").exists());
+    assert!(!app.join("api/src/sdk.rs").exists());
     let build = || {
         let mut command = Command::new(env!("CARGO_BIN_EXE_jade"));
         command
@@ -610,11 +800,15 @@ fn rust_api_template_builds_without_developer_build_scripts() {
     );
     let first: serde_json::Value = serde_json::from_slice(&built.stdout).unwrap();
     let file = Path::new(first["result"]["file"].as_str().unwrap());
-    let package = webc::Container::from_bytes_and_version(
-        std::fs::read(file).unwrap().into(),
-        webc::Version::V3,
-    )
-    .unwrap();
+    assert_eq!(
+        file,
+        app.canonicalize().unwrap().join("build/rust-api-0.1.0.waz")
+    );
+    assert!(
+        app.join("build/target/wasm32-wasip2/release/rust_api.wasm")
+            .is_file()
+    );
+    let package = package(std::fs::read(file).unwrap());
     package.validate().unwrap();
     let backend = package.get_atom("backend").unwrap();
     let doc = wasmparser::Parser::new(0)
@@ -628,8 +822,8 @@ fn rust_api_template_builds_without_developer_build_scripts() {
         .collect::<Vec<_>>();
     assert_eq!(doc.len(), 1);
     assert!(doc[0]["paths"]["/hello"]["get"].is_object());
-    assert!(doc[0]["paths"]["/echo"]["post"].is_object());
-    let source = app.join("api/src/api.rs");
+    assert_eq!(doc[0]["paths"].as_object().unwrap().len(), 1);
+    let source = app.join("api/src/lib.rs");
     std::fs::write(
         &source,
         std::fs::read_to_string(&source)
@@ -683,7 +877,7 @@ fn multiple_identities_require_selection_and_use_the_existing_dhttp_default() {
     );
     let result: serde_json::Value = serde_json::from_slice(&selected.stdout).unwrap();
     assert_eq!(result["result"]["id"], "bob.dhttp.net/hello");
-    assert!(!app.join(".jade/local.toml").exists());
+    assert!(!app.join("build/local.toml").exists());
 }
 
 #[test]
@@ -711,7 +905,7 @@ fn wasm_commands_and_wrong_keys_fail_before_writing_a_package() {
     let output = pack(&home, &app, &[]);
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["error"]["code"], "E_ARTIFACT_INVALID");
-    assert!(!app.join(".jade/hello-1.0.0.waz").exists());
+    assert!(!app.join("build/hello-1.0.0.waz").exists());
     let other = root.path().join("other/.dhttp");
     identity(&other);
     let key = home.join("alice/ssl/privkey.pem");
@@ -774,11 +968,8 @@ fn concurrent_default_builds_publish_complete_packages() {
         first["result"]["payload_sha256"],
         second["result"]["payload_sha256"]
     );
-    let bytes = std::fs::read(app.join(".jade/hello-1.0.0.waz")).unwrap();
-    webc::Container::from_bytes_and_version(bytes.clone().into(), webc::Version::V3)
-        .unwrap()
-        .validate()
-        .unwrap();
+    let bytes = std::fs::read(app.join("build/hello-1.0.0.waz")).unwrap();
+    package(bytes.clone()).validate().unwrap();
     use sha2::{Digest, Sha256};
     let hash = format!("{:x}", Sha256::digest(bytes));
     assert!(

@@ -1,4 +1,4 @@
-//! Shared WEBC inspection and local signature verification.
+//! Standard ZIP inspection and local signature verification.
 use std::{
     collections::{BTreeMap, HashSet},
     path::Path,
@@ -69,73 +69,22 @@ pub(crate) fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str, Whatever>
         .whatever_context(format!("missing or invalid {key}"))
 }
 
-// Read only the bounded raw manifest for identity and request paths. The store
-// verifies the uploaded release before registering or returning it.
+// Read bounded ZIP metadata for identity and request paths. This does not verify
+// the publisher signature; inspect_package performs that check before publication.
 pub(crate) fn manifest_identity(bytes: &[u8]) -> Result<Value, Whatever> {
-    if bytes.get(..8) != Some(b"\0webc003") || bytes.get(8) != Some(&2) {
-        whatever!("expected a signed WEBC v3 package; run jade build first");
+    let package = container(bytes)?;
+    let document =
+        serde_json::to_value(package.manifest()).whatever_context("invalid package manifest")?;
+    let wapm = &document["package"]["wapm"];
+    let id = text(wapm, "name")?;
+    let (author, name) = id
+        .split_once('/')
+        .whatever_context("manifest name must be author/name")?;
+    let mut result = json!({"id":id,"author":author,"name":name,"version":text(wapm, "version")?});
+    if let Some(repository) = wapm.get("repository") {
+        result["repository"] = repository.clone();
     }
-    let length = |offset: usize| -> Result<usize, Whatever> {
-        let raw: [u8; 8] = bytes
-            .get(offset..offset + 8)
-            .whatever_context("truncated WEBC section length")?
-            .try_into()
-            .unwrap();
-        usize::try_from(u64::from_le_bytes(raw)).whatever_context("WEBC section length overflow")
-    };
-    let mut offset = 17usize
-        .checked_add(length(9)?)
-        .filter(|end| *end <= bytes.len())
-        .whatever_context("truncated WEBC index")?;
-    if offset > JSON_LIMIT {
-        whatever!("WEBC index exceeds 1 MiB");
-    }
-    while offset < bytes.len() {
-        let header_end = offset
-            .checked_add(41)
-            .filter(|end| *end <= bytes.len())
-            .whatever_context("truncated WEBC section")?;
-        let end = header_end
-            .checked_add(length(offset + 33)?)
-            .filter(|end| *end <= bytes.len())
-            .whatever_context("truncated WEBC section body")?;
-        if bytes[offset] == 1 {
-            if end - offset > JSON_LIMIT {
-                whatever!("WEBC manifest exceeds 1 MiB");
-            }
-            let section = webc::v3::read::Section::parse(
-                1,
-                Some(bytes[offset + 1..offset + 33].try_into().unwrap()),
-                bytes[header_end..end].to_vec().into(),
-            )
-            .whatever_context("invalid WEBC manifest section")?;
-            let manifest = section
-                .as_manifest()
-                .whatever_context("missing WEBC manifest")?
-                .manifest()
-                .whatever_context("invalid WEBC manifest")?;
-            let document = serde_json::to_value(manifest)
-                .whatever_context("invalid WEBC manifest annotations")?;
-            let wapm = &document["package"]["wapm"];
-            let annotation = &document["package"]["pishoo"];
-            let id = text(wapm, "name")?;
-            let (author, name) = id
-                .split_once('/')
-                .whatever_context("manifest name must be author/name")?;
-            let version = text(wapm, "version")?;
-            if annotation.get("kind").is_some() {
-                whatever!("legacy App/Lib packages are unsupported");
-            }
-            let mut result = json!({"id":id,"author":author,"name":name,"version":version});
-            if let Some(repository) = wapm.get("repository") {
-                // Preserve it for comparison; the host validates its URL format.
-                result["repository"] = repository.clone();
-            }
-            return Ok(result);
-        }
-        offset = end;
-    }
-    whatever!("missing WEBC manifest");
+    Ok(result)
 }
 
 pub(crate) async fn inspect_package(bytes: &[u8]) -> crate::error::Result<Value> {
@@ -147,7 +96,7 @@ pub(crate) async fn inspect_package(bytes: &[u8]) -> crate::error::Result<Value>
     (|| -> Result<Value, Whatever> {
         let document = serde_json::to_value(package.manifest())
             .whatever_context("invalid package manifest")?;
-        for key in ["title", "dependencies", "changelog", "entry", "host"] {
+        for key in ["title", "dependencies", "changelog", "entry"] {
             if let Some(value) = document["package"]["pishoo"].get(key) {
                 metadata[key] = value.clone();
             }
@@ -169,12 +118,12 @@ pub(crate) async fn inspect_package(bytes: &[u8]) -> crate::error::Result<Value>
         crate::pack::validate_metadata(
             &document["package"]["wapm"],
             &document["package"]["pishoo"],
+            package.get_atom("backend").is_some(),
         )
         .map_err(|error| Whatever::without_source(error.to_string()))?;
         if let Some(backend) = package.get_atom("backend") {
             crate::project::validate_component(
                 &backend,
-                &document["package"]["pishoo"]["host"],
                 text(&metadata, "version")?,
                 text(&metadata, "author")?,
                 text(&metadata, "name")?,
@@ -182,11 +131,6 @@ pub(crate) async fn inspect_package(bytes: &[u8]) -> crate::error::Result<Value>
             .map_err(|error| Whatever::without_source(error.to_string()))?;
         }
         version_path(&metadata)?;
-        if package.get_atom("backend").is_none()
-            && document["package"]["pishoo"].get("host").is_some()
-        {
-            whatever!("host capabilities require a backend");
-        }
         if (package.get_volume("public").is_some() && document["package"]["pishoo"]["entry"] != "/")
             || (package.get_volume("public").is_none()
                 && document["package"]["pishoo"].get("entry").is_some())
@@ -202,50 +146,22 @@ pub(crate) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-// Extract the existing protocol digest after the host has validated these spans.
+// Hash the sorted, uncompressed ZIP files independently of archive metadata.
 pub(crate) fn payload_digest(bytes: &[u8]) -> Result<String, Whatever> {
-    let reader =
-        webc::v3::read::OwnedReader::parse(bytes.to_vec()).whatever_context("cannot parse WEBC")?;
-    let index = reader.index();
-    let mut hasher = Sha256::new();
-    hasher.update(b"\0webc003");
-    for entry in std::iter::once(&index.manifest)
-        .chain(std::iter::once(&index.atoms))
-        .chain(
-            index
-                .volumes
-                .iter()
-                .filter(|(name, _)| name.as_str() != "pishoo-signature")
-                .map(|(_, entry)| entry),
-        )
-    {
-        let end = entry
-            .span
-            .start
-            .checked_add(entry.span.len)
-            .whatever_context("WEBC span overflow")?;
-        hasher.update(
-            bytes
-                .get(entry.span.start..end)
-                .whatever_context("WEBC span exceeds package")?,
-        );
-    }
-    Ok(format!("{:x}", hasher.finalize()))
+    let files = crate::archive::waz_read(bytes)
+        .map_err(|error| Whatever::without_source(error.to_string()))?;
+    Ok(crate::archive::waz_payload(&files))
 }
 
 pub(crate) fn signature_envelope(bytes: &[u8]) -> Result<Value, Whatever> {
-    let package = webc::Container::from_bytes_and_version(bytes.to_vec().into(), webc::Version::V3)
-        .whatever_context("cannot parse package")?;
-    let volume = package
-        .get_volume("pishoo-signature")
-        .whatever_context("missing package signature")?;
-    let (data, _) = volume
-        .read_file("/signature.json")
-        .whatever_context("missing signature envelope")?;
-    if data.len() > 64 * 1024 {
-        whatever!("signature envelope exceeds 64 KiB");
-    }
-    serde_json::from_slice(&data).whatever_context("invalid signature envelope JSON")
+    let files = crate::archive::waz_read(bytes)
+        .map_err(|error| Whatever::without_source(error.to_string()))?;
+    serde_json::from_slice(
+        files
+            .get("signature.json")
+            .whatever_context("missing package signature")?,
+    )
+    .whatever_context("invalid signature envelope JSON")
 }
 
 pub(crate) fn package_certificates(
@@ -376,9 +292,12 @@ fn section_length(bytes: &[u8], offset: usize) -> Result<usize, Whatever> {
     usize::try_from(u64::from_le_bytes(raw)).whatever_context("WEBC length overflow")
 }
 
-// Validate the index and all authenticated spans before using the lazy WEBC reader.
-// This follows the Pishoo unified-package profile, including its entry budget.
+// Validate the decoded in-memory resource projection. Incoming files must first
+// pass the standard ZIP parser; raw WEBC publication packages are rejected.
 fn container(bytes: &[u8]) -> Result<webc::Container, Whatever> {
+    let projection = crate::archive::waz_convert(bytes)
+        .map_err(|error| Whatever::without_source(error.to_string()))?;
+    let bytes = projection.as_slice();
     if bytes.len() > PACKAGE_LIMIT
         || bytes.get(..8) != Some(b"\0webc003")
         || bytes.get(8) != Some(&2)
@@ -396,7 +315,7 @@ fn container(bytes: &[u8]) -> Result<webc::Container, Whatever> {
         .whatever_context("missing WEBC index")?
         .index()
         .whatever_context("invalid WEBC index")?;
-    if !index.signature.is_none() || !index.signature.value.is_empty() || index.volumes.len() > 2 {
+    if !index.signature.is_none() || !index.signature.value.is_empty() || index.volumes.len() > 3 {
         whatever!("unsupported WEBC signature or volumes");
     }
     let mut spans = BTreeMap::new();
@@ -477,17 +396,26 @@ fn container(bytes: &[u8]) -> Result<webc::Container, Whatever> {
                 || m.from.is_some()
                 || m.host_path.as_deref().is_some_and(|p| p != "/")
         })
-        || container
-            .volumes()
-            .keys()
-            .any(|name| name != "pishoo-signature" && (name != "public" || mappings.is_empty()))
+        || container.volumes().keys().any(|name| {
+            !matches!(name.as_str(), "pishoo-signature" | "metadata")
+                && (name != "public" || mappings.is_empty())
+        })
     {
-        whatever!("only the public mapping and signature volume are supported");
+        whatever!("only the public mapping, document metadata and signature volume are supported");
     }
     let mut count = 0;
     for (name, volume) in container.volumes() {
         let before = count;
         let files = volume_files(&volume, &mut count)?;
+        if name == "metadata"
+            && (files.is_empty()
+                || count - before != files.len()
+                || files
+                    .keys()
+                    .any(|path| !matches!(path.as_str(), "/README.md" | "/CHANGELOG.md")))
+        {
+            whatever!("metadata volume may only contain README.md and CHANGELOG.md");
+        }
         if name == "pishoo-signature"
             && (count - before != 1
                 || files.len() != 1
@@ -570,7 +498,7 @@ fn volume_files(
 
 pub(crate) fn signature_input(bytes: &[u8]) -> Result<Vec<u8>, Whatever> {
     let digest = payload_digest(bytes)?;
-    let mut input = b"pishoo-webc-signature-v1\0".to_vec();
+    let mut input = b"pishoo-waz-signature-v1\0".to_vec();
     for offset in (0..digest.len()).step_by(2) {
         input.push(u8::from_str_radix(&digest[offset..offset + 2], 16).unwrap());
     }

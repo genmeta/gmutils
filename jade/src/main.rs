@@ -2,6 +2,7 @@ use std::{io::IsTerminal, process::ExitCode};
 
 use clap::Parser;
 
+mod archive;
 mod cli;
 mod display;
 mod error;
