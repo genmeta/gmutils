@@ -44,8 +44,9 @@ genmeta --version
 | `genmeta nslookup` | 通过 mDNS、H3 或系统 DNS 查询地址 | 对应解析源可用 |
 | `genmeta discover` | 持续发现局域网中的 DHTTP 服务 | 局域网支持 mDNS |
 | `genmeta doctor net` | 检测 NAT、接口和公网地址映射 | 网络允许进行探测 |
-| `genmeta build` | 执行项目构建并签名生成 WEBC 包 | 本地项目、构建工具和发布者凭据 |
-| `genmeta publish` | 将已签名 WEBC 包发布到商店 | 本地发布者凭据，商店可达 |
+| `genmeta jade create` | 在新目录创建静态项目模板 | 指定发布者名称，无需凭据或网络 |
+| `genmeta jade build` | 执行项目构建并签名生成 WEBC 包 | 本地项目、构建工具和发布者凭据 |
+| `genmeta jade publish` | 将已签名 WEBC 包发布到商店 | 本地发布者凭据，商店可达 |
 | `genmeta install` | 安装商店中已发布的 App 或 Lib 及其精确依赖 | 本地身份的 Pishoo 已运行并启用，商店可达 |
 | `genmeta update` | 从原发布者更新已安装的包 | 同上，且包已安装 |
 | `genmeta uninstall` | 卸载包，保留数据和依赖 | 本地身份的 Pishoo 已运行并启用 |
@@ -377,19 +378,33 @@ genmeta doctor net --id alice.smith --global
 
 接口筛选控制报告内容，不限制底层运行时只在指定接口上工作。未获得公网映射不等于已判定某种 NAT 类型；应结合详细输出判断。
 
-## 包构建与发布：build、publish
+## 包创建、构建与发布：jade create/build/publish
+
+项目开发命令统一使用 `genmeta jade`；顶层 `genmeta build`、`genmeta publish` 已移除。安装管理命令仍位于顶层。
+
+### create：创建静态项目
+
+```sh
+genmeta jade create ./hello --id alice.smith~
+genmeta jade build --no-build ./hello
+genmeta jade publish ./hello/dist/hello-0.1.0.waz
+```
+
+`PATH` 必填，末级目录名作为包名，必须以小写字母开头，仅含小写字母、数字和连字符，最长 63 字符。`-i/--id` 必填，发布者规范化后写入 manifest，创建时无需本地凭据。父目录需已存在，目标目录必须是新路径；已有文件或目录不会覆盖。
+
+模板包含 `wasmer.toml`、`public/index.html` 和忽略 `dist/` 的 `.gitignore`，初始版本为 `0.1.0`。编辑静态页面后使用 `jade build --no-build` 打包签名；需要源码构建时自行添加 `[build]` 配方。
 
 ### build：构建并签名
 
 ```sh
-genmeta build [PATH] [--no-build] [-o FILE.webc] [--id PUBLISHER]
+genmeta jade build [PATH] [--no-build] [-o FILE.waz] [--id PUBLISHER]
 ```
 
 - `PATH` 为项目目录或 manifest 文件，默认当前目录；传目录时查找 `wasmer.toml`。
 - 默认执行 manifest 的 `[build].command`，再签名。命令在该 manifest 所在目录运行，失败就停止，不签名。
 - `[build].manifest` 可指定构建后生成的包 manifest，必须位于项目目录内。
 - `--no-build` 跳过构建，直接对已有产物打包签名。
-- `-o/--output` 指定输出路径；默认是最终包 manifest 所在目录下的 `dist/NAME-VERSION-KIND.webc`。已存在的输出文件不会被覆盖，输出不能落在打包的内容目录内。
+- `-o/--output` 指定输出路径；默认是最终包 manifest 所在目录下的 `dist/NAME-VERSION.waz`。已存在的输出文件不会被覆盖，输出不能落在打包的内容目录内。
 - `-i/--id` 校验发布者与 manifest 一致；签名使用当前账户的本地发布者凭据，无需运行 Pishoo 或初始化网络。
 
 构建配方示例：
@@ -412,7 +427,6 @@ description = "Hello DHTTP"
 license = "Apache-2.0"
 
 [package.pishoo]
-kind = "app"
 title = "Hello"
 changelog = "Initial release"
 entry = "/"
@@ -424,21 +438,21 @@ dependencies = []
 
 ```sh
 # 有 [build] 配方的源码项目
-genmeta build ./hello -o ./dist/hello.webc --id alice.smith
+genmeta jade build ./hello -o ./dist/hello.waz --id alice.smith
 
 # 已有构建产物，例如上面的最小 App
-genmeta build --no-build ./hello -o ./dist/hello.webc --id alice.smith
+genmeta jade build --no-build ./hello -o ./dist/hello.waz --id alice.smith
 ```
 
-App 使用 `/public` 映射，必须包含 `index.html`，不能包含后端模块。Lib 需要一个名为 `backend` 的已构建 WASM component、`/metadata` 映射和显式的 `host` 用途声明；OpenAPI 从 component 中读取，或由 `metadata/openapi.json` 补入。必须显式写出 `dependencies` 数组，无依赖时填 `[]`；每项依赖都需声明精确的发布者、名称和版本。
+一个 `.waz` 可包含静态页面、后端模块或两者。静态页面使用 `/public` 映射，必须包含 `index.html`；后端使用名为 `backend` 的已构建 WASM component，并显式声明 `host` 用途。OpenAPI 从 component 中读取。必须显式写出 `dependencies` 数组，无依赖时填 `[]`；每项依赖都需声明精确的发布者、名称和版本。
 
-包名使用规范化的 `publisher/name`，版本为 `MAJOR.MINOR.PATCH`，最终包不能超过 64 MiB。构建日志写 stderr，成功结果以 JSON 写 stdout，包含包 ID、类型、版本、文件、大小和 SHA-256。
+包名使用规范化的 `publisher/name`，版本为 `MAJOR.MINOR.PATCH`，最终包不能超过 64 MiB。构建日志写 stderr，成功结果以 JSON 写 stdout，包含包 ID、版本、文件、大小和 SHA-256。
 
 ### publish：发布已签名包
 
 ```sh
-genmeta publish FILE.webc [--id PUBLISHER]
-genmeta publish ./dist/hello.webc --id alice.smith
+genmeta jade publish FILE.waz [--id PUBLISHER]
+genmeta jade publish ./dist/hello.waz --id alice.smith
 ```
 
 读取单个本地已签名 WEBC v3 常规文件，验证包及发布者凭据后上传到受信任的 `store.dhttp.net`。文件上限 64 MiB。省略 `--id` 时使用包内发布者；显式身份必须匹配包内发布者。发布不重新构建或改写包，成功输出 JSON，不依赖本机 Pishoo。
@@ -481,7 +495,7 @@ genmeta update workspace --id alice.smith
 genmeta uninstall hello --id alice.smith
 ```
 
-安装和更新只接受商店已发布版本，不支持直接安装本地 `.webc`、URL 或匿名安装。所有命令均需本地身份凭据及其已启用、可达的 Pishoo；`list`、`info`、`uninstall` 查询的是身份服务，不是商店。
+安装和更新只接受商店已发布版本，不支持直接安装本地 `.waz`、URL 或匿名安装。所有命令均需本地身份凭据及其已启用、可达的 Pishoo；`list`、`info`、`uninstall` 查询的是身份服务，不是商店。
 
 成功结果写 stdout，格式为 JSON；进度和诊断写 stderr。App 安装结果包含 `entry_url`。商店版本解析期限为 120 秒，安装请求最多等待 15 分钟。中断或超时可能意味着结果未知，CLI 不自动重试写操作；先检查已安装目录和服务日志。父包安装失败时，此前已安装的依赖会保留。
 

@@ -129,7 +129,7 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str, Whatever> {
 // verifies the uploaded release before registering or returning it.
 fn manifest_identity(bytes: &[u8]) -> Result<Value, Whatever> {
     if bytes.get(..8) != Some(b"\0webc003") || bytes.get(8) != Some(&2) {
-        whatever!("expected a signed WEBC v3 package; run genmeta build first");
+        whatever!("expected a signed WEBC v3 package; run genmeta jade build first");
     }
     let length = |offset: usize| -> Result<usize, Whatever> {
         let raw: [u8; 8] = bytes
@@ -309,7 +309,7 @@ fn verify_publisher(
         || owner_hash(certificates)? != owner_hash(authority.certificates())?
     {
         whatever!(
-            "package signer differs from current publisher credentials; run genmeta build again with the current credentials"
+            "package signer differs from current publisher credentials; run genmeta jade build again with the current credentials"
         );
     }
     Ok(())
@@ -570,7 +570,7 @@ fn release_metadata(
     if release["publisher_owner_hash"] != owner {
         whatever!("store release publisher owner_hash mismatch");
     }
-    let path = format!("{}/package.pkg", version_path(metadata)?);
+    let path = format!("{}/package.waz", version_path(metadata)?);
     if release["download_path"] != path {
         whatever!("store returned an unexpected download path");
     }

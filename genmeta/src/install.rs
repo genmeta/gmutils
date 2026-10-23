@@ -72,7 +72,7 @@ fn valid_hash(value: &Value) -> bool {
 fn validate_input(target: &str, version: Option<&str>) -> Result<(), Whatever> {
     ensure_whatever!(
         valid_target(target),
-        "TARGET must be a valid short name or canonical publisher/name; local paths, .pkg files, URLs, and name@version are not supported"
+        "TARGET must be a valid short name or canonical publisher/name; local paths, .waz files, URLs, and name@version are not supported"
     );
     ensure_whatever!(
         version.is_none_or(valid_version),
@@ -113,7 +113,7 @@ fn validate_release(
             && valid_hash(&value["package_sha256"])
             && valid_hash(&value["publisher_owner_hash"])
             && value["download_path"]
-                == format!("/store/v1/{collection}/{id}/versions/{release}/package.pkg"),
+                == format!("/store/v1/{collection}/{id}/versions/{release}/package.waz"),
         "Invalid store package size, digest, publisher owner hash, or download path"
     );
     Ok(())

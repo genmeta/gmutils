@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Group project creation, builds and publication under `genmeta jade create/build/publish`;
+  replace the top-level `build` and `publish` commands and add a static project scaffold.
 - Suppress runtime logs across all commands by default; require `--verb` to enable
   debug logging, independently of `RUST_LOG` and command-specific verbose output.
 - After interactive identity application with the server enabled, offer to install

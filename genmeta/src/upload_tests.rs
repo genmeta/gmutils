@@ -12,22 +12,25 @@ use crate::test_credentials as credentials;
 fn upload_cli_accepts_only_the_designed_arguments() {
     use clap::Parser;
     for args in [
-        vec!["genmeta", "publish", "package.webc"],
-        vec!["genmeta", "publish", "package.webc", "-i", "alice"],
+        vec!["genmeta", "jade", "publish", "package.waz"],
+        vec!["genmeta", "jade", "publish", "package.waz", "-i", "alice"],
         vec![
             "genmeta",
+            "jade",
             "publish",
-            "package.webc",
+            "package.waz",
             "--id",
             "alice.dhttp.net",
         ],
     ] {
         assert!(matches!(
             crate::Options::try_parse_from(args).unwrap(),
-            crate::Options::Package(crate::PackageCommand::Publish { .. })
+            crate::Options::Jade {
+                command: crate::jade::Command::Publish { .. }
+            }
         ));
     }
-    assert!(crate::Options::try_parse_from(["genmeta", "publish"]).is_err());
+    assert!(crate::Options::try_parse_from(["genmeta", "jade", "publish"]).is_err());
     for flag in [
         "--kind",
         "--name",
@@ -40,8 +43,9 @@ fn upload_cli_accepts_only_the_designed_arguments() {
         assert!(
             crate::Options::try_parse_from([
                 "genmeta",
+                "jade",
                 "publish",
-                "package.webc",
+                "package.waz",
                 flag,
                 "override"
             ])
@@ -54,7 +58,7 @@ fn upload_cli_accepts_only_the_designed_arguments() {
         ("--version", clap::error::ErrorKind::DisplayVersion),
     ] {
         assert_eq!(
-            crate::Options::try_parse_from(["genmeta", "publish", flag])
+            crate::Options::try_parse_from(["genmeta", "jade", "publish", flag])
                 .unwrap_err()
                 .kind(),
             kind
@@ -206,7 +210,7 @@ fn release(metadata: &Value, bytes: &[u8], owner: &str) -> Value {
     for key in ["kind", "entry", "host"] {
         value.as_object_mut().unwrap().remove(key);
     }
-    value["download_path"] = format!("{}/package.pkg", version_path(metadata).unwrap()).into();
+    value["download_path"] = format!("{}/package.waz", version_path(metadata).unwrap()).into();
     value["status"] = "published".into();
     if let Ok(envelope) = signature_envelope(bytes) {
         value["signer_certificates"] = envelope["certificates"].clone();
@@ -238,8 +242,8 @@ fn paths_and_protocol_proofs_are_exact() {
             ("size", json!(PACKAGE_LIMIT + 1)),
             ("package_sha256", json!("xyz")),
             ("publisher_owner_hash", json!("b".repeat(64))),
-            ("download_path", json!("https://evil.example/package.webc")),
-            ("download_path", json!(format!("{path}/../app.webc"))),
+            ("download_path", json!("https://evil.example/package.waz")),
+            ("download_path", json!(format!("{path}/../app.waz"))),
         ] {
             let mut bad = proof.clone();
             bad[key] = invalid;
@@ -306,7 +310,7 @@ fn parses_manifest_without_treating_it_as_verified_and_preserves_payload_identit
 async fn snapshot_is_bounded_and_survives_original_replacement() {
     let directory = tempfile::tempdir().unwrap();
     assert!(read_snapshot(directory.path()).await.is_err());
-    let path = directory.path().join("input.webc");
+    let path = directory.path().join("input.waz");
     std::fs::write(&path, b"original").unwrap();
     let snapshot = read_snapshot(&path).await.unwrap();
     std::fs::write(&path, b"changed").unwrap();
@@ -438,7 +442,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
                 assert_eq!(remote.name(), "alice.dhttp.net");
                 if method == http::Method::GET {
                     gets.fetch_add(1, Ordering::SeqCst);
-                    let download = path.ends_with(".pkg");
+                    let download = path.ends_with(".waz");
                     let key = if download { path.rsplit_once('/').unwrap().0 } else { path.as_str() };
                     let saved = packages.lock().unwrap().get(key).cloned();
                     return Ok::<_, dhttp::BoxError>(match saved {
@@ -641,7 +645,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
     let mut snapshot_metadata = metadata("app", "snapshot", json!([]));
     snapshot_metadata["repository"] = "https://github.com/genmeta/upload-test".into();
     let snapshot_bytes = build(&snapshot_metadata, Some(&authority), "original");
-    let input = root.path().join("snapshot.webc");
+    let input = root.path().join("snapshot.waz");
     std::fs::write(&input, &snapshot_bytes).unwrap();
     let snapshot = read_snapshot(&input).await.unwrap();
     let checked = inspect_package(&snapshot).await.unwrap();

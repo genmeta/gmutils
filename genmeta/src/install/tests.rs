@@ -6,7 +6,7 @@ fn release(publisher: &str, name: &str, _kind: &str, version: &str) -> Value {
         "id": format!("{publisher}/{name}"), "publisher": publisher, "name": name,
         "version": version, "status": "published", "size": 4096,
         "package_sha256": "a".repeat(64), "publisher_owner_hash": "b".repeat(64),
-        "download_path": format!("/store/v1/{collection}/{publisher}/{name}/versions/{version}/package.pkg"),
+        "download_path": format!("/store/v1/{collection}/{publisher}/{name}/versions/{version}/package.waz"),
         "title": "Package", "description": "Description", "changelog": "Initial release", "dependencies": [],
     });
     value
@@ -35,7 +35,7 @@ fn input_accepts_only_store_names_and_exact_versions() {
         "/workspace",
         "~/workspace",
         "C:\\workspace",
-        "workspace.webc",
+        "workspace.waz",
         "dev/workspace",
         "dev.dhttp.net/a/b",
         "https://github.com/a/b",
@@ -243,7 +243,7 @@ fn release_validation_rejects_withdrawn_and_mismatched_proofs() {
         ("size", json!(64 * 1024 * 1024 + 1)),
         ("package_sha256", json!("bad")),
         ("publisher_owner_hash", json!("A".repeat(64))),
-        ("download_path", json!("https://example.com/app.webc")),
+        ("download_path", json!("https://example.com/app.waz")),
     ] {
         let mut value_to_check = base.clone();
         value_to_check[key] = value;
@@ -375,7 +375,7 @@ fn package_cli_is_top_level_and_has_no_app_or_lib_selection() {
     for args in [
         vec!["genmeta", "package", "install", "workspace"],
         vec!["genmeta", "install"],
-        vec!["genmeta", "install", "workspace", "--file", "workspace.pkg"],
+        vec!["genmeta", "install", "workspace", "--file", "workspace.waz"],
         vec!["genmeta", "uninstall", "workspace", "--version", "1.0.0"],
     ] {
         assert!(Options::try_parse_from(args).is_err());

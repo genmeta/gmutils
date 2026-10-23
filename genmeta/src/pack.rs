@@ -198,7 +198,7 @@ async fn build(
         return Err("package has no runtime content".into());
     }
     let output =
-        output.unwrap_or_else(|| project.join("dist").join(format!("{name}-{version}.pkg")));
+        output.unwrap_or_else(|| project.join("dist").join(format!("{name}-{version}.waz")));
     reject_url(output.as_os_str())?;
     if std::fs::symlink_metadata(&output).is_ok() {
         return Err(format!("output already exists: {}", output.display()).into());
@@ -435,7 +435,7 @@ fn wasm_write_length(mut length: usize, bytes: &mut Vec<u8>) {
     bytes.push(length as u8);
 }
 
-fn reject_url(value: &std::ffi::OsStr) -> Result<()> {
+pub(super) fn reject_url(value: &std::ffi::OsStr) -> Result<()> {
     if value.to_str().is_some_and(|s| {
         s.contains("://")
             || s.split_once(':').is_some_and(|(scheme, _)| {
@@ -473,7 +473,7 @@ fn valid_version(value: &str) -> bool {
         })
 }
 
-fn valid_id(id: &str) -> bool {
+pub(super) fn valid_id(id: &str) -> bool {
     id.split_once('/').is_some_and(|(publisher, name)| {
         dhttp_home::normalize_name(publisher).as_deref() == Some(publisher)
             && (1..=63).contains(&name.len())
@@ -628,7 +628,7 @@ fn resolved_output(path: &Path) -> Result<PathBuf> {
 
 fn ensure_outside_mapping(output: &Path, parent: &Path, directory: &Path) -> Result<()> {
     if output.starts_with(directory) || parent.starts_with(directory) {
-        return Err("output and staging directory are inside a content mapping; use an external -o FILE.pkg".into());
+        return Err("output and staging directory are inside a content mapping; use an external -o FILE.waz".into());
     }
     Ok(())
 }
@@ -777,7 +777,7 @@ mod windows_tests {
     fn canonical_windows_output_can_have_missing_parent_directories() {
         let temporary = tempfile::tempdir().unwrap();
         let root = temporary.path().canonicalize().unwrap();
-        let output = root.join("dist").join("nested").join("test.webc");
+        let output = root.join("dist").join("nested").join("test.waz");
         assert_eq!(resolved_output(&output).unwrap(), output);
         assert!(!output.parent().unwrap().exists());
     }

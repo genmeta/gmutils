@@ -87,7 +87,7 @@ fn pack(home: &Path, cwd: &Path, args: &[&OsStr]) -> Output {
         .env("HOME", home.parent().unwrap())
         .env("DHTTP_HOME", "/nonexistent-ignored-pishoo-home")
         .current_dir(cwd)
-        .args(["build", "--no-build"])
+        .args(["jade", "build", "--no-build"])
         .args(args)
         .output()
         .unwrap()
@@ -101,6 +101,87 @@ fn fails(output: &Output, error: &str) {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn jade_create_scaffolds_a_package_that_builds_with_local_credentials() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home/.dhttp");
+    let create = || {
+        Command::new(env!("CARGO_BIN_EXE_genmeta"))
+            .current_dir(dir.path())
+            .args(["jade", "create", "hello", "--id", "alice~"])
+            .output()
+            .unwrap()
+    };
+    let created = create();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    assert_eq!(summary["id"], "alice~/hello");
+    let app = dir.path().join("hello");
+    let manifest = std::fs::read_to_string(app.join("wasmer.toml")).unwrap();
+    let config: toml::Value = toml::from_str(&manifest).unwrap();
+    assert_eq!(
+        config["package"]["name"].as_str(),
+        Some("alice.dhttp.net/hello")
+    );
+    assert!(app.join("public/index.html").is_file());
+    assert_eq!(
+        std::fs::read_to_string(app.join(".gitignore")).unwrap(),
+        "/dist/\n"
+    );
+    fails(&create(), "use a new path");
+    assert_eq!(
+        std::fs::read_to_string(app.join("wasmer.toml")).unwrap(),
+        manifest
+    );
+
+    identity(&home);
+    let built = pack(&home, &app, &[]);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let file = app.join("dist/hello-0.1.0.waz");
+    let package = webc::Container::from_bytes_and_version(
+        std::fs::read(file).unwrap().into(),
+        webc::Version::V3,
+    )
+    .unwrap();
+    package.validate().unwrap();
+    assert!(package.get_volume("pishoo-signature").is_some());
+    assert!(
+        package
+            .get_volume("public")
+            .unwrap()
+            .read_file("/index.html")
+            .is_some()
+    );
+}
+
+#[test]
+fn jade_create_rejects_invalid_names_and_publishers_before_writing() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, publisher, error) in [
+        ("Hello", "alice~", "Package name"),
+        ("bad name", "alice~", "Package name"),
+        ("hello", "https://example.com", "publisher"),
+        ("https://example.com/hello", "alice~", "local filesystem"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_genmeta"))
+            .current_dir(dir.path())
+            .args(["jade", "create", name, "--id", publisher])
+            .output()
+            .unwrap();
+        fails(&output, error);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+}
+
 #[test]
 fn urls_and_missing_credentials_and_id_mismatches_are_errors() {
     let dir = tempfile::tempdir().unwrap();
@@ -226,7 +307,7 @@ fn invalid_files_and_existing_targets_preserve_old_content() {
     identity(&home);
     let app = dir.path().join("app");
     project(&app, "app", "");
-    let file = dir.path().join("old.pkg");
+    let file = dir.path().join("old.waz");
     std::fs::write(&file, "old content").unwrap();
     fails(
         &pack(&home, &app, &["-o".as_ref(), file.as_os_str()]),
@@ -289,7 +370,7 @@ fn app_and_lib_build_signed_packages_offline_without_a_host_service() {
         identity(&home);
         let input = dir.path().join(kind);
         project(&input, kind, "");
-        let output = input.join("dist/signed.dhttp.net.pkg");
+        let output = input.join("dist/signed.dhttp.net.waz");
         let result = pack(&home, &input, &["--output".as_ref(), output.as_os_str()]);
         assert!(
             result.status.success(),

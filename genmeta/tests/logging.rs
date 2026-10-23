@@ -21,7 +21,7 @@ fn ambient_rust_log_does_not_enable_runtime_logs_or_hide_command_errors() {
         vec!["access", "--id", "missing", "list"],
         vec!["install", "--list", "--id", "missing"],
         vec!["mount", "--id", "missing"],
-        vec!["build", "missing-project-path"],
+        vec!["jade", "build", "missing-project-path"],
     ] {
         let output = run(&args, "trace");
         assert!(!output.status.success(), "{args:?}");
@@ -45,7 +45,7 @@ fn explicit_debug_flag_enables_logs_even_when_rust_log_is_off() {
         vec!["nslookup", "localhost", "system", "--id", "missing"],
         vec!["curl", "https://example.com/", "--id", "missing"],
         vec!["proxy", "--id", "missing"],
-        vec!["build", "missing-project-path"],
+        vec!["jade", "build", "missing-project-path"],
     ] {
         for args in [
             [vec!["--verb"], command.clone()].concat(),
