@@ -955,6 +955,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires matching PISHOO_BIN; run the cross-repository configuration tests"]
     async fn noninteractive_apply_keeps_listening_disabled() {
         let fixture = ServerFixture::new("disabled").await;
         let profile = fixture.profile();
@@ -972,6 +973,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires matching PISHOO_BIN; run the cross-repository configuration tests"]
     async fn apply_keeps_an_enabled_pishoo_configuration() {
         let fixture = ServerFixture::new("enabled").await;
         let config = super::super::site::ServerConfig::for_profile(&fixture.profile());

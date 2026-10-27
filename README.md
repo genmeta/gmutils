@@ -344,3 +344,25 @@ executable is needed. Service start/stop/restart/status belong
 to systemctl or brew services; gmutils does not wrap them.
 
 Store metadata uses `author`, `author_owner_hash` and `dependencies[].author`; catalog filters and update requests also use `author`. ZIP manifest dependencies also use `author`.
+
+### Pishoo configuration (release/0.9.0)
+
+Identity service activation and `genmeta listen` require the matching Pishoo
+executable. gmutils invokes `pishoo configure --profile PATH` locally, including
+when HTTP listening is off. Set `PISHOO_BIN` to an absolute executable path to
+override PATH lookup. A missing or older host is reported as an error; gmutils
+never falls back to creating a database itself.
+
+Pishoo alone initializes the current v3 configuration and package registry under
+`.volume/sys/{setting,pkg,access,contact}`. New identities do not create
+`sys/app/database` or `sys/lib/database`. Configuration v1/v2 and old config.db
+files require explicit service reinitialization; they are not migrated or deleted.
+Identity credentials are preserved. Disabling listening preserves mounts and data.
+
+Cross-repository tests use a built Pishoo from the matching branch (these tests are
+ignored by default because the host is a separate repository):
+
+```sh
+PISHOO_BIN=/absolute/path/to/pishoo cargo test --locked -p genmeta-identity --lib cli::flow::site::tests -- --ignored
+PISHOO_BIN=/absolute/path/to/pishoo cargo test --locked -p genmeta-identity --lib cli::flow::apply::tests -- --ignored
+```
