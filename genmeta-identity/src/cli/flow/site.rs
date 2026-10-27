@@ -93,23 +93,10 @@ impl ServerConfig {
 
     pub(crate) async fn state(&self) -> Result<ServerConfigState, Error> {
         if !regular_file_exists(&self.path).await? {
-            // An old config must be reported, never silently replaced by a fresh service.
-            let profile =
-                IdentityProfile::try_from(self.path.ancestors().nth(4).unwrap().to_path_buf())
-                    .map_err(|e| Error::InvalidConfiguration {
-                        path: self.path.clone(),
-                        message: e.to_string(),
-                    })?;
-            if profile
-                .config_db_path()
-                .try_exists()
-                .context(error::InspectSnafu { path: &self.path })?
-            {
-                return Err(Error::InvalidConfiguration { path: self.path.clone(), message: "legacy configuration is unsupported; reinitialize the identity service (existing data preserved)".into() });
-            }
+            // Legacy paths are not current host configuration; Pishoo owns fresh initialization.
             return Ok(ServerConfigState::Missing);
         }
-        Ok(if self.configure(&[]).await? == "off" {
+        Ok(if self.configure(&["--init"]).await? == "off" {
             ServerConfigState::Disabled
         } else {
             ServerConfigState::Enabled
@@ -207,7 +194,7 @@ pub async fn run_listen(
     }
     let listen = match scope {
         Some(mode) => config.configure(&["--listen", mode]).await?,
-        None => config.configure(&[]).await?,
+        None => config.configure(&["--init"]).await?,
     };
     println!("{}", serde_json::json!({"listen":listen}));
     if scope.is_some() {
@@ -299,7 +286,7 @@ mod tests {
             Err(Error::InvalidConfiguration { .. })
         ));
         db.execute_unprepared(
-            "PRAGMA user_version=1; INSERT INTO setting VALUES('listen','invalid')",
+            "PRAGMA user_version=3; INSERT INTO setting VALUES('listen','invalid')",
         )
         .await
         .unwrap();
@@ -383,18 +370,39 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires matching PISHOO_BIN; run the cross-repository configuration tests"]
-    async fn old_versions_are_rejected_without_migration() {
+    async fn old_versions_are_archived_and_enabled_with_fresh_configuration() {
         for version in [1, 2] {
             let (_root, profile, config) = fixture().await;
             let db = config.open().await.unwrap();
-            db.execute_unprepared(&format!("PRAGMA user_version={version}"))
-                .await
-                .unwrap();
+            db.execute_unprepared(&format!("PRAGMA user_version={version}; INSERT INTO setting VALUES('listen','invalid'); INSERT INTO proxy_location VALUES('/old','http://127.0.0.1:8080')"))
+                .await.unwrap();
             db.close().await.unwrap();
-            let before = fs::read(&config.path).await.unwrap();
-            assert!(config.state().await.is_err());
-            assert!(config.enable().await.is_err());
-            assert_eq!(fs::read(&config.path).await.unwrap(), before);
+            assert_eq!(config.state().await.unwrap(), ServerConfigState::Disabled);
+            assert_eq!(config.enable().await.unwrap(), ConfigChange::Changed);
+            assert_eq!(config.state().await.unwrap(), ServerConfigState::Enabled);
+            let archives = std::fs::read_dir(profile.join(".volume/sys"))
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".setting-v")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(archives.len(), 1);
+            assert!(archives[0].path().join("setting/database").is_file());
+            let db = config.open().await.unwrap();
+            let row = db
+                .query_one_raw(Statement::from_string(
+                    DatabaseBackend::Sqlite,
+                    "SELECT count(*) FROM proxy_location",
+                ))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(row.try_get_by_index::<i64>(0).unwrap(), 0);
+            db.close().await.unwrap();
             assert!(!profile.join(".volume/sys/app").exists());
             assert!(!profile.join(".volume/sys/lib").exists());
         }
@@ -402,20 +410,20 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires matching PISHOO_BIN; run the cross-repository configuration tests"]
-    async fn listen_creates_configuration_only_for_an_explicit_valid_mode() {
+    async fn listen_query_initializes_missing_configuration_and_modes_remain_validated() {
         let (root, profile, config) = fixture().await;
         let home = DhttpHome::new(root.path().to_path_buf());
         fs::remove_file(profile.join(".volume/sys/setting/database"))
             .await
             .unwrap();
-        assert!(run_listen("alice.smith", None, &home).await.is_err());
-        assert!(!profile.join(".volume/sys/setting/database").exists());
+        run_listen("alice.smith", None, &home).await.unwrap();
+        assert_eq!(config.state().await.unwrap(), ServerConfigState::Disabled);
         assert!(
             run_listen("alice.smith", Some("both"), &home)
                 .await
                 .is_err()
         );
-        assert!(!profile.join(".volume/sys/setting/database").exists());
+        assert_eq!(config.state().await.unwrap(), ServerConfigState::Disabled);
         run_listen("alice.smith", Some("internal"), &home)
             .await
             .unwrap();
@@ -444,5 +452,29 @@ mod tests {
             config.enable().await,
             Err(Error::NotRegularFile { .. })
         ));
+    }
+    #[tokio::test]
+    #[ignore = "requires matching PISHOO_BIN; run the cross-repository configuration tests"]
+    async fn legacy_path_does_not_block_fresh_service_activation() {
+        let (root, profile, config) = fixture().await;
+        fs::remove_file(&config.path).await.unwrap();
+        fs::create_dir_all(profile.db_dir()).await.unwrap();
+        fs::write(profile.config_db_path(), b"old configuration kept")
+            .await
+            .unwrap();
+        assert_eq!(config.state().await.unwrap(), ServerConfigState::Missing);
+        assert_eq!(config.enable().await.unwrap(), ConfigChange::Changed);
+        assert_eq!(config.state().await.unwrap(), ServerConfigState::Enabled);
+        run_listen(
+            "alice.smith",
+            Some("internal"),
+            &DhttpHome::new(root.path().to_path_buf()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            fs::read(profile.config_db_path()).await.unwrap(),
+            b"old configuration kept"
+        );
     }
 }

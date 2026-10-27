@@ -355,8 +355,11 @@ never falls back to creating a database itself.
 
 Pishoo alone initializes the current v3 configuration and package registry under
 `.volume/sys/{setting,pkg,access,contact}`. New identities do not create
-`sys/app/database` or `sys/lib/database`. Configuration v1/v2 and old config.db
-files require explicit service reinitialization; they are not migrated or deleted.
+`sys/app/database` or `sys/lib/database`. Legacy config.db files are ignored and retained. Pishoo archives v1/v2 configuration
+at the current path and creates fresh v3 defaults without importing old settings.
+`genmeta listen` initializes missing configuration before reading it; enabling uses
+the requested listening mode. Service setup errors after identity installation
+are reported as warnings and do not turn successful identity installation into a failure.
 Identity credentials are preserved. Disabling listening preserves mounts and data.
 
 Cross-repository tests use a built Pishoo from the matching branch (these tests are
