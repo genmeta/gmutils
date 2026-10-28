@@ -915,6 +915,12 @@ pub(crate) fn validate_component(
                 ),
                 _ => false,
             }
+        } else if package.namespace == "pishoo" && package.name == "events" {
+            interface_name == "change"
+                && package
+                    .version
+                    .as_ref()
+                    .is_some_and(|v| v.major == 0 && v.minor == 1 && v.patch == 0)
         } else {
             package.namespace == "pishoo"
                 && package.name == "identity"
