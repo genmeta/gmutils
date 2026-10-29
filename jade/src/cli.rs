@@ -38,6 +38,9 @@ pub(super) enum Command {
         /// Signing identity; must match package.author when configured
         #[arg(short, long, value_name = "AUTHOR")]
         id: Option<String>,
+        /// Developer certificate sequence (default: smallest usable sequence)
+        #[arg(long)]
+        signing_sequence: Option<u32>,
         /// Package output file (default build/NAME-VERSION.waz)
         #[arg(short, long, value_name = "FILE.waz")]
         output: Option<PathBuf>,
@@ -71,7 +74,8 @@ pub(super) async fn run(command: Command, machine: bool) -> Result<Value> {
             id,
             output,
             overwrite,
-        } => crate::pack::run(path, output, id, overwrite, machine).await,
+            signing_sequence,
+        } => crate::pack::run(path, output, id, overwrite, machine, signing_sequence).await,
         Command::Publish { file } => crate::upload::run(file).await,
     }
 }
@@ -192,7 +196,7 @@ serde_json = "1"
     if matches!(template, Template::Api | Template::Fullstack) {
         readme.push_str("Install the component target with `rustup target add wasm32-wasip2`. Edit handlers and the WASI HTTP entry point in `api/src/lib.rs`, and keep its `ROUTES` metadata in sync when changing routes. The template uses `wasip2` directly. Jade invokes Cargo and embeds OpenAPI from the route metadata; no build script is needed.\n\n");
     }
-    readme.push_str(&format!("Build and publish using your signing identity (replace `alice.smith` below). Provision credentials using the DHTTP identity tools.\n\n```sh\njade build --id alice.smith\njade publish build/{name}-0.1.0.waz\n```\n\nSigned packages and Cargo's `target/` cache are written under `build/`.\n"));
+    readme.push_str(&format!("Build and publish using your signing identity (replace `alice.smith` below). Provision TLS credentials using genmeta identity apply, then purchase and apply a developer certificate using genmeta identity developer NAME.\n\n```sh\njade build --id alice.smith\njade publish build/{name}-0.1.0.waz\n```\n\nSigned packages and Cargo's `target/` cache are written under `build/`.\n"));
     readme.push_str("\nJade automatically includes root-level `README.md` and `CHANGELOG.md` when present. No declaration in `jade.toml` is needed; missing files are skipped.\n");
     if matches!(template, Template::Api | Template::Fullstack) {
         readme.push_str(&format!(

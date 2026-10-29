@@ -96,7 +96,7 @@ fn build(metadata: &Value, authority: Option<&dhttp::LocalAuthority>, content: &
             input.push(u8::from_str_radix(&payload[i..i + 2], 16).unwrap());
         }
         let signature = authority
-            .sign(qtls::SignatureScheme::ECDSA_NISTP256_SHA256, &input)
+            .sign(qtls::SignatureScheme::ECDSA_NISTP384_SHA384, &input)
             .unwrap();
         files.insert("signature.json".into(), serde_json::to_vec(&json!({"version":1,
             "certificates":authority.certificates().iter().map(|c|STANDARD.encode(c.as_ref())).collect::<Vec<_>>(),
@@ -144,7 +144,7 @@ fn build_projection(
         let doc=serde_json::to_vec(&json!({"openapi":"3.1.0","info":{"title":"Upload API","description":content,"version":"1.0.0"},
             "paths":{"/page":{"get":{"operationId":"readPage","summary":"Read page","responses":{"200":{"description":"OK"}}}}}})).unwrap();
         let backend = crate::pack::embedded_openapi(
-            include_bytes!("../tests/fixtures/upload-handler.wasm").to_vec(),
+            include_bytes!("../fixtures/upload-handler.wasm").to_vec(),
             Some(&doc),
         )
         .unwrap();
@@ -188,23 +188,12 @@ fn build_projection(
 }
 
 fn local(name: &str, owner: &str) -> dhttp::LocalAuthority {
-    let mut params = rcgen::CertificateParams::new(vec![name.to_owned()]).unwrap();
-    let ski = format!("0:0:{owner}");
-    let mut der = vec![4, ski.len() as u8];
-    der.extend_from_slice(ski.as_bytes());
-    params
-        .custom_extensions
-        .push(rcgen::CustomExtension::from_oid_content(
-            &[2, 5, 29, 14],
-            der,
-        ));
-    let key = rcgen::KeyPair::generate().unwrap();
-    let cert = params.self_signed(&key).unwrap();
+    let (certificates, key) = crate::test_credentials::developer(name, owner);
     dhttp::LocalAuthority::new(
         &qtls::default_provider(),
         Arc::from(name),
-        vec![cert.der().clone()],
-        qtls::PrivateKeyDer::try_from(key.serialize_der()).unwrap(),
+        certificates,
+        key,
         vec![1],
     )
     .unwrap()
@@ -304,7 +293,10 @@ fn parses_manifest_without_treating_it_as_verified_and_preserves_payload_identit
         );
         let chain = package_certificates(&original).unwrap();
         assert!(verify_author(&metadata, &chain, &alice).is_ok());
-        assert!(verify_author(&metadata, &chain, &rotated).is_err());
+        assert!(
+            verify_author(&metadata, &chain, &rotated).is_ok(),
+            "same-owner key rotation is allowed"
+        );
         let mut wrong = metadata.clone();
         wrong["author"] = "bob.dhttp.net".into();
         assert!(verify_author(&wrong, &chain, &alice).is_err());

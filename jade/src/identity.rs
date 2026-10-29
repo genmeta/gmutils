@@ -53,7 +53,7 @@ pub(crate) async fn select(
         }
     };
     if let Some(selected) = selected {
-        credentials(&home, &selected).await?;
+        developer_credentials(&home, &selected).await?;
         return Ok(selected);
     }
     let names = home.identity_profile_names();
@@ -61,7 +61,7 @@ pub(crate) async fn select(
     let mut candidates = Vec::new();
     while let Some(name) = names.next().await {
         let name = name.map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
-        if credentials(&home, &name).await.is_ok() {
+        if developer_credentials(&home, &name).await.is_ok() {
             candidates.push(name);
         }
     }
@@ -70,9 +70,9 @@ pub(crate) async fn select(
     match candidates.len() {
         0 => Err(Error::new(
             "E_IDENTITY_UNAVAILABLE",
-            "No usable local identity credentials",
+            "No usable local developer credentials",
         )
-        .hint("Prepare an identity with genmeta identity apply, then run jade build --id NAME")),
+        .hint("Run genmeta identity developer NAME purchase --idempotency-key KEY, pay the invoice, then genmeta identity developer NAME apply")),
         1 => Ok(candidates.remove(0)),
         _ if machine || !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() => Err(
             Error::new("E_IDENTITY_REQUIRED", "Select a signing identity")
@@ -93,7 +93,7 @@ pub(crate) async fn select(
     }
 }
 
-pub(crate) async fn credentials(
+pub(crate) async fn tls_credentials(
     home: &DhttpHome,
     name: &str,
 ) -> Result<(
@@ -118,14 +118,26 @@ pub(crate) async fn credentials(
             format!("Cannot load local credentials for {name}: {e}"),
         )
     })?;
-    crate::package::check_certificates(&certs, name)
+    let verifier =
+        dhttp::trust::dhttp_client_cert_verifier(dhttp::trust::ClientIdentityPolicy::Required);
+    verifier
+        .verify_client_cert(
+            certs
+                .first()
+                .ok_or_else(|| Error::new("E_IDENTITY_UNAVAILABLE", "missing TLS certificate"))?,
+            &certs[1..],
+            rustls::pki_types::UnixTime::now(),
+        )
         .map_err(|e| Error::new("E_IDENTITY_MISMATCH", e))?;
     let (_, certificate) = x509_parser::parse_x509_certificate(certs[0].as_ref())
         .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
+    if certificate.subject_alternative_name().map_err(|e|Error::new("E_IDENTITY_MISMATCH",e))?.is_none_or(|names|!names.value.general_names.iter().any(|entry|matches!(entry,x509_parser::extensions::GeneralName::DNSName(dns) if *dns==name))) {
+        return Err(Error::new("E_IDENTITY_MISMATCH","TLS identity certificate differs from the package author"));
+    }
     if !certificate.validity().is_valid() {
         return Err(Error::new(
             "E_IDENTITY_UNAVAILABLE",
-            format!("Signing certificate for {name} is outside its validity period"),
+            format!("TLS identity certificate for {name} is outside its validity period"),
         ));
     }
     let signer = qtls::default_provider()
@@ -155,4 +167,42 @@ pub(crate) async fn credentials(
         ));
     }
     Ok((certs, key))
+}
+
+pub(crate) async fn developer_credentials(
+    home: &DhttpHome,
+    name: &str,
+) -> Result<(
+    Vec<qtls::CertificateDer<'static>>,
+    qtls::PrivateKeyDer<'static>,
+)> {
+    developer_credentials_sequence(home, name, None).await
+}
+pub(crate) async fn developer_credentials_sequence(
+    home: &DhttpHome,
+    name: &str,
+    sequence: Option<u32>,
+) -> Result<(
+    Vec<qtls::CertificateDer<'static>>,
+    qtls::PrivateKeyDer<'static>,
+)> {
+    let profile = home
+        .resolve_identity_profile_exactly(name)
+        .await
+        .map_err(|_| {
+            Error::new(
+                "E_IDENTITY_UNAVAILABLE",
+                format!("Cannot find local credentials for {name}"),
+            )
+        })?;
+    let credentials=genmeta_identity::code_signing::load(&profile,sequence).map_err(|e|Error::new("E_DEVELOPER_CERTIFICATE_REQUIRED",e).hint("Run genmeta identity developer NAME purchase --idempotency-key KEY, pay the invoice, then genmeta identity developer NAME apply"))?;
+    let chain = credentials
+        .chain()
+        .map_err(|e| Error::new("E_SIGNATURE_INVALID", e))?;
+    Ok((
+        chain,
+        credentials
+            .key()
+            .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?,
+    ))
 }

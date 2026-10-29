@@ -14,8 +14,39 @@ jade build --id alice.smith
 jade publish build/hello-0.1.0.waz
 ```
 
-Provision credentials through the DHTTP identity tools, for example
-`genmeta identity apply`. Jade uses `dhttp-home`, including `DHTTP_HOME` when set.
+Jade signs with an independent developer certificate. Initialize the normal TLS
+identity with `genmeta identity apply NAME`, then use the Account login flow:
+
+```sh
+genmeta identity developer NAME pricing
+genmeta identity developer NAME purchase --idempotency-key YOUR-STABLE-PURCHASE-KEY
+# Pay the returned invoice in the web console; the return page is not payment proof.
+genmeta identity developer NAME invoice INV_NUMBER
+genmeta identity developer NAME apply
+jade build --id NAME
+```
+
+Jade uses `dhttp-home`, including `DHTTP_HOME` when set. Developer bundles are
+stored separately in `<profile>/code-signing/<sequence>/credentials.json` with
+private file permissions. TLS remains in `ssl/`. `jade build --signing-sequence N`
+selects a specific developer chain; the default is the smallest usable sequence.
+Missing, expired or TLS-only credentials fail explicitly. Signing CI can provide
+only the developer bundle and no TLS directory.
+
+Renew with `genmeta identity developer NAME renew --sequence N`. This rotates the
+private key using one persisted pending CSR and operation key and never creates
+a purchase. Retry the same command after an uncertain response; preserve pending
+files across ephemeral CI runs. A purchase retry must reuse its original key.
+The current CertServer initial-issuance API has no idempotency key: after an
+unknown POST outcome or HTTP 5xx (including a failure after server commit), apply queries the original CSR and never submits a second
+issuance until the first outcome is known. Retry the same command later. If the
+original result never appears, inspect the exact signing certificate list with
+support before manually clearing the pending operation; deleting it blindly can
+consume another chain slot.
+`subscription`, `status --fingerprint-sha256 HEX`, `auto-renew CS_NUMBER false`, and
+`revoke --serial-number HEX --issuer-id ISSUER [--whole-sequence]` expose the
+corresponding V2 operations. Closing auto-renewal retains paid periods and does
+not cancel a submitted payment.
 
 ## Create a project
 
@@ -160,11 +191,22 @@ requires `--overwrite`.
 Build verifies component structure, the WASI HTTP entry point, supported imports,
 OpenAPI, container contents and the digital signature. Publish repeats local
 checks before preparing an authenticated endpoint and uploads one fixed snapshot.
-It uses the package's author credentials; certificate changes require rebuilding.
+It uses TLS transport credentials and the developer public certificates embedded
+in the existing WAZ. Both chains are independently validated and must bind the
+same canonical domain and owner_hash; their DER bytes and keys may differ.
+Publication preserves the exact WAZ bytes and never re-signs. Upload CI needs no
+developer private key. Publication admission verifies the signed certificate locally;
+paid entitlement is enforced only at certificate issuance and renewal. Jade and
+Registry never query CertServer during publication.
 Before sending a package, it reads the store catalogue and rejects the legacy
 `publisher`/`.pkg` protocol with no upload.
-Local checks establish signature and identity binding; current network trust and
-revocation checks belong to DHTTP authentication.
+Local checks validate the codeSigning path against the compiled DHTTP Root,
+strict certificate profile and package signature. TLS authentication validates
+the upload identity. Optional issuer-signed DER CRLs can be imported independently
+under `<author profile>/trust/code-signing/<issuer DER SHA256>.crl`. No list means
+current revocation is unknown; a known revoked certificate is refused, and a stale
+list requires an independently distributed replacement. Registry records the unreleased policy 1
+and a portable signed publication receipt for historical installation.
 
 Publication returns `published` or `already-published` for identical content.
 Different content at the same version is a conflict. An uncertain upload performs
@@ -211,3 +253,12 @@ cargo test -p jade --locked \
 The implementation scope and acceptance criteria are in
 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md). Install and manage published
 packages through `genmeta install/update/uninstall`.
+
+## Developer-signing tests
+
+`jade/tests/scripts/code-signing.sh --offline` builds into a dedicated
+`target/code-signing-tests` directory with the disposable test Root compiled in.
+It runs package, build and launcher regression tests. This is a test artifact,
+not a release binary. The locked dhttp 0.7.1 consumes `DHTTP_ROOT_CA_PEM` as PEM
+text at compile time; a runtime variable or a `DHTTP_ROOT_CA` file path does not
+change its trust anchor. Production builds must supply their approved PEM.

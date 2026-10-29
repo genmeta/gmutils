@@ -17,6 +17,7 @@ ddns = { workspace = true }
 dhttp = { workspace = true }
 dhttp-home = { workspace = true, features = ["manage"] }
 dhttp-identity = { workspace = true }
+genmeta-identity = { workspace = true }
 dirs = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }

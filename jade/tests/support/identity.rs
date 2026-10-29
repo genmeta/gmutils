@@ -1,3 +1,6 @@
+#[allow(dead_code)]
+#[path = "upload_credentials.rs"]
+mod signing;
 use std::path::Path;
 
 pub fn create(home: &Path) {
@@ -32,5 +35,35 @@ pub fn create_named(home: &Path, name: &str) {
         )
         .unwrap();
     }
-    // Offline package signing needs certificate + private key, not transport OCSP.
+    // Signing credentials are independent from the legacy TLS fixture above.
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    fn pem(label: &str, der: &[u8]) -> String {
+        let base = STANDARD.encode(der);
+        let lines = base
+            .as_bytes()
+            .chunks(64)
+            .map(|c| std::str::from_utf8(c).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("-----BEGIN {label}-----\n{lines}\n-----END {label}-----\n")
+    }
+    let (chain, key) = signing::developer(name, &"a".repeat(64));
+    let cert_pem = chain
+        .iter()
+        .map(|c| pem("CERTIFICATE", c.as_ref()))
+        .collect::<String>();
+    let key_pem = pem("PRIVATE KEY", key.secret_der());
+    let signing = ssl.parent().unwrap().join("code-signing/1");
+    std::fs::create_dir_all(&signing).unwrap();
+    let credentials = signing.join("credentials.json");
+    std::fs::write(
+        &credentials,
+        serde_json::to_vec(&serde_json::json!({"cert_pem":cert_pem,"key_pem":key_pem})).unwrap(),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(credentials, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
 }

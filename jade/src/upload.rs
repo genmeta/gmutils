@@ -13,9 +13,16 @@ use crate::package::{
     read_snapshot, signature_envelope, text, version_path,
 };
 
-const STORE_NAME: &str = "store.dhttp.net";
-const STORE_OWNER: &str = "ffc3e50e1dfb7baca1cc07a7cbfcf8cb34a9bf5a9c25024fcf9a9786bb230746";
-const JSON_LIMIT: usize = 1024 * 1024;
+const STORE_NAME: &str = match option_env!("PISHOO_REGISTRY_NAME") {
+    Some(value) => value,
+    None => "store.dhttp.net",
+};
+const STORE_OWNER: &str = match option_env!("PISHOO_REGISTRY_OWNER_HASH") {
+    Some(value) => value,
+    None => "ffc3e50e1dfb7baca1cc07a7cbfcf8cb34a9bf5a9c25024fcf9a9786bb230746",
+};
+// A detailed release may carry a base64-encoded 4 MiB issuer CRL.
+const JSON_LIMIT: usize = 8 * 1024 * 1024;
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(180);
 const METADATA_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -27,15 +34,17 @@ pub(super) async fn run(file: PathBuf) -> crate::error::Result<Value> {
     let metadata = inspect_package(&bytes).await?;
     let author = text(&metadata, "author").map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
     let home = crate::identity::home()?;
-    let (local_certificates, _) = crate::identity::credentials(&home, author).await?;
+    let (local_certificates, _) = crate::identity::tls_credentials(&home, author).await?;
     let certificates =
         package_certificates(&bytes).map_err(|e| Error::new("E_SIGNATURE_INVALID", e))?;
-    if local_certificates != certificates {
+    if owner_hash(&local_certificates).map_err(|e| Error::new("E_IDENTITY_MISMATCH", e))?
+        != owner_hash(&certificates).map_err(|e| Error::new("E_IDENTITY_MISMATCH", e))?
+    {
         return Err(Error::new(
             "E_IDENTITY_MISMATCH",
-            "Package signer differs from current author credentials",
+            "Package signer owner differs from TLS uploader owner",
         )
-        .hint("Run jade build again with the current credentials"));
+        .hint("Use TLS upload credentials with the same author domain and owner_hash as the developer signer"));
     }
     let owner = owner_hash(&certificates).map_err(|e| Error::new("E_SIGNATURE_INVALID", e))?;
     let profile = home
@@ -54,6 +63,13 @@ pub(super) async fn run(file: PathBuf) -> crate::error::Result<Value> {
         .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
     verify_author(&metadata, &certificates, &authority)
         .map_err(|e| Error::new("E_IDENTITY_MISMATCH", e))?;
+    // Certificate purpose, validity and WAZ signature were verified locally by inspect_package.
+    // Paid entitlement is enforced only when the developer certificate is issued or renewed.
+    genmeta_identity::code_signing::check_local_revocations(
+        &certificates,
+        &profile.path().join("trust/code-signing"),
+    )
+    .map_err(|e| Error::new("E_PUBLISH_REJECTED", e))?;
     tokio::time::timeout(METADATA_TIMEOUT, init_network())
         .await
         .map_err(|e| Error::new("E_PUBLISH_REJECTED", e))?
@@ -67,11 +83,10 @@ fn verify_author(
     authority: &dhttp::LocalAuthority,
 ) -> Result<(), Whatever> {
     if authority.name() != text(metadata, "author")?
-        || certificates != authority.certificates()
         || owner_hash(certificates)? != owner_hash(authority.certificates())?
     {
         whatever!(
-            "package signer differs from current author credentials; run jade build again with the current credentials"
+            "TLS uploader and developer signer must have the same canonical domain and owner_hash"
         );
     }
     Ok(())
@@ -498,5 +513,5 @@ fn check_catalogue(response: &http::Response<Vec<u8>>) -> Result<(), Whatever> {
 }
 
 #[cfg(test)]
-#[path = "upload_tests.rs"]
+#[path = "../tests/unit/upload.rs"]
 mod tests;

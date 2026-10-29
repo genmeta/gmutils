@@ -21,6 +21,7 @@ pub(super) async fn run(
     id: Option<String>,
     overwrite: bool,
     machine: bool,
+    signing_sequence: Option<u32>,
 ) -> crate::error::Result<Value> {
     use crate::error::Error;
     let (project, config) = crate::project::read(&path)?;
@@ -114,7 +115,8 @@ pub(super) async fn run(
         .transpose()
         .map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
     let home = crate::identity::home()?;
-    let (certificates, private_key) = crate::identity::credentials(&home, &author).await?;
+    let (certificates, private_key) =
+        crate::identity::developer_credentials_sequence(&home, &author, signing_sequence).await?;
     let owner = crate::package::owner_hash(&certificates)
         .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
     let signing_key = qtls::default_provider()
@@ -672,67 +674,9 @@ fn public_directory(
 }
 
 #[cfg(all(test, windows))]
-mod windows_tests {
-    use super::*;
-
-    #[test]
-    fn canonical_windows_content_paths_wait_for_the_complete_root() {
-        let temporary = tempfile::tempdir().unwrap();
-        let root = temporary.path().canonicalize().unwrap();
-        assert!(matches!(
-            root.components().next(),
-            Some(Component::Prefix(_))
-        ));
-        std::fs::create_dir(root.join("public")).unwrap();
-        assert_eq!(
-            local_content_path(&root, "public").unwrap(),
-            root.join("public")
-        );
-    }
-
-    #[test]
-    fn canonical_windows_output_can_have_missing_parent_directories() {
-        let temporary = tempfile::tempdir().unwrap();
-        let root = temporary.path().canonicalize().unwrap();
-        let output = root.join("dist").join("nested").join("test.waz");
-        assert_eq!(resolved_output(&output).unwrap(), output);
-        assert!(!output.parent().unwrap().exists());
-    }
-}
+#[path = "../tests/unit/pack_windows.rs"]
+mod windows_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn embeds_one_openapi_before_package_signing() {
-        let document = br#"{"openapi":"3.1.0","info":{"version":"1.0.0"},"paths":{}}"#;
-        let original = b"\0asm\x0d\0\x01\0".to_vec();
-        let embedded = embedded_openapi(original.clone(), Some(document)).unwrap();
-        assert!(embedded.starts_with(&original));
-        assert!(
-            embedded
-                .windows(document.len())
-                .any(|bytes| bytes == document)
-        );
-        assert_eq!(embedded_openapi(embedded.clone(), None).unwrap(), embedded);
-        assert_eq!(
-            embedded_openapi(embedded.clone(), Some(document)).unwrap(),
-            embedded
-        );
-        assert!(
-            embedded_openapi(embedded, Some(br#"{"openapi":"3.1.0","paths":{"/x":{}}}"#)).is_err()
-        );
-        assert!(embedded_openapi(original, None).is_err());
-    }
-
-    #[test]
-    fn rejects_duplicate_and_truncated_embedded_documents() {
-        let document = br#"{"openapi":"3.1.0","paths":{}}"#;
-        let original = b"\0asm\x0d\0\x01\0".to_vec();
-        let mut embedded = embedded_openapi(original, Some(document)).unwrap();
-        embedded.extend_from_within(8..);
-        assert!(embedded_openapi(embedded, None).is_err());
-        assert!(embedded_openapi(b"\0asm\x0d\0\x01\0\0\x80".to_vec(), None).is_err());
-    }
-}
+#[path = "../tests/unit/pack.rs"]
+mod tests;

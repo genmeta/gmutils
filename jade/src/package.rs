@@ -197,12 +197,20 @@ pub(crate) fn owner_hash(
     )
 }
 
-/// Local binding checks use public certificates only. Remote trust and current
-/// revocation are checked by the authenticated DHTTP connection at publication.
+/// Independently validate the developer path and exact profile. Online status is
+/// checked separately at publication, and again by Registry.
 pub(crate) fn check_certificates(
     certificates: &[rustls::pki_types::CertificateDer<'_>],
     author: &str,
 ) -> Result<(), Whatever> {
+    #[cfg(not(test))]
+    genmeta_identity::code_signing::verify_chain(
+        certificates,
+        author,
+        rustls::pki_types::UnixTime::now(),
+    )?;
+    #[cfg(test)]
+    test_support::verify_certificates(certificates, author)?;
     let first = certificates
         .first()
         .whatever_context("missing signer certificates")?;
@@ -504,3 +512,7 @@ pub(crate) fn signature_input(bytes: &[u8]) -> Result<Vec<u8>, Whatever> {
     }
     Ok(input)
 }
+
+#[cfg(test)]
+#[path = "../tests/common/package_signing.rs"]
+mod test_support;

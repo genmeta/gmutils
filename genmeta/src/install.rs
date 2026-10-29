@@ -10,8 +10,14 @@ use tokio::io::AsyncWriteExt;
 
 use crate::display;
 
-const STORE: &str = "store.dhttp.net";
-const STORE_OWNER: &str = "ffc3e50e1dfb7baca1cc07a7cbfcf8cb34a9bf5a9c25024fcf9a9786bb230746";
+const STORE: &str = match option_env!("PISHOO_REGISTRY_NAME") {
+    Some(value) => value,
+    None => "store.dhttp.net",
+};
+const STORE_OWNER: &str = match option_env!("PISHOO_REGISTRY_OWNER_HASH") {
+    Some(value) => value,
+    None => "ffc3e50e1dfb7baca1cc07a7cbfcf8cb34a9bf5a9c25024fcf9a9786bb230746",
+};
 const JSON_LIMIT: usize = 2 * 1024 * 1024;
 const RESOLUTION_BYTES: usize = 20 * 1024 * 1024;
 const CANDIDATE_LIMIT: u64 = 10_000;
@@ -804,5 +810,5 @@ async fn host_exchange(
 }
 
 #[cfg(test)]
-#[path = "install/tests.rs"]
+#[path = "../tests/unit/install.rs"]
 mod tests;

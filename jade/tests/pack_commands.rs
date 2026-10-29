@@ -407,7 +407,12 @@ fn app_and_lib_build_signed_packages_offline_without_a_host_service() {
         let mut signed = b"pishoo-waz-signature-v1\0".to_vec();
         signed.extend_from_slice(&digest.finalize());
         let key = rcgen::KeyPair::from_pem(
-            &std::fs::read_to_string(home.join("alice/ssl/privkey.pem")).unwrap(),
+            serde_json::from_slice::<serde_json::Value>(
+                &std::fs::read(home.join("alice/code-signing/1/credentials.json")).unwrap(),
+            )
+            .unwrap()["key_pem"]
+                .as_str()
+                .unwrap(),
         )
         .unwrap();
         assert!(
@@ -908,13 +913,20 @@ fn wasm_commands_and_wrong_keys_fail_before_writing_a_package() {
     assert!(!app.join("build/hello-1.0.0.waz").exists());
     let other = root.path().join("other/.dhttp");
     identity(&other);
-    let key = home.join("alice/ssl/privkey.pem");
+    let key = home.join("alice/code-signing/1/credentials.json");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
-    std::fs::copy(other.join("alice/ssl/privkey.pem"), &key).unwrap();
+    let mut saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&key).unwrap()).unwrap();
+    let another: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(other.join("alice/code-signing/1/credentials.json")).unwrap(),
+    )
+    .unwrap();
+    saved["key_pem"] = another["key_pem"].clone();
+    std::fs::write(&key, serde_json::to_vec(&saved).unwrap()).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -922,7 +934,7 @@ fn wasm_commands_and_wrong_keys_fail_before_writing_a_package() {
     }
     let output = pack(&home, &app, &[]);
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(result["error"]["code"], "E_IDENTITY_UNAVAILABLE");
+    assert_eq!(result["error"]["code"], "E_DEVELOPER_CERTIFICATE_REQUIRED");
     assert!(
         result["error"]["message"]
             .as_str()
@@ -993,4 +1005,31 @@ fn malformed_commands_do_not_infer_a_command_from_later_arguments() {
             .unwrap()
             .contains('\u{1b}')
     );
+}
+
+#[test]
+fn signing_home_needs_no_tls_credentials() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home/.dhttp");
+    identity(&home);
+    std::fs::remove_dir_all(home.join("alice/ssl")).unwrap();
+    let input = dir.path().join("app");
+    project(&input, "app", "");
+    let built = pack(
+        &home,
+        &input,
+        &[
+            "--id".as_ref(),
+            "alice".as_ref(),
+            "--signing-sequence".as_ref(),
+            "1".as_ref(),
+        ],
+    );
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    assert!(input.join("build/hello-1.0.0.waz").is_file());
+    assert!(!home.join("alice/ssl").exists());
 }
