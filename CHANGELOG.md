@@ -1,6 +1,14 @@
 # Changelog
 
-## [Unreleased]
+## [0.9.0] - 2026-10-29
+
+- Release genmeta 0.9.0 and genmeta-identity 0.5.0 on the stable channel.
+- Use matching Pishoo 0.9.0 to initialize and update listening settings.
+- Recover legacy service settings through Pishoo while preserving valid settings.
+- Keep an installed identity usable when service configuration or activation fails.
+
+Jade remains 0.1.0 and keeps the existing TLS identity signing workflow. Other
+utility crates retain their published versions.
 
 ## [0.9.0-preview.5] - 2026-10-23
 

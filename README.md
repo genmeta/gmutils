@@ -2,11 +2,11 @@
   <img src="https://media.dhttp.net/img/gmutils/gmutils.svg" width="900" alt="GMUTILS command-line tool family: identity, access, curl, nslookup, doctor, proxy, and discover">
 </p>
 <p align="center">
-  <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/version-0.9.0--preview.5-1f6feb?style=flat-square" alt="Version 0.9.0-preview.5"></a>
+  <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/version-0.9.0-1f6feb?style=flat-square" alt="Version 0.9.0"></a>
   <a href="https://doc.rust-lang.org/edition-guide/rust-2024/"><img src="https://img.shields.io/badge/Rust-2024-dea584?style=flat-square&amp;logo=rust&amp;logoColor=black" alt="Rust 2024 edition"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-00a51a?style=flat-square&amp;logo=apache&amp;logoColor=white" alt="Apache-2.0 license"></a>
   <a href="#install"><img src="https://img.shields.io/badge/Cargo-supported-dea584?style=flat-square&amp;logo=rust&amp;logoColor=black" alt="Cargo package supported"></a>
-  <a href="https://github.com/genmeta/homebrew-preview"><img src="https://img.shields.io/badge/Homebrew-supported-fbb040?style=flat-square&amp;logo=homebrew&amp;logoColor=black" alt="Homebrew package supported"></a>
+  <a href="https://github.com/genmeta/homebrew-stable"><img src="https://img.shields.io/badge/Homebrew-supported-fbb040?style=flat-square&amp;logo=homebrew&amp;logoColor=black" alt="Homebrew package supported"></a>
   <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/DEB-supported-a81d33?style=flat-square&amp;logo=debian&amp;logoColor=white" alt="DEB package supported"></a>
   <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/RPM-supported-ee0000?style=flat-square&amp;logo=redhat&amp;logoColor=white" alt="RPM package supported"></a>
 </p>
@@ -62,10 +62,9 @@ wget -qO- https://download.dhttp.net/ppa/key/public.key \
   | gpg --dearmor \
   | sudo tee /etc/apt/keyrings/genmeta.gpg > /dev/null
 
-# Add the stable and preview package channels.
+# Add the stable package channel.
 sudo tee /etc/apt/sources.list.d/genmeta.list > /dev/null <<'EOF'
 deb [signed-by=/etc/apt/keyrings/genmeta.gpg] https://download.dhttp.net/ppa/genmeta stable main
-deb [signed-by=/etc/apt/keyrings/genmeta.gpg] https://download.dhttp.net/ppa/genmeta preview main
 EOF
 
 sudo apt update
@@ -77,8 +76,8 @@ Install `pishoo` as well when this machine will expose local services through DH
 ### macOS
 
 ```bash
-brew tap genmeta/preview https://github.com/genmeta/homebrew-preview
-brew trust genmeta/preview
+brew tap genmeta/stable https://github.com/genmeta/homebrew-stable
+brew trust genmeta/stable
 brew update
 brew install gmutils
 ```
