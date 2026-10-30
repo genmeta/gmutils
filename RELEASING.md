@@ -34,7 +34,8 @@ cargo publish --dry-run --locked -p genmeta-identity -p genmeta
 ```
 
 Run the ignored configuration tests with PISHOO_BIN set to the matching candidate
-host. CI also covers platform builds and Jade acceptance. Verify DEB/RPM/Homebrew
+host. Coverage CI builds a fixed Pishoo release commit and includes these tests.
+CI also covers platform builds and Jade acceptance. Verify DEB/RPM/Homebrew
 artifacts and the formal release configuration before tagging; a local macOS run
 does not replace those checks.
 
