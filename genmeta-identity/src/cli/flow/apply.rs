@@ -559,7 +559,17 @@ async fn offer_server_activation(
         .map_err(server_error)?;
     let server = super::site::ServerConfig::for_profile(&profile);
 
-    match server.state().await.map_err(server_error)? {
+    let state = match server.state().await {
+        Ok(state) => state,
+        Err(error) => {
+            super::transcript::print_warning(&format!(
+                "The identity is installed, but its service could not be configured: {error}"
+            ));
+            print_server_disabled_hint(target.short_name());
+            return Ok(false);
+        }
+    };
+    match state {
         super::site::ServerConfigState::Enabled => Ok(true),
         super::site::ServerConfigState::Disabled | super::site::ServerConfigState::Missing
             if !interactive =>
@@ -573,7 +583,13 @@ async fn offer_server_activation(
                 .require_interactive("`genmeta listen --id IDENTITY all`")
                 .map_err(|source| Error::ServerActivationPrompt { source })?;
             if enabled {
-                server.enable().await.map_err(server_error)?;
+                if let Err(error) = server.enable().await {
+                    super::transcript::print_warning(&format!(
+                        "The identity is installed, but its service could not be enabled: {error}"
+                    ));
+                    print_server_disabled_hint(target.short_name());
+                    return Ok(false);
+                }
             } else {
                 print_server_disabled_hint(target.short_name());
             }
@@ -955,6 +971,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires matching PISHOO_BIN; run the cross-repository configuration tests"]
     async fn noninteractive_apply_keeps_listening_disabled() {
         let fixture = ServerFixture::new("disabled").await;
         let profile = fixture.profile();
@@ -972,6 +989,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires matching PISHOO_BIN; run the cross-repository configuration tests"]
     async fn apply_keeps_an_enabled_pishoo_configuration() {
         let fixture = ServerFixture::new("enabled").await;
         let config = super::super::site::ServerConfig::for_profile(&fixture.profile());
@@ -988,6 +1006,19 @@ mod tests {
             config.state().await.unwrap(),
             super::super::site::ServerConfigState::Enabled
         );
+    }
+
+    #[tokio::test]
+    async fn installed_identity_survives_service_configuration_failure() {
+        let fixture = ServerFixture::new("broken-service").await;
+        let path = fixture.profile().join(".volume/sys/setting/database");
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(
+            !offer_server_activation(&fixture.home, &fixture.target, false)
+                .await
+                .unwrap()
+        );
+        assert!(path.is_dir());
     }
 
     #[test]

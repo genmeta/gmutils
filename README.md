@@ -2,11 +2,11 @@
   <img src="https://media.dhttp.net/img/gmutils/gmutils.svg" width="900" alt="GMUTILS command-line tool family: identity, access, curl, nslookup, doctor, proxy, and discover">
 </p>
 <p align="center">
-  <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/version-0.9.0--preview.5-1f6feb?style=flat-square" alt="Version 0.9.0-preview.5"></a>
+  <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/version-0.9.0-1f6feb?style=flat-square" alt="Version 0.9.0"></a>
   <a href="https://doc.rust-lang.org/edition-guide/rust-2024/"><img src="https://img.shields.io/badge/Rust-2024-dea584?style=flat-square&amp;logo=rust&amp;logoColor=black" alt="Rust 2024 edition"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-00a51a?style=flat-square&amp;logo=apache&amp;logoColor=white" alt="Apache-2.0 license"></a>
   <a href="#install"><img src="https://img.shields.io/badge/Cargo-supported-dea584?style=flat-square&amp;logo=rust&amp;logoColor=black" alt="Cargo package supported"></a>
-  <a href="https://github.com/genmeta/homebrew-preview"><img src="https://img.shields.io/badge/Homebrew-supported-fbb040?style=flat-square&amp;logo=homebrew&amp;logoColor=black" alt="Homebrew package supported"></a>
+  <a href="https://github.com/genmeta/homebrew-stable"><img src="https://img.shields.io/badge/Homebrew-supported-fbb040?style=flat-square&amp;logo=homebrew&amp;logoColor=black" alt="Homebrew package supported"></a>
   <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/DEB-supported-a81d33?style=flat-square&amp;logo=debian&amp;logoColor=white" alt="DEB package supported"></a>
   <a href="https://github.com/genmeta/gmutils/releases"><img src="https://img.shields.io/badge/RPM-supported-ee0000?style=flat-square&amp;logo=redhat&amp;logoColor=white" alt="RPM package supported"></a>
 </p>
@@ -62,10 +62,9 @@ wget -qO- https://download.dhttp.net/ppa/key/public.key \
   | gpg --dearmor \
   | sudo tee /etc/apt/keyrings/genmeta.gpg > /dev/null
 
-# Add the stable and preview package channels.
+# Add the stable package channel.
 sudo tee /etc/apt/sources.list.d/genmeta.list > /dev/null <<'EOF'
 deb [signed-by=/etc/apt/keyrings/genmeta.gpg] https://download.dhttp.net/ppa/genmeta stable main
-deb [signed-by=/etc/apt/keyrings/genmeta.gpg] https://download.dhttp.net/ppa/genmeta preview main
 EOF
 
 sudo apt update
@@ -77,8 +76,8 @@ Install `pishoo` as well when this machine will expose local services through DH
 ### macOS
 
 ```bash
-brew tap genmeta/preview https://github.com/genmeta/homebrew-preview
-brew trust genmeta/preview
+brew tap genmeta/stable https://github.com/genmeta/homebrew-stable
+brew trust genmeta/stable
 brew update
 brew install gmutils
 ```
@@ -344,3 +343,28 @@ executable is needed. Service start/stop/restart/status belong
 to systemctl or brew services; gmutils does not wrap them.
 
 Store metadata uses `author`, `author_owner_hash` and `dependencies[].author`; catalog filters and update requests also use `author`. ZIP manifest dependencies also use `author`.
+
+### Pishoo configuration (release/0.9.0)
+
+Identity service activation and `genmeta listen` require the matching Pishoo
+executable. gmutils invokes `pishoo configure --profile PATH` locally, including
+when HTTP listening is off. Set `PISHOO_BIN` to an absolute executable path to
+override PATH lookup. A missing or older host is reported as an error; gmutils
+never falls back to creating a database itself.
+
+Pishoo alone initializes the current v3 configuration and package registry under
+`.volume/sys/{setting,pkg,access,contact}`. New identities do not create
+`sys/app/database` or `sys/lib/database`. Legacy config.db files are ignored and retained. Pishoo archives v1/v2 configuration
+at the current path and creates fresh v3 defaults without importing old settings.
+`genmeta listen` initializes missing configuration before reading it; enabling uses
+the requested listening mode. Service setup errors after identity installation
+are reported as warnings and do not turn successful identity installation into a failure.
+Identity credentials are preserved. Disabling listening preserves mounts and data.
+
+Cross-repository tests use a built Pishoo from the matching branch (these tests are
+ignored by default because the host is a separate repository):
+
+```sh
+PISHOO_BIN=/absolute/path/to/pishoo cargo test --locked -p genmeta-identity --lib cli::flow::site::tests -- --ignored
+PISHOO_BIN=/absolute/path/to/pishoo cargo test --locked -p genmeta-identity --lib cli::flow::apply::tests -- --ignored
+```

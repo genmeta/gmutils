@@ -11,14 +11,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+        with:
+          repository: genmeta/pishoo
+          ref: 6f380d61fe6082a037409f3d679820fd29c0c81f
+          path: .coverage-host
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: llvm-tools-preview
       - name: Install PAM development libraries
         run: |
           sudo apt-get update
           sudo apt-get install --assume-yes --no-install-recommends libpam0g-dev
+      - name: Build the matching Pishoo host
+        working-directory: .coverage-host
+        run: cargo build --locked --bin pishoo
       - uses: taiki-e/install-action@cargo-llvm-cov
       # Limit test parallelism to 1 thread to avoid resource contention
-      - run: cargo llvm-cov --locked --all-features --workspace --lcov --output-path lcov.info -- --test-threads=1
+      - run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov --locked --all-features --workspace --no-report -- --test-threads=1
+      - name: Cover host configuration and identity activation
+        env:
+          PISHOO_BIN: ${{ github.workspace }}/.coverage-host/target/debug/pishoo
+        run: |
+          cargo llvm-cov --locked --all-features -p genmeta-identity --lib --no-report -- cli::flow::site::tests --ignored --test-threads=1
+          cargo llvm-cov --locked --all-features -p genmeta-identity --lib --no-report -- cli::flow::apply::tests --ignored --test-threads=1
+      - run: cargo llvm-cov report --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
