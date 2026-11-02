@@ -36,6 +36,9 @@ fn catalogue_preflight_rejects_the_legacy_store_protocol() {
 fn upload_cli_accepts_only_the_designed_arguments() {
     use clap::Parser;
     for args in [
+        vec!["jade", "publish"],
+        vec!["jade", "publish", "."],
+        vec!["jade", "publish", "jade.toml"],
         vec!["jade", "publish", "package.waz"],
         vec!["jade", "publish", "package.waz", "--json"],
     ] {
@@ -44,9 +47,7 @@ fn upload_cli_accepts_only_the_designed_arguments() {
             crate::cli::Command::Publish { .. }
         ));
     }
-    assert!(crate::Cli::try_parse_from(["jade", "publish"]).is_err());
     for flag in [
-        "--id",
         "--kind",
         "--name",
         "--version",
@@ -753,4 +754,77 @@ async fn a_valid_container_with_a_forged_signature_is_rejected_locally() {
     assert!(crate::archive::waz_read(&forged).is_ok());
     let error = inspect_package(&forged).await.unwrap_err();
     assert_eq!(error.code, "E_SIGNATURE_INVALID");
+}
+
+fn publish_project(root: &Path, name: &str, version: &str, author: &str) {
+    std::fs::write(root.join("jade.toml"), format!("[package]\nname='{name}'\nversion='{version}'\nauthor='{author}'\ndescription='Test'\nlicense='MIT'\n")).unwrap();
+    std::fs::create_dir_all(root.join("build")).unwrap();
+}
+
+#[tokio::test]
+async fn project_publish_reads_only_the_exact_prebuilt_package_and_preserves_bytes() {
+    let root = tempfile::tempdir().unwrap();
+    publish_project(root.path(), "note", "1.0.0", "alice.dhttp.net");
+    // Publication must not inspect or execute a frontend build script.
+    std::fs::write(
+        root.path().join("package.json"),
+        "not valid JSON and not a build input",
+    )
+    .unwrap();
+    let authority = local("alice.dhttp.net", &"a".repeat(64));
+    let bytes = build(
+        &metadata("app", "note", json!([])),
+        Some(&authority),
+        "prebuilt",
+    );
+    let file = root.path().join("build/note-1.0.0.waz");
+    std::fs::write(&file, &bytes).unwrap();
+    for input in [
+        root.path().to_path_buf(),
+        root.path().join("jade.toml"),
+        file.clone(),
+    ] {
+        let (snapshot, identity) = read_input(&input).await.unwrap();
+        assert_eq!(snapshot, bytes);
+        assert_eq!(identity["name"], "note");
+        assert_eq!(std::fs::read(&file).unwrap(), bytes);
+    }
+}
+
+#[tokio::test]
+async fn project_publish_never_falls_back_to_another_version_or_builds_a_missing_package() {
+    let root = tempfile::tempdir().unwrap();
+    publish_project(root.path(), "note", "2.0.0", "alice.dhttp.net");
+    std::fs::write(root.path().join("build/note-1.0.0.waz"), "old output").unwrap();
+    let error = read_input(root.path()).await.unwrap_err();
+    assert_eq!(error.code, "E_BUILD_REQUIRED");
+    assert!(error.hint.unwrap().contains("jade build"));
+    assert!(!root.path().join("build/note-2.0.0.waz").exists());
+}
+
+#[tokio::test]
+async fn project_publish_rejects_renamed_packages_with_the_wrong_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let authority = local("alice.dhttp.net", &"a".repeat(64));
+    let bytes = build(
+        &metadata("app", "note", json!([])),
+        Some(&authority),
+        "prebuilt",
+    );
+    for (name, version, author) in [
+        ("other", "1.0.0", "alice.dhttp.net"),
+        ("note", "2.0.0", "alice.dhttp.net"),
+        ("note", "1.0.0", "bob.dhttp.net"),
+    ] {
+        publish_project(root.path(), name, version, author);
+        std::fs::write(
+            root.path().join(format!("build/{name}-{version}.waz")),
+            &bytes,
+        )
+        .unwrap();
+        assert_eq!(
+            read_input(root.path()).await.unwrap_err().code,
+            "E_PACKAGE_MISMATCH"
+        );
+    }
 }

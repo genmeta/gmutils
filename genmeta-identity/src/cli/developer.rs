@@ -35,12 +35,12 @@ pub enum DeveloperCommand {
     Invoice {
         invoice_no: String,
     },
-    /// Issue a new developer key and certificate, preserving TLS credentials
+    /// Issue one developer identity for TLS and package signing
     Apply {
         #[arg(long, default_value = "local developer")]
         device_name: String,
     },
-    /// Rotate the key of one existing developer sequence without purchasing again
+    /// Renew one developer sequence, recovering checkout if entitlement has expired
     Renew {
         #[arg(long)]
         sequence: u32,
@@ -90,17 +90,32 @@ impl Developer {
             std::io::stdin().is_terminal(),
         )
         .await?;
+        output(
+            self.run_authorized(home, server, &token, std::io::stdin().is_terminal())
+                .await?,
+        )
+    }
+
+    async fn run_authorized(
+        &self,
+        home: &DhttpHome,
+        server: &CertServer,
+        token: &str,
+        interactive: bool,
+    ) -> Result<Value, Error> {
+        let domain = dhttp_home::normalize_name(&self.name)
+            .ok_or_else(|| Error::without_source("invalid developer identity".into()))?;
         let value = match &self.command {
             DeveloperCommand::Subscription => {
-                server.code_signing_subscriptions(&token, &domain).await?
+                server.code_signing_subscriptions(token, &domain).await?
             }
             DeveloperCommand::Purchase { idempotency_key } => {
                 server
-                    .purchase_code_signing(&token, &domain, idempotency_key)
+                    .purchase_code_signing(token, &domain, idempotency_key)
                     .await?
             }
             DeveloperCommand::Invoice { invoice_no } => {
-                let invoice = server.get_invoice(&token, invoice_no).await?;
+                let invoice = server.get_invoice(token, invoice_no).await?;
                 json!({"invoice_no":invoice.invoice_no,"domain":invoice.domain,"status":invoice.status,"amount":invoice.amount,"currency":invoice.currency,"url":invoice.url})
             }
             DeveloperCommand::AutoRenew {
@@ -108,7 +123,7 @@ impl Developer {
                 enabled,
             } => {
                 server
-                    .set_code_signing_renewal(&token, subscription_no, *enabled)
+                    .set_code_signing_renewal(token, subscription_no, *enabled)
                     .await?
             }
             DeveloperCommand::Revoke {
@@ -117,11 +132,18 @@ impl Developer {
                 whole_sequence,
             } => {
                 server
-                    .revoke_developer_certificate(&token, serial_number, issuer_id, *whole_sequence)
+                    .revoke_developer_certificate(token, serial_number, issuer_id, *whole_sequence)
                     .await?
             }
             DeveloperCommand::Apply { .. } | DeveloperCommand::Renew { .. } => {
-                let profile = home.resolve_identity_profile_exactly(&domain).await?;
+                let subscriptions = server.code_signing_subscriptions(token, &domain).await?;
+                let (root, domain) = developer_target(&subscriptions, &domain)?;
+                let profile = home
+                    .identity_profile(&domain)
+                    .map_err(|e| Error::without_source(e.to_string()))?;
+                tokio::fs::create_dir_all(profile.path())
+                    .await
+                    .map_err(|e| Error::without_source(e.to_string()))?;
                 let _lock = code_signing::lock(&profile).map_err(local_error)?;
                 let sequence = if let DeveloperCommand::Renew { sequence } = self.command {
                     Some(sequence)
@@ -135,25 +157,79 @@ impl Developer {
                 } else {
                     "local developer"
                 };
+                ensure_entitlement(server, token, &root, pending.operation_key(), interactive)
+                    .await?;
+                let binding = server.code_signing_subscriptions(token, &root).await?;
+                let ready = binding["items"]
+                    .as_array()
+                    .and_then(|items| {
+                        items
+                            .iter()
+                            .find(|item| item["domain"] == root && item["status"] == "active")
+                    })
+                    .is_some_and(|item| {
+                        item["developer_domain"] == domain && item["developer_ready"] == true
+                    });
+                if !ready {
+                    // Existing paid subscriptions can initialize their fixed child without another invoice.
+                    let binding = server
+                        .purchase_code_signing(token, &root, pending.operation_key())
+                        .await?;
+                    if binding["developer_domain"] != domain || binding["developer_ready"] != true {
+                        return Err(Error::without_source("Developer domain is not provisioned yet; retry this operation after fulfillment.".into()));
+                    }
+                }
                 let certificate = pending
-                    .request_certificate(&profile, server, &token, device)
+                    .request_certificate(&profile, server, token, device)
                     .await?;
                 let chain = code_signing::parse_chain(&certificate.certificate.cert_pem)
                     .map_err(local_error)?;
                 let fingerprint = code_signing::fingerprint(&chain).map_err(local_error)?;
-                let status = server
-                    .exact_certificate_status(&domain, &fingerprint)
-                    .await?;
-                code_signing::verify_status(&status, &chain, &domain, true).map_err(local_error)?;
+                code_signing::verify_chain(&chain, &domain, rustls::pki_types::UnixTime::now())
+                    .map_err(local_error)?;
+                let key_pem = pending.key_pem().to_owned();
+                if certificate.certificate.csr.trim() != pending.csr().trim()
+                    || certificate.purpose != "code_signing"
+                {
+                    return Err(Error::without_source(
+                        "developer response does not match request".into(),
+                    ));
+                }
+                super::flow::install::validate_install(
+                    &certificate.certificate,
+                    &super::flow::install::InstallExpectation {
+                        target: super::flow::target::IdentityTarget::parse(&domain)?.dhttp_name(),
+                        kind: super::flow::kind::IdentityKind::Primary,
+                        sequence,
+                    },
+                    &key_pem,
+                )?;
+                // save_identity stages the certificate and private key as one identity.
+                // Keep the pending request until both installation steps succeed.
+                let has_transport = profile
+                    .ssl_dir()
+                    .join(dhttp_home::identity::ssl::CERT_FILE_NAME)
+                    .try_exists()
+                    .map_err(|e| Error::without_source(e.to_string()))?;
+                let install_transport = !has_transport || installed_sequence(&profile)?.is_some();
+                if install_transport {
+                    profile
+                        .save_identity(
+                            certificate.certificate.cert_pem.as_bytes(),
+                            key_pem.as_bytes(),
+                        )
+                        .await
+                        .map_err(|e| Error::without_source(e.to_string()))?;
+                }
                 let sequence = certificate.certificate.sequence;
                 pending
                     .install(&profile, &certificate)
                     .map_err(local_error)?;
-                json!({"domain":domain,"purpose":"code_signing","sequence":sequence,"fingerprint_sha256":fingerprint,"valid_not_after":certificate.certificate.valid_not_after})
+                json!({"domain":domain,"root_domain":root,"transport_installed":install_transport,"purpose":"code_signing","sequence":sequence,"fingerprint_sha256":fingerprint,"valid_not_after":certificate.certificate.valid_not_after})
             }
             DeveloperCommand::Pricing | DeveloperCommand::Status { .. } => unreachable!(),
         };
-        output(value)
+        Ok(value)
     }
 }
 fn local_error(error: snafu::Whatever) -> Error {
@@ -166,3 +242,345 @@ fn output(value: Value) -> Result<(), Error> {
     );
     Ok(())
 }
+
+/// Detect the certificate type even after expiry, so renewal never downgrades it.
+pub(super) fn installed_sequence(
+    profile: &dhttp_home::identity::IdentityProfile,
+) -> Result<Option<u32>, Error> {
+    let pem = match std::fs::read(
+        profile
+            .ssl_dir()
+            .join(dhttp_home::identity::ssl::CERT_FILE_NAME),
+    ) {
+        Ok(pem) => pem,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(Error::without_source(error.to_string())),
+    };
+    let pem = std::str::from_utf8(&pem).map_err(|e| Error::without_source(e.to_string()))?;
+    let chain = code_signing::parse_chain(pem).map_err(local_error)?;
+    let leaf = chain
+        .first()
+        .ok_or_else(|| Error::without_source("empty identity chain".into()))?;
+    let (_, cert) = x509_parser::parse_x509_certificate(leaf.as_ref())
+        .map_err(|e| Error::without_source(e.to_string()))?;
+    let developer = cert
+        .extended_key_usage()
+        .map_err(|e| Error::without_source(e.to_string()))?
+        .is_some_and(|eku| eku.value.code_signing);
+    if !developer {
+        return Ok(None);
+    }
+    let ski = dhttp_home::certificate::extract_dhttp_subject_key_identifier(&chain)
+        .map_err(|e| Error::without_source(e.to_string()))?;
+    Ok(Some(ski.chain().sequence().get()))
+}
+
+fn has_entitlement(subscriptions: &Value, domain: &str, now: i64) -> bool {
+    subscriptions["items"].as_array().is_some_and(|items| {
+        items.iter().any(|item| {
+            item["domain"].as_str() == Some(domain)
+                && item["status"] == "active"
+                && item["paid_through"].as_i64().is_some_and(|end| end > now)
+        })
+    })
+}
+
+pub(super) async fn apply_for_account(
+    home: &DhttpHome,
+    server: &CertServer,
+    token: &str,
+    domain: &str,
+    device_name: &str,
+    required: bool,
+) -> Result<bool, Error> {
+    let profile = home
+        .identity_profile(domain)
+        .map_err(|e| Error::without_source(e.to_string()))?;
+    let sequence = installed_sequence(&profile)?;
+    let pending_apply = code_signing::directory(&profile)
+        .join("apply.pending.json")
+        .exists();
+    if !required && sequence.is_none() && !pending_apply {
+        return Ok(false);
+    }
+    let command = Developer {
+        name: domain.into(),
+        email: None,
+        verify_code: None,
+        command: match sequence.filter(|_| !pending_apply) {
+            Some(sequence) => DeveloperCommand::Renew { sequence },
+            None => DeveloperCommand::Apply {
+                device_name: device_name.into(),
+            },
+        },
+    };
+    output(
+        command
+            .run_authorized(home, server, token, std::io::stdin().is_terminal())
+            .await?,
+    )?;
+    Ok(true)
+}
+
+fn developer_target(subscriptions: &Value, requested: &str) -> Result<(String, String), Error> {
+    let items = subscriptions["items"]
+        .as_array()
+        .ok_or_else(|| Error::without_source("Invalid developer subscription response".into()))?;
+    let root = items
+        .iter()
+        .find(|item| {
+            item["status"] != "terminated"
+                && (item["domain"] == requested || item["developer_domain"] == requested)
+        })
+        .and_then(|item| item["domain"].as_str())
+        .unwrap_or(requested);
+    let target = format!("dev.{root}");
+    if dhttp_home::normalize_name(root).as_deref() != Some(root)
+        || dhttp_home::normalize_name(&target).as_deref() != Some(target.as_str())
+    {
+        return Err(Error::without_source("Invalid developer root name".into()));
+    }
+    if items.iter().any(|item| {
+        item["domain"] == root
+            && item["developer_domain"]
+                .as_str()
+                .is_some_and(|name| name != target)
+    }) {
+        return Err(Error::without_source(
+            "The server developer binding does not match the root name".into(),
+        ));
+    }
+    Ok((root.to_owned(), target))
+}
+
+/// Prepare publication credentials without writing an extra command result to stdout.
+pub async fn prepare_for_publish(
+    home: &DhttpHome,
+    server: &CertServer,
+    root: &str,
+    email: Option<&str>,
+    interactive: bool,
+) -> Result<Value, Error> {
+    if !interactive {
+        return Err(Error::without_source("Developer credentials must be prepared interactively before noninteractive publication.".into()));
+    }
+    let token =
+        run_cert_server_email_session(server, EmailLogin::Account, email, None, true).await?;
+    let command = Developer {
+        name: root.to_owned(),
+        email: None,
+        verify_code: None,
+        command: DeveloperCommand::Apply {
+            device_name: "jade publish".into(),
+        },
+    };
+    command.run_authorized(home, server, &token, true).await
+}
+
+trait CheckoutUi {
+    async fn confirm(&mut self, pricing: &Value) -> Result<bool, Error>;
+    async fn open(&mut self, url: &str) -> Result<(), Error>;
+    async fn wait(&mut self) -> Result<bool, Error>;
+}
+struct TerminalCheckout {
+    polls: usize,
+}
+impl CheckoutUi for TerminalCheckout {
+    async fn confirm(&mut self, pricing: &Value) -> Result<bool, Error> {
+        use super::prompt::InquireResultExt;
+        let price = &pricing["code_signing"];
+        let amount = price["amount"]
+            .as_i64()
+            .filter(|amount| *amount >= 0)
+            .ok_or_else(|| Error::without_source("Developer pricing is unavailable".into()))?;
+        let currency = price["currency"]
+            .as_str()
+            .ok_or_else(|| Error::without_source("Developer currency is unavailable".into()))?;
+        if price["enabled"] != true {
+            return Err(Error::without_source(
+                "Developer purchases are unavailable".into(),
+            ));
+        }
+        let question = format!(
+            "Activate developer signing for {}.{:02} {currency}/year with annual automatic renewal? Discounts and final payment are shown at checkout.",
+            amount / 100,
+            amount % 100
+        );
+        Ok(super::prompt::sync(move || {
+            inquire::Confirm::new(&question)
+                .with_default(false)
+                .prompt()
+        })
+        .await
+        .require_interactive("developer subscription purchase")?)
+    }
+    async fn open(&mut self, url: &str) -> Result<(), Error> {
+        let parsed = reqwest::Url::parse(url).map_err(|e| Error::without_source(e.to_string()))?;
+        if parsed.scheme() != "https"
+            || parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+        {
+            return Err(Error::without_source(
+                "Checkout requires a valid HTTPS URL".into(),
+            ));
+        }
+        super::flow::transcript::print_err_block(
+            &crate::checkout::payment_instruction_block_or_link(url),
+        );
+        #[cfg(target_os = "macos")]
+        let command = Some(("open", vec![url]));
+        #[cfg(target_os = "linux")]
+        let command = Some(("xdg-open", vec![url]));
+        #[cfg(target_os = "windows")]
+        let command = Some(("rundll32", vec!["url.dll,FileProtocolHandler", url]));
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+        let command: Option<(&str, Vec<&str>)> = None;
+        if let Some((program, args)) = command {
+            // Opening is best effort; the printed link remains usable on another device.
+            let _ = tokio::process::Command::new(program)
+                .args(args)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .await;
+        }
+        super::flow::transcript::print_line(
+            "Waiting for confirmed payment. Ctrl+C preserves this checkout for retry.",
+        );
+        Ok(())
+    }
+    async fn wait(&mut self) -> Result<bool, Error> {
+        if self.polls >= 120 {
+            return Err(Error::without_source(
+                "Checkout is still pending. Rerun the command to resume the same invoice.".into(),
+            ));
+        }
+        self.polls += 1;
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        Ok(true)
+    }
+}
+
+async fn ensure_entitlement(
+    server: &CertServer,
+    token: &str,
+    domain: &str,
+    operation_key: &str,
+    interactive: bool,
+) -> Result<(), Error> {
+    ensure_entitlement_with_ui(
+        server,
+        token,
+        domain,
+        operation_key,
+        interactive,
+        &mut TerminalCheckout { polls: 0 },
+    )
+    .await
+}
+
+async fn ensure_entitlement_with_ui(
+    server: &CertServer,
+    token: &str,
+    domain: &str,
+    operation_key: &str,
+    interactive: bool,
+    ui: &mut impl CheckoutUi,
+) -> Result<(), Error> {
+    let subscriptions = server.code_signing_subscriptions(token, domain).await?;
+    if !subscriptions["items"].is_array() {
+        return Err(Error::without_source(
+            "Invalid developer subscription response".into(),
+        ));
+    }
+    if has_entitlement(&subscriptions, domain, chrono::Utc::now().timestamp()) {
+        return Ok(());
+    }
+    if !interactive {
+        return Err(Error::without_source("Payment required. Complete developer setup interactively, then retry; no order was created.".into()));
+    }
+    let pricing = server.code_signing_pricing(domain).await?;
+    if !ui.confirm(&pricing).await? {
+        return Err(Error::without_source(
+            "Developer checkout cancelled; no new order was created.".into(),
+        ));
+    }
+    let mut attempt = server
+        .purchase_code_signing(token, domain, operation_key)
+        .await;
+    if attempt
+        .as_ref()
+        .err()
+        .is_some_and(|e| e.is_api_code("purchase_ended"))
+    {
+        let latest = subscriptions["items"]
+            .as_array()
+            .and_then(|items| items.iter().find(|item| item["domain"] == domain))
+            .and_then(|item| item["invoice_no"].as_str())
+            .ok_or_else(|| {
+                Error::without_source(
+                    "Cannot replace checkout without the ended invoice identity".into(),
+                )
+            })?;
+        attempt = server
+            .purchase_code_signing(token, domain, &format!("{operation_key}-{latest}"))
+            .await;
+    }
+    let purchase = match attempt {
+        Ok(value) => value,
+        Err(error) if error.is_api_code("purchase_in_progress") => {
+            let subscriptions = server.code_signing_subscriptions(token, domain).await?;
+            if has_entitlement(&subscriptions, domain, chrono::Utc::now().timestamp()) {
+                return Ok(());
+            }
+            subscriptions["items"]
+                .as_array()
+                .and_then(|items| {
+                    items
+                        .iter()
+                        .find(|item| item["domain"] == domain && item["invoice_no"].is_string())
+                })
+                .cloned()
+                .ok_or(error)?
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if has_entitlement(
+        &server.code_signing_subscriptions(token, domain).await?,
+        domain,
+        chrono::Utc::now().timestamp(),
+    ) {
+        return Ok(());
+    }
+    let invoice_no = purchase["invoice_no"].as_str().ok_or_else(|| {
+        Error::without_source("Developer checkout did not return an invoice".into())
+    })?;
+    let invoice = server.get_invoice(token, invoice_no).await?;
+    ui.open(&invoice.url).await?;
+    loop {
+        if !ui.wait().await? {
+            return Err(Error::without_source(
+                "Developer checkout cancelled; its operation is preserved.".into(),
+            ));
+        }
+        if has_entitlement(
+            &server.code_signing_subscriptions(token, domain).await?,
+            domain,
+            chrono::Utc::now().timestamp(),
+        ) {
+            return Ok(());
+        }
+        let invoice = server.get_invoice(token, invoice_no).await?;
+        if !matches!(invoice.status.as_str(), "pending" | "paid") {
+            return Err(Error::without_source(format!(
+                "Developer checkout ended with status {}. Rerun to create or recover checkout.",
+                invoice.status
+            )));
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/cli/developer.rs"]
+mod tests;

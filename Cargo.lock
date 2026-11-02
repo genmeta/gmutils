@@ -2097,6 +2097,7 @@ dependencies = [
  "pkcs8",
  "qrcode",
  "qrustls",
+ "qtls",
  "reqwest",
  "rustls-webpki",
  "sea-orm",

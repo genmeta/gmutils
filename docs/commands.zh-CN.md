@@ -48,7 +48,8 @@ genmeta --version
 | `genmeta doctor net` | 检测 NAT、接口和公网地址映射 | 网络允许进行探测 |
 | `jade create` | 在新目录创建静态、前端或 Rust API 模板 | 无需身份凭据 |
 | `jade build` | 构建或收集产物，校验并签名生成 ZIP 格式的 .waz 包 | 本地项目、所需工具链和作者凭据 |
-| `jade publish` | 将指定签名包发布到商店 | 包内作者的本地凭据，商店可达 |
+| `jade run` | 在本机 Pishoo 临时加载项目并监听重载 | 普通宿主身份，不要求开发者证书或订阅 |
+| `jade publish` | 上传项目对应的已构建包或指定 WAZ，不隐式构建 | 包内作者的开发者上传凭据，商店可达 |
 | `genmeta install` | 安装商店中已发布的 App 或 Lib 及其精确依赖 | 本地身份的 Pishoo 已运行并启用，商店可达 |
 | `genmeta update` | 从原发布者更新已安装的包 | 同上，且包已安装 |
 | `genmeta uninstall` | 卸载包，保留数据和依赖 | 本地身份的 Pishoo 已运行并启用 |
@@ -456,14 +457,17 @@ jade build ./hello -o ./hello.waz --overwrite --id alice.smith
 `.waz` 使用标准 ZIP 格式（`application/zip`），包含 `manifest.json`、`signature.json` 以及前后端产物。项目根目录的 `README.md`、`CHANGELOG.md` 存在时自动打包，缺少时跳过，无需在 `jade.toml` 中声明；这些文档也受包签名保护。旧 WEBC 发布包不再接受，需要重新构建，并先更新商店和宿主读取端。格式详见 [WAZ 规范](../jade/FORMAT.md)。
 
 ```sh
+jade publish                    # 当前项目的 build/NAME-VERSION.waz
+jade publish ./hello             # 指定项目目录
 jade publish ./hello/build/hello-0.1.0.waz
+jade publish --prepare --id sky.lee  # 只准备证书，随后显式 build
 ```
 
-publish 从包中取得作者，加载匹配凭据，在联网前完成容器、签名和身份绑定检查，再向固定商店上传一次文件快照。证书更换后重新 build。相同内容的同版本重复发布视为成功，不同内容返回版本冲突；响应丢失后只读核验，无法确认时返回 `E_PUBLISH_OUTCOME_UNKNOWN`。
+publish 从已签包中取得作者，在联网前完成容器、签名、项目身份及本地吊销检查，再向固定商店上传原始文件快照。缺包时提示显式 build，不自动构建或重签；上传凭据换证不要求改写仍有效的历史包。相同内容的同版本重复发布视为成功，不同内容返回版本冲突；响应丢失后只读核验，无法确认时返回 `E_PUBLISH_OUTCOME_UNKNOWN`。
 
 `.waz` 使用标准 ZIP，MIME 为 `application/zip`，可同时包含静态页面、后端组件和可选文档。压缩包和解压后总内容分别限制为 64 MiB。`payload_sha256` 表示内容摘要，`package_sha256` 表示包含签名的完整文件摘要。
 
-三个命令默认输出人类可读摘要。`--json` 在 stdout 输出一个完整结果文档，错误同样具有稳定结构；进度、构建工具输出和诊断写 stderr。机器结果使用完整身份，终端可缩写为 `alice.smith~`；`--verb` 开启调试日志。退出码为成功 0、运行失败或发布结果未知 1、参数错误 2、取消 130。
+这些命令默认输出人类可读摘要。`--json` 在 stdout 输出一个完整结果文档，错误同样具有稳定结构；进度、构建工具输出和诊断写 stderr。机器结果使用完整身份，终端可缩写为 `alice.smith~`；`--verb` 开启调试日志。退出码为成功 0、运行失败或发布结果未知 1、参数错误 2、取消 130；run 的正常 Ctrl+C 停止返回 0，监听事件写 stderr，机器模式 stdout 在结束时输出一个结果。
 
 ## 包安装与管理：install、update、uninstall、list、info
 
@@ -605,3 +609,20 @@ genmeta curl --verb --id alice.smith -v https://alice.smith.dhttp.net/
 - [局域网发现](../genmeta-discover/src/lib.rs)
 - [诊断入口](../genmeta-doctor/src/lib.rs)与 [NAT 实现](../genmeta-nat/src/lib.rs)
 - [构建与签名](../jade/src/pack.rs)、[发布](../jade/src/upload.rs)、[安装与包管理](../genmeta/src/install.rs)
+
+## 本地开发与开发者身份
+
+```sh
+jade run [PATH] --id HOST [--no-watch] [--fresh]
+jade publish --prepare --id ROOT
+jade build --id dev.ROOT
+jade publish
+```
+
+`jade run` 选择已运行的本机 Pishoo 身份。它通过本地 Unix IPC 加载未签名快照，不要求开发者证书或订阅，不触发支付。默认监听源码并重载，失败保留旧版；Ctrl+C 或控制连接断开撤下路由，测试数据与正式数据分开。普通用户自行注册的 dev 子名字也可以用作宿主身份。第一版不提供远程开发或本地多项目依赖替换。
+
+`jade publish --prepare --id sky.lee` 只准备 `dev.sky.lee.dhttp.net` 开发者凭据。权益不足时确认报价并打开安全结账页，等待服务端确认后继续；没有包时仍需显式 `jade build`。一个主名字只绑定一个固定 dev 子名字，同一 dev 下证书／序列数量不限，多设备不重复购买年费。
+
+`genmeta identity apply NAME` 保持普通身份申请，不因主名字有开发者订阅就把请求目标替换成 dev。`genmeta identity apply ROOT --developer` 或 `genmeta identity developer ROOT apply` 明确申请固定 dev 名字的三用途证书；续签可使用 `genmeta identity developer ROOT renew --sequence N`。需要登录时沿用账户邮箱验证；非交互缺少权益不自动下单。显式 purchase、账单、状态、吊销和自动续费管理命令继续可用，精确 status 使用证书实际 dev 域名。
+
+待处理 CSR、私钥与购买操作在失败后保留，相同 CSR 的重试不会重复签发。已有普通 dev TLS 凭据不被覆盖；开发者证书存于用途目录，也可作为同名 TLS 凭据。上传使用所选开发者凭据与原包作者／owner_hash 绑定，允许不同序列或续签后的凭据上传仍有效的原始包。

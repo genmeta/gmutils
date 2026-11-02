@@ -1,0 +1,1 @@
+Disposable test-only P-384 Root, issuer and leaf. The issuer and developer leaf carry serverAuth, clientAuth and codeSigning. The partial leaf deliberately lacks clientAuth. The private key is copied from the existing disposable developer fixture; never use it for production. Root and issuer private keys are not included.

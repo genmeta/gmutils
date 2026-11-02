@@ -1,4 +1,4 @@
-//! Independent developer credentials. TLS files under `ssl/` are never changed.
+//! Unified developer identities, with historical signing credentials retained for explicit sequences.
 use std::{
     fs,
     io::Write,
@@ -71,14 +71,13 @@ pub fn verify_chain_with_root(
             .ok_or_else(|| Whatever::without_source("missing codeSigning usage".into()))?;
         if !eku.value.code_signing
             || eku.value.any
-            || eku.value.server_auth
-            || eku.value.client_auth
+            || (eku.value.server_auth != eku.value.client_auth)
             || eku.value.email_protection
             || eku.value.time_stamping
             || eku.value.ocsp_signing
             || !eku.value.other.is_empty()
         {
-            whatever!("developer chain must have only codeSigning extended key usage");
+            whatever!("developer chain requires codeSigning with both TLS usages or neither");
         }
         if !bc.critical || !ku.critical {
             whatever!("developer chain constraints must be critical");
@@ -280,6 +279,75 @@ impl Credentials {
         PrivateKeyDer::from_pem_slice(self.key_pem.as_bytes())
             .whatever_context("invalid developer private key")
     }
+    /// Install these same developer credentials into an explicitly selected transport profile.
+    /// Jade uses a temporary profile so ordinary credentials already serving this name are preserved.
+    pub async fn save_transport_to(&self, profile: &IdentityProfile) -> Result<(), Whatever> {
+        self.validate_transport(profile.name())?;
+        profile
+            .save_identity(self.cert_pem.as_bytes(), self.key_pem.as_bytes())
+            .await
+            .whatever_context("cannot prepare developer transport credentials")
+    }
+
+    /// Preserve the ordinary TLS cache and reuse independently cached status for this leaf.
+    pub async fn copy_transport_status(
+        &self,
+        source: &IdentityProfile,
+        target: &IdentityProfile,
+    ) -> Result<(), Whatever> {
+        let chain = self.chain()?;
+        let cache = directory(source)
+            .join("ocsp")
+            .join(format!("{}.der", fingerprint(&chain)?));
+        let cached = if cache
+            .try_exists()
+            .whatever_context("cannot inspect developer OCSP cache")?
+        {
+            Some(read_private(&cache)?)
+        } else {
+            None
+        };
+        let ordinary = source.load_ocsp().await.ok();
+        for response in cached.into_iter().chain(ordinary) {
+            if qtls::validate_ocsp(&response, &chain, qtls::UnixTime::now()).is_ok() {
+                save_private(&target.ocsp_path(), &response)?;
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn retain_transport_status(
+        &self,
+        source: &IdentityProfile,
+        prepared: &IdentityProfile,
+    ) -> Result<(), Whatever> {
+        let chain = self.chain()?;
+        let response = prepared
+            .load_ocsp()
+            .await
+            .whatever_context("cannot read prepared developer OCSP status")?;
+        qtls::validate_ocsp(&response, &chain, qtls::UnixTime::now())
+            .whatever_context("invalid prepared developer OCSP status")?;
+        let root = directory(source);
+        private_directory(&root)?;
+        let cache = root.join("ocsp");
+        private_directory(&cache)?;
+        save_private(
+            &cache.join(format!("{}.der", fingerprint(&chain)?)),
+            &response,
+        )
+    }
+
+    pub fn validate_transport(&self, domain: &str) -> Result<(), Whatever> {
+        self.validate(domain)?;
+        let chain = self.chain()?;
+        dhttp::trust::dhttp_client_cert_verifier(dhttp::trust::ClientIdentityPolicy::Required)
+            .verify_client_cert(&chain[0], &chain[1..], UnixTime::now())
+            .whatever_context("developer credentials cannot authenticate a TLS connection")
+            .map(|_| ())
+    }
+
     pub fn validate(&self, domain: &str) -> Result<(), Whatever> {
         self.validate_with_root(domain, dhttp::trust::DHTTP_ROOT_CA_DER)
     }
@@ -401,8 +469,54 @@ fn save_private(path: &Path, bytes: &[u8]) -> Result<(), Whatever> {
     Ok(())
 }
 
-/// The smallest usable code_signing sequence is selected; TLS credentials are never a fallback.
+/// Prefer the installed unified identity; ordinary TLS certificates fail signing validation.
 pub fn load(profile: &IdentityProfile, sequence: Option<u32>) -> Result<Credentials, Whatever> {
+    load_with_root(profile, sequence, dhttp::trust::DHTTP_ROOT_CA_DER)
+}
+
+fn load_with_root(
+    profile: &IdentityProfile,
+    sequence: Option<u32>,
+    trust_root: &[u8],
+) -> Result<Credentials, Whatever> {
+    let mut last_error = None;
+    let cert_path = profile
+        .ssl_dir()
+        .join(dhttp_home::identity::ssl::CERT_FILE_NAME);
+    if cert_path.exists() {
+        let cert_pem =
+            fs::read_to_string(cert_path).whatever_context("cannot read identity certificate")?;
+        let chain = parse_chain(&cert_pem)?;
+        let leaf = chain
+            .first()
+            .ok_or_else(|| Whatever::without_source("empty identity chain".into()))?;
+        let (_, cert) = x509_parser::parse_x509_certificate(leaf.as_ref())
+            .whatever_context("invalid identity certificate")?;
+        if cert
+            .extended_key_usage()
+            .whatever_context("invalid identity usages")?
+            .is_some_and(|eku| eku.value.code_signing)
+        {
+            let ski = dhttp_home::certificate::extract_dhttp_subject_key_identifier(&chain)
+                .whatever_context("invalid developer SKI")?;
+            if sequence.is_none_or(|s| s == ski.chain().sequence().get()) {
+                let credentials = Credentials {
+                    cert_pem,
+                    key_pem: String::from_utf8(read_private(
+                        &profile
+                            .ssl_dir()
+                            .join(dhttp_home::identity::ssl::KEY_FILE_NAME),
+                    )?)
+                    .whatever_context("invalid identity key encoding")?,
+                };
+                match credentials.validate_with_root(profile.name(), trust_root) {
+                    Ok(()) => return Ok(credentials),
+                    Err(error) if sequence.is_some() => return Err(error),
+                    Err(error) => last_error = Some(error),
+                }
+            }
+        }
+    }
     let root = directory(profile);
     private_directory(&root)?;
     let explicit = sequence.is_some();
@@ -412,7 +526,6 @@ pub fn load(profile: &IdentityProfile, sequence: Option<u32>) -> Result<Credenti
         fs::read_dir(&root).whatever_context("developer credentials missing; run genmeta identity developer purchase, then apply")?.filter_map(Result::ok).filter(|e|e.file_type().is_ok_and(|t|t.is_dir())).filter_map(|e|e.file_name().to_str()?.parse::<u32>().ok()).collect()
     };
     sequences.sort_unstable();
-    let mut last_error = None;
     for sequence in sequences {
         let dir = root.join(sequence.to_string());
         private_directory(&dir)?;
@@ -420,7 +533,7 @@ pub fn load(profile: &IdentityProfile, sequence: Option<u32>) -> Result<Credenti
             let credentials: Credentials =
                 serde_json::from_slice(&read_private(&dir.join("credentials.json"))?)
                     .whatever_context("invalid developer credentials")?;
-            credentials.validate(profile.name())?;
+            credentials.validate_with_root(profile.name(), trust_root)?;
             Ok(credentials)
         })();
         match result {
@@ -521,29 +634,9 @@ impl Pending {
                 )
                 .await;
         }
-        let mut page = 1;
-        loop {
-            let list = server
-                .code_signing_certificates(token, &self.domain, page)
-                .await?;
-            for item in &list.list {
-                if let Some(serial) = &item.serial_number {
-                    let detail = server.developer_certificate_detail(token, serial).await?;
-                    if detail.certificate.csr.trim() == self.csr_pem.trim() {
-                        return Ok(detail);
-                    }
-                }
-            }
-            if list.pagination.page_size == 0
-                || page.saturating_mul(list.pagination.page_size) >= list.pagination.total
-            {
-                break;
-            }
-            page += 1;
-        }
-        if self.issuance_submitted {
-            return Err(crate::cert_server::Error::without_source("Developer issuance outcome is pending; retry the same command later to recover its original CSR. No second issuance was submitted.".into()));
-        }
+        // The server revalidates the current root/child ownership and replays this
+        // exact CSR atomically. Never recover a certificate from an old ownership
+        // merely because a historical list contains the same CSR.
         self.issuance_submitted = true;
         self.persist(profile)
             .map_err(crate::cert_server::Error::from)?;
@@ -573,6 +666,9 @@ impl Pending {
             &serde_json::to_vec(self)
                 .whatever_context("cannot encode pending developer request")?,
         )
+    }
+    pub fn key_pem(&self) -> &str {
+        &self.key_pem
     }
     pub fn csr(&self) -> &str {
         &self.csr_pem

@@ -58,6 +58,23 @@ pub(super) fn success(command: &str, machine: bool, result: Value) -> Result<()>
     if machine {
         let envelope = json!({"schema_version":1,"command":command,"status":"ok","result":result});
         writeln!(stdout, "{envelope}")?;
+    } else if command == "publish" && result["outcome"] == "credentials-ready" {
+        writeln!(
+            stdout,
+            "Developer credentials ready: {}",
+            result["author"].as_str().unwrap_or_default()
+        )?;
+        writeln!(
+            stdout,
+            "Build: jade build --id {}",
+            argument(result["author"].as_str().unwrap_or_default())
+        )?;
+        writeln!(
+            stdout,
+            "Then review the package and run jade publish. No package was uploaded."
+        )?;
+    } else if command == "run" {
+        writeln!(stdout, "Stopped local development session")?;
     } else if command == "create" {
         let project = path(&result["path"]);
         writeln!(

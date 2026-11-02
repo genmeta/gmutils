@@ -48,9 +48,40 @@ pub(super) enum Command {
         #[arg(long, requires = "output")]
         overwrite: bool,
     },
-    /// Publish one signed package using its author's credentials
+    /// Run an unsigned local project in a temporary Pishoo development session
     #[command(version)]
-    Publish { file: PathBuf },
+    Run {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Local Pishoo host identity; no developer certificate is required
+        #[arg(short, long, value_name = "HOST")]
+        id: Option<String>,
+        /// Build once and keep serving until the command exits
+        #[arg(long)]
+        no_watch: bool,
+        /// Use a new private test data directory without deleting existing data
+        #[arg(long)]
+        fresh: bool,
+    },
+    /// Publish an existing signed package; never build or sign implicitly
+    #[command(version)]
+    Publish {
+        /// Project directory, jade.toml, or an explicit signed FILE.waz
+        #[arg(default_value = ".", value_name = "PATH")]
+        file: PathBuf,
+        /// Root name for first-time project developer setup; never overrides a signed author
+        #[arg(short, long, value_name = "ROOT")]
+        id: Option<String>,
+        /// Account email used only when developer setup is needed
+        #[arg(long)]
+        email: Option<String>,
+        /// Prepare developer credentials only, then build explicitly before publishing
+        #[arg(long)]
+        prepare: bool,
+        /// Local developer sequence to use for the upload connection
+        #[arg(long)]
+        signing_sequence: Option<u32>,
+    },
 }
 
 impl Command {
@@ -59,6 +90,7 @@ impl Command {
             Self::Create { .. } => "create",
             Self::Build { .. } => "build",
             Self::Publish { .. } => "publish",
+            Self::Run { .. } => "run",
         }
     }
 }
@@ -76,7 +108,19 @@ pub(super) async fn run(command: Command, machine: bool) -> Result<Value> {
             overwrite,
             signing_sequence,
         } => crate::pack::run(path, output, id, overwrite, machine, signing_sequence).await,
-        Command::Publish { file } => crate::upload::run(file).await,
+        Command::Run {
+            path,
+            id,
+            no_watch,
+            fresh,
+        } => crate::run::run(path, id, !no_watch, fresh, machine).await,
+        Command::Publish {
+            file,
+            id,
+            email,
+            signing_sequence,
+            prepare,
+        } => crate::upload::run(file, id, email, signing_sequence, prepare, machine).await,
     }
 }
 
@@ -194,9 +238,9 @@ serde_json = "1"
         readme.push_str("Edit files under `web/`. `jade build` installs frontend dependencies, including build tools, before running the build script. Install Node.js and npm before building.\n\n");
     }
     if matches!(template, Template::Api | Template::Fullstack) {
-        readme.push_str("Install the component target with `rustup target add wasm32-wasip2`. Edit handlers and the WASI HTTP entry point in `api/src/lib.rs`, and keep its `ROUTES` metadata in sync when changing routes. The template uses `wasip2` directly. Jade invokes Cargo and embeds OpenAPI from the route metadata; no build script is needed.\n\n");
+        readme.push_str("Use a Rust toolchain with `wasm32-wasip2` installed; select an existing one with `RUSTUP_TOOLCHAIN` when needed. Edit handlers and the WASI HTTP entry point in `api/src/lib.rs`, and keep its `ROUTES` metadata in sync when changing routes. The template uses `wasip2` directly. Jade invokes Cargo and embeds OpenAPI from the route metadata; no build script is needed.\n\n");
     }
-    readme.push_str(&format!("Build and publish using your signing identity (replace `alice.smith` below). Provision TLS credentials using genmeta identity apply, then purchase and apply a developer certificate using genmeta identity developer NAME.\n\n```sh\njade build --id alice.smith\njade publish build/{name}-0.1.0.waz\n```\n\nSigned packages and Cargo's `target/` cache are written under `build/`.\n"));
+    readme.push_str("Test locally with an already running Pishoo identity. Local run needs no developer certificate or subscription. Replace the example names with your own.\n\n```sh\njade run --id test.sky.lee\n```\n\nPrepare developer credentials for a root name, build and review the signed package, then publish it. Publish never builds implicitly.\n\n```sh\njade publish --prepare --id sky.lee\njade build --id dev.sky.lee\njade publish\n```\n\nSigned packages and Cargo's `target/` cache are written under `build/`.\n");
     readme.push_str("\nJade automatically includes root-level `README.md` and `CHANGELOG.md` when present. No declaration in `jade.toml` is needed; missing files are skipped.\n");
     if matches!(template, Template::Api | Template::Fullstack) {
         readme.push_str(&format!(
@@ -209,8 +253,8 @@ After publishing, install the package on your running Pishoo service, then call 
 with `genmeta curl` (replace the author and host identities as needed):
 
 ```sh
-genmeta install alice.smith.dhttp.net/{name} --id alice.smith
-genmeta curl --id alice.smith -f https://alice.smith.dhttp.net/{name}/hello
+genmeta install dev.sky.lee.dhttp.net/{name} --id test.sky.lee
+genmeta curl --id test.sky.lee -f https://test.sky.lee.dhttp.net/{name}/hello
 # {{"message":"Hello from Rust"}}
 ```
 "#

@@ -348,6 +348,29 @@ async fn renew_one(
         enable_automatic_renewal(dhttp_home, &preflight).await;
         return Ok(());
     }
+    let profile = dhttp_home
+        .identity_profile(preflight.target.full_name())
+        .expect("validated identity name");
+    if let Some(sequence) = crate::cli::developer::installed_sequence(&profile)? {
+        crate::cli::developer::Developer {
+            name: preflight.target.full_name().to_string(),
+            email: command.email.clone(),
+            verify_code: command.verify_code.clone(),
+            command: crate::cli::developer::DeveloperCommand::Renew { sequence },
+        }
+        .run(dhttp_home, cert_server)
+        .await?;
+        if let Err(error) = super::key_material::PendingRenewal::remove_for_name(
+            dhttp_home,
+            preflight.target.dhttp_name(),
+        )
+        .await
+        {
+            tracing::warn!(error = %snafu::Report::from_error(&error), "failed to remove obsolete TLS renewal material");
+        }
+        enable_automatic_renewal(dhttp_home, &preflight).await;
+        return Ok(());
+    }
     let device_name =
         super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
     let pending = match existing_pending {

@@ -49,6 +49,7 @@ impl Drop for ServerFixture {
 
 fn command(name: Option<&str>) -> Apply {
     Apply {
+        developer: false,
         name: name.map(ToOwned::to_owned),
         force: false,
         device_name: None,
@@ -318,7 +319,4 @@ fn explicit_targets_register_only_with_the_direct_parent_proof() {
         RemoteTargetState::Exists,
         "alice.smith.dhttp.net",
     ));
-    assert!(should_register_with_email(RemoteTargetState::Unknown));
-    assert!(should_register_with_email(RemoteTargetState::Missing));
-    assert!(!should_register_with_email(RemoteTargetState::Exists));
 }

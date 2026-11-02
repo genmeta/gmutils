@@ -10,18 +10,26 @@ fn exposes_only_project_commands() {
             .get_subcommands()
             .map(|command| command.get_name())
             .collect::<Vec<_>>(),
-        ["create", "build", "publish"]
+        ["create", "build", "run", "publish"]
     );
     for args in [
         vec!["jade", "create", "hello"],
         vec!["jade", "build"],
+        vec!["jade", "run"],
+        vec![
+            "jade",
+            "run",
+            "--id",
+            "test.sky.lee",
+            "--no-watch",
+            "--fresh",
+        ],
         vec!["jade", "publish", "hello.waz"],
     ] {
         assert!(Cli::try_parse_from(args).is_ok());
     }
     for args in [
         vec!["jade", "create", "hello", "--id", "alice"],
-        vec!["jade", "publish", "hello.waz", "--id", "alice"],
         vec!["jade", "build", "--no-build"],
         vec!["jade", "build", "--manifest-path", "jade.toml"],
     ] {
@@ -38,7 +46,13 @@ fn global_output_flags_and_help_work_at_every_level() {
         let parsed = Cli::try_parse_from(args).unwrap();
         assert!(parsed.json && parsed.verb);
     }
-    for command in [None, Some("create"), Some("build"), Some("publish")] {
+    for command in [
+        None,
+        Some("create"),
+        Some("build"),
+        Some("run"),
+        Some("publish"),
+    ] {
         for (flag, kind) in [
             ("--help", ErrorKind::DisplayHelp),
             ("--version", ErrorKind::DisplayVersion),

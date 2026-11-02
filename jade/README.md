@@ -1,52 +1,84 @@
 # Jade
 
-Jade creates projects, builds and signs `.waz` packages, and publishes them to the
-Pishoo store. It is an independent executable in the gmutils workspace. Builds use
-local tools and credentials; a running Pishoo service is not required. The gmutils
-Debian and Homebrew packages include both the `genmeta` and `jade` commands.
+Jade creates projects, runs them in a local Pishoo development session, builds and
+signs `.waz` releases, and publishes existing releases to the Pishoo store.
+`run` needs an already running local Pishoo identity. `build` and `publish` do not
+need a running host service. The gmutils packages include `genmeta` and `jade`.
 
 ```sh
-cargo install --path jade --locked
-jade create hello
+jade create hello --template api
 cd hello
-rustup target add wasm32-wasip2
-jade build --id alice.smith
-jade publish build/hello-0.1.0.waz
+# Select an installed Rust toolchain with wasm32-wasip2 when building Rust APIs.
+# RUSTUP_TOOLCHAIN can select that toolchain without changing global defaults.
+jade run --id test.sky.lee
 ```
 
-Jade signs with an independent developer certificate. Initialize the normal TLS
-identity with `genmeta identity apply NAME`, then use the Account login flow:
+Local run requires no developer subscription, certificate, or payment. To prepare
+formal publication, activate the root name's fixed developer child:
 
 ```sh
-genmeta identity developer NAME pricing
-genmeta identity developer NAME purchase --idempotency-key YOUR-STABLE-PURCHASE-KEY
-# Pay the returned invoice in the web console; the return page is not payment proof.
-genmeta identity developer NAME invoice INV_NUMBER
-genmeta identity developer NAME apply
-jade build --id NAME
+jade publish --prepare --id sky.lee
+# If needed, confirm the annual quote and finish checkout in the browser.
+# The command waits for server-confirmed fulfillment and prepares dev.sky.lee.dhttp.net.
+jade build --id dev.sky.lee
+# Review build/hello-0.1.0.waz, then upload those exact bytes.
+jade publish
 ```
 
-Jade uses `dhttp-home`, including `DHTTP_HOME` when set. Developer bundles are
-stored separately in `<profile>/code-signing/<sequence>/credentials.json` with
-private file permissions. TLS remains in `ssl/`. `jade build --signing-sequence N`
-selects a specific developer chain; the default is the smallest usable sequence.
-Missing, expired or TLS-only credentials fail explicitly. Signing CI can provide
-only the developer bundle and no TLS directory.
+Each root name binds one `dev.` developer name; certificate and sequence counts
+are not limited. Devices and CI can hold independent keys under that same name
+and annual subscription. Merely registering a normal `dev.` child does not grant
+signing entitlement. Certificates have codeSigning, clientAuth, and serverAuth.
+Ordinary TLS certificates cannot sign releases.
 
-Renew with `genmeta identity developer NAME renew --sequence N`. This rotates the
-private key using one persisted pending CSR and operation key and never creates
-a purchase. Retry the same command after an uncertain response; preserve pending
-files across ephemeral CI runs. A purchase retry must reuse its original key.
-The current CertServer initial-issuance API has no idempotency key: after an
-unknown POST outcome or HTTP 5xx (including a failure after server commit), apply queries the original CSR and never submits a second
-issuance until the first outcome is known. Retry the same command later. If the
-original result never appears, inspect the exact signing certificate list with
-support before manually clearing the pending operation; deleting it blindly can
-consume another chain slot.
-`subscription`, `status --fingerprint-sha256 HEX`, `auto-renew CS_NUMBER false`, and
-`revoke --serial-number HEX --issuer-id ISSUER [--whole-sequence]` expose the
-corresponding V2 operations. Closing auto-renewal retains paid periods and does
-not cancel a submitted payment.
+Jade uses `dhttp-home`, including `DHTTP_HOME` when set. Developer credentials are
+kept privately in `<profile>/code-signing/<sequence>/credentials.json`; an installed
+unified identity in `ssl/` may also be used. An ordinary TLS profile is preserved
+when developer credentials are issued. Upload uses the selected developer key in
+a temporary transport profile and keeps per-leaf OCSP caches under
+`<profile>/code-signing/ocsp/`. It does not replace a normal host's TLS credentials.
+
+Use `--signing-sequence N` with build or publish to select a specific local
+credential. Otherwise Jade prefers the usable unified identity, then an available
+sequence. The upload credential can differ from the package signing credential,
+but the canonical author and owner_hash must match. Neither the old package's
+private key nor a byte-identical certificate is required just to upload it.
+
+Renew with `genmeta identity developer ROOT renew --sequence N`. Issuance and
+renewal check entitlement; interactive preparation can confirm a quote and resume
+checkout if needed. Noninteractive preparation never creates an order implicitly.
+The pending CSR, private key and operation are preserved across failures. Initial
+issuance replays the same CSR under the server ownership lock rather than creating
+a second sequence after a lost response. A new independent CSR can create another
+certificate; no additional annual subscription is needed.
+
+## Run locally
+
+```sh
+jade run [PATH] [--id HOST] [--no-watch] [--fresh]
+```
+
+The first implementation uses authenticated Unix IPC on Linux and macOS. `--id`
+selects the running host, not a signing author. Pishoo checks the operating-system
+peer and identity owner, validates an unsigned immutable snapshot, and exposes its
+API and frontend only to the authenticated host owner. Existing public ACLs do
+not make development routes public. No checkout or developer-certificate request
+is made by run.
+
+By default Jade watches project inputs, rebuilds serially, and loads a new revision
+only after validation succeeds. Failed builds keep the last revision running;
+App and Lib switch together. Generated output and dependency caches are excluded
+from watching; an explicitly discovered static `dist/` input is still watched.
+`--no-watch` loads one revision and keeps serving until exit. `--fresh` selects a
+new isolated data directory without deleting prior test data. Normal restarts
+reuse data for the same host, canonical project path and package.
+
+Pishoo rejects installed-name conflicts and simultaneous sessions for the same
+host/package. Exact dependencies must already be installed in the test identity.
+The command prints the actual API/App URLs, a GET example when available, and the
+data directory. Ctrl+C exits successfully and disconnects the local session;
+Pishoo removes development routes even if Jade exits unexpectedly. These temporary
+snapshots are never registered as formal installed packages.
 
 ## Create a project
 
@@ -171,7 +203,8 @@ and component target for API projects, before building.
 
 ```sh
 jade build [PATH] [--id AUTHOR] [-o FILE.waz] [--overwrite]
-jade publish FILE.waz
+jade publish [PATH | FILE.waz] [--id ROOT] [--email EMAIL] [--signing-sequence N]
+jade publish --prepare [PATH] [--id ROOT]
 ```
 
 Build accepts a project directory or a Jade configuration file. Identity selection
@@ -191,13 +224,25 @@ requires `--overwrite`.
 Build verifies component structure, the WASI HTTP entry point, supported imports,
 OpenAPI, container contents and the digital signature. Publish repeats local
 checks before preparing an authenticated endpoint and uploads one fixed snapshot.
-It uses TLS transport credentials and the developer public certificates embedded
-in the existing WAZ. Both chains are independently validated and must bind the
+It uses a selected developer credential for TLS and the public signing certificates
+embedded in the existing WAZ. Both chains are independently validated and must bind the
 same canonical domain and owner_hash; their DER bytes and keys may differ.
-Publication preserves the exact WAZ bytes and never re-signs. Upload CI needs no
-developer private key. Publication admission verifies the signed certificate locally;
+Publication preserves the exact WAZ bytes and never re-signs. Upload CI needs its
+own developer transport key, but not the original package-signing private key. Publication admission verifies the signed certificate locally;
 paid entitlement is enforced only at certificate issuance and renewal. Jade and
 Registry never query CertServer during publication.
+When PATH is omitted, publish uses the current project's exact
+`build/NAME-VERSION.waz`. A directory or `jade.toml` selects that same convention;
+custom output requires an explicit file. Name, version, and a configured author
+must agree with the signed package. Missing output reports `E_BUILD_REQUIRED`;
+a mismatch reports `E_PACKAGE_MISMATCH`. Publish never runs Cargo/npm, builds a
+missing release, signs a package, or chooses another version automatically.
+
+`--prepare` only prepares credentials and returns `credentials-ready`; then run
+build explicitly. Interactive project publication can also prepare missing
+credentials, but missing output still requires a separate build. Explicit file
+publication cannot change its author with `--id` or start a preparation flow.
+
 Before sending a package, it reads the store catalogue and rejects the legacy
 `publisher`/`.pkg` protocol with no upload.
 Local checks validate the codeSigning path against the compiled DHTTP Root,

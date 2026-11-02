@@ -1033,3 +1033,36 @@ fn signing_home_needs_no_tls_credentials() {
     assert!(input.join("build/hello-1.0.0.waz").is_file());
     assert!(!home.join("alice/ssl").exists());
 }
+
+#[test]
+fn publish_preparation_is_explicit_and_noninteractive_mode_never_creates_an_order() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    std::fs::write(project.join("jade.toml"), "[package]\nname='hello'\nversion='1.0.0'\nauthor='dev.sky.lee.dhttp.net'\ndescription='Test'\nlicense='MIT'\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_jade"))
+        .current_dir(&project)
+        .env("DHTTP_HOME", &home)
+        .args(["--json", "publish", "--prepare", "--id", "sky.lee"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["error"]["code"], "E_DEVELOPER_CERTIFICATE_REQUIRED");
+    assert!(!project.join("build").exists());
+    assert!(
+        !home
+            .join("dev.sky.lee/code-signing/apply.pending.json")
+            .exists()
+    );
+    let explicit = Command::new(env!("CARGO_BIN_EXE_jade"))
+        .current_dir(&project)
+        .env("DHTTP_HOME", &home)
+        .args(["--json", "publish", "release.waz", "--prepare"])
+        .output()
+        .unwrap();
+    let result: serde_json::Value = serde_json::from_slice(&explicit.stdout).unwrap();
+    assert_eq!(result["error"]["code"], "E_USAGE");
+}

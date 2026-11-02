@@ -214,17 +214,13 @@ async fn recover_committed_initial_issuance(use_server_error: bool) {
         crate::cert_server::CertServer::new(format!("http://{}", listener.local_addr().unwrap()))
             .unwrap();
     let mock = tokio::spawn(async move {
-        let mut posts = 0;
-        for step in 0..4 {
+        for step in 0..2 {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut request = Vec::new();
             loop {
                 let mut buf = [0u8; 4096];
                 let n = socket.read(&mut buf).await.unwrap();
                 request.extend_from_slice(&buf[..n]);
-                if n == 0 {
-                    break;
-                }
                 if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
                     let headers = String::from_utf8_lossy(&request[..end]);
                     let length = headers
@@ -239,31 +235,23 @@ async fn recover_committed_initial_issuance(use_server_error: bool) {
                         break;
                     }
                 }
+                assert_ne!(n, 0);
             }
             let request = String::from_utf8(request).unwrap();
-            if request.starts_with("POST ") {
-                assert_eq!(step, 1);
-                posts += 1;
-                let body: serde_json::Value =
-                    serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
-                assert_eq!(body["csr"], detail["csr"]);
+            assert!(request.starts_with("POST /v2/cert "));
+            let body: serde_json::Value =
+                serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(body["csr"], detail["csr"]);
+            if step == 0 {
                 if use_server_error {
                     let body = r#"{"error":{"code":1412,"message":"response detail unavailable after commit"}}"#;
                     socket.write_all(format!("HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
                 }
                 continue;
             }
-            let body = if step == 0 {
-                serde_json::json!({"list":[],"pagination":{"page":1,"page_size":100,"total":0}})
-            } else if step == 2 {
-                serde_json::json!({"list":[{"domain":DOMAIN,"sequence":1,"kind":"primary","status":"active","serial_number":"1000","issued_at":0,"valid_not_after":detail["valid_not_after"],"created_at":0}],"pagination":{"page":1,"page_size":100,"total":1}})
-            } else {
-                detail.clone()
-            };
-            let body = serde_json::to_string(&body).unwrap();
-            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+            let body = serde_json::to_string(&detail).unwrap();
+            socket.write_all(format!("HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
         }
-        posts
     });
     assert!(
         pending
@@ -278,7 +266,7 @@ async fn recover_committed_initial_issuance(use_server_error: bool) {
         .request_certificate(&profile, &server, "account-token", "test")
         .await
         .unwrap();
-    assert_eq!(mock.await.unwrap(), 1);
+    mock.await.unwrap();
     restored
         .install_with_root(&profile, &recovered, &root())
         .unwrap();
@@ -291,7 +279,7 @@ async fn recover_committed_initial_issuance(use_server_error: bool) {
 }
 
 #[tokio::test]
-async fn unknown_submission_without_a_listed_certificate_never_posts_again() {
+async fn uncertain_issuance_retries_the_same_persisted_csr() {
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -302,29 +290,57 @@ async fn unknown_submission_without_a_listed_certificate_never_posts_again() {
     let mut pending = Pending::prepare(&profile, None).unwrap();
     pending.issuance_submitted = true;
     pending.persist(&profile).unwrap();
+    let csr = pending.csr().to_owned();
+    let key = pending.key_pem().to_owned();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let server =
         crate::cert_server::CertServer::new(format!("http://{}", listener.local_addr().unwrap()))
             .unwrap();
+    let expected = csr.clone();
     let mock = tokio::spawn(async move {
-        let (mut socket, _) = listener.accept().await.unwrap();
-        let mut bytes = [0u8; 4096];
-        let n = socket.read(&mut bytes).await.unwrap();
-        assert!(
-            std::str::from_utf8(&bytes[..n])
-                .unwrap()
-                .starts_with("GET ")
-        );
-        let body = r#"{"list":[],"pagination":{"page":1,"page_size":100,"total":0}}"#;
-        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+        for _ in 0..1 {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            loop {
+                let mut chunk = [0; 4096];
+                let n = socket.read(&mut chunk).await.unwrap();
+                bytes.extend_from_slice(&chunk[..n]);
+                if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&bytes[..end]);
+                    let length = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.to_lowercase()
+                                .strip_prefix("content-length:")
+                                .and_then(|v| v.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if bytes.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+                assert_ne!(n, 0);
+            }
+            let text = String::from_utf8(bytes).unwrap();
+            assert!(text.starts_with("POST /v2/cert "));
+            let request: serde_json::Value =
+                serde_json::from_str(text.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(request["csr"], expected);
+            let status = 503;
+            let body = r#"{"error":{"code":1427,"message":"issuer unavailable"}}"#;
+            socket.write_all(format!("HTTP/1.1 {status} response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+        }
     });
-    let error = pending
-        .request_certificate(&profile, &server, "account-token", "test")
-        .await
-        .unwrap_err();
-    assert!(error.to_string().contains("No second issuance"));
+    assert!(
+        pending
+            .request_certificate(&profile, &server, "account-token", "test")
+            .await
+            .is_err()
+    );
     mock.await.unwrap();
-    assert!(Pending::prepare(&profile, None).unwrap().issuance_submitted);
+    let restored = Pending::prepare(&profile, None).unwrap();
+    assert_eq!(restored.csr(), csr);
+    assert_eq!(restored.key_pem(), key);
 }
 
 #[test]
@@ -343,11 +359,11 @@ fn chain_allows_only_optional_exact_root_and_rejects_unrelated_tail() {
 }
 
 #[tokio::test]
-async fn a_lost_initial_issuance_response_recovers_csr_without_a_second_post() {
+async fn a_lost_initial_issuance_response_replays_the_same_csr() {
     recover_committed_initial_issuance(false).await;
 }
 #[tokio::test]
-async fn postcommit_503_preserves_submission_and_recovers_without_a_second_post() {
+async fn postcommit_503_preserves_submission_and_replays_the_same_csr() {
     recover_committed_initial_issuance(true).await;
 }
 #[test]
@@ -377,4 +393,57 @@ fn only_documented_precommit_refusals_clear_the_issuance_marker() {
         reqwest::StatusCode::BAD_REQUEST,
         "9999"
     )));
+}
+
+#[test]
+fn unified_identity_validates_for_tls_and_signing_and_loads_one_key_pair() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/unified-developer");
+    let issuer = fs::read_to_string(fixtures.join("issuer.cert.pem")).unwrap();
+    let cert_pem = fs::read_to_string(fixtures.join("developer.cert.pem")).unwrap() + &issuer;
+    let chain = parse_chain(&cert_pem).unwrap();
+    let root = parse_chain(&fs::read_to_string(fixtures.join("root.cert.pem")).unwrap())
+        .unwrap()
+        .remove(0);
+    verify_chain_with_root(&chain, DOMAIN, UnixTime::now(), root.as_ref()).unwrap();
+    let anchor = webpki::anchor_from_trusted_cert(&root).unwrap();
+    let leaf = webpki::EndEntityCert::try_from(&chain[0]).unwrap();
+    for usage in [
+        webpki::KeyUsage::server_auth(),
+        webpki::KeyUsage::client_auth(),
+    ] {
+        leaf.verify_for_usage(
+            webpki::ALL_VERIFICATION_ALGS,
+            std::slice::from_ref(&anchor),
+            &chain[1..],
+            UnixTime::now(),
+            usage,
+            None,
+            None,
+        )
+        .unwrap();
+    }
+    let partial =
+        parse_chain(&(fs::read_to_string(fixtures.join("partial.cert.pem")).unwrap() + &issuer))
+            .unwrap();
+    assert!(verify_chain_with_root(&partial, DOMAIN, UnixTime::now(), root.as_ref()).is_err());
+    let tmp = tempfile::tempdir().unwrap();
+    let p = IdentityProfile::try_from(tmp.path().join("developer")).unwrap();
+    fs::create_dir_all(p.ssl_dir()).unwrap();
+    fs::write(
+        p.ssl_dir().join(dhttp_home::identity::ssl::CERT_FILE_NAME),
+        &cert_pem,
+    )
+    .unwrap();
+    save_private(
+        &p.ssl_dir().join(dhttp_home::identity::ssl::KEY_FILE_NAME),
+        &fs::read(fixtures.join("developer.key.pem")).unwrap(),
+    )
+    .unwrap();
+    let credentials = load_with_root(&p, None, root.as_ref()).unwrap();
+    assert_eq!(credentials.cert_pem, cert_pem);
+    assert!(
+        !directory(&p).exists(),
+        "unified signing requires no independent credential directory"
+    );
+    assert!(load_with_root(&p, Some(999), root.as_ref()).is_err());
 }

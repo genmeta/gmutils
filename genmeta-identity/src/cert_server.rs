@@ -148,6 +148,10 @@ fn normalize_api_code(code: &str) -> &str {
         "1434" => "purchase_idempotency_conflict",
         "1435" => "purchase_in_progress",
         "1436" => "purchase_ended",
+        "1437" => "developer_root_required",
+        "1438" => "developer_domain_conflict",
+        "1439" => "developer_domain_required",
+        "1440" => "developer_domain_managed",
         _ => code,
     }
 }

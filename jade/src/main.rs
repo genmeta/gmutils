@@ -10,6 +10,7 @@ mod identity;
 mod pack;
 mod package;
 mod project;
+mod run;
 mod upload;
 
 #[cfg(test)]
@@ -59,7 +60,7 @@ async fn main() -> ExitCode {
                 .take_while(|arg| *arg != "--")
                 .filter_map(|arg| arg.to_str())
                 .find(|arg| !arg.starts_with('-'))
-                .filter(|arg| matches!(*arg, "create" | "build" | "publish"));
+                .filter(|arg| matches!(*arg, "create" | "build" | "publish" | "run"));
             return display::failure(command, json, &error::Error::new("E_USAGE", error));
         }
     };
@@ -75,7 +76,9 @@ async fn main() -> ExitCode {
     let command = cli.options.name();
     let result = tokio::select! {
         result = cli::run(cli.options, cli.json) => result,
-        _ = tokio::signal::ctrl_c() => Err(error::Error::new("E_CANCELLED", "Command cancelled")),
+        _ = tokio::signal::ctrl_c() => if command == "run" {
+            Ok(serde_json::json!({"stopped":true}))
+        } else { Err(error::Error::new("E_CANCELLED", "Command cancelled")) },
     };
     match result {
         Ok(value) => match display::success(command, cli.json, value) {

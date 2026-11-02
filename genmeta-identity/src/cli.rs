@@ -9,7 +9,7 @@ mod developer;
 use std::io::IsTerminal;
 
 use clap::Parser;
-pub use developer::Developer;
+pub use developer::{Developer, prepare_for_publish};
 use dhttp_home::{
     DhttpHome, HomeScope, LoadDhttpHomeError,
     identity::{
@@ -166,6 +166,9 @@ fn parse_identity_name(identity: &str) -> Result<Name<'static>, Error> {
 /// Apply identity
 #[derive(Parser, Debug, Clone)]
 pub struct Apply {
+    /// Request a developer certificate for TLS and package signing (requires paid entitlement)
+    #[arg(long)]
+    pub developer: bool,
     #[arg(value_name = "IDENTITY")]
     pub name: Option<String>,
     #[arg(short, long)]

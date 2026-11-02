@@ -44,7 +44,7 @@ pub(crate) struct Dependency {
     version: String,
 }
 
-pub(crate) fn read(path: &Path) -> Result<(PathBuf, Manifest)> {
+pub(crate) fn read_manifest(path: &Path) -> Result<(PathBuf, Manifest)> {
     crate::pack::reject_url(path.as_os_str()).map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
     let path = if path.is_dir() {
         path.join("jade.toml")
@@ -54,7 +54,7 @@ pub(crate) fn read(path: &Path) -> Result<(PathBuf, Manifest)> {
     let source = crate::pack::read_bounded(&path, 1024 * 1024)
         .map_err(|e| Error::new("E_CONFIG_INVALID", e).context(json!({"file":path})))?;
     let source = std::str::from_utf8(&source).map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
-    let mut manifest: Manifest = toml::from_str(source).map_err(|e: toml::de::Error| {
+    let manifest: Manifest = toml::from_str(source).map_err(|e: toml::de::Error| {
         let mut context = json!({"file":path});
         if let Some(span) = e.span() {
             let prefix = &source[..span.start.min(source.len())];
@@ -71,7 +71,13 @@ pub(crate) fn read(path: &Path) -> Result<(PathBuf, Manifest)> {
         Error::new("E_CONFIG_INVALID", format!("{}: {e}", path.display())).context(context)
     })?;
     let path = std::fs::canonicalize(&path)?;
-    let root = path.parent().unwrap();
+    Ok((path.parent().unwrap().to_path_buf(), manifest))
+}
+
+pub(crate) fn read(path: &Path) -> Result<(PathBuf, Manifest)> {
+    let (root, mut manifest) = read_manifest(path)?;
+    let path = root.join("jade.toml");
+    let root = root.as_path();
     manifest.frontend = discover_frontend(root)?;
     manifest.backend = discover_backend(root)?;
     if manifest.frontend.is_none() && manifest.backend.is_none() {
