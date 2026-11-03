@@ -47,11 +47,11 @@ zip = { version = "6", default-features = false, features = ["deflate"] }
 libc = "0.2"
 
 [dev-dependencies]
+qprotocol = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 http-body = "1"
 qbase = { workspace = true }
-qprotocol = { workspace = true }
 rcgen = "0.14"
 rustls-pemfile = "2"
 tower = { version = "0.5", features = ["util"] }

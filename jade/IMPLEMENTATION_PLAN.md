@@ -1,4 +1,4 @@
-当前身份选择及发布引导以 [README](README.md) 和 [REFERENCE](REFERENCE.md) 为准：所有 Jade 命令统一传基础名字 `--id alex.chen`，内部选择 `dev.alex.chen`；以下为首轮实施记录。
+当前身份选择及发布引导以 [README](README.md) 和 [REFERENCE](REFERENCE.md) 为准：所有 Jade 命令统一传实际开发子名字 `--id dev.alex.chen`，不自动添加或剥离 `dev.`；以下为首轮实施记录。
 
 # Jade 实施规划
 
@@ -16,7 +16,7 @@ Jade 完成三件事：准备项目、生成签名包、发布指定包。首轮
 jade create hello
 cd hello
 rustup target add wasm32-wasip2
-jade build --id alice.smith
+jade build --id dev.alice.smith
 jade publish build/hello-0.1.0.waz
 ```
 

@@ -13,7 +13,7 @@ use crate::{cert_server::CertServer, code_signing};
 
 #[derive(Parser, Debug, Clone)]
 pub struct Developer {
-    /// Full domain or short identity name
+    /// Actual developer child for Apply/Renew; billing commands use the root name
     pub name: String,
     #[arg(long)]
     pub email: Option<String>,
@@ -326,17 +326,26 @@ fn developer_target(subscriptions: &Value, requested: &str) -> Result<(String, S
     let items = subscriptions["items"]
         .as_array()
         .ok_or_else(|| Error::without_source("Invalid developer subscription response".into()))?;
-    let root = items
+    let binding = items
         .iter()
-        .find(|item| {
-            item["status"] != "terminated"
-                && (item["domain"] == requested || item["developer_domain"] == requested)
-        })
-        .and_then(|item| item["domain"].as_str())
-        .unwrap_or(requested);
-    let target = format!("dev.{root}");
+        .find(|item| item["status"] != "terminated" && item["developer_domain"] == requested);
+    let root = match binding.and_then(|item| item["domain"].as_str()) {
+        Some(root) => root,
+        None => requested
+            .strip_suffix(dhttp_home::DHTTP_SUFFIX)
+            .and_then(|name| name.strip_prefix("dev."))
+            .filter(|root| root.contains('.'))
+            .and_then(|_| requested.strip_prefix("dev."))
+            .ok_or_else(|| {
+                Error::without_source(
+                    "Select the actual development child, for example dev.alex.chen".into(),
+                )
+            })?,
+    };
+    let target = requested.to_owned();
     if dhttp_home::normalize_name(root).as_deref() != Some(root)
         || dhttp_home::normalize_name(&target).as_deref() != Some(target.as_str())
+        || target != format!("dev.{root}")
     {
         return Err(Error::without_source("Invalid developer root name".into()));
     }
@@ -353,11 +362,11 @@ fn developer_target(subscriptions: &Value, requested: &str) -> Result<(String, S
     Ok((root.to_owned(), target))
 }
 
-/// Prepare publication credentials without writing an extra command result to stdout.
+/// Prepare credentials for the actual developer child without changing the requested name.
 pub async fn prepare_for_publish(
     home: &DhttpHome,
     server: &CertServer,
-    root: &str,
+    developer: &str,
     email: Option<&str>,
     interactive: bool,
 ) -> Result<Value, Error> {
@@ -367,7 +376,7 @@ pub async fn prepare_for_publish(
     let token =
         run_cert_server_email_session(server, EmailLogin::Account, email, None, true).await?;
     let command = Developer {
-        name: root.to_owned(),
+        name: developer.to_owned(),
         email: None,
         verify_code: None,
         command: DeveloperCommand::Apply {

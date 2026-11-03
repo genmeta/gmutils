@@ -1958,7 +1958,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta"
-version = "0.9.0-preview.5"
+version = "0.9.1"
 dependencies = [
  "bytes",
  "clap",
@@ -1982,6 +1982,7 @@ dependencies = [
  "qrustls",
  "qtls",
  "rustls-pemfile",
+ "semver",
  "serde_json",
  "snafu",
  "tempfile",

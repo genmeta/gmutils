@@ -64,7 +64,7 @@ enum PackageCommand {
         #[arg(long, value_name = "MAJOR.MINOR.PATCH")]
         version: Option<String>,
     },
-    /// Update an installed package from its original publisher
+    /// Update an installed package from its current verified maintenance publisher
     #[command(disable_version_flag = true)]
     Update {
         /// Package short name or canonical publisher/name

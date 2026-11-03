@@ -733,7 +733,7 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
         );
         assert_eq!(calls[4], (http::Method::DELETE, unmount.into(), Vec::new()));
     }
-    let saved = super::catalog(&endpoint, &owner, Some("alice.dhttp.net/demo"), true)
+    let saved = super::catalog(&endpoint, &owner, Some("alice.dhttp.net/demo"), true, false)
         .await
         .unwrap()
         .unwrap();
@@ -748,7 +748,7 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
     assert_eq!(removed["removed"], true);
     assert_eq!(removed["data_retained"], true);
     assert!(
-        super::catalog(&endpoint, &owner, Some("alice.dhttp.net/demo"), false)
+        super::catalog(&endpoint, &owner, Some("alice.dhttp.net/demo"), false, false)
             .await
             .unwrap()
             .is_none()
@@ -761,7 +761,7 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
 fn abbreviated_authors_expand_without_changing_installed_bare_names() {
     assert_eq!(
         normalize_target("workspace", true),
-        "std.dhttp.net/workspace"
+        "dev.genmeta.dhttp.net/workspace"
     );
     assert_eq!(normalize_target("message", false), "message");
     assert_eq!(
@@ -781,4 +781,31 @@ fn abbreviated_authors_expand_without_changing_installed_bare_names() {
         assert_eq!(normalize_target(&display::package_id(id), false), id);
     }
     assert!(!valid_target(&normalize_target("@alice/message", true)));
+}
+
+#[test]
+fn update_follows_committed_maintenance_author_and_keeps_canonical_id_checks() {
+    let current = serde_json::json!({"id":"dev.genmeta.dhttp.net/workspace","version":"0.3.5"});
+    assert_eq!(
+        choose_release_target("update", "workspace", Some(&current)).unwrap(),
+        "dev.genmeta.dhttp.net/workspace"
+    );
+    let next = serde_json::json!({"id":"dev.genmeta.dhttp.net/workspace","version":"0.3.6"});
+    assert!(!check_install_version("update", Some(&current), &next).unwrap());
+    let other = serde_json::json!({"id":"dev.attacker.dhttp.net/workspace","version":"0.3.6"});
+    assert!(check_install_version("update", Some(&current), &other).is_err());
+}
+
+
+#[test]
+fn installation_requires_a_host_with_developer_author_and_migration_support() {
+    for version in [None,Some("0.9.0"),Some("0.9.1-preview.1"),Some("invalid")] {
+        let mut headers=http::HeaderMap::new();
+        if let Some(version)=version {headers.insert("pishoo-version",version.parse().unwrap());}
+        assert!(require_install_host(&headers).is_err());
+    }
+    for version in ["0.9.1","0.9.1+build.2","0.10.0-preview.1","1.0.0"] {
+        let mut headers=http::HeaderMap::new();headers.insert("pishoo-version",version.parse().unwrap());
+        require_install_host(&headers).unwrap();
+    }
 }

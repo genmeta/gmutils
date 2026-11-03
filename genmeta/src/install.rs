@@ -51,7 +51,7 @@ fn normalize_target(target: &str, standard_bare: bool) -> String {
             return format!("{author}/{name}");
         }
     } else if standard_bare && valid_name(target) {
-        return format!("std.dhttp.net/{target}");
+        return format!("dev.genmeta.dhttp.net/{target}");
     }
     target.to_owned()
 }
@@ -502,6 +502,7 @@ async fn catalog(
     owner: &OwnerHash,
     target: Option<&str>,
     require_removal_support: bool,
+    require_signing_support: bool,
 ) -> Result<Option<Value>, Whatever> {
     let path = match target {
         Some(target) => format!("/std/sys/pkg?name={}", target.rsplit('/').next().unwrap()),
@@ -513,6 +514,7 @@ async fn catalog(
             .header(header::ACCEPT, http::HeaderValue::from_static("application/json"))
             .await.whatever_context(format!("Cannot query the selected identity service. {SERVICE}"))?;
         verify_remote(&response, endpoint.name(), owner)?;
+        if require_signing_support { require_install_host(response.headers())?; }
         let status = response.status();
         let package_id = response.headers().get("package-id").cloned();
         if status == StatusCode::NOT_FOUND && target.is_some() {
@@ -668,7 +670,7 @@ pub(super) async fn run(
     let owner = ski.owner_hash().clone();
     if operation == "list" {
         let packages =
-            display::package_output(catalog(&endpoint, &owner, None, false).await?.unwrap());
+            display::package_output(catalog(&endpoint, &owner, None, false, false).await?.unwrap());
         println!(
             "{}",
             serde_json::to_string_pretty(&packages).whatever_context("Cannot encode catalog")?
@@ -676,7 +678,7 @@ pub(super) async fn run(
         return Ok(());
     }
     let target = target.as_deref().unwrap();
-    let current = catalog(&endpoint, &owner, Some(target), operation == "remove").await?;
+    let current = catalog(&endpoint, &owner, Some(target), operation == "remove", matches!(operation, "install" | "update")).await?;
     if matches!(operation, "info" | "remove") {
         let Some(current) = current else {
             whatever!("Package {} is not installed", display::package_id(target))
@@ -812,3 +814,11 @@ async fn host_exchange(
 #[cfg(test)]
 #[path = "../tests/unit/install.rs"]
 mod tests;
+
+
+fn require_install_host(headers: &http::HeaderMap) -> Result<(), Whatever> {
+    let version=headers.get("pishoo-version").and_then(|value|value.to_str().ok()).and_then(|value|semver::Version::parse(value).ok());
+    ensure_whatever!(version.is_some_and(|version|version>=semver::Version::new(0,9,1)),
+        "Applications require Pishoo 0.9.1 or newer. Upgrade Pishoo with Homebrew and restart its service before installing or updating applications");
+    Ok(())
+}

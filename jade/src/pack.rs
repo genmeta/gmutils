@@ -1,4 +1,4 @@
-//! Build declared sources, collect immutable artifacts and sign Pishoo packages.
+//! Build declared sources and atomically write unsigned Pishoo packages.
 use std::{
     collections::{BTreeMap, HashSet},
     io::{Read, Write},
@@ -20,13 +20,10 @@ pub(super) async fn run(
     requested_output: Option<PathBuf>,
     id: Option<String>,
     overwrite: bool,
-    machine: bool,
-    signing_sequence: Option<u32>,
 ) -> crate::error::Result<Value> {
     use crate::error::Error;
     let (project, config) = crate::project::read(&path)?;
-    let author =
-        crate::identity::select(id.as_deref(), config.package.author.as_deref(), machine).await?;
+    let author = crate::identity::select(id.as_deref(), config.package.author.as_deref()).await?;
     let id = format!("{author}/{}", config.package.name);
     let name = &config.package.name;
     let version = &config.package.version;
@@ -42,19 +39,9 @@ pub(super) async fn run(
     let parent = output
         .parent()
         .ok_or_else(|| Error::new("E_OUTPUT_CONFLICT", "Missing output directory"))?;
-    let home = crate::identity::home()?;
-    let (certificates, private_key) =
-        crate::identity::developer_credentials_sequence(&home, &author, signing_sequence).await?;
-    let owner = crate::package::owner_hash(&certificates)
-        .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
-    let signing_key = qtls::default_provider()
-        .key_provider
-        .load_private_key(private_key)
-        .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
-    eprintln!("   Signing  {}", crate::display::identity(&author));
-    let bytes = encode(files, &certificates, &signing_key)
-        .map_err(|e| Error::new("E_SIGNATURE_INVALID", e))?;
-    crate::package::inspect_package(&bytes).await?;
+    let bytes =
+        crate::archive::waz_write(&files).map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
+    crate::package::inspect_contents(&bytes).await?;
     std::fs::create_dir_all(parent)?;
     let parent = std::fs::canonicalize(parent)?;
     let output = parent.join(output.file_name().unwrap());
@@ -98,19 +85,16 @@ pub(super) async fn run(
                 let existing = crate::package::read_snapshot(&output)
                     .await
                     .map_err(|e| Error::new("E_OUTPUT_CONFLICT", e))?;
-                let previous = crate::package::inspect_package(&existing)
+                let previous = crate::package::inspect_contents(&existing)
                     .await
                     .map_err(|e| {
                         Error::new("E_OUTPUT_CONFLICT", e)
                             .hint("Choose a different output file with -o")
                     })?;
-                let old_owner = crate::package::package_certificates(&existing)
-                    .and_then(|c| crate::package::owner_hash(&c))
-                    .map_err(|e| Error::new("E_OUTPUT_CONFLICT", e))?;
-                if previous["id"] != id || previous["version"] != *version || old_owner != owner {
+                if previous["id"] != id || previous["version"] != *version {
                     return Err(Error::new(
                         "E_OUTPUT_CONFLICT",
-                        "Existing output belongs to another package, version or owner",
+                        "Existing output belongs to another package or version",
                     )
                     .hint("Choose a different output file with -o"));
                 }
@@ -283,43 +267,6 @@ fn assemble_files(
     Ok(files)
 }
 
-fn encode(
-    mut files: BTreeMap<String, Vec<u8>>,
-    certificates: &[qtls::CertificateDer<'_>],
-    signing_key: &std::sync::Arc<dyn rustls::sign::SigningKey>,
-) -> Result<Vec<u8>> {
-    let digest = crate::archive::waz_payload(&files);
-    let mut input = b"pishoo-waz-signature-v1\0".to_vec();
-    for offset in (0..digest.len()).step_by(2) {
-        input.push(u8::from_str_radix(&digest[offset..offset + 2], 16)?);
-    }
-    let mut signature = None;
-    for scheme in [
-        qtls::SignatureScheme::RSA_PSS_SHA512,
-        qtls::SignatureScheme::ECDSA_NISTP256_SHA256,
-        qtls::SignatureScheme::ECDSA_NISTP384_SHA384,
-        qtls::SignatureScheme::ED25519,
-    ] {
-        if let Some(signer) = signing_key.choose_scheme(&[scheme]) {
-            signature = Some(signer.sign(&input)?);
-            break;
-        }
-    }
-    let envelope = json!({"version":1,
-        "certificates":certificates.iter().map(|c|STANDARD.encode(c.as_ref())).collect::<Vec<_>>(),
-        "signature":STANDARD.encode(signature.ok_or("unsupported signing key")?)});
-    files.insert(
-        "signature.json".into(),
-        serde_json::to_vec_pretty(&envelope)?,
-    );
-    let bytes = crate::archive::waz_write(&files)
-        .map_err(|error| -> Box<dyn std::error::Error> { error })?;
-    if crate::package::payload_digest(&bytes)? != digest {
-        return Err("final package content differs from signed payload".into());
-    }
-    Ok(bytes)
-}
-
 pub(crate) fn embedded_openapi(mut backend: Vec<u8>, source: Option<&[u8]>) -> Result<Vec<u8>> {
     let mut offset = 8;
     let mut embedded = None;
@@ -467,7 +414,9 @@ pub(crate) fn validate_metadata(wapm: &Value, annotation: &Value, has_backend: b
         return Err("invalid normalized author/name".into());
     }
     let (author, name) = id.split_once('/').unwrap();
-    if name == "std" || (name == "app" && author != "std.dhttp.net" && has_backend) {
+    if name == "std"
+        || (name == "app" && !crate::identity::is_standard_author(author) && has_backend)
+    {
         return Err("package name conflicts with a host namespace".into());
     }
     if !valid_version(text(wapm, "version")?) {

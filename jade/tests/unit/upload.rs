@@ -48,6 +48,8 @@ fn upload_cli_accepts_only_the_designed_arguments() {
         ));
     }
     assert!(crate::Cli::try_parse_from(["jade", "publish", "--prepare"]).is_err());
+    assert!(crate::Cli::try_parse_from(["jade", "build", "--signing-sequence", "1"]).is_err());
+    assert!(crate::Cli::try_parse_from(["jade", "publish", "--signing-sequence", "1"]).is_ok());
     for flag in [
         "--kind",
         "--name",
@@ -836,4 +838,66 @@ async fn project_publish_rejects_renamed_packages_with_the_wrong_identity() {
             "E_PACKAGE_MISMATCH"
         );
     }
+}
+
+#[tokio::test]
+async fn publication_signs_only_the_built_payload_and_preserves_the_source_archive() {
+    let root = tempfile::tempdir().unwrap();
+    publish_project(root.path(), "note", "1.0.0", "alice.dhttp.net");
+    let unsigned = build(
+        &metadata("app", "note", json!([])),
+        None,
+        "reviewed content",
+    );
+    let file = root.path().join("build/note-1.0.0.waz");
+    std::fs::write(&file, &unsigned).unwrap();
+    // Source discovery must not participate in signing a previously built snapshot.
+    std::fs::write(root.path().join("package.json"), "invalid JSON").unwrap();
+    let (snapshot, _) = read_input(root.path()).await.unwrap();
+    assert!(inspect_package(&snapshot).await.is_err());
+    let files = crate::archive::waz_read(&snapshot).unwrap();
+    let (certificates, key) = credentials::developer("alice.dhttp.net", &"a".repeat(64));
+    let key = qtls::default_provider()
+        .key_provider
+        .load_private_key(key)
+        .unwrap();
+    let signed = sign_package(files.clone(), &certificates, &key).unwrap();
+    assert_eq!(inspect_package(&signed).await.unwrap()["name"], "note");
+    assert_eq!(
+        payload_digest(&signed).unwrap(),
+        payload_digest(&snapshot).unwrap()
+    );
+    let mut released = crate::archive::waz_read(&signed).unwrap();
+    assert!(released.remove("signature.json").is_some());
+    assert_eq!(released, files);
+    assert_eq!(std::fs::read(&file).unwrap(), unsigned);
+    std::fs::write(&file, &signed).unwrap();
+    assert_eq!(read_input(root.path()).await.unwrap().0, signed);
+    let mut tampered = crate::archive::waz_read(&signed).unwrap();
+    tampered.insert("public/index.html".into(), b"tampered".to_vec());
+    std::fs::write(&file, crate::archive::waz_write(&tampered).unwrap()).unwrap();
+    assert_eq!(
+        read_input(root.path()).await.unwrap_err().code,
+        "E_SIGNATURE_INVALID"
+    );
+}
+
+#[test]
+fn signed_snapshot_is_durable_before_upload_and_changed_inputs_are_preserved() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("app.waz");
+    std::fs::write(&file, b"unsigned").unwrap();
+    persist_signed_snapshot(&file, b"unsigned", b"signed bytes").unwrap();
+    assert_eq!(std::fs::read(&file).unwrap(), b"signed bytes");
+    assert!(persist_signed_snapshot(&file, b"unsigned", b"another signature").is_err());
+    assert_eq!(std::fs::read(&file).unwrap(), b"signed bytes");
+    std::os::unix::fs::symlink(&file, root.path().join("link.waz")).unwrap();
+    assert!(
+        persist_signed_snapshot(
+            &root.path().join("link.waz"),
+            b"signed bytes",
+            b"replacement"
+        )
+        .is_err()
+    );
 }

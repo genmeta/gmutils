@@ -36,7 +36,7 @@ fn config(root: &Path) {
 }
 
 #[test]
-fn npm_uses_literal_working_directory_and_failure_preserves_the_signed_output() {
+fn npm_uses_literal_working_directory_and_failure_preserves_the_built_output() {
     let root = tempfile::Builder::new()
         .prefix("jade $(touch unexpected) ")
         .tempdir()

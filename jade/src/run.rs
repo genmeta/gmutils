@@ -49,13 +49,14 @@ pub(super) async fn run(
         let (project, config) = crate::project::read(&path)?;
         let root_author =
             crate::identity::normalize(config.package.author.as_deref().unwrap_or(&host))?;
-        let data_directory = profile
-            .join(".volume")
-            .join(if root_author == "std.dhttp.net" {
-                format!("std/{}", config.package.name)
-            } else {
-                config.package.name.clone()
-            });
+        let data_directory =
+            profile
+                .join(".volume")
+                .join(if crate::identity::is_standard_author(&root_author) {
+                    format!("std/{}", config.package.name)
+                } else {
+                    config.package.name.clone()
+                });
         projects(&project, &host)?;
         prepare_host(&profile).await?;
         let mut published_directories = BTreeMap::new();
@@ -94,7 +95,7 @@ pub(super) async fn run(
                         result["host"] = host.clone().into();
                         let manifest: Value = serde_json::from_slice(&files["manifest.json"]).map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
                         if result["has_api"] == true {
-                            let prefix = if manifest["package"]["author"] == "std.dhttp.net" { "/std" } else { "" };
+                            let prefix = if crate::identity::is_standard_author(manifest["package"]["author"].as_str().unwrap_or("")) { "/std" } else { "" };
                             result["api"] = format!("https://{host}{prefix}/{name}").into();
                         }
                         if result["has_app"] == true {
@@ -281,7 +282,9 @@ fn publish(
     let _data = private_directory(&data_root, &owner)?;
     let manifest: Value = serde_json::from_slice(&files["manifest.json"])
         .map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
-    let data_root = if manifest["package"]["author"] == "std.dhttp.net" {
+    let data_root = if crate::identity::is_standard_author(
+        manifest["package"]["author"].as_str().unwrap_or(""),
+    ) {
         let standard = data_root.join("std");
         private_directory(&standard, &owner)?;
         standard
@@ -387,22 +390,10 @@ async fn select_host(
     explicit: Option<&str>,
     _machine: bool,
 ) -> Result<String> {
-    let base = if let Some(name) = explicit {
-        crate::identity::normalize(name)?
-    } else if home.settings_path().try_exists()? {
-        let settings = home
-            .load_settings()
-            .await
-            .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
-        settings
-            .settings()
-            .default_identity_name()
-            .map(|name| name.as_full().to_owned())
-            .unwrap_or(crate::identity::normalize("zero.ai")?)
-    } else {
-        crate::identity::normalize("zero.ai")?
-    };
-    crate::identity::developer_name(&base)
+    if let Some(name) = explicit {
+        return crate::identity::developer_name(name);
+    }
+    crate::identity::default_developer_name(home).await
 }
 
 // Local paths resolve against the manifest that declares them, including nested dependencies.

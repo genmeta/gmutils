@@ -110,17 +110,29 @@ fn entitlement_requires_exact_domain_paid_period_and_operational_status() {
     assert!(!has_entitlement(&expired, "alice.dhttp.net", now));
 }
 #[test]
-fn root_and_bound_child_resolve_the_same_developer_target_without_prefix_authority() {
-    for input in ["alice.dhttp.net", "dev.alice.dhttp.net"] {
-        assert_eq!(
-            developer_target(&active(), input).unwrap(),
-            ("alice.dhttp.net".into(), "dev.alice.dhttp.net".into())
-        );
+fn developer_setup_preserves_the_exact_child_and_rejects_root_names() {
+    assert_eq!(
+        developer_target(&active(), "dev.alice.dhttp.net").unwrap(),
+        ("alice.dhttp.net".into(), "dev.alice.dhttp.net".into())
+    );
+    assert!(developer_target(&active(), "alice.dhttp.net").is_err());
+    assert!(developer_target(&json!({}), "dev.alex.chen.dhttp.net").is_err());
+    let empty = json!({"items": []});
+    for root in ["alex.chen.dhttp.net", "dev.wang.dhttp.net"] {
+        assert!(developer_target(&empty, root).is_err());
     }
-    assert!(developer_target(&json!({}), "alice.dhttp.net").is_err());
+    assert_eq!(
+        developer_target(&empty, "dev.dev.wang.dhttp.net").unwrap(),
+        ("dev.wang.dhttp.net".into(), "dev.dev.wang.dhttp.net".into())
+    );
+    let bound = json!({"items": [{"domain":"dev.wang.dhttp.net", "developer_domain":"dev.dev.wang.dhttp.net", "status":"active"}]});
+    assert_eq!(
+        developer_target(&bound, "dev.dev.wang.dhttp.net").unwrap(),
+        ("dev.wang.dhttp.net".into(), "dev.dev.wang.dhttp.net".into())
+    );
     let mut wrong = active();
     wrong["items"][0]["developer_domain"] = json!("other.alice.dhttp.net");
-    assert!(developer_target(&wrong, "alice.dhttp.net").is_err());
+    assert!(developer_target(&wrong, "dev.alice.dhttp.net").is_err());
 }
 #[tokio::test]
 async fn existing_entitlement_skips_checkout() {
@@ -334,7 +346,7 @@ async fn explicit_developer_apply_uses_bound_child_csr_and_preserves_pending_on_
     let tmp = tempfile::tempdir().unwrap();
     let home = DhttpHome::new(tmp.path().to_path_buf());
     let command = Developer {
-        name: "alice.dhttp.net".into(),
+        name: "dev.alice.dhttp.net".into(),
         email: None,
         verify_code: None,
         command: DeveloperCommand::Apply {

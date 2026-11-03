@@ -816,7 +816,7 @@ pub(crate) fn validate_component(
         {
             return Err(invalid(&format!("Unsupported OpenAPI path: {path}")));
         }
-        if author == "std.dhttp.net"
+        if crate::identity::is_standard_author(author)
             && path != &format!("/{name}")
             && !path.starts_with(&format!("/{name}/"))
         {

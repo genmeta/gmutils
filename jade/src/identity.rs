@@ -1,8 +1,5 @@
-//! Select existing DHTTP credentials without storing Jade-specific preferences.
-use std::io::IsTerminal;
-
+//! Resolve package authors without loading credentials or storing Jade preferences.
 use dhttp_home::{DhttpHome, HomeScope};
-use futures::StreamExt;
 
 use crate::error::{Error, Result};
 
@@ -19,21 +16,26 @@ pub(crate) fn normalize(name: &str) -> Result<String> {
     })
 }
 
-/// Jade's CLI always selects a base name; its development child hosts and signs.
+/// Validate an explicitly selected development child without rewriting its name.
 pub(crate) fn developer_name(name: &str) -> Result<String> {
     let name = normalize(name)?;
-    Ok(if name.starts_with("dev.") {
-        name
-    } else {
-        format!("dev.{name}")
-    })
+    if name == "dev.genmeta.dhttp.net" {
+        return Ok(name);
+    }
+    let child = name.strip_suffix(dhttp_home::DHTTP_SUFFIX).unwrap();
+    if !child
+        .strip_prefix("dev.")
+        .is_some_and(|root| root.contains('.'))
+    {
+        return Err(Error::new(
+            "E_IDENTITY_REQUIRED",
+            "Select the actual development child with --id, for example dev.alex.chen",
+        ));
+    }
+    Ok(name)
 }
 
-pub(crate) async fn select(
-    explicit: Option<&str>,
-    configured: Option<&str>,
-    machine: bool,
-) -> Result<String> {
+pub(crate) async fn select(explicit: Option<&str>, configured: Option<&str>) -> Result<String> {
     let configured = configured.map(normalize).transpose()?;
     let explicit = explicit.map(developer_name).transpose()?;
     if let (Some(explicit), Some(configured)) = (&explicit, &configured)
@@ -44,104 +46,35 @@ pub(crate) async fn select(
             "The developer identity selected by --id differs from package.author",
         ));
     }
-    let home = home()?;
-    let selected = match explicit.or(configured) {
-        Some(selected) => Some(selected),
-        None => {
-            if home.settings_path().try_exists()? {
-                let settings = home
-                    .load_settings()
-                    .await
-                    .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
-                settings
-                    .settings()
-                    .default_identity_name()
-                    .map(|name| developer_name(name.as_full()))
-                    .transpose()?
-            } else {
-                None
-            }
-        }
-    };
-    if let Some(selected) = selected {
-        developer_credentials(&home, &selected).await?;
+    if let Some(selected) = explicit.or(configured) {
         return Ok(selected);
     }
-    let names = home.identity_profile_names();
-    futures::pin_mut!(names);
-    let mut candidates = Vec::new();
-    while let Some(name) = names.next().await {
-        let name = name.map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
-        if developer_credentials(&home, &name).await.is_ok() {
-            candidates.push(name);
-        }
-    }
-    candidates.sort();
-    candidates.dedup();
-    match candidates.len() {
-        0 => Err(Error::new(
-            "E_IDENTITY_UNAVAILABLE",
-            "No usable local developer credentials",
-        )
-        .hint("Run jade publish --id NAME interactively from the project directory to set up developer credentials, then retry jade build --id NAME")),
-        1 => Ok(candidates.remove(0)),
-        _ if machine || !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() => Err(
-            Error::new("E_IDENTITY_REQUIRED", "Select a signing identity")
-                .hint("Run jade build --id NAME"),
-        ),
-        _ => inquire::Select::new(
-            "Signing identity (local credentials available):",
-            candidates,
-        )
-        .prompt()
-        .map_err(|e| match e {
-            inquire::InquireError::OperationCanceled
-            | inquire::InquireError::OperationInterrupted => {
-                Error::new("E_CANCELLED", "Identity selection cancelled")
-            }
-            _ => Error::new("E_IDENTITY_REQUIRED", e).hint("Run jade build --id NAME"),
-        }),
-    }
+    let home = home()?;
+    default_developer_name(&home).await
 }
 
-pub(crate) async fn developer_credentials(
-    home: &DhttpHome,
-    name: &str,
-) -> Result<(
-    Vec<qtls::CertificateDer<'static>>,
-    qtls::PrivateKeyDer<'static>,
-)> {
-    developer_credentials_sequence(home, name, None).await
-}
-pub(crate) async fn developer_credentials_sequence(
-    home: &DhttpHome,
-    name: &str,
-    sequence: Option<u32>,
-) -> Result<(
-    Vec<qtls::CertificateDer<'static>>,
-    qtls::PrivateKeyDer<'static>,
-)> {
-    let profile = home
-        .resolve_identity_profile_exactly(name)
-        .await
-        .map_err(|_| {
-            Error::new(
-                "E_IDENTITY_UNAVAILABLE",
-                format!("Cannot find local credentials for {name}"),
-            )
-        })?;
-    let credentials=genmeta_identity::code_signing::load(&profile,sequence).map_err(|e|Error::new("E_DEVELOPER_CERTIFICATE_REQUIRED",e).hint("Run jade publish --id NAME interactively from the project directory to set up developer credentials, then retry jade build --id NAME"))?;
-    let chain = credentials
-        .chain()
-        .map_err(|e| Error::new("E_SIGNATURE_INVALID", e))?;
-    Ok((
-        chain,
-        credentials
-            .key()
-            .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?,
-    ))
+/// Only a default main identity selects a child; an existing dev child stays exact.
+pub(crate) async fn default_developer_name(home: &DhttpHome) -> Result<String> {
+    if home.settings_path().try_exists()? {
+        let settings = home
+            .load_settings()
+            .await
+            .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
+        if let Some(name) = settings.settings().default_identity_name() {
+            return match developer_name(name.as_full()) {
+                Ok(name) => Ok(name),
+                Err(_) => normalize(&format!("dev.{}", name.as_full())),
+            };
+        }
+    }
+    developer_name("dev.zero.ai")
 }
 
 #[cfg(test)]
 #[path = "../tests/unit/identity.rs"]
 mod tests;
+
+/// Exact standard publishers retain the existing API and data namespace.
+pub(crate) fn is_standard_author(author: &str) -> bool {
+    matches!(author, "std.dhttp.net" | "dev.genmeta.dhttp.net")
+}

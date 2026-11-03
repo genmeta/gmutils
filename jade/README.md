@@ -1,6 +1,6 @@
 # Jade
 
-Create a Pishoo application, run it locally, then build and publish a signed
+Create a Pishoo application, build it, run it locally, then sign and publish its
 `.waz` package. This guide uses the example name `alex.chen` (Alex Chen); replace it with your own name.
 
 ## Start locally
@@ -12,7 +12,7 @@ the API, and run Pishoo locally.
 jade create hello
 cd hello
 rustup target add wasm32-wasip2
-jade run --id alex.chen
+jade run --id dev.alex.chen
 ```
 
 This runs on `dev.alex.chen`. If its ordinary identity credentials are missing,
@@ -30,37 +30,45 @@ it can differ from the identity hosting the application. Displayed names omit
 
 ## One name for every Jade command
 
-Use the same `--id alex.chen` for `run`, `build` and `publish`. Jade uses
-`dev.alex.chen` internally for local hosting, signing and publication.
-Local hosting needs ordinary identity credentials; signing and publication need
-developer credentials, which `publish` helps prepare.
+Use the same `--id dev.alex.chen` for `run`, `build` and `publish`. Jade uses
+that exact development identity for local hosting, signing and publication.
+Explicit names are never converted by adding or removing `dev.`. A main name
+such as
+`dev.wang` must be selected as `dev.dev.wang` for development.
+Build needs no identity credentials. Local hosting needs ordinary identity
+credentials; only publication needs developer credentials, which `publish` helps prepare.
 
-Without `--id`, local run uses the DHTTP default name, or `zero.ai`. Build can
-also use `package.author` or available developer credentials. `package.author`
-is the actual author recorded in the package; if configured, it must match the
+Without `--id`, local run selects the `dev` child of the DHTTP default name, or
+uses `dev.zero.ai` when no default is configured. A default of `dev.wang` selects
+`dev.dev.wang`; a default of `dev.dev.wang` stays unchanged. Build uses
+`package.author` first, otherwise the same default child or `dev.zero.ai`.
+Publication setup uses that same selection when no package author is available.
+`package.author` is the actual author recorded in the package; if configured,
+it must match the
 selected developer identity. Signed metadata always keeps the full name.
 
 ## Publish and install
 
-Start publication from the project directory. Jade guides first-time developer setup:
+Build and review the package before publishing:
 
 ```sh
-jade publish --id alex.chen
+jade build --id dev.alex.chen
+# Review build/hello-0.1.0.waz.
+jade run --id dev.alex.chen
+# After local testing, stop the watcher with Ctrl+C.
+jade publish --id dev.alex.chen
 ```
 
-If there is no built package, follow the build hint after setup:
+Build creates an unsigned package and requires no developer certificate or
+subscription. Run also builds from source and watches for changes. Publish reads
+the existing build, prepares developer credentials when needed, signs that fixed
+content and uploads it. It leaves the local build archive unchanged and never
+rebuilds sources. An already signed package is verified and uploaded unchanged.
 
-```sh
-jade build --id alex.chen
-# Review build/hello-0.1.0.waz before uploading.
-jade publish --id alex.chen
-```
-
-Setup may require confirming the developer subscription and completing checkout.
-With an existing package, Jade prepares missing upload credentials and continues
-publication. Without a package, it asks you to build and review one first.
-JSON and noninteractive runs report the required next step without starting setup.
-Publication never builds or re-signs a package implicitly.
+First-time publication may require confirming the developer subscription and
+completing checkout. Without a built package, publication asks you to build and
+review one first. JSON and noninteractive runs report the required next step
+without starting setup.
 
 To install the published application on your base identity's Pishoo service:
 
@@ -82,7 +90,7 @@ jade create hello --template fullstack  # Default
 ```
 
 `jade.toml` contains package metadata and optional exact runtime dependencies.
-Jade discovers frontend and Rust source directories automatically. Signed output
+Jade discovers frontend and Rust source directories automatically. Build output
 and Cargo's cache go under `build/`. Root `README.md` and `CHANGELOG.md` are included
 in the package when present. `--json` produces machine-readable output.
 

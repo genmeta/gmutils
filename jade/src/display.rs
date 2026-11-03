@@ -12,7 +12,7 @@ pub(super) fn identity(name: &str) -> Cow<'_, str> {
     }
 }
 pub(super) fn publisher(name: &str) -> Cow<'_, str> {
-    if name == "std.dhttp.net" {
+    if crate::identity::is_standard_author(name) {
         Cow::Borrowed("std")
     } else {
         identity(name)

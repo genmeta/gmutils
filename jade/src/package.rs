@@ -88,11 +88,19 @@ pub(crate) fn manifest_identity(bytes: &[u8]) -> Result<Value, Whatever> {
 }
 
 pub(crate) async fn inspect_package(bytes: &[u8]) -> crate::error::Result<Value> {
+    let metadata = inspect_contents(bytes).await?;
+    let author =
+        text(&metadata, "author").map_err(|e| crate::error::Error::new("E_PACKAGE_INVALID", e))?;
+    verify_signature(bytes, author)
+        .map_err(|e| crate::error::Error::new("E_SIGNATURE_INVALID", e))?;
+    Ok(metadata)
+}
+
+/// Validate build artifacts independently of publication credentials.
+pub(crate) async fn inspect_contents(bytes: &[u8]) -> crate::error::Result<Value> {
     use crate::error::Error;
     let package = container(bytes).map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
     let mut metadata = manifest_identity(bytes).map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
-    let author = text(&metadata, "author").map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
-    verify_signature(bytes, author).map_err(|e| Error::new("E_SIGNATURE_INVALID", e))?;
     (|| -> Result<Value, Whatever> {
         let document = serde_json::to_value(package.manifest())
             .whatever_context("invalid package manifest")?;

@@ -171,12 +171,12 @@ The flag also works on standalone tools. `RUST_LOG` alone does not enable logs.
 Command results, progress and errors remain visible; curl's `--verbose`
 request/response output is independent of debug logging.
 
-## Build and sign a package
+## Build and publish a package
 
 `jade build PATH` reads `jade.toml`, runs native frontend or Rust API builds when
-needed, and signs the resulting package locally. Static resources and prebuilt
+needed, and writes an unsigned package locally. Static resources and prebuilt
 Components use the same command. A running Pishoo service is not required.
-The default output is `build/NAME-VERSION.waz`; `--id` selects the signing identity.
+The default output is `build/NAME-VERSION.waz`; `--id` selects the package author via its `dev.` child.
 See [Jade](jade/README.md) for configuration, templates and JSON output.
 
 ## Access policies
@@ -266,19 +266,19 @@ The development workflow uses `jade.toml` and existing native build tools.
 ```sh
 # Static starter; no identity is needed until build.
 jade create ./hello --template static
-jade build ./hello --id alice.smith
+jade build ./hello --id dev.alice.smith
 jade publish ./hello/build/hello-0.1.0.waz
 
 # Rust API starter; Jade invokes Cargo, with no developer-written build script.
 jade create ./service --template api
 rustup target add wasm32-wasip2
-jade build ./service --id alice.smith
+jade build ./service --id dev.alice.smith
 jade publish ./service/build/service-0.1.0.waz
 
 # Default fullstack starter; the Vite frontend calls the generated Rust /hello API.
 jade create ./application
 rustup target add wasm32-wasip2
-jade build ./application --id alice.smith
+jade build ./application --id dev.alice.smith
 jade publish ./application/build/application-0.1.0.waz
 
 genmeta install std.dhttp.net/workspace --id alice.smith
@@ -309,12 +309,13 @@ Frontend build
 scripts run through npm/pnpm/Bun after installing dependencies, including build
 tools; Rust APIs compile through Cargo to WASI Components.
 Existing static directories and Components are collected directly. Build checks
-content and signatures, then atomically writes the package. `-o FILE --overwrite`
+content, then atomically writes the unsigned package. `-o FILE --overwrite`
 replaces an explicit output. Results are human-readable by default; `--json`
 provides canonical IDs and stable diagnostic codes for scripts.
 
-`jade publish FILE` reads the author from the signed package, checks matching
-credentials and uploads the fixed snapshot. It does not rebuild the package.
+`jade publish FILE` reads the package author, checks developer credentials, signs
+an unsigned build and uploads the fixed snapshot without changing the local file.
+Already signed packages are verified and uploaded unchanged. It never rebuilds sources.
 
 The new removal command requires the Pishoo detail API's `Package-Id` response
 header and sends `Expected-Package-Id` to prevent deleting a replacement publisher
@@ -337,9 +338,9 @@ genmeta install --list --id alice.smith
 Listening configuration is edited locally, including when listening is off.
 Proxy changes and package operations call the running host and retain its authorization,
 validation, dependency and atomic-install rules. Installation and updates select published store releases and resolve exact dependencies through the host. Local artifacts are used only for build and publish.
-`jade build` builds or collects declared artifacts and signs directly. Local
-signature and component checks run during build/publish; the host additionally
-checks runtime compatibility during install/update. No Pishoo CLI or pishoo-pack
+`jade build` builds or collects declared artifacts without requiring credentials.
+Component checks run during build; signing and signature checks belong to publish.
+The host additionally checks runtime compatibility during install/update. No Pishoo CLI or pishoo-pack
 executable is needed. Service start/stop/restart/status belong
 to systemctl or brew services; gmutils does not wrap them.
 

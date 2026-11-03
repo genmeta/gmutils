@@ -29,18 +29,15 @@ pub(super) enum Command {
         #[arg(long, value_enum, default_value = "fullstack")]
         template: Template,
     },
-    /// Build sources or declared artifacts and sign a package
+    /// Build sources or declared artifacts into an unsigned package
     #[command(version)]
     Build {
         /// Project directory or Jade configuration file
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// Base identity; uses its dev. child for signing
-        #[arg(short, long, value_name = "BASE")]
+        /// Actual development identity, for example dev.alex.chen
+        #[arg(short, long, value_name = "DEV_NAME")]
         id: Option<String>,
-        /// Developer certificate sequence (default: smallest usable sequence)
-        #[arg(long)]
-        signing_sequence: Option<u32>,
         /// Package output file (default build/NAME-VERSION.waz)
         #[arg(short, long, value_name = "FILE.waz")]
         output: Option<PathBuf>,
@@ -48,31 +45,31 @@ pub(super) enum Command {
         #[arg(long, requires = "output")]
         overwrite: bool,
     },
-    /// Build and watch local projects on dev.<default identity>
+    /// Build and watch local projects on the selected development identity
     #[command(version)]
     Run {
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// Base identity (default: configured default or zero.ai); runs on dev.<identity>
-        #[arg(short, long, value_name = "BASE")]
+        /// Actual development identity (default: dev.<default identity>, or dev.zero.ai)
+        #[arg(short, long, value_name = "DEV_NAME")]
         id: Option<String>,
         /// Archive previous test data and start with an empty directory
         #[arg(long)]
         fresh: bool,
     },
-    /// Publish an existing signed package; never build or sign implicitly
+    /// Sign and publish a built package; never rebuild sources
     #[command(version)]
     Publish {
-        /// Project directory, jade.toml, or an explicit signed FILE.waz
+        /// Project directory, jade.toml, or a built FILE.waz
         #[arg(default_value = ".", value_name = "PATH")]
         file: PathBuf,
-        /// Base identity; uses its dev. child for developer setup and publication
-        #[arg(short, long, value_name = "BASE")]
+        /// Actual development identity; must match the built package author
+        #[arg(short, long, value_name = "DEV_NAME")]
         id: Option<String>,
         /// Account email used only when developer setup is needed
         #[arg(long)]
         email: Option<String>,
-        /// Local developer sequence to use for the upload connection
+        /// Developer certificate sequence for signing and upload
         #[arg(long)]
         signing_sequence: Option<u32>,
     },
@@ -100,8 +97,7 @@ pub(super) async fn run(command: Command, machine: bool) -> Result<Value> {
             id,
             output,
             overwrite,
-            signing_sequence,
-        } => crate::pack::run(path, output, id, overwrite, machine, signing_sequence).await,
+        } => crate::pack::run(path, output, id, overwrite).await,
         Command::Run { path, id, fresh } => crate::run::run(path, id, fresh, machine).await,
         Command::Publish {
             file,
@@ -234,7 +230,7 @@ serde_json = "1"
     if matches!(template, Template::Api | Template::Fullstack) {
         readme.push_str("API: `api/src/lib.rs`. Requires Rust with `wasm32-wasip2` installed. Keep `ROUTES` in sync with the handlers.\n\n");
     }
-    readme.push_str("## Develop locally\n\nReplace `alex.chen` with your own base identity. Start Pishoo, then run:\n\n```sh\njade run --id alex.chen\n```\n\nJade runs on `dev.alex.chen`, using ordinary identity credentials. Follow its setup hint if credentials are missing. No developer certificate or subscription is needed. Changes rebuild automatically; Ctrl+C removes local code and keeps data. Without `--id`, the base is your DHTTP default, or `zero.ai`.\n\n");
+    readme.push_str("## Develop locally\n\nReplace `dev.alex.chen` with your actual development identity. Start Pishoo, then run:\n\n```sh\njade run --id dev.alex.chen\n```\n\nJade runs on `dev.alex.chen`, using ordinary identity credentials. Follow its setup hint if credentials are missing. No developer certificate or subscription is needed. Changes rebuild automatically; Ctrl+C removes local code and keeps data. Without `--id`, Jade selects the `dev` child of your DHTTP default identity, retaining an existing development child, or uses `dev.zero.ai` when no default is configured.\n\n");
     if matches!(
         template,
         Template::Static | Template::Web | Template::Fullstack
@@ -246,7 +242,7 @@ serde_json = "1"
     if matches!(template, Template::Api | Template::Fullstack) {
         readme.push_str(&format!("GET `/{name}/whoami` returns the verified visitor's name, or `anonymous`. The visitor can differ from the hosting identity.\n\n"));
     }
-    readme.push_str(&format!("## Publish\n\nStart publication from this project. Jade guides first-time developer setup:\n\n```sh\njade publish --id alex.chen\n```\n\nIf no package exists, follow the build hint after setup, review the output, then publish again:\n\n```sh\njade build --id alex.chen\n# Review build/{name}-0.1.0.waz, then upload it.\njade publish --id alex.chen\n```\n\nUse `--id alex.chen` for all Jade commands. Jade uses `dev.alex.chen` internally for hosting and signing; the signed package keeps that author.\n\nSigned packages and Cargo's cache go under `build/`. Root `README.md` and `CHANGELOG.md` are included when present.\n"));
+    readme.push_str(&format!("## Build and publish\n\nBuild and review the unsigned package, then publish it:\n\n```sh\njade build --id dev.alex.chen\n# Review build/{name}-0.1.0.waz, then upload it.\njade publish --id dev.alex.chen\n```\n\nBuild requires no developer certificate or subscription. Publish guides first-time developer setup, signs the existing build and uploads it without changing the local archive or rebuilding sources. Already signed packages are verified and uploaded unchanged.\n\nUse `--id dev.alex.chen` for all Jade commands. Jade uses the selected name directly for hosting and the package author; it never adds or removes `dev.`. Local hosting uses ordinary identity credentials; only publication needs developer credentials.\n\nBuild output and Cargo's cache go under `build/`. Root `README.md` and `CHANGELOG.md` are included when present.\n"));
     fs::write(root.join("README.md"), readme)?;
     commit_directory(root, &target).map_err(|e| {
         Error::new(

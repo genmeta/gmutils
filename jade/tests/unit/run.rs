@@ -12,15 +12,26 @@ fn project(root: &Path) {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[tokio::test]
-async fn publishes_plain_files_without_credentials_or_running_host_and_retains_them() {
+async fn build_then_run_publishes_plain_files_without_developer_credentials() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("project");
     std::fs::create_dir(&source).unwrap();
     project(&source);
     let profile = root.path().join("profile");
     std::fs::create_dir(&profile).unwrap();
-    let (name, files) = build(&source, "test.sky.lee.dhttp.net").await.unwrap();
+    crate::pack::run(source.clone(), None, Some("dev.test.sky.lee".into()), false)
+        .await
+        .unwrap();
+    let release = source.join("build/hello-1.0.0.waz");
+    let original = std::fs::read(&release).unwrap();
+    assert!(
+        !crate::archive::waz_read(&original)
+            .unwrap()
+            .contains_key("signature.json")
+    );
+    let (name, files) = build(&source, "dev.test.sky.lee.dhttp.net").await.unwrap();
     assert!(!files.contains_key("signature.json"));
+    assert_eq!(crate::archive::waz_read(&original).unwrap(), files);
     publish(&profile, &name, &files, false).unwrap();
     assert_eq!(
         std::fs::read(profile.join("dev/hello/app/index.html")).unwrap(),
@@ -28,10 +39,10 @@ async fn publishes_plain_files_without_credentials_or_running_host_and_retains_t
     );
     assert!(profile.join("dev/hello/manifest.json").exists());
     assert!(!profile.join("ssl").exists());
-    assert!(!source.join("build/hello-1.0.0.waz").exists());
+    assert_eq!(std::fs::read(&release).unwrap(), original);
     std::fs::write(profile.join(".volume/hello/database"), "test data").unwrap();
     std::fs::write(source.join("public/index.html"), "second").unwrap();
-    let (_, files) = build(&source, "test.sky.lee.dhttp.net").await.unwrap();
+    let (_, files) = build(&source, "dev.test.sky.lee.dhttp.net").await.unwrap();
     publish(&profile, &name, &files, false).unwrap();
     assert_eq!(
         std::fs::read(profile.join("dev/hello/app/index.html")).unwrap(),
@@ -138,7 +149,7 @@ async fn stop_removes_app_and_api_but_preserves_data_and_later_publishers() {
 }
 
 #[tokio::test]
-async fn default_base_identity_selects_its_development_child() {
+async fn default_identity_resolves_its_child_while_explicit_identity_is_used_exactly() {
     let root = tempfile::tempdir().unwrap();
     let home = dhttp_home::DhttpHome::new(root.path().to_path_buf());
     assert_eq!(
@@ -146,12 +157,36 @@ async fn default_base_identity_selects_its_development_child() {
         "dev.zero.ai.dhttp.net"
     );
     assert_eq!(
-        select_host(&home, Some("one.ai"), true).await.unwrap(),
+        select_host(&home, Some("dev.one.ai"), true).await.unwrap(),
         "dev.one.ai.dhttp.net"
     );
     assert_eq!(
         select_host(&home, Some("dev.zero.ai"), true).await.unwrap(),
         "dev.zero.ai.dhttp.net"
+    );
+    for name in ["one.ai", "dev.wang"] {
+        assert_eq!(
+            select_host(&home, Some(name), true).await.unwrap_err().code,
+            "E_IDENTITY_REQUIRED"
+        );
+    }
+    std::fs::write(
+        home.settings_path(),
+        "[default]\nname='dev.wang.dhttp.net'\n",
+    )
+    .unwrap();
+    assert_eq!(
+        select_host(&home, None, true).await.unwrap(),
+        "dev.dev.wang.dhttp.net"
+    );
+    std::fs::write(
+        home.settings_path(),
+        "[default]\nname='dev.dev.wang.dhttp.net'\n",
+    )
+    .unwrap();
+    assert_eq!(
+        select_host(&home, None, true).await.unwrap(),
+        "dev.dev.wang.dhttp.net"
     );
 }
 
