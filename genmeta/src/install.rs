@@ -669,8 +669,11 @@ pub(super) async fn run(
             .whatever_context("Local credentials have no valid owner hash")?;
     let owner = ski.owner_hash().clone();
     if operation == "list" {
-        let packages =
-            display::package_output(catalog(&endpoint, &owner, None, false, false).await?.unwrap());
+        let packages = display::package_output(
+            catalog(&endpoint, &owner, None, false, false)
+                .await?
+                .unwrap(),
+        );
         println!(
             "{}",
             serde_json::to_string_pretty(&packages).whatever_context("Cannot encode catalog")?
@@ -678,7 +681,14 @@ pub(super) async fn run(
         return Ok(());
     }
     let target = target.as_deref().unwrap();
-    let current = catalog(&endpoint, &owner, Some(target), operation == "remove", matches!(operation, "install" | "update")).await?;
+    let current = catalog(
+        &endpoint,
+        &owner,
+        Some(target),
+        operation == "remove",
+        matches!(operation, "install" | "update"),
+    )
+    .await?;
     if matches!(operation, "info" | "remove") {
         let Some(current) = current else {
             whatever!("Package {} is not installed", display::package_id(target))
@@ -815,10 +825,14 @@ async fn host_exchange(
 #[path = "../tests/unit/install.rs"]
 mod tests;
 
-
 fn require_install_host(headers: &http::HeaderMap) -> Result<(), Whatever> {
-    let version=headers.get("pishoo-version").and_then(|value|value.to_str().ok()).and_then(|value|semver::Version::parse(value).ok());
-    ensure_whatever!(version.is_some_and(|version|version>=semver::Version::new(0,9,1)),
-        "Applications require Pishoo 0.9.1 or newer. Upgrade Pishoo with Homebrew and restart its service before installing or updating applications");
+    let version = headers
+        .get("pishoo-version")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| semver::Version::parse(value).ok());
+    ensure_whatever!(
+        version.is_some_and(|version| version >= semver::Version::new(0, 9, 1)),
+        "Applications require Pishoo 0.9.1 or newer. Upgrade Pishoo with Homebrew and restart its service before installing or updating applications"
+    );
     Ok(())
 }

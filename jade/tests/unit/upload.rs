@@ -891,13 +891,16 @@ fn signed_snapshot_is_durable_before_upload_and_changed_inputs_are_preserved() {
     assert_eq!(std::fs::read(&file).unwrap(), b"signed bytes");
     assert!(persist_signed_snapshot(&file, b"unsigned", b"another signature").is_err());
     assert_eq!(std::fs::read(&file).unwrap(), b"signed bytes");
-    std::os::unix::fs::symlink(&file, root.path().join("link.waz")).unwrap();
-    assert!(
-        persist_signed_snapshot(
-            &root.path().join("link.waz"),
-            b"signed bytes",
-            b"replacement"
-        )
-        .is_err()
-    );
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&file, root.path().join("link.waz")).unwrap();
+        assert!(
+            persist_signed_snapshot(
+                &root.path().join("link.waz"),
+                b"signed bytes",
+                b"replacement"
+            )
+            .is_err()
+        );
+    }
 }

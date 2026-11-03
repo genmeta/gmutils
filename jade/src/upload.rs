@@ -828,6 +828,7 @@ fn persist_signed_file(path: &std::path::Path, bytes: &[u8]) -> crate::error::Re
     staged
         .persist(path)
         .map_err(|e| crate::error::Error::new("E_PACKAGE_INVALID", e))?;
+    #[cfg(unix)]
     std::fs::File::open(parent)?.sync_all()?;
     Ok(())
 }

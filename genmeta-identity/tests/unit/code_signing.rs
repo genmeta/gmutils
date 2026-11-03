@@ -447,3 +447,13 @@ fn unified_identity_validates_for_tls_and_signing_and_loads_one_key_pair() {
     );
     assert!(load_with_root(&p, Some(999), root.as_ref()).is_err());
 }
+
+#[test]
+fn private_credentials_can_be_created_replaced_and_read_on_supported_platforms() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("credentials.json");
+    save_private(&file, b"first credential").unwrap();
+    save_private(&file, b"replacement credential").unwrap();
+    assert_eq!(read_private(&file).unwrap(), b"replacement credential");
+    assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 1);
+}

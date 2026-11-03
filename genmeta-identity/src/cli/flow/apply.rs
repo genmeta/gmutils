@@ -362,13 +362,11 @@ fn replacement_sequence(
 #[derive(Debug)]
 enum ApplyAttempt {
     Certificate(Box<CertificateDetail>),
-    InstalledDeveloper,
     ReplanMissing,
 }
 
 struct ApplyAttemptContext<'a> {
     command: &'a Apply,
-    dhttp_home: &'a DhttpHome,
     cert_server: &'a CertServer,
     kind: IdentityKind,
     device_name: &'a str,
@@ -377,13 +375,13 @@ struct ApplyAttemptContext<'a> {
     renewal_operation_key: Option<&'a str>,
 }
 
-async fn attempt_apply_with_candidates(
+async fn attempt_apply_with_candidates<L: super::auth_plan::ExactIdentityLoader>(
     resolved: &mut ResolvedApplyTarget,
     context: ApplyAttemptContext<'_>,
+    loader: L,
 ) -> Result<ApplyAttempt, Error> {
     let ApplyAttemptContext {
         command,
-        dhttp_home,
         cert_server,
         kind,
         device_name,
@@ -391,9 +389,7 @@ async fn attempt_apply_with_candidates(
         key_material,
         renewal_operation_key,
     } = context;
-    // Certificate selection needs account-scoped developer entitlement.
-    let specs = vec![super::auth_plan::AuthCandidateSpec::Email];
-    let loader = super::auth_plan::HomeExactIdentityLoader::new(dhttp_home);
+    let specs = super::auth_plan::candidate_specs(&resolved.target, resolved.remote);
     let mut candidates = super::auth_plan::AuthCandidateRunner::new(loader, specs);
     let mut last_rejection = None;
 
@@ -467,21 +463,15 @@ async fn attempt_apply_with_candidates(
                 )
                 .await?;
 
-                let outcome =
-                    register_with_email(cert_server, &resolved.target, &token, interactive).await?;
-                print_new_name(outcome);
-                resolved.remote = RemoteTargetState::Exists;
-                if crate::cli::developer::apply_for_account(
-                    dhttp_home,
-                    cert_server,
-                    &token,
-                    resolved.target.full_name(),
-                    device_name,
-                    command.developer,
-                )
-                .await?
-                {
-                    return Ok(ApplyAttempt::InstalledDeveloper);
+                if matches!(
+                    resolved.remote,
+                    RemoteTargetState::Missing | RemoteTargetState::Unknown
+                ) {
+                    let outcome =
+                        register_with_email(cert_server, &resolved.target, &token, interactive)
+                            .await?;
+                    print_new_name(outcome);
+                    resolved.remote = RemoteTargetState::Exists;
                 }
 
                 let first = request_certificate(
@@ -672,6 +662,12 @@ async fn finish_installed(context: InstallFinishContext<'_>) -> Result<(), Error
     super::transcript::print_line(INSTALLED);
 
     #[cfg(unix)]
+    if crate::cli::developer::installed_sequence(
+        &dhttp_home
+            .identity_profile(resolved.target.full_name())
+            .expect("validated identity name"),
+    )?
+    .is_none()
     {
         let identity_enabled = match super::auto_renew::enable_identity(
             dhttp_home,
@@ -726,6 +722,50 @@ pub(crate) async fn run(
     let kind = APPLY_CERTIFICATE_KIND;
     let device_name =
         super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
+    let profile = dhttp_home
+        .identity_profile(resolved.target.full_name())
+        .expect("validated identity name");
+    let developer = command.developer
+        || crate::cli::developer::installed_sequence(&profile)?.is_some()
+        || crate::code_signing::directory(&profile)
+            .join("apply.pending.json")
+            .try_exists()
+            .map_err(|e| Error::without_source(e.to_string()))?;
+    if developer {
+        // The developer subscription provisions its child independently of ordinary child quota.
+        let token = super::email::run_cert_server_email_session(
+            cert_server,
+            super::email::EmailLogin::Account,
+            command.email.as_deref(),
+            command.verify_code.as_deref(),
+            interactive,
+        )
+        .await?;
+        crate::cli::developer::apply_for_account(
+            dhttp_home,
+            cert_server,
+            &token,
+            resolved.target.full_name(),
+            &device_name,
+            true,
+        )
+        .await?;
+        if let Err(error) = super::key_material::PendingRenewal::remove_for_name(
+            dhttp_home,
+            resolved.target.dhttp_name(),
+        )
+        .await
+        {
+            tracing::warn!(error = %snafu::Report::from_error(&error), "failed to remove obsolete TLS renewal material");
+        }
+        return finish_installed(InstallFinishContext {
+            dhttp_home,
+            home_scope,
+            resolved: &resolved,
+            interactive,
+        })
+        .await;
+    }
     let replacement_sequence = replacement_sequence(&resolved, kind);
     let pending_renewal = match replacement_sequence {
         Some(sequence) => match super::key_material::PendingRenewal::load(
@@ -772,7 +812,6 @@ pub(crate) async fn run(
             &mut resolved,
             ApplyAttemptContext {
                 command,
-                dhttp_home,
                 cert_server,
                 kind,
                 device_name: &request_device_name,
@@ -780,6 +819,7 @@ pub(crate) async fn run(
                 key_material: &mut key_material,
                 renewal_operation_key,
             },
+            super::auth_plan::HomeExactIdentityLoader::new(dhttp_home),
         )
         .await?
         {
@@ -794,23 +834,6 @@ pub(crate) async fn run(
                     &key_material,
                     &detail,
                 )
-                .await;
-            }
-            ApplyAttempt::InstalledDeveloper => {
-                if let Err(error) = super::key_material::PendingRenewal::remove_for_name(
-                    dhttp_home,
-                    resolved.target.dhttp_name(),
-                )
-                .await
-                {
-                    tracing::warn!(error = %snafu::Report::from_error(&error), "failed to remove obsolete TLS renewal material");
-                }
-                return finish_installed(InstallFinishContext {
-                    dhttp_home,
-                    home_scope,
-                    resolved: &resolved,
-                    interactive,
-                })
                 .await;
             }
             ApplyAttempt::ReplanMissing => {

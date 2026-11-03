@@ -1,7 +1,6 @@
 use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use dhttp_home::{DhttpHome, HomeScope};
@@ -13,11 +12,11 @@ use super::{
 };
 
 fn unique_test_dir() -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock should be after unix epoch")
-        .as_nanos();
-    std::env::temp_dir().join(format!("genmeta-auto-renew-{}-{nonce}", std::process::id()))
+    tempfile::Builder::new()
+        .prefix("genmeta-auto-renew-")
+        .tempdir()
+        .unwrap()
+        .keep()
 }
 
 #[test]

@@ -463,6 +463,7 @@ fn save_private(path: &Path, bytes: &[u8]) -> Result<(), Whatever> {
             "cannot save developer credentials".into(),
         ));
     }
+    #[cfg(unix)]
     fs::File::open(path.parent().unwrap())
         .and_then(|f| f.sync_all())
         .whatever_context("cannot sync developer directory")?;

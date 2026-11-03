@@ -748,10 +748,16 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
     assert_eq!(removed["removed"], true);
     assert_eq!(removed["data_retained"], true);
     assert!(
-        super::catalog(&endpoint, &owner, Some("alice.dhttp.net/demo"), false, false)
-            .await
-            .unwrap()
-            .is_none()
+        super::catalog(
+            &endpoint,
+            &owner,
+            Some("alice.dhttp.net/demo"),
+            false,
+            false
+        )
+        .await
+        .unwrap()
+        .is_none()
     );
     assert_eq!(requests.lock().unwrap().len(), 8);
     drop(listening);
@@ -796,16 +802,23 @@ fn update_follows_committed_maintenance_author_and_keeps_canonical_id_checks() {
     assert!(check_install_version("update", Some(&current), &other).is_err());
 }
 
-
 #[test]
 fn installation_requires_a_host_with_developer_author_and_migration_support() {
-    for version in [None,Some("0.9.0"),Some("0.9.1-preview.1"),Some("invalid")] {
-        let mut headers=http::HeaderMap::new();
-        if let Some(version)=version {headers.insert("pishoo-version",version.parse().unwrap());}
+    for version in [
+        None,
+        Some("0.9.0"),
+        Some("0.9.1-preview.1"),
+        Some("invalid"),
+    ] {
+        let mut headers = http::HeaderMap::new();
+        if let Some(version) = version {
+            headers.insert("pishoo-version", version.parse().unwrap());
+        }
         assert!(require_install_host(&headers).is_err());
     }
-    for version in ["0.9.1","0.9.1+build.2","0.10.0-preview.1","1.0.0"] {
-        let mut headers=http::HeaderMap::new();headers.insert("pishoo-version",version.parse().unwrap());
+    for version in ["0.9.1", "0.9.1+build.2", "0.10.0-preview.1", "1.0.0"] {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("pishoo-version", version.parse().unwrap());
         require_install_host(&headers).unwrap();
     }
 }

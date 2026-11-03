@@ -186,6 +186,29 @@ pub(crate) async fn build_files(
     let mut remaining = 64 * 1024 * 1024 - backend.len();
     let mut documents = BTreeMap::new();
     let mut excluded_content = excluded.to_vec();
+    for path in config
+        .dependencies
+        .iter()
+        .filter_map(|dependency| dependency.path.as_ref())
+    {
+        let path =
+            resolved_output(&project.join(path)).map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
+        let path = if path.is_file() || path.file_name().is_some_and(|name| name == "jade.toml") {
+            path.parent().unwrap().to_path_buf()
+        } else {
+            path
+        };
+        if directory
+            .as_ref()
+            .is_some_and(|directory| directory.starts_with(&path))
+        {
+            return Err(Error::new(
+                "E_CONFIG_INVALID",
+                "Frontend resources cannot be inside a local dependency project",
+            ));
+        }
+        excluded_content.push(path);
+    }
     for name in ["README.md", "CHANGELOG.md"] {
         let path = project.join(name);
         excluded_content.push(path.clone());
@@ -597,6 +620,11 @@ fn public_directory(
         if excluded.contains(&entry.path()) {
             continue;
         }
+        let kind = entry.file_type()?;
+        // Nested Jade projects are source trees, including their local-only manifests and caches.
+        if kind.is_dir() && entry.path().join("jade.toml").try_exists()? {
+            continue;
+        }
         *count += 1;
         if *count > 4096 {
             return Err("too many content entries".into());
@@ -615,7 +643,6 @@ fn public_directory(
         {
             return Err("invalid content file path".into());
         }
-        let kind = entry.file_type()?;
         let item = if kind.is_dir() {
             DirEntry::Dir(public_directory(
                 &entry.path(),

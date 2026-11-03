@@ -225,6 +225,9 @@ impl Developer {
                 pending
                     .install(&profile, &certificate)
                     .map_err(local_error)?;
+                if install_transport {
+                    require_manual_renewal(home, &domain, sequence).await;
+                }
                 json!({"domain":domain,"root_domain":root,"transport_installed":install_transport,"purpose":"code_signing","sequence":sequence,"fingerprint_sha256":fingerprint,"valid_not_after":certificate.certificate.valid_not_after})
             }
             DeveloperCommand::Pricing | DeveloperCommand::Status { .. } => unreachable!(),
@@ -273,6 +276,30 @@ pub(super) fn installed_sequence(
     let ski = dhttp_home::certificate::extract_dhttp_subject_key_identifier(&chain)
         .map_err(|e| Error::without_source(e.to_string()))?;
     Ok(Some(ski.chain().sequence().get()))
+}
+
+/// Developer renewal is account-only; cron cannot obtain a fresh email verification code.
+pub(super) async fn require_manual_renewal(home: &DhttpHome, domain: &str, sequence: u32) {
+    #[cfg(unix)]
+    if let Err(error) = super::flow::auto_renew::disable_identity(
+        home,
+        dhttp_identity::name::DhttpName::try_from(domain).expect("validated identity name"),
+        "developer-account-verification-required",
+    )
+    .await
+    {
+        super::flow::transcript::print_warning(&format!(
+            "Could not disable automatic renewal for {domain}: {error}"
+        ));
+    }
+    #[cfg(not(unix))]
+    let _ = home;
+    let name = domain
+        .strip_suffix(dhttp_home::DHTTP_SUFFIX)
+        .unwrap_or(domain);
+    super::flow::transcript::print_warning(&format!(
+        "Developer certificates require account email verification and cannot renew automatically. Run `genmeta identity developer {name} renew --sequence {sequence}` before this certificate expires."
+    ));
 }
 
 fn has_entitlement(subscriptions: &Value, domain: &str, now: i64) -> bool {

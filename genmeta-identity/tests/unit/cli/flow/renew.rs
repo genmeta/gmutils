@@ -58,6 +58,139 @@ fn renewal_is_due_only_within_fifteen_days_or_when_expiry_is_unknown() {
     assert!(!renewal_is_due(Some(now + 30 * DAY), now));
 }
 
+async fn developer_home() -> (tempfile::TempDir, DhttpHome) {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = DhttpHome::new(tmp.path().to_path_buf());
+    let profile = home.identity_profile("dev.alex.chen.dhttp.net").unwrap();
+    // Batch filtering inspects purpose before trust assessment; it must never use this test key online.
+    profile
+        .save_identity(
+            concat!(
+                include_str!("../../../fixtures/code-signing/developer.cert.pem"),
+                include_str!("../../../fixtures/code-signing/code-issuer.cert.pem")
+            )
+            .as_bytes(),
+            include_bytes!("../../../fixtures/code-signing/developer.key.pem"),
+        )
+        .await
+        .unwrap();
+    (tmp, home)
+}
+
+#[tokio::test]
+async fn batch_renewal_skips_developers_without_requesting_email_or_creating_a_csr() {
+    let (_tmp, home) = developer_home().await;
+    let command = Renew {
+        name: None,
+        all: true,
+        force: true,
+        device_name: None,
+        email: None,
+        verify_code: None,
+    };
+    super::renew_all(&command, &home, HomeScope::User, &dummy_cert_server())
+        .await
+        .unwrap();
+    let profile = home.identity_profile("dev.alex.chen.dhttp.net").unwrap();
+    assert!(!crate::code_signing::directory(&profile).exists());
+    #[cfg(unix)]
+    assert_eq!(
+        std::fs::read_to_string(profile.join(".auto-renew-disabled")).unwrap(),
+        "developer-account-verification-required\n"
+    );
+}
+
+#[tokio::test]
+async fn developer_not_due_does_not_reenable_automatic_renewal() {
+    let (_tmp, home) = developer_home().await;
+    let command = Renew {
+        name: Some("dev.alex.chen".into()),
+        all: false,
+        force: false,
+        device_name: None,
+        email: None,
+        verify_code: None,
+    };
+    let preflight = RenewPreflight {
+        target: IdentityTarget::parse("dev.alex.chen.dhttp.net").unwrap(),
+        kind: crate::cli::flow::kind::IdentityKind::Primary,
+        sequence: 1,
+    };
+    super::renew_one(
+        &command,
+        &home,
+        HomeScope::User,
+        &dummy_cert_server(),
+        preflight,
+        Some(super::local::now_unix_timestamp() + 30 * 24 * 60 * 60),
+        false,
+    )
+    .await
+    .unwrap();
+    let profile = home.identity_profile("dev.alex.chen.dhttp.net").unwrap();
+    assert!(!crate::code_signing::directory(&profile).exists());
+    #[cfg(unix)]
+    assert!(
+        !super::super::auto_renew::is_identity_enabled(
+            &home,
+            IdentityTarget::parse("dev.alex.chen.dhttp.net")
+                .unwrap()
+                .dhttp_name()
+        )
+        .await
+        .unwrap()
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn ordinary_tls_keeps_automatic_renewal_with_separate_signing_credentials() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = DhttpHome::new(tmp.path().to_path_buf());
+    let profile = home.identity_profile("alice.smith.dhttp.net").unwrap();
+    profile
+        .save_identity(
+            include_bytes!("../../../fixtures/install/chain.pem"),
+            include_bytes!("../../../fixtures/install/leaf.key"),
+        )
+        .await
+        .unwrap();
+    std::fs::create_dir_all(crate::code_signing::directory(&profile).join("1")).unwrap();
+    let target = IdentityTarget::parse("alice.smith").unwrap();
+    super::super::auto_renew::disable_identity(&home, target.dhttp_name(), "old state")
+        .await
+        .unwrap();
+    let command = Renew {
+        name: Some("alice.smith".into()),
+        all: false,
+        force: false,
+        device_name: None,
+        email: None,
+        verify_code: None,
+    };
+    let preflight = RenewPreflight {
+        target: target.clone(),
+        kind: crate::cli::flow::kind::IdentityKind::Primary,
+        sequence: 1,
+    };
+    super::renew_one(
+        &command,
+        &home,
+        HomeScope::User,
+        &dummy_cert_server(),
+        preflight,
+        Some(super::local::now_unix_timestamp() + 30 * 24 * 60 * 60),
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(
+        super::super::auto_renew::is_identity_enabled(&home, target.dhttp_name())
+            .await
+            .unwrap()
+    );
+}
+
 #[test]
 fn batch_targets_follow_the_deterministic_inventory_order() {
     let alice = summary(

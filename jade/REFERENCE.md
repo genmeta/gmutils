@@ -25,6 +25,9 @@ private key nor a byte-identical certificate is required just to upload it.
 Renew with `genmeta identity developer DEV_NAME renew --sequence N`. Issuance and
 renewal check entitlement; interactive preparation can confirm a quote and resume
 checkout if needed. Noninteractive preparation never creates an order implicitly.
+Developer certificates require account email verification for renewal and are
+excluded from the automatic `genmeta identity renew --all` job. Renew them
+explicitly before expiry; ordinary TLS identities continue to renew automatically.
 The pending CSR, private key and operation are preserved across failures. Initial
 issuance replays the same CSR under the server ownership lock rather than creating
 a second sequence after a lost response. A new independent CSR can create another
@@ -67,8 +70,9 @@ Dependencies with `path` are built and watched locally, recursively. Paths resol
 relative to their declaring `jade.toml`; local author/name/version must match.
 Dependencies without `path` are installed from the store at the exact declared
 version. Conflicting versions, dependency cycles and duplicate local names fail
-explicitly. `path` is omitted from release metadata and does not change build or
-publication behavior.
+explicitly. `path` is omitted from release metadata. Build and publish do not
+recursively build dependencies. Local dependency source trees and nested Jade
+projects are excluded when collecting static frontend resources.
 
 Jade watches every local project and publishes each complete directory atomically
 to `<dev-identity>/dev/<name>/`, containing `manifest.json`, optional `lib.wasm`,

@@ -332,26 +332,28 @@ async fn renew_one(
     interactive: bool,
 ) -> Result<(), Error> {
     let now = local::now_unix_timestamp();
-    let existing_pending = super::key_material::PendingRenewal::load(
-        dhttp_home,
-        preflight.target.dhttp_name(),
-        preflight.certificate_kind(),
-        preflight.sequence,
-    )
-    .await?;
-    if existing_pending.is_none() && !command.force && !renewal_is_due(expires_at, now) {
-        super::transcript::print_line(renew_not_due_message(
-            preflight.target.short_name(),
-            expires_at.expect("renewal is not due only when expiry is known"),
-            now,
-        ));
-        enable_automatic_renewal(dhttp_home, &preflight).await;
-        return Ok(());
-    }
     let profile = dhttp_home
         .identity_profile(preflight.target.full_name())
         .expect("validated identity name");
     if let Some(sequence) = crate::cli::developer::installed_sequence(&profile)? {
+        let pending = crate::code_signing::directory(&profile)
+            .join(format!("renew-{sequence}.pending.json"))
+            .try_exists()
+            .map_err(|e| Error::without_source(e.to_string()))?;
+        if !pending && !command.force && !renewal_is_due(expires_at, now) {
+            super::transcript::print_line(renew_not_due_message(
+                preflight.target.short_name(),
+                expires_at.expect("renewal is not due only when expiry is known"),
+                now,
+            ));
+            crate::cli::developer::require_manual_renewal(
+                dhttp_home,
+                preflight.target.full_name(),
+                sequence,
+            )
+            .await;
+            return Ok(());
+        }
         crate::cli::developer::Developer {
             name: preflight.target.full_name().to_string(),
             email: command.email.clone(),
@@ -368,6 +370,21 @@ async fn renew_one(
         {
             tracing::warn!(error = %snafu::Report::from_error(&error), "failed to remove obsolete TLS renewal material");
         }
+        return Ok(());
+    }
+    let existing_pending = super::key_material::PendingRenewal::load(
+        dhttp_home,
+        preflight.target.dhttp_name(),
+        preflight.certificate_kind(),
+        preflight.sequence,
+    )
+    .await?;
+    if existing_pending.is_none() && !command.force && !renewal_is_due(expires_at, now) {
+        super::transcript::print_line(renew_not_due_message(
+            preflight.target.short_name(),
+            expires_at.expect("renewal is not due only when expiry is known"),
+            now,
+        ));
         enable_automatic_renewal(dhttp_home, &preflight).await;
         return Ok(());
     }
@@ -473,6 +490,18 @@ async fn renew_all(
         }
 
         let result = async {
+            let profile = dhttp_home
+                .identity_profile(target.full_name())
+                .expect("validated identity name");
+            if let Some(sequence) = crate::cli::developer::installed_sequence(&profile)? {
+                crate::cli::developer::require_manual_renewal(
+                    dhttp_home,
+                    target.full_name(),
+                    sequence,
+                )
+                .await;
+                return Ok(());
+            }
             let (preflight, expires_at) =
                 resolve_preflight(command, dhttp_home, Some(target.short_name())).await?;
             renew_one(
@@ -515,7 +544,12 @@ pub(crate) async fn run(
     }
     let (preflight, expires_at) =
         resolve_preflight(command, dhttp_home, command.name.as_deref()).await?;
-    ensure_automatic_renewal(home_scope).await;
+    let profile = dhttp_home
+        .identity_profile(preflight.target.full_name())
+        .expect("validated identity name");
+    if crate::cli::developer::installed_sequence(&profile)?.is_none() {
+        ensure_automatic_renewal(home_scope).await;
+    }
     renew_one(
         command,
         dhttp_home,

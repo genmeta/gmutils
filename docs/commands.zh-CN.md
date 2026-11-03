@@ -627,3 +627,5 @@ jade publish
 `genmeta identity apply NAME` 保持普通身份申请，不因主名字有开发者订阅就把请求目标替换成 dev。`genmeta identity apply DEV_NAME --developer` 或 `genmeta identity developer DEV_NAME apply` 使用实际开发子名字申请三用途证书，不将主名字自动转换；续签可使用 `genmeta identity developer DEV_NAME renew --sequence N`。需要登录时沿用账户邮箱验证；非交互缺少权益不自动下单。显式 purchase、账单、状态、吊销和自动续费管理命令继续可用，精确 status 使用证书实际 dev 域名。
 
 待处理 CSR、私钥与购买操作在失败后保留，相同 CSR 的重试不会重复签发。已有普通 dev TLS 凭据不被覆盖；开发者证书存于用途目录，也可作为同名 TLS 凭据。上传使用所选开发者凭据与原包作者／owner_hash 绑定，允许不同序列或续签后的凭据上传仍有效的原始包。
+
+开发者证书续期要求账户邮箱验证，不参与 `genmeta identity renew --all` 的自动续期任务。请在到期前显式运行 `genmeta identity developer DEV_NAME renew --sequence N`；普通 TLS 身份继续自动续期。开发者申请由订阅直接准备固定子名字，不占用普通子名字的注册流程。
