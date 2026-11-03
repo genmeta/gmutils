@@ -251,7 +251,10 @@ nslookup accept the default `--interface '*'`; other outbound interface
 patterns are rejected until the runtime exposes interface selection. NAT and
 mDNS discovery accept interface names or local IPs as report/discovery filters.
 Missing or stale local OCSP staples are fetched, validated and cached when an
-identity is used.
+identity is used. The proxy also renews its loaded identity's staple in the
+background, halfway through its remaining validity and at least once per day.
+Failed renewals retry after one minute; successful renewals update subsequent
+requests, including requests on existing HTTP keep-alive connections.
 
 ## Package management
 
