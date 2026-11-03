@@ -31,38 +31,15 @@ pub(super) async fn run(
     root: Option<String>,
     email: Option<String>,
     signing_sequence: Option<u32>,
-    prepare: bool,
     machine: bool,
 ) -> crate::error::Result<Value> {
     use crate::error::Error;
     let project = file.is_dir() || file.file_name().is_some_and(|name| name == "jade.toml");
     let interactive = !machine && std::io::IsTerminal::is_terminal(&std::io::stdin());
-    if !project && (root.is_some() || email.is_some() || prepare) {
-        return Err(Error::new(
-            "E_USAGE",
-            "--id and --email prepare a project identity; explicit packages keep their signed author",
-        ));
-    }
-    if prepare {
-        let author = prepare_project_identity(
-            &file,
-            root.as_deref(),
-            email.as_deref(),
-            None,
-            signing_sequence,
-            interactive,
-        )
-        .await?;
-        let (_, config) = crate::project::read_manifest(&file)?;
-        return Ok(
-            json!({"id":format!("{author}/{}", config.package.name),"author":author,
-            "version":config.package.version,"outcome":"credentials-ready","build_required":true}),
-        );
-    }
     let (bytes, metadata) = match read_input(&file).await {
         Ok(value) => value,
         Err(error) if error.code == "E_BUILD_REQUIRED" && project => {
-            if !machine && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            if interactive {
                 let author = prepare_project_identity(
                     &file,
                     root.as_deref(),
@@ -72,16 +49,18 @@ pub(super) async fn run(
                     true,
                 )
                 .await?;
-                return Err(error.hint(format!("Developer credentials are ready. Run jade build --id {author}, review the package, then run jade publish again.")));
+                let base = author.strip_prefix("dev.").unwrap_or(&author);
+                let base = base.strip_suffix(dhttp_home::DHTTP_SUFFIX).unwrap_or(base);
+                return Err(error.hint(format!("Developer credentials are ready. Run jade build --id {base}, review the package, then run jade publish --id {base} again.")));
             }
-            return Err(error);
+            return Err(error.hint("For first-time developer setup, run jade publish --id NAME interactively. Then run jade build --id NAME, review the package, and run jade publish again. For a custom output, use jade publish FILE.waz."));
         }
         Err(error) => return Err(error),
     };
     let author = text(&metadata, "author").map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
     let home = crate::identity::home()?;
     if let Some(root) = &root
-        && author != format!("dev.{}", crate::identity::normalize(root)?)
+        && author != crate::identity::developer_name(root)?
     {
         return Err(Error::new(
             "E_IDENTITY_MISMATCH",
@@ -95,7 +74,7 @@ pub(super) async fn run(
         .and_then(|profile| genmeta_identity::code_signing::load(profile, signing_sequence).ok());
     let credentials = match credentials {
         Some(credentials) => credentials,
-        None if project && !machine && std::io::IsTerminal::is_terminal(&std::io::stdin()) => {
+        None if interactive => {
             prepare_project_identity(
                 &file,
                 root.as_deref(),
@@ -117,7 +96,7 @@ pub(super) async fn run(
             "No usable developer upload credentials for this package author",
         )
         .hint(
-            "Prepare a developer certificate for this author, then retry the same signed package.",
+            "Run jade publish interactively with this project or package to set up matching developer credentials, then retry the same signed package.",
         )),
     };
     let local_certificates = credentials
@@ -191,32 +170,41 @@ async fn prepare_project_identity(
     interactive: bool,
 ) -> crate::error::Result<String> {
     use crate::error::Error;
-    let (_, config) = crate::project::read_manifest(input)?;
-    let configured = config
-        .package
-        .author
-        .as_deref()
-        .map(crate::identity::normalize)
-        .transpose()?;
+    let configured = if input.is_dir() || input.file_name().is_some_and(|name| name == "jade.toml")
+    {
+        let (_, config) = crate::project::read_manifest(input)?;
+        config
+            .package
+            .author
+            .as_deref()
+            .map(crate::identity::normalize)
+            .transpose()?
+    } else {
+        None
+    };
     let author = signed_author.or(configured.as_deref());
     let root = match requested_root {
-        Some(root) => crate::identity::normalize(root)?,
+        Some(root) => {
+            let author = crate::identity::developer_name(root)?;
+            author.strip_prefix("dev.").unwrap().to_owned()
+        }
         None => match author.and_then(|name| name.strip_prefix("dev.")) {
             Some(root) => root.to_owned(),
             None if !interactive => {
                 return Err(Error::new(
                     "E_IDENTITY_REQUIRED",
-                    "Select the root name with --id ROOT before developer setup",
+                    "Select your name with --id NAME before developer setup",
                 ));
             }
             None => crate::identity::normalize(
-                &inquire::Text::new("Root name for developer signing (for example sky.lee):")
+                &inquire::Text::new("Your name (for example alex.chen):")
                     .prompt()
                     .map_err(|e| Error::new("E_CANCELLED", e))?,
             )?,
         },
     };
-    let target = format!("dev.{root}");
+    let target = crate::identity::developer_name(&root)?;
+    let root = target.strip_prefix("dev.").unwrap();
     if author.is_some_and(|author| author != target) {
         return Err(Error::new("E_IDENTITY_MISMATCH", "The project author differs from the selected developer name")
             .hint(format!("Review the author migration and set package.author to {target} before building a new release.")));
@@ -239,12 +227,12 @@ async fn prepare_project_identity(
             "Developer credentials must be prepared before noninteractive publication",
         )
         .hint(
-            "Run jade publish --prepare --id ROOT interactively, then jade build and jade publish.",
+            "Run jade publish --id NAME interactively for developer setup, then follow its build and publication hints.",
         ));
     }
     let server = genmeta_identity::cert_server::CertServer::new(genmeta_identity::DHTTP_CA_SERVICE)
         .map_err(|e| Error::new("E_DEVELOPER_SETUP", e))?;
-    let result = genmeta_identity::cli::prepare_for_publish(&home, &server, &root, email, true)
+    let result = genmeta_identity::cli::prepare_for_publish(&home, &server, root, email, true)
         .await
         .map_err(|e| Error::new("E_DEVELOPER_SETUP", e))?;
     if result["domain"] != target {
@@ -331,7 +319,7 @@ fn store_uri(path: &str) -> Result<Uri, Whatever> {
         .whatever_context("invalid fixed store URI")
 }
 
-async fn init_network() -> Result<(), Whatever> {
+pub(crate) async fn init_network() -> Result<(), Whatever> {
     let mdns = ddns::install_resolvers(&[ddns::DnsScheme::Mdns, ddns::DnsScheme::H3])
         .whatever_context("failed to initialize DHTTP DNS")?;
     let network = dhttp::DhttpNetwork::init()

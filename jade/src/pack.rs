@@ -170,6 +170,7 @@ pub(crate) async fn build_files(
     let excluded = [
         project.join(crate::project::BUILD_DIR),
         project.join(".jade"),
+        project.join("jade.toml"),
     ];
     let directory = match &config.frontend {
         Some(frontend) => Some(crate::project::frontend(project, frontend).await?),

@@ -47,6 +47,7 @@ fn upload_cli_accepts_only_the_designed_arguments() {
             crate::cli::Command::Publish { .. }
         ));
     }
+    assert!(crate::Cli::try_parse_from(["jade", "publish", "--prepare"]).is_err());
     for flag in [
         "--kind",
         "--name",
@@ -445,9 +446,11 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
     )));
     let store = endpoint(root.path(), "store", STORE_NAME).await;
     let client = endpoint(root.path(), "alice", "alice.dhttp.net").await;
-    let rotated = endpoint(root.path(), "rotated", "alice.dhttp.net").await;
-    let authority = client.local_authority().unwrap();
-    let rotated_authority = rotated.local_authority().unwrap();
+    // Sign packages with trusted developer credentials, independently of the
+    // ordinary TLS credentials generated for the loopback transport fixture.
+    let authority = local("alice.dhttp.net", &owner);
+    let rotated_authority = local("alice.dhttp.net", &owner);
+    let upload_authority = client.local_authority().unwrap();
     let packages = Arc::new(Mutex::new(BTreeMap::<String, (Vec<u8>, Value)>::new()));
     let puts = Arc::new(AtomicUsize::new(0));
     let gets = Arc::new(AtomicUsize::new(0));
@@ -486,7 +489,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
                 let bytes = request.into_body().collect().await?.to_bytes().to_vec();
                 let metadata = inspect_package(&bytes).await?;
                 assert_eq!(version_path(&metadata).unwrap(), path);
-                assert_eq!(package_certificates(&bytes).unwrap(), remote.certificates());
+                assert_eq!(owner_hash(&package_certificates(&bytes).unwrap()).unwrap(), owner_hash(remote.certificates()).unwrap());
                 let payload = payload_digest(&bytes).unwrap();
                 let proof = release(&metadata, &bytes, &owner);
                 let mut saved = packages.lock().unwrap();
@@ -529,7 +532,12 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
         let metadata = metadata(kind, &format!("note-{kind}"), json!([]));
         let bytes = build(&metadata, Some(&authority), "test");
         let checked = inspect_package(&bytes).await.unwrap();
-        verify_author(&checked, &package_certificates(&bytes).unwrap(), &authority).unwrap();
+        verify_author(
+            &checked,
+            &package_certificates(&bytes).unwrap(),
+            &upload_authority,
+        )
+        .unwrap();
         assert_eq!(
             publish(&client, &bytes, &checked, &owner).await.unwrap()["outcome"],
             "published"
@@ -543,9 +551,10 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
             verify_author(
                 &checked,
                 &package_certificates(&rotated_package).unwrap(),
-                &authority
+                &upload_authority
             )
-            .is_err()
+            .is_ok(),
+            "same-owner signing key rotation remains valid for upload"
         );
         // A CLI run loads one author endpoint. Same-name endpoints share a
         // connection pool, so test resigning with its retained real credentials.

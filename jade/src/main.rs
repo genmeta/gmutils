@@ -74,11 +74,13 @@ async fn main() -> ExitCode {
         .with_writer(std::io::stderr)
         .init();
     let command = cli.options.name();
-    let result = tokio::select! {
-        result = cli::run(cli.options, cli.json) => result,
-        _ = tokio::signal::ctrl_c() => if command == "run" {
-            Ok(serde_json::json!({"stopped":true}))
-        } else { Err(error::Error::new("E_CANCELLED", "Command cancelled")) },
+    let result = if command == "run" {
+        cli::run(cli.options, cli.json).await
+    } else {
+        tokio::select! {
+            result = cli::run(cli.options, cli.json) => result,
+            _ = tokio::signal::ctrl_c() => Err(error::Error::new("E_CANCELLED", "Command cancelled")),
+        }
     };
     match result {
         Ok(value) => match display::success(command, cli.json, value) {

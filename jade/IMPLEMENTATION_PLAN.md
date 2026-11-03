@@ -1,3 +1,5 @@
+当前身份选择及发布引导以 [README](README.md) 和 [REFERENCE](REFERENCE.md) 为准：所有 Jade 命令统一传基础名字 `--id alex.chen`，内部选择 `dev.alex.chen`；以下为首轮实施记录。
+
 # Jade 实施规划
 
 日期：2026-10-23。状态：首轮实现已落地，本地验收通过；跨平台结果由 CI 确认。用法见 [README](README.md)，领域术语见 [CONTEXT.md](../CONTEXT.md)。

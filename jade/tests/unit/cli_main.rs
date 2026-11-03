@@ -16,14 +16,7 @@ fn exposes_only_project_commands() {
         vec!["jade", "create", "hello"],
         vec!["jade", "build"],
         vec!["jade", "run"],
-        vec![
-            "jade",
-            "run",
-            "--id",
-            "test.sky.lee",
-            "--no-watch",
-            "--fresh",
-        ],
+        vec!["jade", "run", "--id", "test.sky.lee", "--fresh"],
         vec!["jade", "publish", "hello.waz"],
     ] {
         assert!(Cli::try_parse_from(args).is_ok());
@@ -31,6 +24,7 @@ fn exposes_only_project_commands() {
     for args in [
         vec!["jade", "create", "hello", "--id", "alice"],
         vec!["jade", "build", "--no-build"],
+        vec!["jade", "run", "--no-watch"],
         vec!["jade", "build", "--manifest-path", "jade.toml"],
     ] {
         assert!(Cli::try_parse_from(args).is_err());

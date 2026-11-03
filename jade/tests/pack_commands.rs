@@ -714,6 +714,7 @@ fn frontend_template_builds(template: Option<&str>) {
     let root = directory.path();
     let home = root.join("home/.dhttp");
     identity(&home);
+    test_identity::create_named(&home, "dev.alice.dhttp.net");
     let app = root.join("frontend");
     let mut create = Command::new(env!("CARGO_BIN_EXE_jade"));
     create.arg("create").arg(&app);
@@ -771,6 +772,7 @@ fn rust_api_template_builds_without_developer_build_scripts() {
     std::fs::create_dir_all(&root).unwrap();
     let home = root.join("home/.dhttp");
     identity(&home);
+    test_identity::create_named(&home, "dev.alice.dhttp.net");
     let app = root.join("rust-api");
     let created = Command::new(env!("CARGO_BIN_EXE_jade"))
         .args(["--json", "create"])
@@ -826,14 +828,14 @@ fn rust_api_template_builds_without_developer_build_scripts() {
         })
         .collect::<Vec<_>>();
     assert_eq!(doc.len(), 1);
-    assert!(doc[0]["paths"]["/hello"]["get"].is_object());
+    assert!(doc[0]["paths"]["/whoami"]["get"].is_object());
     assert_eq!(doc[0]["paths"].as_object().unwrap().len(), 1);
     let source = app.join("api/src/lib.rs");
     std::fs::write(
         &source,
         std::fs::read_to_string(&source)
             .unwrap()
-            .replace("Hello from Rust", "Updated business handler"),
+            .replace("anonymous", "guest"),
     )
     .unwrap();
     let rebuilt = build();
@@ -855,7 +857,7 @@ fn multiple_identities_require_selection_and_use_the_existing_dhttp_default() {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("home/.dhttp");
     identity(&home);
-    test_identity::create_named(&home, "bob.dhttp.net");
+    test_identity::create_named(&home, "dev.bob.dhttp.net");
     let app = root.path().join("app");
     project(&app, "app", "");
     let manifest = app.join("jade.toml");
@@ -881,7 +883,7 @@ fn multiple_identities_require_selection_and_use_the_existing_dhttp_default() {
         String::from_utf8_lossy(&selected.stderr)
     );
     let result: serde_json::Value = serde_json::from_slice(&selected.stdout).unwrap();
-    assert_eq!(result["result"]["id"], "bob.dhttp.net/hello");
+    assert_eq!(result["result"]["id"], "dev.bob.dhttp.net/hello");
     assert!(!app.join("build/local.toml").exists());
 }
 
@@ -1018,12 +1020,7 @@ fn signing_home_needs_no_tls_credentials() {
     let built = pack(
         &home,
         &input,
-        &[
-            "--id".as_ref(),
-            "alice".as_ref(),
-            "--signing-sequence".as_ref(),
-            "1".as_ref(),
-        ],
+        &["--signing-sequence".as_ref(), "1".as_ref()],
     );
     assert!(
         built.status.success(),
@@ -1035,7 +1032,7 @@ fn signing_home_needs_no_tls_credentials() {
 }
 
 #[test]
-fn publish_preparation_is_explicit_and_noninteractive_mode_never_creates_an_order() {
+fn noninteractive_publication_guides_setup_without_building_or_creating_an_order() {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
@@ -1045,12 +1042,18 @@ fn publish_preparation_is_explicit_and_noninteractive_mode_never_creates_an_orde
     let output = Command::new(env!("CARGO_BIN_EXE_jade"))
         .current_dir(&project)
         .env("DHTTP_HOME", &home)
-        .args(["--json", "publish", "--prepare", "--id", "sky.lee"])
+        .args(["--json", "publish", "--id", "sky.lee"])
         .output()
         .unwrap();
     assert!(!output.status.success());
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(result["error"]["code"], "E_DEVELOPER_CERTIFICATE_REQUIRED");
+    assert_eq!(result["error"]["code"], "E_BUILD_REQUIRED");
+    assert!(
+        result["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("jade publish --id NAME interactively")
+    );
     assert!(!project.join("build").exists());
     assert!(
         !home
@@ -1060,9 +1063,50 @@ fn publish_preparation_is_explicit_and_noninteractive_mode_never_creates_an_orde
     let explicit = Command::new(env!("CARGO_BIN_EXE_jade"))
         .current_dir(&project)
         .env("DHTTP_HOME", &home)
-        .args(["--json", "publish", "release.waz", "--prepare"])
+        .args(["--json", "publish", "release.waz", "--id", "sky.lee"])
         .output()
         .unwrap();
     let result: serde_json::Value = serde_json::from_slice(&explicit.stdout).unwrap();
-    assert_eq!(result["error"]["code"], "E_USAGE");
+    assert_eq!(result["error"]["code"], "E_PACKAGE_INVALID");
+}
+
+#[test]
+fn base_identity_builds_as_its_development_child_and_publish_checks_that_same_author() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    test_identity::create_named(&home, "dev.alex.chen.dhttp.net");
+    let app = root.path().join("app");
+    project(&app, "app", "");
+    let manifest = app.join("jade.toml");
+    std::fs::write(
+        &manifest,
+        std::fs::read_to_string(&manifest)
+            .unwrap()
+            .replace("alice.dhttp.net", "dev.alex.chen.dhttp.net"),
+    )
+    .unwrap();
+    for name in ["alex.chen", "alex.chen.dhttp.net", "dev.alex.chen"] {
+        let output = pack(&home, &app, &["--id".as_ref(), name.as_ref()]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["result"]["id"], "dev.alex.chen.dhttp.net/hello");
+    }
+    let file = app.join("build/hello-1.0.0.waz");
+    let original = std::fs::read(&file).unwrap();
+    for input in [app.as_path(), file.as_path()] {
+        let output = Command::new(env!("CARGO_BIN_EXE_jade"))
+            .env("DHTTP_HOME", &home)
+            .args(["--json", "publish"])
+            .arg(input)
+            .args(["--id", "other.name"])
+            .output()
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["error"]["code"], "E_IDENTITY_MISMATCH");
+        assert_eq!(std::fs::read(&file).unwrap(), original);
+    }
 }

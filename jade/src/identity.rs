@@ -19,19 +19,29 @@ pub(crate) fn normalize(name: &str) -> Result<String> {
     })
 }
 
+/// Jade's CLI always selects a base name; its development child hosts and signs.
+pub(crate) fn developer_name(name: &str) -> Result<String> {
+    let name = normalize(name)?;
+    Ok(if name.starts_with("dev.") {
+        name
+    } else {
+        format!("dev.{name}")
+    })
+}
+
 pub(crate) async fn select(
     explicit: Option<&str>,
     configured: Option<&str>,
     machine: bool,
 ) -> Result<String> {
     let configured = configured.map(normalize).transpose()?;
-    let explicit = explicit.map(normalize).transpose()?;
+    let explicit = explicit.map(developer_name).transpose()?;
     if let (Some(explicit), Some(configured)) = (&explicit, &configured)
         && explicit != configured
     {
         return Err(Error::new(
             "E_IDENTITY_MISMATCH",
-            "--id differs from package.author",
+            "The developer identity selected by --id differs from package.author",
         ));
     }
     let home = home()?;
@@ -46,7 +56,8 @@ pub(crate) async fn select(
                 settings
                     .settings()
                     .default_identity_name()
-                    .map(|name| name.as_full().to_owned())
+                    .map(|name| developer_name(name.as_full()))
+                    .transpose()?
             } else {
                 None
             }
@@ -72,7 +83,7 @@ pub(crate) async fn select(
             "E_IDENTITY_UNAVAILABLE",
             "No usable local developer credentials",
         )
-        .hint("Run genmeta identity developer NAME purchase --idempotency-key KEY, pay the invoice, then genmeta identity apply NAME --developer")),
+        .hint("Run jade publish --id NAME interactively from the project directory to set up developer credentials, then retry jade build --id NAME")),
         1 => Ok(candidates.remove(0)),
         _ if machine || !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() => Err(
             Error::new("E_IDENTITY_REQUIRED", "Select a signing identity")
@@ -119,7 +130,7 @@ pub(crate) async fn developer_credentials_sequence(
                 format!("Cannot find local credentials for {name}"),
             )
         })?;
-    let credentials=genmeta_identity::code_signing::load(&profile,sequence).map_err(|e|Error::new("E_DEVELOPER_CERTIFICATE_REQUIRED",e).hint("Run genmeta identity developer NAME purchase --idempotency-key KEY, pay the invoice, then genmeta identity apply NAME --developer"))?;
+    let credentials=genmeta_identity::code_signing::load(&profile,sequence).map_err(|e|Error::new("E_DEVELOPER_CERTIFICATE_REQUIRED",e).hint("Run jade publish --id NAME interactively from the project directory to set up developer credentials, then retry jade build --id NAME"))?;
     let chain = credentials
         .chain()
         .map_err(|e| Error::new("E_SIGNATURE_INVALID", e))?;
@@ -130,3 +141,7 @@ pub(crate) async fn developer_credentials_sequence(
             .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?,
     ))
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/identity.rs"]
+mod tests;

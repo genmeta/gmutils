@@ -39,9 +39,10 @@ pub(crate) struct Package {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Dependency {
-    author: String,
-    name: String,
-    version: String,
+    pub(crate) author: String,
+    pub(crate) name: String,
+    pub(crate) version: String,
+    pub(crate) path: Option<PathBuf>,
 }
 
 pub(crate) fn read_manifest(path: &Path) -> Result<(PathBuf, Manifest)> {

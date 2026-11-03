@@ -18,7 +18,7 @@ pub(super) enum Command {
     /// Create a project in a new directory
     #[command(
         version,
-        after_help = "Examples:\n  jade create hello                             # Vite frontend + Rust API (default)\n  jade create website --template static         # Static HTML\n  jade create frontend --template web           # Vite frontend\n  jade create service --template api            # Rust HTTP API\n  jade create application --template fullstack  # Frontend calling a Rust API\n\nAPI and fullstack templates include GET /hello."
+        after_help = "Examples:\n  jade create hello                             # Vite frontend + Rust API (default)\n  jade create website --template static         # Static HTML\n  jade create frontend --template web           # Vite frontend\n  jade create service --template api            # Rust HTTP API\n  jade create application --template fullstack  # Frontend calling a Rust API\n\nAPI and fullstack templates include GET /whoami."
     )]
     Create {
         path: PathBuf,
@@ -35,8 +35,8 @@ pub(super) enum Command {
         /// Project directory or Jade configuration file
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// Signing identity; must match package.author when configured
-        #[arg(short, long, value_name = "AUTHOR")]
+        /// Base identity; uses its dev. child for signing
+        #[arg(short, long, value_name = "BASE")]
         id: Option<String>,
         /// Developer certificate sequence (default: smallest usable sequence)
         #[arg(long)]
@@ -48,18 +48,15 @@ pub(super) enum Command {
         #[arg(long, requires = "output")]
         overwrite: bool,
     },
-    /// Run an unsigned local project in a temporary Pishoo development session
+    /// Build and watch local projects on dev.<default identity>
     #[command(version)]
     Run {
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// Local Pishoo host identity; no developer certificate is required
-        #[arg(short, long, value_name = "HOST")]
+        /// Base identity (default: configured default or zero.ai); runs on dev.<identity>
+        #[arg(short, long, value_name = "BASE")]
         id: Option<String>,
-        /// Build once and keep serving until the command exits
-        #[arg(long)]
-        no_watch: bool,
-        /// Use a new private test data directory without deleting existing data
+        /// Archive previous test data and start with an empty directory
         #[arg(long)]
         fresh: bool,
     },
@@ -69,15 +66,12 @@ pub(super) enum Command {
         /// Project directory, jade.toml, or an explicit signed FILE.waz
         #[arg(default_value = ".", value_name = "PATH")]
         file: PathBuf,
-        /// Root name for first-time project developer setup; never overrides a signed author
-        #[arg(short, long, value_name = "ROOT")]
+        /// Base identity; uses its dev. child for developer setup and publication
+        #[arg(short, long, value_name = "BASE")]
         id: Option<String>,
         /// Account email used only when developer setup is needed
         #[arg(long)]
         email: Option<String>,
-        /// Prepare developer credentials only, then build explicitly before publishing
-        #[arg(long)]
-        prepare: bool,
         /// Local developer sequence to use for the upload connection
         #[arg(long)]
         signing_sequence: Option<u32>,
@@ -108,19 +102,13 @@ pub(super) async fn run(command: Command, machine: bool) -> Result<Value> {
             overwrite,
             signing_sequence,
         } => crate::pack::run(path, output, id, overwrite, machine, signing_sequence).await,
-        Command::Run {
-            path,
-            id,
-            no_watch,
-            fresh,
-        } => crate::run::run(path, id, !no_watch, fresh, machine).await,
+        Command::Run { path, id, fresh } => crate::run::run(path, id, fresh, machine).await,
         Command::Publish {
             file,
             id,
             email,
             signing_sequence,
-            prepare,
-        } => crate::upload::run(file, id, email, signing_sequence, prepare, machine).await,
+        } => crate::upload::run(file, id, email, signing_sequence, machine).await,
     }
 }
 
@@ -184,18 +172,23 @@ fn create(path: PathBuf, name: Option<String>, template: Template) -> Result<Val
             )?;
             fs::write(
                 root.join("web/index.html"),
-                format!(
-                    "<!doctype html>\n<html lang=\"en\"><meta charset=\"utf-8\"><title>{name}</title><main id=\"app\"></main><script type=\"module\" src=\"/src/main.js\"></script></html>\n"
-                ),
+                include_str!("../templates/web/index.html").replace("__JADE_NAME__", &name),
             )?;
-            let content = if matches!(template, Template::Fullstack) {
-                format!(
-                    "const app = document.querySelector('#app');\napp.textContent = 'Loading…';\nfetch('/{name}/hello').then(response => {{ if (!response.ok) throw new Error(`HTTP ${{response.status}}`); return response.json(); }}).then(data => app.textContent = data.message).catch(error => app.textContent = error.message);\n"
-                )
+            let api = if matches!(template, Template::Fullstack) {
+                format!("\"/{name}/whoami\"")
             } else {
-                format!("document.querySelector('#app').textContent = 'Hello from {name}';\n")
+                "null".to_owned()
             };
-            fs::write(root.join("web/src/main.js"), content)?;
+            fs::write(
+                root.join("web/src/main.js"),
+                include_str!("../templates/web/src/main.js")
+                    .replace("__JADE_NAME__", &name)
+                    .replace("__JADE_API__", &api),
+            )?;
+            fs::write(
+                root.join("web/src/style.css"),
+                include_str!("../templates/web/src/style.css"),
+            )?;
             ignore.push_str("/web/node_modules/\n/web/dist/\n");
         }
         Template::Api => {}
@@ -217,6 +210,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
+pishoo-sdk = {{ version = "=0.1.0-preview.2", git = "https://github.com/genmeta/pishoo.git", rev = "daa6cde34dcabd642136ce662945bdaebb830e0f" }}
 wasip2 = "=1.0.4"
 serde_json = "1"
 "#
@@ -235,34 +229,24 @@ serde_json = "1"
     fs::write(root.join(".gitignore"), ignore)?;
     let mut readme = format!("# {name}\n\n");
     if matches!(template, Template::Web | Template::Fullstack) {
-        readme.push_str("Edit files under `web/`. `jade build` installs frontend dependencies, including build tools, before running the build script. Install Node.js and npm before building.\n\n");
+        readme.push_str("Frontend: `web/index.html`, `web/src/main.js` and `web/src/style.css`. Requires Node.js and npm.\n\n");
     }
     if matches!(template, Template::Api | Template::Fullstack) {
-        readme.push_str("Use a Rust toolchain with `wasm32-wasip2` installed; select an existing one with `RUSTUP_TOOLCHAIN` when needed. Edit handlers and the WASI HTTP entry point in `api/src/lib.rs`, and keep its `ROUTES` metadata in sync when changing routes. The template uses `wasip2` directly. Jade invokes Cargo and embeds OpenAPI from the route metadata; no build script is needed.\n\n");
+        readme.push_str("API: `api/src/lib.rs`. Requires Rust with `wasm32-wasip2` installed. Keep `ROUTES` in sync with the handlers.\n\n");
     }
-    readme.push_str("Test locally with an already running Pishoo identity. Local run needs no developer certificate or subscription. Replace the example names with your own.\n\n```sh\njade run --id test.sky.lee\n```\n\nPrepare developer credentials for a root name, build and review the signed package, then publish it. Publish never builds implicitly.\n\n```sh\njade publish --prepare --id sky.lee\njade build --id dev.sky.lee\njade publish\n```\n\nSigned packages and Cargo's `target/` cache are written under `build/`.\n");
-    readme.push_str("\nJade automatically includes root-level `README.md` and `CHANGELOG.md` when present. No declaration in `jade.toml` is needed; missing files are skipped.\n");
-    if matches!(template, Template::Api | Template::Fullstack) {
+    readme.push_str("## Develop locally\n\nReplace `alex.chen` with your own base identity. Start Pishoo, then run:\n\n```sh\njade run --id alex.chen\n```\n\nJade runs on `dev.alex.chen`, using ordinary identity credentials. Follow its setup hint if credentials are missing. No developer certificate or subscription is needed. Changes rebuild automatically; Ctrl+C removes local code and keeps data. Without `--id`, the base is your DHTTP default, or `zero.ai`.\n\n");
+    if matches!(
+        template,
+        Template::Static | Template::Web | Template::Fullstack
+    ) {
         readme.push_str(&format!(
-            r#"
-## Call the backend API
-
-The starter in `api/src/lib.rs` implements GET `/hello`.
-Pishoo provides the HTTP listener and mounts this route under `/{name}`.
-After publishing, install the package on your running Pishoo service, then call it
-with `genmeta curl` (replace the author and host identities as needed):
-
-```sh
-genmeta install dev.sky.lee.dhttp.net/{name} --id test.sky.lee
-genmeta curl --id test.sky.lee -f https://test.sky.lee.dhttp.net/{name}/hello
-# {{"message":"Hello from Rust"}}
-```
-"#
+            "Open `/app/{name}/` on the development identity, using the URL printed by Jade.\n\n"
         ));
     }
-    if matches!(template, Template::Fullstack) {
-        readme.push_str(&format!("\nThe frontend in `web/src/main.js` calls `/{name}/hello` and displays the JSON response's `message`. Open the installed package's `entry_url` to try it. Vite's dev server serves only the frontend; API requests require the Pishoo service.\n"));
+    if matches!(template, Template::Api | Template::Fullstack) {
+        readme.push_str(&format!("GET `/{name}/whoami` returns the verified visitor's name, or `anonymous`. The visitor can differ from the hosting identity.\n\n"));
     }
+    readme.push_str(&format!("## Publish\n\nStart publication from this project. Jade guides first-time developer setup:\n\n```sh\njade publish --id alex.chen\n```\n\nIf no package exists, follow the build hint after setup, review the output, then publish again:\n\n```sh\njade build --id alex.chen\n# Review build/{name}-0.1.0.waz, then upload it.\njade publish --id alex.chen\n```\n\nUse `--id alex.chen` for all Jade commands. Jade uses `dev.alex.chen` internally for hosting and signing; the signed package keeps that author.\n\nSigned packages and Cargo's cache go under `build/`. Root `README.md` and `CHANGELOG.md` are included when present.\n"));
     fs::write(root.join("README.md"), readme)?;
     commit_directory(root, &target).map_err(|e| {
         Error::new(
