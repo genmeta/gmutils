@@ -52,6 +52,8 @@ Changes since the published gmutils 0.9.0 release.
 
 ### Fixed
 
+- Refresh the running proxy’s OCSP staple in the background and apply validated
+  replacements to later requests, including existing HTTP keep-alive connections.
 - Reject invalid signed packages before upload instead of re-signing them; check
   author, owner, developer chain and local revocation information, and require host
   signing support before install/update writes.
@@ -78,6 +80,16 @@ Changes since the published gmutils 0.9.0 release.
 Jade remains 0.1.0 as a separately versioned bundled executable; this release
 keeps it outside the crates.io publication list. gmutils package versions follow
 `genmeta/Cargo.toml`.
+
+## [0.9.0] - 2026-10-29
+
+- Release genmeta 0.9.0 and genmeta-identity 0.5.0 on the stable channel.
+- Use matching Pishoo 0.9.0 to initialize and update listening settings.
+- Recover legacy service settings through Pishoo while preserving valid settings.
+- Keep an installed identity usable when service configuration or activation fails.
+
+Jade remains 0.1.0 and keeps the existing TLS identity signing workflow. Other
+utility crates retain their published versions.
 
 ## [0.9.0-preview.5] - 2026-10-23
 

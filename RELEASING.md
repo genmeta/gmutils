@@ -110,17 +110,18 @@ cargo publish --dry-run --locked --allow-dirty \
 
 - Workspace and xtask formatting pass. Strict workspace all-target/all-feature
   Clippy and strict xtask Clippy pass; xtask's own locked test command passes.
-- The ordinary workspace checks pass 333 tests with 11 opt-in cases skipped;
+- The ordinary workspace checks pass 336 tests with 12 opt-in cases skipped;
   isolated Jade checks pass 75 tests with 5 opt-in cases skipped.
 - Four Jade opt-in acceptance tests pass separately: local HTTP/3 publication,
   Rust API generation/rebuild, and real web/fullstack template builds. Together
-  with ordinary checks, 412 of the 424 inventoried tests were executed and pass;
-  the other 12 environment/host-specific cases remain opt-in.
+  with ordinary checks, 415 of the 428 inventoried tests were executed and pass;
+  the other 13 environment/host-specific cases remain opt-in.
 - All nine crates pass the combined locked publish dry run, including compilation
   of packaged sources and resolution of new versions through Cargo's temporary
   registry. Cargo explicitly skips every upload in dry-run mode.
-- The before/after workspace inventories contain the same 424 test names. No
-  test was renamed, added or removed by this release preparation.
+- After merging current main, the inventories before and after moving its OCSP
+  tests contain the same 428 names. All four upstream OCSP tests are preserved
+  under `genmeta-proxy/tests/unit/ocsp.rs`, with their original names and privacy.
 - All nine generated `.crate` archives were inspected and contain no private
   signing-key PEM files. The identity manifest explicitly excludes fixture keys.
 - The launcher reports `genmeta 0.9.1-preview.1`; bundled Jade reports `jade 0.1.0`.

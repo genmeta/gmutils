@@ -10,7 +10,11 @@ use dhttp_home::{DhttpHome, identity::IdentityProfile};
 use dhttp_identity::name::DhttpName as Name;
 use http_body_util::BodyExt;
 use snafu::{IntoError, Report, ResultExt, Snafu};
-use tokio::{net::TcpListener, sync::Semaphore, task::JoinSet};
+use tokio::{
+    net::TcpListener,
+    sync::{Semaphore, watch},
+    task::JoinSet,
+};
 use tracing::Instrument;
 use tracing_subscriber::prelude::*;
 
@@ -331,7 +335,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
     init_network(&options.dns, &options.binds)
         .await
         .context(BuildEndpointSnafu)?;
-    let client = Arc::new(match &identity_profile {
+    let (client_updates, client) = watch::channel(match &identity_profile {
         Some(profile) => Some(
             dhttp::Endpoint::load_from_with_ocsp(profile.path())
                 .await
@@ -352,11 +356,16 @@ pub async fn run(options: Options) -> Result<(), Error> {
         tasks.spawn(accept_loop(listener, client, router, semaphore));
     }
 
-    while let Some(result) = tasks.join_next().await {
-        match result {
-            Ok(()) => tracing::info!("listener task exited"),
-            Err(e) => {
-                tracing::error!(error = %snafu::Report::from_error(&e), "listener task panicked")
+    let maintenance = ocsp::maintain(identity_profile, client_updates);
+    tokio::pin!(maintenance);
+    while !tasks.is_empty() {
+        tokio::select! {
+            () = &mut maintenance => {},
+            Some(result) = tasks.join_next() => match result {
+                Ok(()) => tracing::info!("listener task exited"),
+                Err(e) => {
+                    tracing::error!(error = %snafu::Report::from_error(&e), "listener task panicked")
+                }
             }
         }
     }
@@ -393,7 +402,7 @@ fn configure_tcp_keepalive(stream: &tokio::net::TcpStream) {
 /// Accept loop for a single TCP listener. Runs until the listener is dropped.
 async fn accept_loop(
     listener: TcpListener,
-    client: Arc<Option<dhttp::Endpoint>>,
+    client: watch::Receiver<Option<dhttp::Endpoint>>,
     router: Arc<route::Router>,
     semaphore: Arc<Semaphore>,
 ) {
@@ -429,7 +438,8 @@ async fn accept_loop(
                     .serve_connection(
                         io,
                         hyper::service::service_fn(move |req| {
-                            let client = client.clone();
+                            // Snapshot each request so keep-alive connections see renewed staples.
+                            let client = client.borrow().clone();
                             let router = router.clone();
                             async move { handle_request(req, &client, &router).await }
                         }),
@@ -447,6 +457,7 @@ async fn accept_loop(
 
 pub mod forward;
 pub mod h3_forward;
+mod ocsp;
 pub mod route;
 pub mod tunnel;
 

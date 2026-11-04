@@ -27,6 +27,14 @@ hyper-util = { workspace = true }
 http-body-util = { workspace = true }
 socket2 = { workspace = true }
 bytes = { workspace = true }
+qtls.workspace = true
+reqwest.workspace = true
+x509-parser.workspace = true
+der = "0.7"
+sha1 = "0.10"
+x509-cert = "0.2"
+x509-ocsp = "0.2"
+tempfile = "3"
 
 [target.'cfg(unix)'.dependencies]
 daemonize = { workspace = true }
