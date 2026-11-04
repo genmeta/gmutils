@@ -51,7 +51,7 @@ fn normalize_target(target: &str, standard_bare: bool) -> String {
             return format!("{author}/{name}");
         }
     } else if standard_bare && valid_name(target) {
-        return format!("dev.genmeta.dhttp.net/{target}");
+        return format!("dev.genmeta.tech.dhttp.net/{target}");
     }
     target.to_owned()
 }
@@ -650,6 +650,7 @@ pub(super) async fn run(
     target: Option<String>,
     id: Option<String>,
     version: Option<String>,
+    verbose: bool,
 ) -> Result<(), Whatever> {
     let target = target.map(|target| normalize_target(&target, operation == "install"));
     if let Some(target) = &target {
@@ -669,14 +670,12 @@ pub(super) async fn run(
             .whatever_context("Local credentials have no valid owner hash")?;
     let owner = ski.owner_hash().clone();
     if operation == "list" {
-        let packages = display::package_output(
-            catalog(&endpoint, &owner, None, false, false)
-                .await?
-                .unwrap(),
-        );
+        let packages = catalog(&endpoint, &owner, None, false, false)
+            .await?
+            .unwrap();
         println!(
             "{}",
-            serde_json::to_string_pretty(&packages).whatever_context("Cannot encode catalog")?
+            display::package_list(packages.as_array().unwrap(), verbose)
         );
         return Ok(());
     }
@@ -693,13 +692,13 @@ pub(super) async fn run(
         let Some(current) = current else {
             whatever!("Package {} is not installed", display::package_id(target))
         };
-        let output = if operation == "remove" {
-            tokio::time::timeout(RESOLUTION_TIMEOUT, remove(&endpoint, &owner, &current))
-                .await
-                .whatever_context("Removal timed out; query the catalog before retrying")??
-        } else {
-            current
-        };
+        if operation == "info" {
+            println!("{}", display::package_details(&current));
+            return Ok(());
+        }
+        let output = tokio::time::timeout(RESOLUTION_TIMEOUT, remove(&endpoint, &owner, &current))
+            .await
+            .whatever_context("Removal timed out; query the catalog before retrying")??;
         println!(
             "{}",
             serde_json::to_string_pretty(&display::package_output(output))

@@ -257,7 +257,8 @@ identity is used.
 ## Package management
 
 Project creation, builds and publication use the independent [Jade project](jade/README.md)
-and its `jade` executable. The gmutils Debian and Homebrew packages install both `genmeta`
+and its `jade` executable. `jade publish` guides developer certificate application
+when needed; `genmeta identity renew NAME` renews an installed developer identity. The gmutils Debian and Homebrew packages install both `genmeta`
 and `jade`. For a source installation, use `cargo install --path jade --locked`
 from this checkout. Installation, updates, queries and removal use `genmeta`.
 
@@ -284,11 +285,17 @@ jade publish ./application/build/application-0.1.0.waz
 genmeta install std.dhttp.net/workspace --id alice.smith
 genmeta update workspace --id alice.smith
 genmeta install --list --id alice.smith
+genmeta install --list --verbose --id alice.smith
 genmeta install --info message --id alice.smith
 genmeta uninstall alice.smith.dhttp.net/message --id alice.smith
 ```
 
 Package identity is `author/name`; all management operations act on the entire package. A `.waz` is a standard ZIP and may contain a backend, static pages, or both, with one version and signature. Root-level README.md and CHANGELOG.md are included when present. See the [WAZ format](jade/FORMAT.md); old WEBC release files must be rebuilt. `install --list`, `install --info` and `uninstall` query the selected identity's Pishoo service. Full package IDs must match the installed publisher; removal retains business data and dependencies.
+
+`install --list` prints a compact table with name, author and version. Add
+`--verbose` (`-v`) for readable package details, dependencies and APIs;
+`install --info NAME` uses the same detail format. The global `--verb` flag
+continues to control debug logging independently.
 
 `install` leaves an identical installed version unchanged and directs version
 changes to `update`. `update` requires an installed package, stays with its current

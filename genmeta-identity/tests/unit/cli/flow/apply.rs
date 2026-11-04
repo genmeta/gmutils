@@ -49,7 +49,6 @@ impl Drop for ServerFixture {
 
 fn command(name: Option<&str>) -> Apply {
     Apply {
-        developer: false,
         name: name.map(ToOwned::to_owned),
         force: false,
         device_name: None,
@@ -101,49 +100,6 @@ fn certificate_action_tracks_exact_local_material_lifecycle() {
         }))),
         dhttp::log::cert::CertificateAction::Replace,
     );
-}
-
-#[test]
-fn replacement_reuses_sequence_only_for_the_same_certificate_kind() {
-    assert_eq!(
-        replacement_sequence(&resolved_with(None), IdentityKind::Primary),
-        None
-    );
-    let resolved = resolved_with(Some(LocalIdentityStatus::Incomplete {
-        detail: "private key is missing".to_string(),
-    }));
-    assert_eq!(
-        replacement_sequence(&resolved, IdentityKind::Primary),
-        Some(0),
-    );
-    assert_eq!(
-        replacement_sequence(&resolved, IdentityKind::Secondary),
-        None,
-    );
-
-    let mut secondary = resolved;
-    secondary.local.as_mut().unwrap().usage = Some(IdentityUsage::ClientOnly);
-    assert_eq!(
-        replacement_sequence(&secondary, IdentityKind::Secondary),
-        Some(0),
-    );
-    assert_eq!(
-        replacement_sequence(&secondary, IdentityKind::Primary),
-        None,
-    );
-}
-
-#[test]
-fn replacement_without_local_usage_or_sequence_requests_a_new_chain() {
-    let mut resolved = resolved_with(Some(LocalIdentityStatus::Invalid {
-        detail: "certificate metadata is incomplete".to_string(),
-    }));
-    resolved.local.as_mut().unwrap().usage = None;
-    assert_eq!(replacement_sequence(&resolved, IdentityKind::Primary), None,);
-
-    resolved.local.as_mut().unwrap().usage = Some(IdentityUsage::BothClientAndServer);
-    resolved.local.as_mut().unwrap().sequence = None;
-    assert_eq!(replacement_sequence(&resolved, IdentityKind::Primary), None,);
 }
 
 #[test]
@@ -355,7 +311,6 @@ async fn ordinary_apply_tries_saved_identity_proofs_before_email() {
                 device_name: "test",
                 interactive: false,
                 key_material: &mut key_material,
-                renewal_operation_key: None,
             },
             Loader(requested.clone()),
         )
@@ -374,82 +329,95 @@ async fn ordinary_apply_tries_saved_identity_proofs_before_email() {
 }
 
 #[tokio::test]
-async fn developer_apply_reaches_entitlement_without_ordinary_child_registration() {
+async fn pending_developer_apply_does_not_block_ordinary_identity_setup() {
+    _ = rustls::crypto::ring::default_provider().install_default();
+    let cert_server = CertServer::new("http://127.0.0.1:1").unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = DhttpHome::new(tmp.path().to_path_buf());
+    let profile = home.identity_profile("dev.alex.chen").unwrap();
+    let signing = crate::code_signing::directory(&profile);
+    std::fs::create_dir_all(&signing).unwrap();
+    std::fs::write(
+        signing.join("apply.pending.json"),
+        "pending developer request",
+    )
+    .unwrap();
+    let error = run(
+        &command(Some("dev.alex.chen")),
+        &home,
+        HomeScope::User,
+        &cert_server,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Email verification requires an interactive terminal for this command."
+    );
+    assert_eq!(
+        std::fs::read_to_string(signing.join("apply.pending.json")).unwrap(),
+        "pending developer request"
+    );
+    assert!(!profile.ssl_dir().exists());
+}
+
+#[tokio::test]
+async fn apply_requests_a_new_sequence_without_a_client_selected_purpose() {
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
-    _ = rustls::crypto::ring::default_provider().install_default();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let cert_server =
-        CertServer::new(format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    let server = CertServer::new(format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    let target = IdentityTarget::parse("dev.alex.chen").unwrap();
     let mock = tokio::spawn(async move {
-        let mut requests = Vec::new();
-        let replies = [
-            serde_json::json!({"email":"test@example.com", "access_token":"account", "token_expires_at":i64::MAX}),
-            serde_json::json!({"items":[]}),
-            serde_json::json!({"items":[]}),
-        ];
-        for reply in replies {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            loop {
-                let mut bytes = [0; 4096];
-                let count = socket.read(&mut bytes).await.unwrap();
-                assert_ne!(count, 0);
-                request.extend_from_slice(&bytes[..count]);
-                if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
-                    let headers = String::from_utf8_lossy(&request[..end]);
-                    let length = headers
-                        .lines()
-                        .find_map(|line| {
-                            line.to_ascii_lowercase()
-                                .strip_prefix("content-length:")?
-                                .trim()
-                                .parse::<usize>()
-                                .ok()
-                        })
-                        .unwrap_or(0);
-                    if request.len() >= end + 4 + length {
-                        break;
-                    }
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut bytes = Vec::new();
+        loop {
+            let mut buffer = [0; 4096];
+            let read = socket.read(&mut buffer).await.unwrap();
+            assert_ne!(read, 0);
+            bytes.extend_from_slice(&buffer[..read]);
+            if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                let headers = String::from_utf8_lossy(&bytes[..end]);
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .and_then(|n| n.trim().parse::<usize>().ok())
+                    })
+                    .unwrap();
+                if bytes.len() >= end + 4 + length {
+                    break;
                 }
             }
-            requests.push(String::from_utf8(request).unwrap());
-            let body = reply.to_string();
-            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
         }
-        requests
+        let request = String::from_utf8(bytes).unwrap();
+        assert!(request.starts_with("POST /v2/cert "));
+        let body: serde_json::Value =
+            serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert!(body["sequence"].is_null());
+        assert!(body["purpose"].is_null());
+        assert_eq!(body["domain"], "dev.alex.chen.dhttp.net");
+        assert_eq!(body["kind"], "primary");
+        let response = r#"{"error":{"code":1412,"message":"test signer unavailable"}}"#;
+        socket.write_all(format!("HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",response.len()).as_bytes()).await.unwrap();
     });
-    let tmp = tempfile::tempdir().unwrap();
-    let home = DhttpHome::new(tmp.path().to_path_buf());
-    let mut command = command(Some("dev.alex.chen"));
-    command.developer = true;
-    command.email = Some("test@example.com".into());
-    command.verify_code = Some("123456".into());
-    let error = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        run(&command, &home, HomeScope::User, &cert_server),
-    )
-    .await
-    .unwrap()
-    .unwrap_err();
+    let mut key = super::super::key_material::LazyKeyMaterial::for_name(target.dhttp_name());
     assert!(
-        error.to_string().contains("no order was created"),
-        "{error}"
+        request_certificate(
+            &server,
+            CertificateProof::AccessToken("account"),
+            CertificateRequest {
+                target: &target,
+                kind: IdentityKind::Primary,
+                device_name: "apply-test",
+            },
+            &mut key
+        )
+        .await
+        .is_err()
     );
-    let requests = mock.await.unwrap();
-    assert!(requests[0].starts_with("POST /v2/user/login "));
-    assert!(
-        requests[1..]
-            .iter()
-            .all(|request| request.starts_with("GET /v2/subscription?"))
-    );
-    let profile = home.identity_profile("dev.alex.chen").unwrap();
-    assert!(
-        crate::code_signing::directory(&profile)
-            .join("apply.pending.json")
-            .exists()
-    );
-    assert!(!profile.ssl_dir().exists());
+    mock.await.unwrap();
 }

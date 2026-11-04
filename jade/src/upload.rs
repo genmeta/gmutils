@@ -8,6 +8,7 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use snafu::{FromString, OptionExt, ResultExt, Whatever, whatever};
 use tokio::io::AsyncWriteExt;
+use tracing_indicatif::span_ext::IndicatifSpanExt;
 
 use crate::package::{
     PACKAGE_LIMIT, digest, inspect_package, owner_hash, package_certificates, payload_digest,
@@ -119,7 +120,9 @@ pub(super) async fn run(
             .key_provider
             .load_private_key(key)
             .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
-        eprintln!("   Signing  {}", crate::display::identity(author));
+        if !machine {
+            eprintln!("{:>12} {}", "Signing", crate::display::identity(author));
+        }
         let signed = sign_package(files, &local_certificates, &signing_key)
             .map_err(|e| Error::new("E_SIGNATURE_INVALID", e))?;
         inspect_package(&signed).await?;
@@ -147,36 +150,34 @@ pub(super) async fn run(
         &profile.path().join("trust/code-signing"),
     )
     .map_err(|e| Error::new("E_PUBLISH_REJECTED", e))?;
-    // Cached staples must be verified against initialized TLS roots before
-    // copying them into the temporary upload identity.
+    let name = text(&metadata, "name").map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
+    let version = text(&metadata, "version").map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
+    let id = format!("{author}/{name}");
+    if !machine {
+        eprintln!(
+            "{:>12} {} v{version} to {STORE_NAME}",
+            "Uploading",
+            crate::display::package_id(&id)
+        );
+    }
+    let progress = tracing::info_span!("cli_progress", indicatif.pb_show = tracing::field::Empty);
+    progress.pb_set_message(&format!(
+        "Publishing {} v{version}...",
+        crate::display::package_id(&id),
+    ));
+    progress.pb_start();
     tokio::time::timeout(METADATA_TIMEOUT, init_network())
         .await
         .map_err(|e| Error::new("E_PUBLISH_REJECTED", e))?
         .map_err(|e| Error::new("E_PUBLISH_REJECTED", e))?;
-    // Use the selected signing identity for TLS without replacing an ordinary dev-name host profile.
-    let transport = tempfile::Builder::new().prefix("jade-publish-").tempdir()?;
-    let transport_profile =
-        dhttp_home::identity::IdentityProfile::try_from(transport.path().join(author))
-            .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
-    credentials
-        .save_transport_to(&transport_profile)
-        .await
-        .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
-    credentials
-        .copy_transport_status(&profile, &transport_profile)
-        .await
-        .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
+    // Signing and upload share the selected identity's normal SSL credentials and OCSP cache.
     let endpoint = tokio::time::timeout(
         METADATA_TIMEOUT,
-        dhttp::Endpoint::load_from_with_ocsp(transport_profile.path()),
+        dhttp::Endpoint::load_from_with_ocsp(profile.path()),
     )
     .await
     .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?
     .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
-    credentials
-        .retain_transport_status(&profile, &transport_profile)
-        .await
-        .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
     let authority = endpoint
         .local_authority()
         .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
@@ -184,7 +185,9 @@ pub(super) async fn run(
         .map_err(|e| Error::new("E_IDENTITY_MISMATCH", e))?;
     // Certificate purpose, validity and WAZ signature were verified locally by inspect_package.
     // Paid entitlement is enforced only when the developer certificate is issued or renewed.
-    publish(&endpoint, &bytes, &metadata, &owner).await
+    let result = publish(&endpoint, &bytes, &metadata, &owner).await;
+    drop(progress);
+    result
 }
 
 async fn prepare_project_identity(
@@ -227,7 +230,7 @@ async fn prepare_project_identity(
     }
     if sequence.is_some() {
         return Err(Error::new("E_DEVELOPER_CERTIFICATE_REQUIRED", "The explicitly selected developer sequence is unavailable")
-            .hint("Renew or restore that sequence, or omit --signing-sequence to provision a new credential."));
+            .hint("Renew or install that sequence in ssl, or omit --signing-sequence to provision a new credential."));
     }
     if !interactive {
         return Err(Error::new(
@@ -238,6 +241,10 @@ async fn prepare_project_identity(
             "Run jade publish --id NAME interactively for developer setup, then follow its build and publication hints.",
         ));
     }
+    eprintln!(
+        "A developer certificate is required for {}. We'll guide you through the application.",
+        crate::display::identity(&target)
+    );
     let server = genmeta_identity::cert_server::CertServer::new(genmeta_identity::DHTTP_CA_SERVICE)
         .map_err(|e| Error::new("E_DEVELOPER_SETUP", e))?;
     let result = genmeta_identity::cli::prepare_for_publish(&home, &server, &target, email, true)
@@ -249,7 +256,11 @@ async fn prepare_project_identity(
             "The provisioned developer name differs from the requested author",
         ));
     }
-    eprintln!("Developer credentials ready: {target}");
+    eprintln!(
+        "{:>12} developer credentials for {}",
+        "Ready",
+        crate::display::identity(&target)
+    );
     Ok(target)
 }
 

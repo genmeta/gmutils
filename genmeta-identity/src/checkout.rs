@@ -140,7 +140,7 @@ pub(crate) async fn wait_for_checkout_completion_until(
     }
 }
 
-fn checkout_wait_duration(expires_at: i64, now: i64) -> Duration {
+pub(crate) fn checkout_wait_duration(expires_at: i64, now: i64) -> Duration {
     const MAX_WAIT_SECONDS: u64 = 15 * 60;
 
     Duration::from_secs(

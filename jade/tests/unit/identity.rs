@@ -3,7 +3,8 @@ use super::*;
 #[test]
 fn all_jade_commands_require_the_actual_development_child() {
     for (input, expected) in [
-        ("dev.genmeta", "dev.genmeta.dhttp.net"),
+        ("dev.genmeta.tech", "dev.genmeta.tech.dhttp.net"),
+        ("dev.genmeta.tech.dhttp.net", "dev.genmeta.tech.dhttp.net"),
         ("dev.alex.chen", "dev.alex.chen.dhttp.net"),
         ("dev.alex.chen.dhttp.net", "dev.alex.chen.dhttp.net"),
         (" DEV.Dev.Wang~ ", "dev.dev.wang.dhttp.net"),
@@ -16,6 +17,8 @@ fn all_jade_commands_require_the_actual_development_child() {
         "alex.chen.dhttp.net",
         "dev.wang",
         "dev.wang.dhttp.net",
+        "dev.genmeta",
+        "dev.genmeta.dhttp.net",
     ] {
         assert_eq!(
             developer_name(input).unwrap_err().code,
@@ -23,6 +26,20 @@ fn all_jade_commands_require_the_actual_development_child() {
         );
     }
     assert!(developer_name("https://alex.chen/").is_err());
+}
+
+#[test]
+fn official_author_requires_an_exact_match() {
+    assert!(is_standard_author("dev.genmeta.tech.dhttp.net"));
+    assert!(is_standard_author("std.dhttp.net"));
+    for author in [
+        "dev.genmeta.dhttp.net",
+        "dev.tech.genmeta.dhttp.net",
+        "dev.genmeta.tech.dhttp.net.attacker.dhttp.net",
+        "dev.other.genmeta.tech.dhttp.net",
+    ] {
+        assert!(!is_standard_author(author));
+    }
 }
 
 #[tokio::test]

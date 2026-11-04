@@ -48,6 +48,8 @@ pub(crate) const CHECK_NAME: ProgressCopy =
     ProgressCopy::clear("Checking the validity of this name...");
 pub(crate) const SEND_CODE: ProgressCopy = ProgressCopy::clear("Sending verification code...");
 pub(crate) const VERIFY_EMAIL: ProgressCopy = ProgressCopy::clear("Verifying with email...");
+pub(crate) const CHECK_DEVELOPER: ProgressCopy =
+    ProgressCopy::clear("Checking developer subscription...");
 pub(crate) const GENERATE_KEY: ProgressCopy = ProgressCopy::retain(
     "Generating secp384r1 ECC key pair locally...",
     KEY_GENERATED,

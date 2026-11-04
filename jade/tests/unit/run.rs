@@ -1,5 +1,34 @@
 use super::*;
 
+#[tokio::test]
+async fn hosting_credentials_require_a_matching_key_but_not_cached_ocsp() {
+    let root = tempfile::tempdir().unwrap();
+    let host = "dev.zero.ai.dhttp.net";
+    crate::test_credentials::generate(root.path(), &[("dev.zero.ai", host, &"a".repeat(64))]);
+    let profile =
+        dhttp_home::identity::IdentityProfile::try_from(root.path().join("dev.zero.ai")).unwrap();
+    std::fs::remove_file(profile.ocsp_path()).unwrap();
+    validate_host(&profile).await.unwrap();
+
+    let key = rcgen::KeyPair::generate().unwrap();
+    std::fs::remove_file(profile.key_path()).unwrap();
+    std::fs::write(profile.key_path(), key.serialize_pem()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(profile.key_path(), std::fs::Permissions::from_mode(0o400))
+            .unwrap();
+    }
+    let error = validate_host(&profile).await.unwrap_err();
+    assert_eq!(error.code, "E_IDENTITY_UNAVAILABLE");
+    assert!(
+        error
+            .hint
+            .unwrap()
+            .contains("genmeta identity apply dev.zero.ai")
+    );
+}
+
 fn project(root: &Path) {
     std::fs::write(
         root.join("jade.toml"),

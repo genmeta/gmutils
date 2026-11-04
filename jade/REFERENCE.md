@@ -9,22 +9,62 @@ and annual subscription. Merely registering a normal `dev.` child does not grant
 signing entitlement. Certificates have codeSigning, clientAuth, and serverAuth.
 Ordinary TLS certificates cannot sign releases.
 
-Jade uses `dhttp-home`, including `DHTTP_HOME` when set. Developer credentials are
-kept privately in `<profile>/code-signing/<sequence>/credentials.json`; an installed
-unified identity in `ssl/` may also be used. An ordinary TLS profile is preserved
-when developer credentials are issued. Upload uses the selected developer key in
-a temporary transport profile and keeps per-leaf OCSP caches under
-`<profile>/code-signing/ocsp/`. It does not replace a normal host's TLS credentials.
+Jade uses `dhttp-home`, including `DHTTP_HOME` when set. Developer credentials use
+only the normal `<profile>/ssl/fullchain.crt` and `ssl/privkey.pem`, with OCSP in
+`ssl/stapling.ocsp`. Developer issuance and renewal replace the certificate and
+private key together through the normal identity transaction. Signing, upload and
+hosting use that same installed identity. Ordinary TLS certificates cannot sign
+packages; publish guides developer setup when the installed certificate lacks
+`codeSigning`. Issued credentials are not stored or selected from
+`code-signing/<sequence>/credentials.json`, and upload creates no temporary identity.
+Pending developer requests remain retryable until SSL installation succeeds.
 
-Use `--signing-sequence N` with publish to select a specific local
-credential. Otherwise Jade prefers the usable unified identity, then an available
-sequence. The upload credential can differ from the package signing credential,
-but the canonical author and owner_hash must match. Neither the old package's
-private key nor a byte-identical certificate is required just to upload it.
+`genmeta identity apply NAME` requests a new sequence using the target name's
+current entitlement: a bound name with active developer entitlement receives
+`codeSigning`, `clientAuth` and `serverAuth`; otherwise it receives ordinary TLS
+credentials. `genmeta identity renew NAME` renews the installed sequence with its
+existing purpose. Names and ownership are verified by the server; a `dev.` prefix
+alone grants no signing rights.
 
-Renew with `genmeta identity developer DEV_NAME renew --sequence N`. Issuance and
+`--signing-sequence N` with publish must match the sequence installed in `ssl/`.
+Without it Jade uses that installed identity. An already signed package may have
+been signed by another certificate, but its canonical author and owner_hash must
+match the uploader. The old package's private key is not required for upload.
+
+Renew with `genmeta identity renew DEV_NAME`. Issuance and
 renewal check entitlement; interactive preparation can confirm a quote and resume
-checkout if needed. Noninteractive preparation never creates an order implicitly.
+checkout if needed. Payment uses the same QR/link instructions and waiting
+indicator as `genmeta identity apply`, bounded by the public link expiry,
+invoice expiry and 15 minutes.
+Only confirmed subscription fulfillment permits issuance; a paid invoice alone
+does not. Cancellation or timeout preserves the operation for retry.
+Noninteractive preparation never creates an order implicitly.
+
+Developer checkout reads `payment_entry` from the authenticated
+`GET /v2/invoice?no=...` response:
+
+```json
+{
+  "url": "/v2/invoice?no=INV...",
+  "payment_entry": {
+    "url": "https://dhttp.net/checkout/ckt_...",
+    "checkout_token": "ckt_...",
+    "kind": "code_signing_purchase",
+    "expires_at": 1793780000
+  }
+}
+```
+
+The nested URL must be an absolute HTTPS browser payment link. Jade encodes that
+same link in its terminal QR code. The top-level URL remains an API reference.
+The server and website must support developer purchase and renewal through the
+public checkout capability, including invoice queries, coupons, payment sessions
+and result polling without another browser login. The capability must be scoped
+to the invoice and expire without being extended by public reads. Jade reports a
+missing payment entry and retains the pending operation rather than opening the
+invoice API or constructing a billing URL. This client change requires the server
+and website to implement that contract before the payment flow works end to end.
+
 Developer certificates require account email verification for renewal and are
 excluded from the automatic `genmeta identity renew --all` job. Renew them
 explicitly before expiry; ordinary TLS identities continue to renew automatically.

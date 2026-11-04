@@ -26,6 +26,7 @@ fn exposes_only_project_commands() {
         vec!["jade", "build", "--no-build"],
         vec!["jade", "run", "--no-watch"],
         vec!["jade", "build", "--manifest-path", "jade.toml"],
+        vec!["jade", "developer", "dev.alex.chen", "apply"],
     ] {
         assert!(Cli::try_parse_from(args).is_err());
     }

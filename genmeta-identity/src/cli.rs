@@ -9,7 +9,7 @@ mod developer;
 use std::io::IsTerminal;
 
 use clap::Parser;
-pub use developer::{Developer, prepare_for_publish};
+pub use developer::prepare_for_publish;
 use dhttp_home::{
     DhttpHome, HomeScope, LoadDhttpHomeError,
     identity::{
@@ -166,9 +166,6 @@ fn parse_identity_name(identity: &str) -> Result<Name<'static>, Error> {
 /// Apply identity
 #[derive(Parser, Debug, Clone)]
 pub struct Apply {
-    /// Request a developer certificate for TLS and package signing (requires paid entitlement)
-    #[arg(long)]
-    pub developer: bool,
     #[arg(value_name = "IDENTITY")]
     pub name: Option<String>,
     #[arg(short, long)]
@@ -349,8 +346,6 @@ pub enum Options {
     #[command(visible_alias = "create")]
     Apply(Apply),
     Renew(Renew),
-    /// Manage independent annual code-signing subscriptions and credentials
-    Developer(Developer),
     Default(Default),
     Info(Info),
     List(List),
@@ -359,10 +354,7 @@ pub enum Options {
 
 impl Options {
     pub fn writes_home(&self) -> bool {
-        matches!(
-            self,
-            Self::Apply(_) | Self::Renew(_) | Self::Default(_) | Self::Developer(_)
-        )
+        matches!(self, Self::Apply(_) | Self::Renew(_) | Self::Default(_))
     }
 
     pub async fn run(
@@ -374,7 +366,6 @@ impl Options {
         match self {
             Options::Apply(cmd) => flow::run_apply(cmd, dhttp_home, home_scope, cert_server).await,
             Options::Renew(cmd) => flow::run_renew(cmd, dhttp_home, home_scope, cert_server).await,
-            Options::Developer(cmd) => cmd.run(dhttp_home, cert_server).await,
             Options::Default(cmd) => {
                 flow::run_default(cmd, dhttp_home, home_scope, cert_server).await
             }

@@ -491,6 +491,7 @@ impl<'a> CertificateRenewalRequest<'a> {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct InvoiceDetail {
+    pub payment_entry: Option<PaymentEntryInfo>,
     pub invoice_no: String,
     pub domain: String,
     pub status: String,

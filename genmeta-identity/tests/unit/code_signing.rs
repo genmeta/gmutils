@@ -97,7 +97,7 @@ fn profile(root: &Path) -> IdentityProfile {
     IdentityProfile::try_from(path).unwrap()
 }
 #[test]
-fn pending_survives_retries_rotates_keys_and_never_overwrites_tls() {
+fn pending_survives_retries_and_preserves_tls_until_installation() {
     let tmp = tempfile::tempdir().unwrap();
     let p = profile(tmp.path());
     fs::create_dir(p.join("ssl")).unwrap();
@@ -129,11 +129,14 @@ fn pending_survives_retries_rotates_keys_and_never_overwrites_tls() {
         );
     }
 }
-#[test]
-fn completed_pending_installs_matching_key_certificate_atomically() {
+#[tokio::test]
+async fn completed_pending_installs_matching_key_certificate_atomically() {
     let tmp = tempfile::tempdir().unwrap();
     let p = profile(tmp.path());
     let _lock = lock(&p).unwrap();
+    fs::create_dir(p.ssl_dir()).unwrap();
+    fs::write(p.cert_path(), fixture("tls.cert.pem")).unwrap();
+    fs::write(p.key_path(), fixture("superseded.key.pem")).unwrap();
     let mut pending = Pending::prepare(&p, None).unwrap();
     pending.key_pem = fixture("developer.key.pem");
     let cert = DeveloperCertificate {
@@ -154,11 +157,31 @@ fn completed_pending_installs_matching_key_certificate_atomically() {
             created_at: 0,
         },
     };
-    pending.install_with_root(&p, &cert, &root()).unwrap();
+    pending.persist(&p).unwrap();
+    let mut invalid = cert.clone();
+    invalid.certificate.domain = "other.dhttp.net".into();
+    assert!(
+        Pending::prepare(&p, None)
+            .unwrap()
+            .install_with_root(&p, &invalid, &root())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        fs::read_to_string(p.cert_path()).unwrap(),
+        fixture("tls.cert.pem")
+    );
+    assert_eq!(
+        fs::read_to_string(p.key_path()).unwrap(),
+        fixture("superseded.key.pem")
+    );
+    assert!(directory(&p).join("apply.pending.json").exists());
+    pending.install_with_root(&p, &cert, &root()).await.unwrap();
     assert!(!directory(&p).join("apply.pending.json").exists());
-    let saved: Credentials =
-        serde_json::from_slice(&read_private(&directory(&p).join("1/credentials.json")).unwrap())
-            .unwrap();
+    let saved = load_with_root(&p, Some(1), &root()).unwrap();
+    assert_eq!(p.load_certs().await.unwrap(), saved.chain().unwrap());
+    p.load_key().await.unwrap();
+    assert!(!directory(&p).join("1").exists());
     saved.validate_with_root(DOMAIN, &root()).unwrap();
     let wrong = Credentials {
         cert_pem: saved.cert_pem.clone(),
@@ -175,7 +198,9 @@ fn tls_only_and_symlinked_credentials_cannot_be_selected() {
     assert!(load(&p, None).is_err());
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(tmp.path(), directory(&p).join("1")).unwrap();
+        fs::remove_file(p.cert_path()).unwrap();
+        save_private(&p.key_path(), fixture("developer.key.pem").as_bytes()).unwrap();
+        std::os::unix::fs::symlink(p.key_path(), p.cert_path()).unwrap();
         assert!(load(&p, Some(1)).is_err());
     }
 }
@@ -269,11 +294,9 @@ async fn recover_committed_initial_issuance(use_server_error: bool) {
     mock.await.unwrap();
     restored
         .install_with_root(&profile, &recovered, &root())
+        .await
         .unwrap();
-    let saved: Credentials = serde_json::from_slice(
-        &read_private(&directory(&profile).join("1/credentials.json")).unwrap(),
-    )
-    .unwrap();
+    let saved = load_with_root(&profile, None, &root()).unwrap();
     assert_eq!(saved.key_pem, original_key);
     saved.validate_with_root(DOMAIN, &root()).unwrap();
 }
@@ -446,6 +469,22 @@ fn unified_identity_validates_for_tls_and_signing_and_loads_one_key_pair() {
         "unified signing requires no independent credential directory"
     );
     assert!(load_with_root(&p, Some(999), root.as_ref()).is_err());
+    let legacy = directory(&p).join("1");
+    fs::create_dir_all(&legacy).unwrap();
+    save_private(
+        &legacy.join("credentials.json"),
+        &serde_json::to_vec(&serde_json::json!({
+            "cert_pem":credentials.cert_pem,"key_pem":credentials.key_pem,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    // A valid retired copy cannot hide a broken or missing installed SSL identity.
+    save_private(&p.key_path(), fixture("superseded.key.pem").as_bytes()).unwrap();
+    assert!(load_with_root(&p, None, root.as_ref()).is_err());
+    fs::remove_dir_all(p.ssl_dir()).unwrap();
+    assert!(load_with_root(&p, Some(1), root.as_ref()).is_err());
+    assert!(legacy.join("credentials.json").exists());
 }
 
 #[test]

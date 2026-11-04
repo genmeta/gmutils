@@ -45,6 +45,7 @@ pub(super) async fn run(
                 }
                 error => Error::new("E_IDENTITY_UNAVAILABLE", error),
             })?;
+        validate_host(&profile).await?;
         let profile = profile.path().canonicalize()?;
         let (project, config) = crate::project::read(&path)?;
         let root_author =
@@ -492,6 +493,47 @@ fn graph_fingerprint(projects: &BTreeMap<String, PathBuf>) -> Result<Vec<u8>> {
         digest.update(source_fingerprint(path)?);
     }
     Ok(digest.finalize().to_vec())
+}
+
+async fn validate_host(profile: &dhttp_home::identity::IdentityProfile) -> Result<()> {
+    let name = profile
+        .name()
+        .strip_suffix(dhttp_home::DHTTP_SUFFIX)
+        .unwrap_or(profile.name());
+    let unavailable = |detail: String| {
+        Error::new(
+            "E_IDENTITY_UNAVAILABLE",
+            format!("Development identity {name} needs ordinary hosting credentials: {detail}"),
+        )
+        .hint(format!(
+            "Run `genmeta identity apply {name}`, then retry `jade run`."
+        ))
+    };
+    // An existing profile may contain only a pending developer request or code-signing
+    // credentials. Pishoo discovers ordinary SSL identities, not profile directories.
+    let certificates = profile
+        .load_certs()
+        .await
+        .map_err(|error| unavailable(error.to_string()))?;
+    let key = profile
+        .load_key()
+        .await
+        .map_err(|error| unavailable(error.to_string()))?;
+    let ski = dhttp_home::certificate::extract_dhttp_subject_key_identifier(&certificates)
+        .map_err(|error| unavailable(error.to_string()))?;
+    if ski.chain().usage() != dhttp_home::certificate::CertificateUsage::ClientAndServer {
+        return Err(unavailable(
+            "a ClientAndServer certificate is required".into(),
+        ));
+    }
+    rustls::sign::CertifiedKey::from_der(
+        certificates,
+        key,
+        &rustls::crypto::ring::default_provider(),
+    )
+    .map_err(|error| unavailable(error.to_string()))?;
+    // The host refreshes OCSP when loading this identity; no network setup is needed here.
+    Ok(())
 }
 
 async fn prepare_host(profile: &Path) -> Result<()> {

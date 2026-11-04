@@ -3,6 +3,46 @@ use clap::{CommandFactory, Parser};
 use super::{Cli, Options, install_process_crypto_provider};
 
 #[test]
+fn identity_developer_entry_points_are_removed() {
+    for identity in ["identity", "id"] {
+        for args in [
+            vec!["genmeta", identity, "developer", "dev.alex.chen", "apply"],
+            vec!["genmeta", identity, "apply", "dev.alex.chen", "--developer"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+    }
+    let mut command = Cli::command();
+    let identity = command.find_subcommand_mut("identity").unwrap();
+    assert!(
+        !identity
+            .render_long_help()
+            .to_string()
+            .contains("developer")
+    );
+    let apply = identity.find_subcommand_mut("apply").unwrap();
+    assert!(!apply.render_long_help().to_string().contains("--developer"));
+}
+
+#[test]
+fn package_list_verbose_is_separate_from_debug_logging() {
+    for flag in ["--verbose", "-v"] {
+        let parsed = Cli::try_parse_from(["genmeta", "install", "--list", flag]).unwrap();
+        assert!(!parsed.verb);
+        assert!(matches!(
+            parsed.options,
+            Options::Package(super::PackageCommand::Install {
+                list: true,
+                verbose: true,
+                ..
+            })
+        ));
+        assert!(Cli::try_parse_from(["genmeta", "install", "workspace", flag]).is_err());
+    }
+    assert!(Cli::try_parse_from(["genmeta", "install", "--list", "--verbe"]).is_err());
+}
+
+#[test]
 fn debug_flag_is_global_and_propagates_to_nested_commands() {
     for command in [
         vec!["access", "list"],

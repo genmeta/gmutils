@@ -76,6 +76,52 @@ fn fails(output: &Output, error: &str) {
     );
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn run_requires_ordinary_credentials_before_configuring_or_building() {
+    for signing_only in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join(".dhttp");
+        let profile = home.join("dev.alex.chen");
+        if signing_only {
+            test_identity::create_named(&home, "dev.alex.chen.dhttp.net");
+            let legacy = profile.join("code-signing/1");
+            std::fs::create_dir_all(&legacy).unwrap();
+            std::fs::write(
+                legacy.join("credentials.json"),
+                serde_json::to_vec(&json!({
+                    "cert_pem":std::fs::read_to_string(profile.join("ssl/fullchain.crt")).unwrap(),
+                    "key_pem":std::fs::read_to_string(profile.join("ssl/privkey.pem")).unwrap(),
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            std::fs::remove_dir_all(profile.join("ssl")).unwrap();
+        } else {
+            std::fs::create_dir_all(profile.join("code-signing")).unwrap();
+            std::fs::write(profile.join("code-signing/apply.pending.json"), "pending").unwrap();
+        }
+        // A missing project and executable must not hide the identity setup hint.
+        let output = Command::new(env!("CARGO_BIN_EXE_jade"))
+            .env("HOME", root.path())
+            .env("DHTTP_HOME", &home)
+            .env("PISHOO_BIN", root.path().join("missing-pishoo"))
+            .current_dir(root.path())
+            .args(["--json", "run", "--id", "dev.alex.chen"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["error"]["code"], "E_IDENTITY_UNAVAILABLE");
+        assert_eq!(
+            result["error"]["hint"],
+            "Run `genmeta identity apply dev.alex.chen`, then retry `jade run`."
+        );
+        assert!(!profile.join(".volume").exists());
+        assert!(!profile.join("dev").exists());
+    }
+}
+
 #[test]
 fn jade_create_static_scaffolds_a_package_that_builds_without_credentials() {
     let dir = tempfile::tempdir().unwrap();
@@ -896,20 +942,17 @@ fn invalid_wasm_fails_but_broken_signing_credentials_do_not_block_build() {
     assert!(!app.join("build/hello-1.0.0.waz").exists());
     let other = root.path().join("other/.dhttp");
     identity(&other);
-    let key = home.join("alice/code-signing/1/credentials.json");
+    let key = home.join("alice/ssl/privkey.pem");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
-    let mut saved: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&key).unwrap()).unwrap();
-    let another: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(other.join("alice/code-signing/1/credentials.json")).unwrap(),
+    std::fs::write(
+        &key,
+        std::fs::read(other.join("alice/ssl/privkey.pem")).unwrap(),
     )
     .unwrap();
-    saved["key_pem"] = another["key_pem"].clone();
-    std::fs::write(&key, serde_json::to_vec(&saved).unwrap()).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1003,7 +1046,6 @@ fn build_needs_neither_tls_nor_signing_credentials() {
     std::fs::remove_dir_all(home.join("alice/ssl")).unwrap();
     let input = dir.path().join("app");
     project(&input, "app", "");
-    std::fs::remove_dir_all(home.join("alice/code-signing")).unwrap();
     let built = pack(&home, &input, &[]);
     assert!(
         built.status.success(),
@@ -1117,6 +1159,12 @@ fn unsigned_build_requires_developer_credentials_only_when_publishing() {
             .unwrap();
         let result: serde_json::Value = serde_json::from_slice(&published.stdout).unwrap();
         assert_eq!(result["error"]["code"], "E_DEVELOPER_CERTIFICATE_REQUIRED");
+        assert!(
+            result["error"]["hint"]
+                .as_str()
+                .unwrap()
+                .contains("jade publish")
+        );
         assert_eq!(std::fs::read(&file).unwrap(), original);
         assert!(!home.exists());
     }

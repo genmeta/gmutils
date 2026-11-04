@@ -346,12 +346,8 @@ async fn renew_one(
                 expires_at.expect("renewal is not due only when expiry is known"),
                 now,
             ));
-            crate::cli::developer::require_manual_renewal(
-                dhttp_home,
-                preflight.target.full_name(),
-                sequence,
-            )
-            .await;
+            crate::cli::developer::require_manual_renewal(dhttp_home, preflight.target.full_name())
+                .await;
             return Ok(());
         }
         crate::cli::developer::Developer {
@@ -493,13 +489,8 @@ async fn renew_all(
             let profile = dhttp_home
                 .identity_profile(target.full_name())
                 .expect("validated identity name");
-            if let Some(sequence) = crate::cli::developer::installed_sequence(&profile)? {
-                crate::cli::developer::require_manual_renewal(
-                    dhttp_home,
-                    target.full_name(),
-                    sequence,
-                )
-                .await;
+            if crate::cli::developer::installed_sequence(&profile)?.is_some() {
+                crate::cli::developer::require_manual_renewal(dhttp_home, target.full_name()).await;
                 return Ok(());
             }
             let (preflight, expires_at) =

@@ -622,10 +622,10 @@ jade publish
 
 `jade run --id DEV_NAME` 直接使用实际开发子名字，不转换显式输入；省略 `--id` 时，按名字结构选择默认身份的 dev 子名字，例如默认 `dev.wang` 选择 `dev.dev.wang`、默认 `dev.dev.wang` 保持原样；无配置时使用 `dev.zero.ai`。复用现有 Pishoo 进程，用普通身份凭据启用开发身份监听，不要求开发者证书或订阅。App、标准 Lib、普通 Lib 分别使用正常 `/app/<名称>/`、`/std/<名称>/...`、`/<名称>/...`，不再使用 `/dev` URL。依赖有 `path` 时，相对于声明的 `jade.toml` 递归构建并监听本地项目，核对 author/name/version；无 `path` 时从商店安装声明的精确版本。`path` 不写入发布包。本地构建完成后原子发布到开发身份 `dev/<名称>/`，包括 manifest.json、lib.wasm 和 app/；构建失败保留原文件，运行仅允许真实主人。数据使用开发身份的 `.volume/<名称>` 或 `.volume/std/<名称>`，与基础身份隔离；Ctrl+C/SIGTERM 仅清理本次发布的本地代码，不删除后来发布者的替换目录、商店依赖或数据。`--fresh` 显式归档旧开发数据。SIGKILL／断电后的残留文件需手动移除，不自动搬迁旧 `dev-data`。
 
-`jade publish --id dev.alex.chen` 在缺少凭据时引导准备 `dev.alex.chen.dhttp.net` 开发者凭据。权益不足时确认报价并打开安全结账页，等待服务端确认后继续；已有包时继续上传，没有包时提示显式 `jade build`、审阅后再次 publish。非交互和 JSON 模式只报告下一步，不启动交互设置或下单。一个主名字只绑定一个固定 dev 子名字，同一 dev 下证书／序列数量不限，多设备不重复购买年费。
+`jade publish --id dev.alex.chen` 在缺少凭据时引导准备 `dev.alex.chen.dhttp.net` 开发者凭据。权益不足时确认年费及自动续费报价，复用 `identity apply` 的付款链接、二维码和等待进度；遵守账单过期时间，最长等待 15 分钟，服务端确认权益生效后继续；取消、超时和重试保留原购买操作与 CSR；已有包时继续上传，没有包时提示显式 `jade build`、审阅后再次 publish。非交互和 JSON 模式只报告下一步，不启动交互设置或下单。一个主名字只绑定一个固定 dev 子名字，同一 dev 下证书／序列数量不限，多设备不重复购买年费。
 
-`genmeta identity apply NAME` 保持普通身份申请，不因主名字有开发者订阅就把请求目标替换成 dev。`genmeta identity apply DEV_NAME --developer` 或 `genmeta identity developer DEV_NAME apply` 使用实际开发子名字申请三用途证书，不将主名字自动转换；续签可使用 `genmeta identity developer DEV_NAME renew --sequence N`。需要登录时沿用账户邮箱验证；非交互缺少权益不自动下单。显式 purchase、账单、状态、吊销和自动续费管理命令继续可用，精确 status 使用证书实际 dev 域名。
+`genmeta identity apply NAME` 为目标名字申请新证书序列并替换本机 `ssl/`，服务端依据实际开发者绑定及有效权益自动签发带 `codeSigning` 的开发者证书或普通 TLS 证书，不要求客户端指定用途，也不改写请求目标名字。未开通时直接申请普通证书，不触发开发者购买。`jade publish` 缺少签名权益时仍可交互引导开通；证书和私钥同样保存在普通 `ssl/`。不提供独立 developer 命令或 `identity apply --developer`。`genmeta identity renew NAME` 沿已安装序列及既有用途续签，开发者续签继续核对权益，不降级为普通 TLS。
 
 待处理 CSR、私钥与购买操作在失败后保留，相同 CSR 的重试不会重复签发。已有普通 dev TLS 凭据不被覆盖；开发者证书存于用途目录，也可作为同名 TLS 凭据。上传使用所选开发者凭据与原包作者／owner_hash 绑定，允许不同序列或续签后的凭据上传仍有效的原始包。
 
-开发者证书续期要求账户邮箱验证，不参与 `genmeta identity renew --all` 的自动续期任务。请在到期前显式运行 `genmeta identity developer DEV_NAME renew --sequence N`；普通 TLS 身份继续自动续期。开发者申请由订阅直接准备固定子名字，不占用普通子名字的注册流程。
+开发者证书续期要求账户邮箱验证，不参与 `genmeta identity renew --all` 的自动续期任务。请在到期前显式运行 `genmeta identity renew DEV_NAME`；普通 TLS 身份继续自动续期。开发者申请由订阅直接准备固定子名字，不占用普通子名字的注册流程。

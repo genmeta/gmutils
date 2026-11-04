@@ -767,7 +767,7 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
 fn abbreviated_authors_expand_without_changing_installed_bare_names() {
     assert_eq!(
         normalize_target("workspace", true),
-        "dev.genmeta.dhttp.net/workspace"
+        "dev.genmeta.tech.dhttp.net/workspace"
     );
     assert_eq!(normalize_target("message", false), "message");
     assert_eq!(
@@ -791,12 +791,13 @@ fn abbreviated_authors_expand_without_changing_installed_bare_names() {
 
 #[test]
 fn update_follows_committed_maintenance_author_and_keeps_canonical_id_checks() {
-    let current = serde_json::json!({"id":"dev.genmeta.dhttp.net/workspace","version":"0.3.5"});
+    let current =
+        serde_json::json!({"id":"dev.genmeta.tech.dhttp.net/workspace","version":"0.3.5"});
     assert_eq!(
         choose_release_target("update", "workspace", Some(&current)).unwrap(),
-        "dev.genmeta.dhttp.net/workspace"
+        "dev.genmeta.tech.dhttp.net/workspace"
     );
-    let next = serde_json::json!({"id":"dev.genmeta.dhttp.net/workspace","version":"0.3.6"});
+    let next = serde_json::json!({"id":"dev.genmeta.tech.dhttp.net/workspace","version":"0.3.6"});
     assert!(!check_install_version("update", Some(&current), &next).unwrap());
     let other = serde_json::json!({"id":"dev.attacker.dhttp.net/workspace","version":"0.3.6"});
     assert!(check_install_version("update", Some(&current), &other).is_err());

@@ -19,9 +19,6 @@ pub(crate) fn normalize(name: &str) -> Result<String> {
 /// Validate an explicitly selected development child without rewriting its name.
 pub(crate) fn developer_name(name: &str) -> Result<String> {
     let name = normalize(name)?;
-    if name == "dev.genmeta.dhttp.net" {
-        return Ok(name);
-    }
     let child = name.strip_suffix(dhttp_home::DHTTP_SUFFIX).unwrap();
     if !child
         .strip_prefix("dev.")
@@ -76,5 +73,5 @@ mod tests;
 
 /// Exact standard publishers retain the existing API and data namespace.
 pub(crate) fn is_standard_author(author: &str) -> bool {
-    matches!(author, "std.dhttp.net" | "dev.genmeta.dhttp.net")
+    matches!(author, "std.dhttp.net" | "dev.genmeta.tech.dhttp.net")
 }

@@ -110,15 +110,6 @@ impl LazyKeyMaterial<P384Generator> {
     pub(crate) fn for_name(name: DhttpName<'_>) -> Self {
         Self::new(name, P384Generator)
     }
-
-    pub(crate) fn from_existing(name: DhttpName<'_>, key_pem: String, csr_pem: String) -> Self {
-        Self {
-            name: name.into_owned(),
-            generator: P384Generator,
-            key_pem: Some(key_pem),
-            csr_pem: Some(csr_pem),
-        }
-    }
 }
 
 const PENDING_RENEWAL_FILE: &str = ".renew-pending.json";

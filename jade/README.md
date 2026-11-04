@@ -17,6 +17,9 @@ jade run --id dev.alex.chen
 
 This runs on `dev.alex.chen`. If its ordinary identity credentials are missing,
 follow Jade's `genmeta identity apply dev.alex.chen` hint, then retry.
+Jade checks these credentials before building or configuring the listener; a
+profile directory or unfinished developer request alone is insufficient.
+An unfinished developer request does not prevent ordinary identity setup.
 Local run needs no developer certificate or subscription.
 
 Open the App URL printed by Jade. Edit `web/index.html`, `web/src/main.js`,
@@ -36,7 +39,11 @@ Explicit names are never converted by adding or removing `dev.`. A main name
 such as
 `dev.wang` must be selected as `dev.dev.wang` for development.
 Build needs no identity credentials. Local hosting needs ordinary identity
-credentials; only publication needs developer credentials, which `publish` helps prepare.
+credentials; publication requires `codeSigning`, which `publish` helps prepare.
+Both use the certificate and key in the identity's normal `ssl/` directory.
+`genmeta identity apply DEV_NAME` requests a new sequence: active developer
+entitlement for that bound name selects a developer certificate; otherwise it
+selects ordinary TLS credentials. `renew` keeps the installed sequence and purpose.
 
 Without `--id`, local run selects the `dev` child of the DHTTP default name, or
 uses `dev.zero.ai` when no default is configured. A default of `dev.wang` selects
@@ -66,9 +73,22 @@ content and uploads it. It leaves the local build archive unchanged and never
 rebuilds sources. An already signed package is verified and uploaded unchanged.
 
 First-time publication may require confirming the developer subscription and
-completing checkout. Without a built package, publication asks you to build and
-review one first. JSON and noninteractive runs report the required next step
+completing checkout. As with `genmeta identity apply`, Jade shows the
+public checkout link and QR code returned by the server; this payment page does
+not require another login. Jade waits for confirmed payment with a progress
+indicator. The invoice's API URL is used only for status queries.
+The wait follows both the payment link and invoice deadlines, up to 15 minutes; retrying preserves the
+checkout and pending certificate request. Without a built package, publication
+asks you to build and review one first. JSON and noninteractive runs report the required next step
 without starting setup.
+
+Interactive publication shows progress during email verification, developer setup
+and upload, followed by a compact publication result. Use `--verb` for detailed
+package metadata and SHA256 digests, or `--json` for the complete machine result.
+
+When publication needs a certificate, `jade publish` prompts you to apply for
+one and guides the account and subscription checks. Renew an installed developer
+identity with `genmeta identity renew dev.alex.chen` before expiry.
 
 To install the published application on your base identity's Pishoo service:
 

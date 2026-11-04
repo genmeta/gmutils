@@ -1,6 +1,14 @@
 use std::{io::IsTerminal, process::ExitCode};
 
 use clap::Parser;
+use indicatif::ProgressStyle;
+use tracing_indicatif::{
+    IndicatifLayer,
+    filter::{IndicatifFilter, hide_indicatif_span_fields},
+};
+use tracing_subscriber::{
+    Layer, fmt::format::DefaultFields, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 mod archive;
 mod cli;
@@ -64,14 +72,27 @@ async fn main() -> ExitCode {
             return display::failure(command, json, &error::Error::new("E_USAGE", error));
         }
     };
-    tracing_subscriber::fmt()
-        .with_max_level(if cli.verb {
-            tracing::level_filters::LevelFilter::DEBUG
-        } else {
-            tracing::level_filters::LevelFilter::OFF
-        })
-        .with_ansi(std::io::stderr().is_terminal())
-        .with_writer(std::io::stderr)
+    let indicatif_layer = IndicatifLayer::new()
+        .with_span_field_formatter(hide_indicatif_span_fields(DefaultFields::new()))
+        .with_progress_style(
+            ProgressStyle::with_template("{span_child_prefix}{spinner} {msg}")
+                .expect("BUG: static progress bar template is valid"),
+        );
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(std::io::stderr().is_terminal())
+                .with_writer(indicatif_layer.get_stderr_writer())
+                .with_filter(if cli.verb {
+                    tracing::level_filters::LevelFilter::DEBUG
+                } else {
+                    tracing::level_filters::LevelFilter::OFF
+                }),
+        )
+        .with(
+            (!cli.json && std::io::stderr().is_terminal())
+                .then(|| indicatif_layer.with_filter(IndicatifFilter::new(false))),
+        )
         .init();
     let command = cli.options.name();
     let result = if command == "run" {
@@ -83,7 +104,7 @@ async fn main() -> ExitCode {
         }
     };
     match result {
-        Ok(value) => match display::success(command, cli.json, value) {
+        Ok(value) => match display::success(command, cli.json, cli.verb, value) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => display::failure(Some(command), cli.json, &error),
         },

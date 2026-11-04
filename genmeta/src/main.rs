@@ -54,6 +54,9 @@ enum PackageCommand {
         /// Query installed packages without installing or downloading
         #[arg(long,conflicts_with_all=["target","info","version"])]
         list: bool,
+        /// Show readable package details with --list
+        #[arg(short = 'v', long, requires = "list", conflicts_with_all = ["target", "info", "version"])]
+        verbose: bool,
         /// Query an installed package without installing or downloading
         #[arg(long,value_name="NAME",conflicts_with_all=["target","list","version"])]
         info: Option<String>,
@@ -147,25 +150,26 @@ async fn run(options: Options) -> Result<(), Error> {
             PackageCommand::Install {
                 target,
                 list,
+                verbose,
                 info,
                 id,
                 version,
             } => {
                 if list {
-                    install::run("list", None, id, None).await?;
+                    install::run("list", None, id, None, verbose).await?;
                 } else if let Some(name) = info {
-                    install::run("info", Some(name), id, None).await?;
+                    install::run("info", Some(name), id, None, false).await?;
                 } else {
-                    install::run("install", target, id, version).await?;
+                    install::run("install", target, id, version, false).await?;
                 }
             }
             PackageCommand::Update {
                 target,
                 id,
                 version,
-            } => install::run("update", Some(target), id, version).await?,
+            } => install::run("update", Some(target), id, version, false).await?,
             PackageCommand::Uninstall { target, id } => {
-                install::run("remove", Some(target), id, None).await?
+                install::run("remove", Some(target), id, None, false).await?
             }
         },
         Options::Server(command) => server::run(command).await?,
