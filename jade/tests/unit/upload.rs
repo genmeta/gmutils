@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::engine::general_purpose::STANDARD;
 use sha2::{Digest, Sha256};
 use webc::v3::{
     SignatureAlgorithm, Timestamps,

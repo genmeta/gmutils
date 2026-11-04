@@ -50,7 +50,7 @@ pub(super) enum Command {
     Run {
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// Actual development identity (default: dev.<default identity>, or dev.zero.ai)
+        /// Actual development identity (default: the default identity's dev child, or dev.zero.ai)
         #[arg(short, long, value_name = "DEV_NAME")]
         id: Option<String>,
         /// Archive previous test data and start with an empty directory
