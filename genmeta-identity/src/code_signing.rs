@@ -312,15 +312,16 @@ impl Credentials {
     }
 }
 
-pub fn directory(profile: &IdentityProfile) -> PathBuf {
-    profile.join("code-signing")
+/// Only renewal material survives process exit; initial apply stays in memory.
+pub(crate) fn renewal_path(profile: &IdentityProfile, sequence: u32) -> PathBuf {
+    profile.join(format!(".identity-renew-{sequence}.pending.json"))
 }
 
 fn private_directory(path: &Path) -> Result<(), Whatever> {
     if let Ok(meta) = fs::symlink_metadata(path)
         && (!meta.is_dir() || meta.file_type().is_symlink())
     {
-        whatever!("developer credential directory must not be a symlink");
+        whatever!("identity operation directory must not be a symlink");
     }
     let builder = fs::DirBuilder::new();
     #[cfg(unix)]
@@ -336,7 +337,7 @@ fn private_directory(path: &Path) -> Result<(), Whatever> {
         Err(e) => {
             return Err(Whatever::with_source(
                 Box::new(e),
-                "cannot create developer directory".into(),
+                "cannot create identity operation directory".into(),
             ));
         }
     }
@@ -407,7 +408,7 @@ fn save_private(path: &Path, bytes: &[u8]) -> Result<(), Whatever> {
     #[cfg(unix)]
     fs::File::open(path.parent().unwrap())
         .and_then(|f| f.sync_all())
-        .whatever_context("cannot sync developer directory")?;
+        .whatever_context("cannot sync identity operation directory")?;
     Ok(())
 }
 
@@ -449,25 +450,21 @@ pub struct Pending {
     operation_key: String,
     key_pem: String,
     csr_pem: String,
-    #[serde(default)]
-    issuance_submitted: bool,
 }
 
 impl Pending {
     pub fn prepare(profile: &IdentityProfile, sequence: Option<u32>) -> Result<Self, Whatever> {
-        let root = directory(profile);
-        private_directory(&root)?;
-        let path = root.join(match sequence {
-            Some(s) => format!("renew-{s}.pending.json"),
-            None => "apply.pending.json".into(),
-        });
-        if path.exists() {
-            let pending: Self = serde_json::from_slice(&read_private(&path)?)
-                .whatever_context("invalid pending developer request")?;
-            if pending.domain != profile.name() || pending.sequence != sequence {
-                whatever!("pending developer request identity mismatch");
+        if let Some(sequence) = sequence {
+            private_directory(profile.path())?;
+            let path = renewal_path(profile, sequence);
+            if path.exists() {
+                let pending: Self = serde_json::from_slice(&read_private(&path)?)
+                    .whatever_context("invalid pending developer renewal")?;
+                if pending.domain != profile.name() || pending.sequence != Some(sequence) {
+                    whatever!("pending developer renewal identity mismatch");
+                }
+                return Ok(pending);
             }
-            return Ok(pending);
         }
         let key = p384::ecdsa::SigningKey::random(&mut p384::elliptic_curve::rand_core::OsRng);
         let key_pem = key
@@ -498,23 +495,23 @@ impl Pending {
             operation_key: format!("developer-{:x}", Sha256::digest(key_pem.as_bytes())),
             key_pem,
             csr_pem,
-            issuance_submitted: false,
         };
-        save_private(
-            &path,
-            &serde_json::to_vec(&pending)
-                .whatever_context("cannot encode pending developer request")?,
-        )?;
+        pending.persist(profile)?;
         Ok(pending)
     }
     /// Caller holds the profile lock for this complete recovery/request/install operation.
     pub async fn request_certificate(
-        &mut self,
+        &self,
         profile: &IdentityProfile,
         server: &crate::cert_server::CertServer,
         token: &str,
         device: &str,
     ) -> Result<crate::cert_server::DeveloperCertificate, crate::cert_server::Error> {
+        if self.domain != profile.name() {
+            return Err(
+                Whatever::without_source("developer request profile mismatch".into()).into(),
+            );
+        }
         if let Some(sequence) = self.sequence {
             return server
                 .renew_developer_certificate(
@@ -526,37 +523,22 @@ impl Pending {
                 )
                 .await;
         }
-        // The server revalidates the current root/child ownership and replays this
-        // exact CSR atomically. Never recover a certificate from an old ownership
-        // merely because a historical list contains the same CSR.
-        self.issuance_submitted = true;
-        self.persist(profile)
-            .map_err(crate::cert_server::Error::from)?;
-        let result = server
+        server
             .issue_developer_certificate(token, &self.domain, device, &self.csr_pem)
-            .await;
-        if result
-            .as_ref()
-            .err()
-            .is_some_and(issuance_definitely_rejected)
-        {
-            self.issuance_submitted = false;
-            self.persist(profile)
-                .map_err(crate::cert_server::Error::from)?;
-        }
-        result
+            .await
     }
+
     fn persist(&self, profile: &IdentityProfile) -> Result<(), Whatever> {
+        let Some(sequence) = self.sequence else {
+            return Ok(());
+        };
         if self.domain != profile.name() {
             whatever!("pending developer profile mismatch");
         }
         save_private(
-            &directory(profile).join(match self.sequence {
-                Some(s) => format!("renew-{s}.pending.json"),
-                None => "apply.pending.json".into(),
-            }),
+            &renewal_path(profile, sequence),
             &serde_json::to_vec(self)
-                .whatever_context("cannot encode pending developer request")?,
+                .whatever_context("cannot encode pending developer renewal")?,
         )
     }
     pub fn key_pem(&self) -> &str {
@@ -605,7 +587,7 @@ impl Pending {
             whatever!("developer certificate sequence mismatch");
         }
         // Replace the certificate and key together using the ordinary identity transaction.
-        // Keep the pending CSR until installation succeeds so failures remain retryable.
+        // Retain renewal material until the SSL transaction succeeds.
         profile
             .save_identity(
                 credentials.cert_pem.as_bytes(),
@@ -613,20 +595,17 @@ impl Pending {
             )
             .await
             .whatever_context("cannot install developer SSL identity")?;
-        let root = directory(profile);
-        fs::remove_file(root.join(match self.sequence {
-            Some(s) => format!("renew-{s}.pending.json"),
-            None => "apply.pending.json".into(),
-        }))
-        .whatever_context("cannot clear completed developer request")?;
+        if let Some(sequence) = self.sequence {
+            fs::remove_file(renewal_path(profile, sequence))
+                .whatever_context("cannot clear completed developer renewal")?;
+        }
         Ok(())
     }
 }
 
 /// Serialize local operations across processes; do not issue concurrent CSRs for one profile.
 pub fn lock(profile: &IdentityProfile) -> Result<fs::File, Whatever> {
-    let root = directory(profile);
-    private_directory(&root)?;
+    private_directory(profile.path())?;
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(false);
     #[cfg(unix)]
@@ -635,7 +614,7 @@ pub fn lock(profile: &IdentityProfile) -> Result<fs::File, Whatever> {
         options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
     }
     let file = options
-        .open(root.join(".lock"))
+        .open(profile.join(".identity-operation.lock"))
         .whatever_context("cannot open developer credential lock")?;
     file.try_lock()
         .whatever_context("another developer credential operation is in progress")?;
@@ -645,39 +624,3 @@ pub fn lock(profile: &IdentityProfile) -> Result<fs::File, Whatever> {
 #[cfg(test)]
 #[path = "../tests/unit/code_signing.rs"]
 mod tests;
-
-// The current initial-issuance endpoint has no server idempotency key. A 5xx can
-// occur after tx.commit while reloading the response, so it never authorizes a
-// new POST. Only documented precommit client refusals, or a connect failure
-// before an HTTP request was sent, can reopen the same pending CSR for submit.
-fn issuance_definitely_rejected(error: &crate::cert_server::Error) -> bool {
-    match error {
-        crate::cert_server::Error::Request { source } => source.is_connect(),
-        crate::cert_server::Error::Api { status, code, .. } => {
-            status.is_client_error()
-                && matches!(
-                    code.as_str(),
-                    "1001"
-                        | "1002"
-                        | "1008"
-                        | "1110"
-                        | "1201"
-                        | "1202"
-                        | "1203"
-                        | "1204"
-                        | "1206"
-                        | "1401"
-                        | "1402"
-                        | "1403"
-                        | "1404"
-                        | "1405"
-                        | "1406"
-                        | "1410"
-                        | "1425"
-                        | "1428"
-                        | "1429"
-                )
-        }
-        _ => false,
-    }
-}

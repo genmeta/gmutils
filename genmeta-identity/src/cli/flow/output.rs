@@ -107,6 +107,14 @@ pub(crate) fn format_info(summary: &LocalIdentitySummary, now: i64, ansi: bool) 
     if let Some(usage) = summary.usage {
         lines.push(format!("  usage: {}", usage.label()));
     }
+    lines.push(format!(
+        "  code signing: {}",
+        match summary.code_signing {
+            Some(true) => "yes",
+            Some(false) => "no",
+            None => "unknown",
+        }
+    ));
     if let Some(sequence) = summary.sequence {
         lines.push(format!("  sequence: {sequence}"));
     }

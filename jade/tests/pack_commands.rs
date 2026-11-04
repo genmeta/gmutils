@@ -98,8 +98,8 @@ fn run_requires_ordinary_credentials_before_configuring_or_building() {
             .unwrap();
             std::fs::remove_dir_all(profile.join("ssl")).unwrap();
         } else {
-            std::fs::create_dir_all(profile.join("code-signing")).unwrap();
-            std::fs::write(profile.join("code-signing/apply.pending.json"), "pending").unwrap();
+            std::fs::create_dir_all(&profile).unwrap();
+            std::fs::write(profile.join(".identity-apply.pending.json"), "pending").unwrap();
         }
         project(root.path(), "app", "");
         let manifest = root.path().join("jade.toml");
@@ -1116,7 +1116,7 @@ fn noninteractive_publication_guides_setup_without_building_or_creating_an_order
     assert!(!project.join("build").exists());
     assert!(
         !home
-            .join("dev.sky.lee/code-signing/apply.pending.json")
+            .join("dev.sky.lee/.identity-apply.pending.json")
             .exists()
     );
     let explicit = Command::new(env!("CARGO_BIN_EXE_jade"))

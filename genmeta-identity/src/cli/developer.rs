@@ -73,7 +73,7 @@ impl Developer {
         } else {
             None
         };
-        let mut pending = progress::run_sync(progress::GENERATE_KEY, || {
+        let pending = progress::run_sync(progress::GENERATE_KEY, || {
             code_signing::Pending::prepare(&profile, sequence)
         })
         .map_err(local_error)?;
@@ -297,7 +297,7 @@ impl CheckoutUi for TerminalCheckout {
             ));
         }
         let question = format!(
-            "Developer signing: {currency} {}.{:02}/year with annual automatic renewal. Discounts and final payment are shown at checkout. Continue to checkout?",
+            "Developer signing: {currency} {}.{:02}/year (auto-renew). Continue?",
             amount / 100,
             amount % 100
         );

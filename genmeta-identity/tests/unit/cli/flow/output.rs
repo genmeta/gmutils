@@ -34,6 +34,7 @@ fn summary(
     LocalIdentitySummary {
         target: IdentityTarget::parse(name).unwrap(),
         usage,
+        code_signing: usage.map(|_| false),
         sequence,
         valid_from,
         expires_at,
@@ -121,7 +122,7 @@ fn incomplete(name: &str) -> LocalIdentitySummary {
 fn detailed_renderer_matches_ready_near_expired_invalid_and_incomplete_contract() {
     assert_eq!(
         format_info(&ready_default(), NOW, false),
-        "* alice.smith (default):\n  usage: both client and server\n  sequence: 0\n  dir: /tmp/alice.smith\n  validity: 2026/07/08~2027/07/08"
+        "* alice.smith (default):\n  usage: both client and server\n  code signing: no\n  sequence: 0\n  dir: /tmp/alice.smith\n  validity: 2026/07/08~2027/07/08"
     );
     assert!(
         format_info(&near_expiry(), NOW, false)
@@ -132,7 +133,7 @@ fn detailed_renderer_matches_ready_near_expired_invalid_and_incomplete_contract(
     ));
     assert_eq!(
         format_info(&invalid("alice.smith", false), NOW, false),
-        "- alice.smith [invalid]:\n  dir: /tmp/alice.smith\n  reason: certificate is unreadable\n  warn: the certificate for this name is invalid"
+        "- alice.smith [invalid]:\n  code signing: unknown\n  dir: /tmp/alice.smith\n  reason: certificate is unreadable\n  warn: the certificate for this name is invalid"
     );
     assert!(format_info(&incomplete("alice.smith"), NOW, false).contains(
         "  reason: private key is missing\n  warn: the local identity for this name is incomplete"
@@ -218,6 +219,23 @@ fn verbose_default_info_and_verbose_list_share_the_same_block() {
     let inventory = build_inventory(vec![summary]);
 
     assert_eq!(render_verbose_inventory(&inventory, NOW, false), expected);
+}
+
+#[test]
+fn code_signing_is_explicit_even_for_expired_or_untrusted_certificates() {
+    for mut summary in [
+        ready_default(),
+        expired(false),
+        invalid("alice.smith", false),
+    ] {
+        summary.code_signing = Some(true);
+        let expected = format_info(&summary, NOW, false);
+        assert!(expected.contains("\n  code signing: yes\n"));
+        assert_eq!(
+            render_verbose_inventory(&build_inventory(vec![summary]), NOW, false),
+            expected
+        );
+    }
 }
 
 #[test]

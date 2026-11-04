@@ -119,3 +119,14 @@ fn checkout_wait_uses_the_server_deadline_with_a_fifteen_minute_cap() {
         Duration::from_secs(15 * 60)
     );
 }
+
+#[test]
+fn developer_checkout_uses_the_same_compact_payment_layout() {
+    let url = "https://www.dhttp.net/checkout/ckt_dev_0123456789abcdef0123456789abcdef";
+    let qr = render_terminal_qr(url).unwrap();
+    assert!(qr.lines().count() <= 24);
+    assert!(qr.lines().all(|line| line.chars().count() <= 64));
+    let block = payment_instruction_block_or_link(url);
+    assert!(block.contains("scan the QR code below"));
+    assert!(block.ends_with(&format!("Link: {url}")));
+}

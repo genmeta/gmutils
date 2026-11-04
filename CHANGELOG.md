@@ -15,7 +15,7 @@ Changes since the published gmutils 0.9.0 release.
   `--fresh` explicitly archives previous development data.
 - Guide first-time developer setup through interactive `jade publish`, including
   email verification, subscription checks, checkout links/QR codes and bounded
-  payment polling. Preserve pending operations for retry; JSON and noninteractive
+  payment polling. Keep initial key/CSR material in memory; JSON and noninteractive
   runs never start setup or purchase implicitly.
 - Provide a bilingual fullstack starter with a `/whoami` API that reads the
   verified visitor identity through the pinned Pishoo SDK.
@@ -61,8 +61,10 @@ Changes since the published gmutils 0.9.0 release.
 - Reject invalid signed packages before upload instead of re-signing them; check
   author, owner, developer chain and local revocation information, and require host
   signing support before install/update writes.
-- Make developer issuance and payment recovery retryable without losing pending
-  keys or treating an unfulfilled paid invoice as active entitlement.
+- Keep developer initial application in memory like ordinary apply, with no
+  independent credential directory or pending apply file. Persist only renewal
+  recovery state under the identity root; install through the normal SSL transaction.
+  Never treat an unfulfilled paid invoice as active entitlement.
 - Keep local development on normal `/app/`, `/std/` and API URLs, with data in the
   development identity's normal `.volume/` directories. Omit dependency `path`
   entries and nested local source trees from release metadata/content.

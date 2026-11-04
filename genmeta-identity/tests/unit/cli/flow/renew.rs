@@ -37,6 +37,7 @@ fn summary(status: LocalIdentityStatus, facts: bool) -> LocalIdentitySummary {
     LocalIdentitySummary {
         target: IdentityTarget::parse("alice.smith").unwrap(),
         usage: facts.then_some(IdentityUsage::ClientOnly),
+        code_signing: None,
         sequence: facts.then_some(2),
         valid_from: Some(1_700_000_000),
         expires_at: Some(1_900_000_000),
@@ -92,7 +93,7 @@ async fn batch_renewal_skips_developers_without_requesting_email_or_creating_a_c
         .await
         .unwrap();
     let profile = home.identity_profile("dev.alex.chen.dhttp.net").unwrap();
-    assert!(!crate::code_signing::directory(&profile).exists());
+    assert!(!profile.join("code-signing").exists());
     #[cfg(unix)]
     assert_eq!(
         std::fs::read_to_string(profile.join(".auto-renew-disabled")).unwrap(),
@@ -128,7 +129,7 @@ async fn developer_not_due_does_not_reenable_automatic_renewal() {
     .await
     .unwrap();
     let profile = home.identity_profile("dev.alex.chen.dhttp.net").unwrap();
-    assert!(!crate::code_signing::directory(&profile).exists());
+    assert!(!profile.join("code-signing").exists());
     #[cfg(unix)]
     assert!(
         !super::super::auto_renew::is_identity_enabled(
@@ -155,7 +156,7 @@ async fn ordinary_tls_keeps_automatic_renewal_with_separate_signing_credentials(
         )
         .await
         .unwrap();
-    std::fs::create_dir_all(crate::code_signing::directory(&profile).join("1")).unwrap();
+    std::fs::create_dir_all(profile.join("code-signing/1")).unwrap();
     let target = IdentityTarget::parse("alice.smith").unwrap();
     super::super::auto_renew::disable_identity(&home, target.dhttp_name(), "old state")
         .await

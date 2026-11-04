@@ -40,6 +40,7 @@ fn ready_summary(name: &str, is_default: bool, chain: &str) -> LocalIdentitySumm
     LocalIdentitySummary {
         target: IdentityTarget::parse(name).unwrap(),
         usage: Some(usage),
+        code_signing: None,
         sequence: Some(sequence),
         valid_from: Some(NOW - 300),
         expires_at: Some(NOW + 300),
@@ -120,6 +121,59 @@ async fn untrusted_local_certificate_is_invalid_before_authentication() {
     );
 }
 
+#[tokio::test]
+async fn summary_reports_code_signing_from_the_installed_leaf_eku() {
+    for (label, cert, expected) in [
+        (
+            "developer",
+            include_str!("../../../fixtures/unified-developer/developer.cert.pem"),
+            Some(true),
+        ),
+        (
+            "tls",
+            include_str!("../../../fixtures/code-signing/tls.cert.pem"),
+            Some(false),
+        ),
+        (
+            "missing-eku",
+            include_str!("../../../fixtures/code-signing/missing-eku.cert.pem"),
+            Some(false),
+        ),
+        (
+            "any-eku",
+            include_str!("../../../fixtures/code-signing/any-eku.cert.pem"),
+            Some(false),
+        ),
+        (
+            "expired",
+            include_str!("../../../fixtures/code-signing/expired.cert.pem"),
+            Some(true),
+        ),
+        ("unreadable", "invalid certificate", None),
+        ("missing", "", None),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = DhttpHome::new(tmp.path().to_path_buf());
+        // A dev prefix must not grant signing usage; a plain name must not hide it.
+        let name = DhttpName::try_from(if expected == Some(true) {
+            "alex.chen"
+        } else {
+            "dev.alex.chen"
+        })
+        .unwrap();
+        let profile = home.identity_profile(name.borrow().as_full()).unwrap();
+        tokio::fs::create_dir_all(profile.ssl_dir()).await.unwrap();
+        if !cert.is_empty() {
+            tokio::fs::write(profile.cert_path(), cert).await.unwrap();
+        }
+
+        let summary = super::load_summary_exact(&home, name.borrow(), None)
+            .await
+            .unwrap();
+        assert_eq!(summary.code_signing, expected, "{label}");
+    }
+}
+
 #[test]
 fn classifies_ready_expired_incomplete_and_invalid() {
     let ready = classify_status(
@@ -128,6 +182,7 @@ fn classifies_ready_expired_incomplete_and_invalid() {
             private_key: LocalIdentityMaterialState::Present,
             certificate_target_matches: Some(true),
             usage: Some(IdentityUsage::BothClientAndServer),
+            code_signing: None,
             sequence: Some(0),
             valid_from: Some(NOW - 300),
             expires_at: Some(NOW + 300),
@@ -147,6 +202,7 @@ fn classifies_ready_expired_incomplete_and_invalid() {
             private_key: LocalIdentityMaterialState::Present,
             certificate_target_matches: Some(true),
             usage: Some(IdentityUsage::ClientOnly),
+            code_signing: None,
             sequence: Some(2),
             valid_from: Some(NOW - 300),
             expires_at: Some(NOW - 1),
@@ -166,6 +222,7 @@ fn classifies_ready_expired_incomplete_and_invalid() {
             private_key: LocalIdentityMaterialState::Missing("private key missing"),
             certificate_target_matches: Some(true),
             usage: Some(IdentityUsage::ClientOnly),
+            code_signing: None,
             sequence: Some(3),
             valid_from: Some(NOW - 300),
             expires_at: Some(NOW + 300),
@@ -187,6 +244,7 @@ fn classifies_ready_expired_incomplete_and_invalid() {
             private_key: LocalIdentityMaterialState::Present,
             certificate_target_matches: Some(true),
             usage: Some(IdentityUsage::ClientOnly),
+            code_signing: None,
             sequence: Some(4),
             valid_from: Some(NOW - 300),
             expires_at: Some(NOW + 300),
@@ -206,6 +264,7 @@ fn classifies_ready_expired_incomplete_and_invalid() {
             private_key: LocalIdentityMaterialState::Present,
             certificate_target_matches: Some(true),
             usage: Some(IdentityUsage::BothClientAndServer),
+            code_signing: None,
             sequence: Some(0),
             valid_from: Some(NOW + 1),
             expires_at: Some(NOW + 300),

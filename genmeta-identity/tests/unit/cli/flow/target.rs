@@ -12,6 +12,7 @@ fn summary(status: LocalIdentityStatus) -> LocalIdentitySummary {
     LocalIdentitySummary {
         target: IdentityTarget::parse("alice.smith").unwrap(),
         usage: Some(IdentityUsage::BothClientAndServer),
+        code_signing: None,
         sequence: Some(0),
         valid_from: Some(1_700_000_000),
         expires_at: Some(1_900_000_000),

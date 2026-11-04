@@ -96,8 +96,9 @@ completing checkout. As with `genmeta identity apply`, Jade shows the
 public checkout link and QR code returned by the server; this payment page does
 not require another login. Jade waits for confirmed payment with a progress
 indicator. The invoice's API URL is used only for status queries.
-The wait follows both the payment link and invoice deadlines, up to 15 minutes; retrying preserves the
-checkout and pending certificate request. Without a built package, publication
+The wait follows both the payment link and invoice deadlines, up to 15 minutes.
+Initial application keeps its key and CSR only in memory; a new invocation creates
+a fresh request. It creates no `code-signing/` directory or pending apply file. Without a built package, publication
 asks you to build and review one first. JSON and noninteractive runs report the required next step
 without starting setup. With no package, interactive setup uses the configured
 author or default development identity, then asks you to build, review and publish.

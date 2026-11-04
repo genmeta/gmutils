@@ -105,6 +105,9 @@ fn pending_survives_retries_and_preserves_tls_until_installation() {
     let _lock = lock(&p).unwrap();
     assert!(lock(&p).is_err());
     let pending = Pending::prepare(&p, Some(1)).unwrap();
+    assert!(!p.join("code-signing").exists());
+    assert_eq!(renewal_path(&p, 1).parent(), Some(p.path()));
+    assert!(p.join(".identity-operation.lock").is_file());
     let again = Pending::prepare(&p, Some(1)).unwrap();
     assert_eq!(pending.operation_key(), again.operation_key());
     assert_eq!(pending.csr(), again.csr());
@@ -120,7 +123,7 @@ fn pending_survives_retries_and_preserves_tls_until_installation() {
     {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(
-            fs::metadata(directory(&p).join("renew-1.pending.json"))
+            fs::metadata(renewal_path(&p, 1))
                 .unwrap()
                 .permissions()
                 .mode()
@@ -137,7 +140,7 @@ async fn completed_pending_installs_matching_key_certificate_atomically() {
     fs::create_dir(p.ssl_dir()).unwrap();
     fs::write(p.cert_path(), fixture("tls.cert.pem")).unwrap();
     fs::write(p.key_path(), fixture("superseded.key.pem")).unwrap();
-    let mut pending = Pending::prepare(&p, None).unwrap();
+    let mut pending = Pending::prepare(&p, Some(1)).unwrap();
     pending.key_pem = fixture("developer.key.pem");
     let cert = DeveloperCertificate {
         purpose: "code_signing".into(),
@@ -161,7 +164,7 @@ async fn completed_pending_installs_matching_key_certificate_atomically() {
     let mut invalid = cert.clone();
     invalid.certificate.domain = "other.dhttp.net".into();
     assert!(
-        Pending::prepare(&p, None)
+        Pending::prepare(&p, Some(1))
             .unwrap()
             .install_with_root(&p, &invalid, &root())
             .await
@@ -175,13 +178,14 @@ async fn completed_pending_installs_matching_key_certificate_atomically() {
         fs::read_to_string(p.key_path()).unwrap(),
         fixture("superseded.key.pem")
     );
-    assert!(directory(&p).join("apply.pending.json").exists());
+    assert!(renewal_path(&p, 1).exists());
     pending.install_with_root(&p, &cert, &root()).await.unwrap();
-    assert!(!directory(&p).join("apply.pending.json").exists());
+    assert!(!renewal_path(&p, 1).exists());
+    assert!(!p.join("code-signing").exists());
     let saved = load_with_root(&p, Some(1), &root()).unwrap();
     assert_eq!(p.load_certs().await.unwrap(), saved.chain().unwrap());
     p.load_key().await.unwrap();
-    assert!(!directory(&p).join("1").exists());
+    assert!(!p.join("code-signing/1").exists());
     saved.validate_with_root(DOMAIN, &root()).unwrap();
     let wrong = Credentials {
         cert_pem: saved.cert_pem.clone(),
@@ -284,15 +288,14 @@ async fn recover_committed_initial_issuance(use_server_error: bool) {
             .await
             .is_err()
     );
-    let mut restored = Pending::prepare(&profile, None).unwrap();
-    assert!(restored.issuance_submitted);
-    assert_eq!(restored.key_pem, original_key);
-    let recovered = restored
+    assert!(!profile.join("code-signing").exists());
+    assert!(!profile.join(".identity-apply.pending.json").exists());
+    let recovered = pending
         .request_certificate(&profile, &server, "account-token", "test")
         .await
         .unwrap();
     mock.await.unwrap();
-    restored
+    pending
         .install_with_root(&profile, &recovered, &root())
         .await
         .unwrap();
@@ -302,7 +305,7 @@ async fn recover_committed_initial_issuance(use_server_error: bool) {
 }
 
 #[tokio::test]
-async fn uncertain_issuance_retries_the_same_persisted_csr() {
+async fn initial_issuance_failure_does_not_persist_a_private_key() {
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -310,9 +313,7 @@ async fn uncertain_issuance_retries_the_same_persisted_csr() {
     let tmp = tempfile::tempdir().unwrap();
     let profile = profile(tmp.path());
     let _lock = lock(&profile).unwrap();
-    let mut pending = Pending::prepare(&profile, None).unwrap();
-    pending.issuance_submitted = true;
-    pending.persist(&profile).unwrap();
+    let pending = Pending::prepare(&profile, None).unwrap();
     let csr = pending.csr().to_owned();
     let key = pending.key_pem().to_owned();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -361,9 +362,12 @@ async fn uncertain_issuance_retries_the_same_persisted_csr() {
             .is_err()
     );
     mock.await.unwrap();
-    let restored = Pending::prepare(&profile, None).unwrap();
-    assert_eq!(restored.csr(), csr);
-    assert_eq!(restored.key_pem(), key);
+    assert_eq!(fs::read_dir(profile.path()).unwrap().count(), 1);
+    assert!(profile.join(".identity-operation.lock").exists());
+    let next = Pending::prepare(&profile, None).unwrap();
+    assert_ne!(next.csr(), csr);
+    assert_ne!(next.key_pem(), key);
+    assert_eq!(fs::read_dir(profile.path()).unwrap().count(), 1);
 }
 
 #[test]
@@ -382,40 +386,23 @@ fn chain_allows_only_optional_exact_root_and_rejects_unrelated_tail() {
 }
 
 #[tokio::test]
-async fn a_lost_initial_issuance_response_replays_the_same_csr() {
+async fn a_lost_initial_issuance_response_can_retry_the_in_memory_csr() {
     recover_committed_initial_issuance(false).await;
 }
 #[tokio::test]
-async fn postcommit_503_preserves_submission_and_replays_the_same_csr() {
+async fn postcommit_503_can_retry_the_in_memory_csr() {
     recover_committed_initial_issuance(true).await;
 }
 #[test]
-fn only_documented_precommit_refusals_clear_the_issuance_marker() {
-    use crate::cert_server::Error;
-    let error = |status, code: &str| Error::Api {
-        status,
-        code: code.into(),
-        message: "test".into(),
-    };
-    assert!(issuance_definitely_rejected(&error(
-        reqwest::StatusCode::PAYMENT_REQUIRED,
-        "1428"
-    )));
-    assert!(issuance_definitely_rejected(&error(
-        reqwest::StatusCode::UNPROCESSABLE_ENTITY,
-        "1410"
-    )));
-    for status in [
-        reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-        reqwest::StatusCode::SERVICE_UNAVAILABLE,
-        reqwest::StatusCode::REQUEST_TIMEOUT,
-    ] {
-        assert!(!issuance_definitely_rejected(&error(status, "1412")));
-    }
-    assert!(!issuance_definitely_rejected(&error(
-        reqwest::StatusCode::BAD_REQUEST,
-        "9999"
-    )));
+fn initial_apply_generates_fresh_material_without_creating_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let p = profile(tmp.path());
+    let first = Pending::prepare(&p, None).unwrap();
+    let second = Pending::prepare(&p, None).unwrap();
+    assert_ne!(first.key_pem(), second.key_pem());
+    assert_ne!(first.csr(), second.csr());
+    assert_ne!(first.operation_key(), second.operation_key());
+    assert_eq!(fs::read_dir(p.path()).unwrap().count(), 0);
 }
 
 #[test]
@@ -465,11 +452,11 @@ fn unified_identity_validates_for_tls_and_signing_and_loads_one_key_pair() {
     let credentials = load_with_root(&p, None, root.as_ref()).unwrap();
     assert_eq!(credentials.cert_pem, cert_pem);
     assert!(
-        !directory(&p).exists(),
+        !p.join("code-signing").exists(),
         "unified signing requires no independent credential directory"
     );
     assert!(load_with_root(&p, Some(999), root.as_ref()).is_err());
-    let legacy = directory(&p).join("1");
+    let legacy = p.join("code-signing/1");
     fs::create_dir_all(&legacy).unwrap();
     save_private(
         &legacy.join("credentials.json"),

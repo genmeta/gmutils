@@ -22,6 +22,7 @@ pub(crate) struct LocalIdentityAssessment {
     pub(crate) private_key: LocalIdentityMaterialState,
     pub(crate) certificate_target_matches: Option<bool>,
     pub(crate) usage: Option<IdentityUsage>,
+    pub(crate) code_signing: Option<bool>,
     pub(crate) sequence: Option<u32>,
     pub(crate) valid_from: Option<i64>,
     pub(crate) expires_at: Option<i64>,
@@ -69,6 +70,7 @@ impl LocalIdentityStatus {
 pub(crate) struct LocalIdentitySummary {
     pub(crate) target: IdentityTarget,
     pub(crate) usage: Option<IdentityUsage>,
+    pub(crate) code_signing: Option<bool>,
     pub(crate) sequence: Option<u32>,
     pub(crate) valid_from: Option<i64>,
     pub(crate) expires_at: Option<i64>,
@@ -300,6 +302,7 @@ pub(crate) async fn load_summary_exact(
     Ok(LocalIdentitySummary {
         target,
         usage: assessment.usage,
+        code_signing: assessment.code_signing,
         sequence: assessment.sequence,
         valid_from: assessment.valid_from,
         expires_at: assessment.expires_at,
@@ -340,6 +343,7 @@ async fn assess_profile(
                 private_key: LocalIdentityMaterialState::Present,
                 certificate_target_matches: None,
                 usage: None,
+                code_signing: None,
                 sequence: None,
                 valid_from: None,
                 expires_at: None,
@@ -359,6 +363,7 @@ async fn assess_profile(
         private_key: LocalIdentityMaterialState::Present,
         certificate_target_matches: None,
         usage: None,
+        code_signing: None,
         sequence: None,
         valid_from: None,
         expires_at: None,
@@ -400,6 +405,10 @@ async fn assess_profile(
     };
     match x509_parser::parse_x509_certificate(leaf.as_ref()) {
         Ok((_, certificate)) => {
+            assessment.code_signing = certificate
+                .extended_key_usage()
+                .ok()
+                .map(|extension| extension.is_some_and(|eku| eku.value.code_signing));
             assessment.valid_from = Some(certificate.validity().not_before.timestamp());
             assessment.expires_at = Some(certificate.validity().not_after.timestamp());
             let target_matches = certificate

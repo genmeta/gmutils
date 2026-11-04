@@ -72,6 +72,7 @@ fn resolved_with(status: Option<LocalIdentityStatus>) -> ResolvedApplyTarget {
         local: status.map(|status| LocalIdentitySummary {
             target: IdentityTarget::parse("alice.smith").unwrap(),
             usage: Some(IdentityUsage::BothClientAndServer),
+            code_signing: None,
             sequence: Some(0),
             valid_from: Some(1_700_000_000),
             expires_at: Some(1_900_000_000),
@@ -329,19 +330,15 @@ async fn ordinary_apply_tries_saved_identity_proofs_before_email() {
 }
 
 #[tokio::test]
-async fn pending_developer_apply_does_not_block_ordinary_identity_setup() {
+async fn legacy_developer_files_do_not_block_ordinary_identity_setup() {
     _ = rustls::crypto::ring::default_provider().install_default();
     let cert_server = CertServer::new("http://127.0.0.1:1").unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let home = DhttpHome::new(tmp.path().to_path_buf());
     let profile = home.identity_profile("dev.alex.chen").unwrap();
-    let signing = crate::code_signing::directory(&profile);
-    std::fs::create_dir_all(&signing).unwrap();
-    std::fs::write(
-        signing.join("apply.pending.json"),
-        "pending developer request",
-    )
-    .unwrap();
+    let pending = profile.join("code-signing/apply.pending.json");
+    std::fs::create_dir_all(pending.parent().unwrap()).unwrap();
+    std::fs::write(&pending, "pending developer request").unwrap();
     let error = run(
         &command(Some("dev.alex.chen")),
         &home,
@@ -355,7 +352,7 @@ async fn pending_developer_apply_does_not_block_ordinary_identity_setup() {
         "Email verification requires an interactive terminal for this command."
     );
     assert_eq!(
-        std::fs::read_to_string(signing.join("apply.pending.json")).unwrap(),
+        std::fs::read_to_string(&pending).unwrap(),
         "pending developer request"
     );
     assert!(!profile.ssl_dir().exists());

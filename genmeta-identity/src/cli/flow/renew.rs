@@ -336,8 +336,7 @@ async fn renew_one(
         .identity_profile(preflight.target.full_name())
         .expect("validated identity name");
     if let Some(sequence) = crate::cli::developer::installed_sequence(&profile)? {
-        let pending = crate::code_signing::directory(&profile)
-            .join(format!("renew-{sequence}.pending.json"))
+        let pending = crate::code_signing::renewal_path(&profile, sequence)
             .try_exists()
             .map_err(|e| Error::without_source(e.to_string()))?;
         if !pending && !command.force && !renewal_is_due(expires_at, now) {

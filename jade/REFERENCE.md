@@ -17,7 +17,7 @@ hosting use that same installed identity selected by the author or default name.
 Ordinary TLS certificates cannot sign packages; publish guides developer setup when the installed certificate lacks
 `codeSigning`. Issued credentials are not stored or selected from
 `code-signing/<sequence>/credentials.json`, and upload creates no temporary identity.
-Pending developer requests remain retryable until SSL installation succeeds.
+No independent `code-signing/` directory is created, including during setup.
 
 `genmeta identity apply NAME` requests a new sequence using the target name's
 current entitlement: a bound name with active developer entitlement receives
@@ -47,8 +47,8 @@ Developer checkout reads `payment_entry` from the authenticated
 {
   "url": "/v2/invoice?no=INV...",
   "payment_entry": {
-    "url": "https://dhttp.net/checkout/ckt_...",
-    "checkout_token": "ckt_...",
+    "url": "https://dhttp.net/checkout/ckt_dev_<32 hex characters>",
+    "checkout_token": "ckt_dev_<32 hex characters>",
     "kind": "code_signing_purchase",
     "expires_at": 1793780000
   }
@@ -56,7 +56,11 @@ Developer checkout reads `payment_entry` from the authenticated
 ```
 
 The nested URL must be an absolute HTTPS browser payment link. Jade encodes that
-same link in its terminal QR code. The top-level URL remains an API reference.
+same link in its terminal QR code, using the compact layout shared with
+`genmeta identity apply`. New developer tokens are opaque, fixed-length random
+values; invoice/account data and signatures are kept out of the URL. The server
+stores only their digests and enforces the invoice binding and expiry. The top-level
+URL remains an API reference.
 The server and website must support developer purchase and renewal through the
 public checkout capability, including invoice queries, coupons, payment sessions
 and result polling without another browser login. The capability must be scoped
@@ -68,10 +72,15 @@ and website to implement that contract before the payment flow works end to end.
 Developer certificates require account email verification for renewal and are
 excluded from the automatic `genmeta identity renew --all` job. Renew them
 explicitly before expiry; ordinary TLS identities continue to renew automatically.
-The pending CSR, private key and operation are preserved across failures. Initial
-issuance replays the same CSR under the server ownership lock rather than creating
-a second sequence after a lost response. A new independent CSR can create another
-certificate; no additional annual subscription is needed.
+Initial application keeps its private key and CSR only in memory, just like
+ordinary identity apply. Exiting or failing discards them; a later application
+generates a fresh request. It writes no pending application file or independent
+credential directory. Renewal alone persists recovery material under the identity
+root as `.identity-renew-SEQUENCE.pending.json`, with a shared
+`.identity-operation.lock`; successful SSL installation removes the renewal state.
+Historical credential/cache directories are not read or selected, and are not
+automatically migrated or removed.
+
 
 ## Identity selection
 

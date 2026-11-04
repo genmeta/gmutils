@@ -319,11 +319,7 @@ async fn developer_renewal_keeps_code_signing_purpose_and_exact_sequence() {
     assert_eq!(body["purpose"], "code_signing");
     assert_eq!(body["sequence"], 7);
     let profile = home.identity_profile("dev.alice.dhttp.net").unwrap();
-    assert!(
-        code_signing::directory(&profile)
-            .join("renew-7.pending.json")
-            .exists()
-    );
+    assert!(code_signing::renewal_path(&profile, 7).exists());
     assert!(!profile.ssl_dir().exists());
 }
 #[tokio::test]
@@ -454,7 +450,7 @@ async fn publish_setup_requires_interaction_before_network_or_local_changes() {
     assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 0);
 }
 #[tokio::test]
-async fn explicit_developer_apply_uses_bound_child_csr_and_preserves_pending_on_failure() {
+async fn explicit_developer_apply_uses_bound_child_csr_without_persisting_it() {
     let (server, requests) = server(vec![
         (200, active()),
         (200, active()),
@@ -492,11 +488,9 @@ async fn explicit_developer_apply_uses_bound_child_csr_and_preserves_pending_on_
         "dev.alice.dhttp.net"
     );
     let profile = home.identity_profile("dev.alice.dhttp.net").unwrap();
-    assert!(
-        code_signing::directory(&profile)
-            .join("apply.pending.json")
-            .exists()
-    );
+    assert!(!profile.join("code-signing").exists());
+    assert!(!profile.join(".identity-apply.pending.json").exists());
+    assert_eq!(std::fs::read_dir(profile.path()).unwrap().count(), 1);
     assert!(!profile.ssl_dir().exists());
 }
 
