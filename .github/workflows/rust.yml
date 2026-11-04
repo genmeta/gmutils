@@ -18,9 +18,9 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: rustup target add wasm32-wasip2
       - name: Build and rebuild the Rust API template
-        run: cargo test -p jade --locked --test pack_commands rust_api_template_builds_without_developer_build_scripts -- --ignored --exact
+        run: jade/tests/scripts/code-signing.sh --test pack_commands rust_api_template_builds_without_developer_build_scripts -- --ignored --exact
       - name: Exercise publication against the local HTTP/3 store
-        run: cargo test -p jade --locked upload::tests::real_http3_publish_retry_dependencies_and_read_only_recovery -- --ignored --exact
+        run: jade/tests/scripts/code-signing.sh upload::tests::real_http3_publish_retry_dependencies_and_read_only_recovery -- --ignored --exact
 
   build:
     strategy:
@@ -37,7 +37,10 @@ jobs:
       - name: Run tests
         # Limit test parallelism to 1 thread to avoid resource contention
         # GitHub runners have limited cores (ubuntu/windows=2, macos=3)
-        run: cargo test --workspace --locked --verbose -- --test-threads=1
+        run: cargo test --workspace --exclude jade --locked --verbose -- --test-threads=1
+      - name: Run Jade tests with isolated test Root
+        shell: bash
+        run: jade/tests/scripts/code-signing.sh -- --test-threads=1
 
   format:
     runs-on: ubuntu-latest

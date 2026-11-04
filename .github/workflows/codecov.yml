@@ -18,7 +18,13 @@ jobs:
           sudo apt-get install --assume-yes --no-install-recommends libpam0g-dev
       - uses: taiki-e/install-action@cargo-llvm-cov
       # Limit test parallelism to 1 thread to avoid resource contention
-      - run: cargo llvm-cov --locked --all-features --workspace --lcov --output-path lcov.info -- --test-threads=1
+      # Coverage instruments its own disposable test build, never release outputs.
+      - name: Run coverage with isolated test Root
+        shell: bash
+        run: |
+          export CARGO_TARGET_DIR="$PWD/target/code-signing-coverage"
+          export DHTTP_ROOT_CA_PEM="$(cat genmeta-identity/tests/fixtures/code-signing/root.cert.pem)"
+          cargo llvm-cov --locked --all-features --workspace --lcov --output-path lcov.info -- --test-threads=1
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

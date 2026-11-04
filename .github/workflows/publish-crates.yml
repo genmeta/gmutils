@@ -63,7 +63,10 @@ jobs:
         run: cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
 
       - name: Test workspace
-        run: cargo test --locked --workspace --all-features --all-targets -- --test-threads=1
+        run: cargo test --locked --workspace --exclude jade --all-features --all-targets -- --test-threads=1
+
+      - name: Test Jade with isolated test Root
+        run: jade/tests/scripts/code-signing.sh --all-features --all-targets -- --test-threads=1
 
       - name: Authenticate to crates.io
         if: env.RELEASE_TAG != ''

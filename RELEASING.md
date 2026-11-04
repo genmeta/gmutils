@@ -1,182 +1,145 @@
-# Release preparation for v0.9.0-preview.5
+# Release preparation for v0.9.1-preview.1
 
-| Package | Published version | Prepared version |
+The release label is **0.9.1.Preview.1**; Cargo versions and the annotated Git tag
+use the repository's existing SemVer spelling, **0.9.1-preview.1** and
+**v0.9.1-preview.1**. The change baseline is the published `v0.9.0` tag, rather
+than the stale preview.5 heading previously in this document. See
+[CHANGELOG.md](CHANGELOG.md#091-preview1---2026-11-04) for release notes.
+
+## Versions and publication order
+
+| Package | Previous published version | Prepared version |
 | --- | --- | --- |
-| genmeta | 0.9.0-preview.4 | 0.9.0-preview.5 |
-| genmeta-access | 0.5.0-preview.3 | 0.5.0-preview.4 |
-| genmeta-curl | 0.8.0-preview.3 | 0.8.0-preview.4 |
-| genmeta-discover | 0.5.0-preview.2 | 0.5.0-preview.3 |
-| genmeta-doctor | 0.5.0-preview.2 | 0.5.0-preview.3 |
-| genmeta-identity | 0.5.0-preview.4 | 0.5.0-preview.5 |
-| genmeta-nat | 0.6.0-preview.2 | 0.6.0-preview.3 |
-| genmeta-nslookup | 0.6.0-preview.2 | 0.6.0-preview.3 |
-| genmeta-proxy | 0.5.0-preview.2 | 0.5.0-preview.3 |
-| jade | not published by this workflow | 0.1.0 (bundled executable) |
+| genmeta-access | 0.5.0-preview.4 | 0.5.0-preview.5 |
+| genmeta-curl | 0.8.0-preview.4 | 0.8.0-preview.5 |
+| genmeta-discover | 0.5.0-preview.3 | 0.5.0-preview.4 |
+| genmeta-identity | 0.5.0 | 0.5.1-preview.1 |
+| genmeta-nat | 0.6.0-preview.3 | 0.6.0-preview.4 |
+| genmeta-doctor | 0.5.0-preview.3 | 0.5.0-preview.4 |
+| genmeta-nslookup | 0.6.0-preview.3 | 0.6.0-preview.4 |
+| genmeta-proxy | 0.5.0-preview.3 | 0.5.0-preview.4 |
+| genmeta | 0.9.0 | 0.9.1-preview.1 |
+| jade | bundled; outside crates.io workflow | 0.1.0 (unchanged) |
 
-The published versions above were checked against crates.io on 2026-10-23.
-Every Genmeta crate changed after v0.9.0-preview.4, so each receives a new preview
-version and workspace dependencies select those new versions. The publication
-order already places dependencies before dependents. Jade ships in the gmutils
-Debian and Homebrew packages and remains outside the crates.io publication list.
-The `feat/waz-release-20261023` PR branch prepares these changes;
-no tag is created or pushed by this preparation.
+Previous versions were checked against the crates.io API on 2026-11-04. The
+identity crate's version advances beyond the published stable 0.5.0; it must not
+return to the 0.5.0 preview series. Other utility crates advance their independent
+preview series because their packaged sources/tests or workspace dependencies
+changed. Workspace version requirements and `Cargo.lock` must agree. The existing
+publish workflow already orders dependencies before dependents, including NAT
+before Doctor and all utilities before the launcher.
 
-## Scope and compatibility
+Jade retains its independent crate/executable. DEB and Homebrew bundle `genmeta`
+and `jade`, with the distribution version taken from `genmeta/Cargo.toml`.
+RPM/Scoop recipes and the crates.io package list retain their existing scope.
 
-This release targets the current Pishoo unified Pkg, listen/mount and query-based
-ACL APIs. Package creation, build and publication use the separate Jade executable
-(`jade create/build/publish`); frontend and backend source locations are discovered
-automatically without configuration sections. `genmeta` provides install/update/uninstall and
-installed queries via install --list/--info. Signed source files use .waz. No
-legacy App/Lib package flags, package/server grouping, forward or unlisten aliases
-are restored. App entry URLs use /app/NAME/.
+## Behavior and compatibility
 
-Listen edits .volume/sys/setting/database locally, including when the identity is
-off. It accepts internal/external/all/off, and off retains mounts. Mount/unmount
-use the authenticated running Pishoo /std/sys/mount API. Unmount matches both
-location and proxy_pass; off and unmount require confirmation or --yes.
+- `jade create/run/build/publish` separates local development, unsigned builds
+  and signing/upload. Build requires no credentials; local run uses ordinary
+  credentials; publish prepares developer credentials interactively and signs
+  only the reviewed existing build. Already signed packages must verify and are
+  uploaded unchanged. Publish never rebuilds sources or changes the local WAZ.
+- Explicit `--id dev.alex.chen` selects that actual development child for every
+  Jade command. A main name `dev.wang` uses child `dev.dev.wang`. No prefix is
+  automatically added to explicit input. Configured/package authors stay exact.
+- Both ordinary and developer credentials use the identity's normal `ssl/`
+  certificate, key and OCSP staple. Apply requests a new sequence and lets the
+  server choose certificate usage from current binding/entitlement. Renew retains
+  sequence and usage. Legacy signing files are neither selected nor migrated or
+  deleted. Developer renewal is explicit, outside `renew --all`.
+- Local dependencies with `path` are built/watched recursively; other dependencies
+  install exact versions from the store. App/API routes and `.volume` data use
+  normal identity paths. Ctrl+C/SIGTERM removes only code still owned by this run;
+  `--fresh` archives data. Unclean termination may leave code to remove manually.
+- New official packages use author `dev.genmeta.tech.dhttp.net`; bare installs
+  select this author. Explicit legacy `std.dhttp.net` packages remain supported.
+  Updates retain their installed author; changing publishers is a separate action.
+- The matching Pishoo must support developer package validation, local file
+  hosting, `pishoo configure`, unified package APIs and conditional removal.
+  Names alone do not grant signing or local execution rights.
+- Developer checkout requires the server's authenticated invoice API to return
+  an HTTPS public `payment_entry` and to confirm subscription fulfillment.
+  Noninteractive/JSON commands do not start setup or purchases. Local tests do
+  not establish production checkout/store deployment readiness.
 
-Package installation and upgrades do not install Workspace. After interactive
-identity application with the server enabled, the CLI asks whether to install
-Workspace, defaulting to yes on Enter. Confirmation precedes a read-only readiness
-check and `genmeta install workspace --id NAME`. Running Pishoo automatically
-discovers enabled identities; this flow does not call `pishoo reload` or require
-a system-managed service. The readiness check waits for up to 30 seconds.
-Installation uses the
-same identity home, including global applications. Disabled servers,
-non-interactive runs and declined or cancelled prompts skip readiness checks and
-installation. Skips and failures print the manual install command; failures retain
-the applied identity. Only the read-only readiness check is retried; installation
-is submitted once. This replaces the package-manager Workspace install hooks.
+The published DHTTP/DNS/QUIC dependencies remain pinned by `Cargo.lock`. Keep
+`DHTTP_ROOT_CA_PEM` as approved PEM **content** at compile time for dhttp 0.7.1;
+never substitute a filename or runtime trust setting. Production build outputs
+must be separate from the disposable test Root build.
 
-Package output abbreviates identities and URL hosts with `~`, and displays the
-standard publisher as `std`, including in JSON results. Protocol requests retain
-canonical identities.
+## Local release checks
 
-Identity activation creates only explicit listening configuration. It no longer
-creates a default welcome site. Certificate logging preserves history when moving
-an existing real logs directory into log. Curl header write-out tokens consume
-both closing braces, including Pishoo-Viewer-Name on App HEAD responses.
+Run from this repository without sibling Cargo patches. Use the source checkout
+for fixture-based tests; the identity crate archive excludes disposable test
+private keys, and packaged sources are verified through the publish dry run.
 
-Runtime dependencies use published registry releases without sibling Cargo
-patches. The access CLI's test-only daccess dependency uses the same published
-crates.io version 0.2.0 as Pishoo, so its contract tests exercise the current HTTP
-routes. There is no Git source override for this dependency.
+```sh
+cargo fmt --all -- --check
+cargo test --workspace --all-targets --locked -- --list
+cargo test --workspace --exclude jade --locked --all-features --all-targets -- --test-threads=1
+jade/tests/scripts/code-signing.sh --all-features --all-targets -- --test-threads=1
+cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
+cargo fmt --manifest-path xtask/Cargo.toml -- --check
+cargo test --manifest-path xtask/Cargo.toml --locked
+cargo clippy --manifest-path xtask/Cargo.toml --locked --all-targets -- -D warnings
+```
 
-## Jade project
+The Jade script compiles its test trust anchor only into
+`target/code-signing-tests`. Do not distribute those executables or fixture keys.
+CI uses the same isolation for Jade integration tests; ordinary release build
+and crate verification keep the production trust configuration.
 
-Jade lives in `jade/` with its own manifest, executable, README, fixtures and tests.
-Build and test it with `cargo build -p jade --locked` and
-`cargo test -p jade --locked`. Install from this checkout with
-`cargo install --path jade --locked`. Workspace CI includes Jade. The gmutils
-Debian and Homebrew packages install both the `genmeta` and `jade` commands;
-their version continues to follow `genmeta/Cargo.toml`. The existing release
-workflow builds both executables and checks the archive contents before
-publication. Homebrew supports Apple Silicon and Intel Macs and tests both
-installed commands. RPM/Scoop recipes and the crates.io publication list are unchanged.
+Run the opt-in Rust API/frontend and local HTTP/3 acceptance checks in
+[Jade's reference](jade/REFERENCE.md#output-and-validation). Cross-repository
+Pishoo acceptance needs a matching built host; see
+[host validation](docs/pishoo-validation.md) for the earlier baseline, not evidence
+of this version's production acceptance.
 
-Jade implements the `create/build/publish` workflow described in the
-[implementation plan](jade/IMPLEMENTATION_PLAN.md): `jade.toml`, native frontend
-builds, Rust HTTP API templates with built-in Cargo invocation, local content and
-signature checks, and human/JSON result reporting. Publish uses the signed
-package's author; package output defaults to `build/`. New `.waz` releases are standard ZIP files; update the store and host readers before publication. Old WEBC releases must be rebuilt. Runtime templates and local
-HTTP/3 publication have dedicated acceptance checks; platform CI remains a release
-gate.
+Verify all nine crates together so Cargo can resolve their prepared versions in
+its temporary registry, without uploading anything:
 
-### Local application release
+```sh
+cargo publish --dry-run --locked --allow-dirty \
+  -p genmeta-access -p genmeta-curl -p genmeta-discover \
+  -p genmeta-identity -p genmeta-nat -p genmeta-doctor \
+  -p genmeta-nslookup -p genmeta-proxy -p genmeta
+```
 
-Applications use local `jade build` and `jade publish`; there are no application
-release workflows. The six independent repositories are Workspace, Introduction,
-Profile, Message, Calendar and Journal under `pishoo-projects`. Their
-`RELEASING.md` files record exact versions, dependencies and commands.
+## Validation on 2026-11-04
 
-Install gmutils through Debian or Homebrew, or build this checkout. Prepare Bun 1.4.2+
-and Node for source frontends; install the `wasm32-wasip2` Rust target and set
-`WASI_SDK_PATH` for SQLite backends. In each repository, run the existing tests,
-then `jade build`. Review `build/NAME-VERSION.waz` before running
-`jade publish build/NAME-VERSION.waz`. Jade reads the manifest's author and uses
-the matching local DHTTP credentials. Standard applications use `std.dhttp.net`;
-Journal uses `alice.smith.dhttp.net`. Local validation used isolated test signing
-identities; those test packages were saved outside the application repositories.
-Build locally with the real author identity before publishing.
+- Workspace and xtask formatting pass. Strict workspace all-target/all-feature
+  Clippy and strict xtask Clippy pass; xtask's own locked test command passes.
+- The ordinary workspace checks pass 333 tests with 11 opt-in cases skipped;
+  isolated Jade checks pass 75 tests with 5 opt-in cases skipped.
+- Four Jade opt-in acceptance tests pass separately: local HTTP/3 publication,
+  Rust API generation/rebuild, and real web/fullstack template builds. Together
+  with ordinary checks, 412 of the 424 inventoried tests were executed and pass;
+  the other 12 environment/host-specific cases remain opt-in.
+- All nine crates pass the combined locked publish dry run, including compilation
+  of packaged sources and resolution of new versions through Cargo's temporary
+  registry. Cargo explicitly skips every upload in dry-run mode.
+- The before/after workspace inventories contain the same 424 test names. No
+  test was renamed, added or removed by this release preparation.
+- All nine generated `.crate` archives were inspected and contain no private
+  signing-key PEM files. The identity manifest explicitly excludes fixture keys.
+- The launcher reports `genmeta 0.9.1-preview.1`; bundled Jade reports `jade 0.1.0`.
+  Changed workflow YAML parses successfully, and `git diff --check` passes.
 
-Release order: deploy the registry's existing `author`/`.waz` implementation first;
-then Profile 0.3.0 and Message 0.2.1; then Introduction 0.1.0; then Workspace 0.3.2.
-Calendar 0.1.2 and Journal 0.1.2 can follow independently. The 2026-10-23 read-only
-production probe still returned `publisher` and `.pkg`; Jade rejects that catalogue
-before sending any upload. No registry deployment or data migration is part of
-these application changes. On `E_PUBLISH_OUTCOME_UNKNOWN`, keep and retry the same
-signed file after checking the reported state; do not rebuild or automatically
-repeat an upload. Do not reuse a version for changed runtime content.
+Linux/macOS/Windows CI, MSRV 1.94.0 and DEB/RPM/Homebrew artifact checks remain
+required before tagging; local macOS verification does not replace those jobs.
 
-## Preview.5 release checks
+## Release handoff
 
-- `cargo test --workspace --locked --all-features --all-targets -- --test-threads=1`:
-  passes, with environment-specific acceptance tests run separately. Real Rust
-  API, web/fullstack template and local HTTP/3 publication checks also pass.
-- Workspace formatting, strict all-target/all-feature Clippy and `git diff --check`
-  pass. The built launcher reports `genmeta 0.9.0-preview.5`.
-- All nine changed Genmeta crates pass `cargo publish --dry-run --locked --allow-dirty`
-  together, including compilation of packaged sources and temporary-registry
-  resolution of their new dependency versions. Each upload is explicitly skipped
-  by Cargo's dry-run mode.
-- The lockfile records the new workspace versions, ZIP dependencies and the
-  crates.io daccess 0.2.0 release. Platform packaging and remote CI remain pre-tag gates.
+1. Review the version/notes diff and pass the local checks above.
+2. Push the reviewed branch through repository CI and verify the matching Pishoo,
+   store and developer checkout contracts. Check both executables in DEB/Homebrew.
+3. After review/merge and passing CI, create an annotated `v0.9.1-preview.1` tag at
+   the checked commit, using this changelog entry as its annotation, then push it
+   when publication is authorized.
+4. Tag-triggered workflows publish crates in the order above and preview
+   distribution artifacts. Existing crates use Trusted Publishing; first-release
+   tokens remain restricted to new crates. Keep public APT verification enabled.
 
-## Validation on 2026-10-23
-
-- Jade regular tests, strict Clippy, formatting, stable Rust check and the local
-  HTTP/3 publication contract pass. The earlier Rust API/host acceptance remains
-  recorded in `jade/IMPLEMENTATION_PLAN.md`.
-- All six applications build and sign through Jade with isolated test identities.
-  Existing Workspace, Introduction, Profile, Message and Calendar tests pass;
-  Journal has no unit tests and was verified by its actual Jade build.
-- Before the preview.5 version bump, a real amd64 Debian package was built with the release recipe and installed in
-  a disposable Debian container. Both commands run; the installed Jade creates
-  and signs a static project successfully.
-- Before the preview.5 version bump, the native Apple Silicon Homebrew archive was built with the release recipe.
-  Both Mach-O commands run after extraction, and Jade creates and signs a static
-  project. The formula installs and tests both commands. The release workflow
-  also packages Intel Macs; this local smoke test covers Apple Silicon.
-- PR branches are pushed for review. No application pipelines, store uploads or
-  registry deployments are run by this preparation. Production returned the old
-  catalogue protocol in the most recent read-only check.
-
-## Validation on 2026-10-21
-
-- Locked, all-feature workspace tests pass. Both normally ignored HTTP/3 host and
-  publication contract tests were run separately with OpenSSL 3 and local UDP.
-- Strict all-target/all-feature Clippy and nightly formatting pass.
-- Warning-denied workspace documentation builds.
-- All four changed crates pass the multi-package cargo publish --dry-run --locked
-  verification using a temporary registry; no crate was uploaded.
-- Real running-Pishoo acceptance covers installed queries, dependency/author
-  removal protection, mount/unmount and HTTP forwarding, ACL operations, all four
-  listening modes and restoration, curl, proxy, nslookup and discover. See
-  [Pishoo command validation](docs/pishoo-validation.md).
-- Existing package catalogs, ACL rules, mounts and listening settings were restored.
-  SSL and App/Lib files were hash-checked unchanged. Existing background contact
-  retry timestamps/counters continued advancing; no contact/message test data
-  was created or restored over that background activity.
-
-The online store was still serving the legacy App/Lib protocol during validation.
-Its new /store/v1/packages routes returned 403. Store-backed install/update success
-and a new-package live uninstall cycle await that rollout; per the user's decision
-these are external follow-up checks, not blockers for this CLI commit. The local
-HTTP/3 fixture verifies install, unchanged-version handling, identity-conditional
-uninstall, post-delete absence and host errors without publishing a real package.
-
-## Before tagging
-
-Run the repository CI on Linux, macOS and Windows, including the 1.94.0 MSRV job
-and DEB/RPM/Homebrew artifact checks. Those platform jobs were not replaced by a
-local macOS test. Check the new store protocol once its rollout completes.
-
-After CI and review/merge, create annotated tag v0.9.0-preview.5 at the checked
-commit. Existing workflows publish crates, Linux DEB/RPM and macOS Homebrew preview
-artifacts. The publish workflow orders all changed utility crates before the
-launcher and NAT before Doctor. Trusted Publishing remains required for existing crates; first-publication tokens
-remain limited to new crates. Public APT verification stays enabled.
-
-This preparation does not push a tag, publish artifacts, deploy the store, replace
-the Homebrew-installed CLI, or restart production services for a new host build.
+This document records preparation. Creating/pushing the release tag and uploading
+or publishing artifacts are separate release actions.

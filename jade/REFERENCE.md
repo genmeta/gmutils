@@ -95,13 +95,13 @@ calls therefore use the same paths as an installed application.
 
 ```toml
 [[dependencies]]
-author = "std.dhttp.net"
+author = "dev.genmeta.tech.dhttp.net"
 name = "profile"
 version = "0.3.0"
 path = "../profile"
 
 [[dependencies]]
-author = "std.dhttp.net"
+author = "dev.genmeta.tech.dhttp.net"
 name = "message"
 version = "0.2.1"
 ```
@@ -119,7 +119,7 @@ to `<dev-identity>/dev/<name>/`, containing `manifest.json`, optional `lib.wasm`
 and optional `app/`. Pishoo reads App files per request and compiles changed WASM
 lazily. Build failures retain previous files. Local files require the real owner;
 native services and installed dependencies keep normal routing and authorization.
-Only dev identities execute these unsigned files.
+Pishoo checks file existence, the real owner and file permissions; identity-name prefixes do not determine permission to execute these unsigned files.
 
 Development data belongs to the dev identity, in `.volume/<name>` or
 `.volume/std/<name>`, separate from the base identity. Ctrl+C/SIGTERM removes only
@@ -210,7 +210,7 @@ relative to the declaring `jade.toml`, including nested dependencies:
 
 ```toml
 [[dependencies]]
-author = "std.dhttp.net"
+author = "dev.genmeta.tech.dhttp.net"
 name = "message"
 version = "1.2.3"
 path = "../message"
@@ -354,19 +354,19 @@ Exit codes are 0 for success, 1 for runtime failure or unknown publication resul
 2 for CLI usage errors, and 130 for cancellation.
 
 ```sh
-cargo test -p jade --locked
+jade/tests/scripts/code-signing.sh
 cargo clippy -p jade --locked --all-targets -- -D warnings
 # Requires Node.js, npm and registry access for the generated Vite frontend:
-cargo test -p jade --locked --test pack_commands \
+jade/tests/scripts/code-signing.sh --test pack_commands \
   web_template_builds_without_manual_dependency_installation -- --ignored --exact
 # Also requires wasm32-wasip2 for the default fullstack template:
-cargo test -p jade --locked --test pack_commands \
+jade/tests/scripts/code-signing.sh --test pack_commands \
   default_fullstack_template_builds_without_manual_dependency_installation -- --ignored --exact
 # Requires wasm32-wasip2 and the generated API's Cargo dependencies:
-cargo test -p jade --locked --test pack_commands \
+jade/tests/scripts/code-signing.sh --test pack_commands \
   rust_api_template_builds_without_developer_build_scripts -- --ignored --exact
 # Requires OpenSSL 3 and local UDP sockets; uses a local store and test identities:
-cargo test -p jade --locked \
+jade/tests/scripts/code-signing.sh \
   upload::tests::real_http3_publish_retry_dependencies_and_read_only_recovery \
   -- --ignored --exact
 ```

@@ -2,6 +2,83 @@
 
 ## [Unreleased]
 
+## [0.9.1-preview.1] - 2026-11-04
+
+Changes since the published gmutils 0.9.0 release.
+
+### Added
+
+- Add `jade run` for local development with ordinary identity credentials, automatic
+  rebuilds, recursive local `path` dependencies and exact store dependencies.
+  Publish complete local directories atomically; Ctrl+C/SIGTERM removes only this
+  watcher's code, retains data and preserves later publishers' replacements.
+  `--fresh` explicitly archives previous development data.
+- Guide first-time developer setup through interactive `jade publish`, including
+  email verification, subscription checks, checkout links/QR codes and bounded
+  payment polling. Preserve pending operations for retry; JSON and noninteractive
+  runs never start setup or purchase implicitly.
+- Provide a bilingual fullstack starter with a `/whoami` API that reads the
+  verified visitor identity through the pinned Pishoo SDK.
+
+### Changed
+
+- Separate Jade command responsibilities: `build` validates and writes an unsigned
+  WAZ without credentials; `run` builds and watches using ordinary credentials;
+  `publish` signs an existing unsigned snapshot and uploads it without rebuilding
+  sources or modifying the local archive. Valid signed packages upload unchanged.
+  Move `--signing-sequence` to publish and remove `publish --prepare`.
+- Interpret explicit Jade `--id` as the actual development child name, such as
+  `dev.alex.chen`; normalize short/full names without adding or removing `dev.`.
+  Preserve package authors and require exact matches. Defaults select the configured
+  identity's development child, or `dev.zero.ai` when no default is configured.
+- Unify ordinary and developer credentials in `ssl/fullchain.crt`, `ssl/privkey.pem`
+  and `ssl/stapling.ocsp`. Developer issuance/renewal installs SSL through the normal
+  identity transaction; signing and upload no longer select legacy credentials,
+  create temporary upload identities or maintain separate OCSP caches. Historical
+  files remain untouched.
+- `genmeta identity apply` requests a new sequence and replaces local SSL. The
+  server selects developer or ordinary TLS usage from the target name's actual
+  binding and active entitlement; apply never buys developer entitlement implicitly.
+  Renew preserves the installed sequence and purpose. Developer identities require
+  explicit renewal and are excluded from `renew --all`.
+- Default bare-name installs to the official author `dev.genmeta.tech.dhttp.net`.
+  Retain explicit `std.dhttp.net` compatibility and the installed publisher on
+  updates; do not rewrite historical signed packages.
+- Print installed packages as a compact table; `install --list --verbose` and
+  `install --info` show readable metadata, dependencies and API details.
+- Move crate-owned tests and helpers under `tests/`, preserving private module
+  boundaries. Run Jade signing integration tests with an isolated compiled test
+  Root; exclude disposable fixture signing keys from the identity crate archive.
+
+### Fixed
+
+- Reject invalid signed packages before upload instead of re-signing them; check
+  author, owner, developer chain and local revocation information, and require host
+  signing support before install/update writes.
+- Make developer issuance and payment recovery retryable without losing pending
+  keys or treating an unfulfilled paid invoice as active entitlement.
+- Keep local development on normal `/app/`, `/std/` and API URLs, with data in the
+  development identity's normal `.volume/` directories. Omit dependency `path`
+  entries and nested local source trees from release metadata/content.
+
+### Release versions
+
+| Package | Previous published version | Prepared version |
+| --- | --- | --- |
+| genmeta | 0.9.0 | 0.9.1-preview.1 |
+| genmeta-access | 0.5.0-preview.4 | 0.5.0-preview.5 |
+| genmeta-curl | 0.8.0-preview.4 | 0.8.0-preview.5 |
+| genmeta-discover | 0.5.0-preview.3 | 0.5.0-preview.4 |
+| genmeta-doctor | 0.5.0-preview.3 | 0.5.0-preview.4 |
+| genmeta-identity | 0.5.0 | 0.5.1-preview.1 |
+| genmeta-nat | 0.6.0-preview.3 | 0.6.0-preview.4 |
+| genmeta-nslookup | 0.6.0-preview.3 | 0.6.0-preview.4 |
+| genmeta-proxy | 0.5.0-preview.3 | 0.5.0-preview.4 |
+
+Jade remains 0.1.0 as a separately versioned bundled executable; this release
+keeps it outside the crates.io publication list. gmutils package versions follow
+`genmeta/Cargo.toml`.
+
 ## [0.9.0-preview.5] - 2026-10-23
 
 ### Changed
