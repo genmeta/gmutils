@@ -50,7 +50,7 @@ genmeta curl --id alice.smith -f https://alice.smith.dhttp.net/std/sys/listen
 genmeta install dev.genmeta.tech.dhttp.net/workspace --id alice.smith
 ```
 
-裸名 `genmeta install workspace` 固定选择官方作者 `dev.genmeta.tech.dhttp.net`；这里写出完整发布者名称，使安装来源明确。Pishoo 会验证包并安装精确版本的 Profile、Message 等 Lib 依赖，无需逐个安装。安装成功会立即更新运行中的应用，无需重启。
+裸名 `genmeta install workspace` 已安装时沿用登记作者，首次安装时仅在商店同名包的作者唯一时自动选择；多个作者同名时须填写 `AUTHOR/NAME`。这里写出完整发布者名称，使安装来源明确。Pishoo 会验证包并安装精确版本的 Profile、Message 等 Lib 依赖，无需逐个安装。安装成功会立即更新运行中的应用，无需重启。
 
 检查运行中的包和入口：
 

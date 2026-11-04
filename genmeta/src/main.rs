@@ -45,10 +45,13 @@ enum Options {
 
 #[derive(clap::Subcommand, Debug, Clone)]
 enum PackageCommand {
-    /// Install a published package and its exact dependencies
-    #[command(disable_version_flag = true)]
+    /// Install or upgrade a published package and its exact dependencies
+    #[command(
+        disable_version_flag = true,
+        after_help = "Bare package names keep the installed author, or select the unique matching package in the store for a first installation. If multiple authors publish the same name, specify AUTHOR/NAME. Installing an existing package changes its version; the same version is left unchanged."
+    )]
     Install {
-        /// Package short name or canonical publisher/name
+        /// Package name or AUTHOR/NAME
         #[arg(required_unless_present_any=["list","info"],conflicts_with_all=["list","info"])]
         target: Option<String>,
         /// Query installed packages without installing or downloading

@@ -12,7 +12,7 @@ pub(super) fn identity(name: &str) -> Cow<'_, str> {
     }
 }
 pub(super) fn publisher(name: &str) -> Cow<'_, str> {
-    if crate::identity::is_standard_author(name) {
+    if name == "std.dhttp.net" {
         Cow::Borrowed("std")
     } else {
         identity(name)
@@ -24,6 +24,10 @@ pub(super) fn package_id(id: &str) -> Cow<'_, str> {
         None => Cow::Borrowed(id),
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/display.rs"]
+mod tests;
 
 fn path(value: &Value) -> String {
     let path = Path::new(value.as_str().unwrap_or_default());

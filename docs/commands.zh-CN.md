@@ -500,7 +500,7 @@ genmeta install --info TARGET [--id NAME]
 
 | 命令 | 行为 |
 | --- | --- |
-| `install` | 默认安装最新已发布版本，并由 Pishoo 安装精确 Lib 依赖；同版本保持不变，版本变更使用 `update` |
+| `install` | 未安装时安装，已安装时升级同作者的包，同版本保持不变；默认选择最新已发布版本，`--version` 可切换到精确版本（含旧版），由 Pishoo 安装精确依赖 |
 | `update` | 要求包已安装，保持原发布者，默认选择最新版本，也可显式指定版本 |
 | `uninstall` | 卸载包但保留数据与依赖；若被其他 App/Lib 依赖，服务端会阻止并报告依赖者 |
 | `list` | 查询所选身份服务上的已安装目录 |
@@ -508,8 +508,8 @@ genmeta install --info TARGET [--id NAME]
 
 目标名称规则：
 
-- 安装裸名 `workspace` 固定选择官方作者 `dev.genmeta.tech.dhttp.net/workspace`；显式 `std.dhttp.net` 保留旧包兼容，更新不改作者。
-- 安装时 `alice.smith/hello` 展开为 `alice.smith.dhttp.net/hello`，也可直接传完整包 ID。
+- 安装裸名时，已安装则沿用已安装作者；首次安装跨作者查询精确同名包，只有一个作者时自动选择，多个作者时列出候选并要求填写 `AUTHOR/NAME`，不优先官方作者。显式 `std.dhttp.net` 保留旧包兼容。
+- 安装时 `alice.smith/hello` 展开为 `alice.smith.dhttp.net/hello`，也可直接传完整包 ID；显式作者精确选择，不回退其他作者。
 - `update`、`uninstall`、`info` 的裸名查询已安装目录，并保留原注册发布者；完整 ID 必须匹配已安装发布者。
 
 ```sh
@@ -528,7 +528,11 @@ genmeta uninstall hello --id alice.smith
 
 安装、更新与卸载的成功结果以 JSON 写 stdout；`install --list` 显示紧凑表格，`--verbose` 和 `install --info` 显示可读的元数据、依赖与 API。进度和诊断写 stderr。含 App 的安装结果包含 `entry_url`。商店版本解析期限为 120 秒，安装请求最多等待 15 分钟。中断或超时可能意味着结果未知，CLI 不自动重试写操作；先检查已安装目录和服务日志。父包安装失败时，此前已安装的依赖会保留。
 
-包管理输出中的身份使用 `alice.smith~`，包 ID 使用 `alice.smith~/hello`，标准发布者简写为 `std/workspace`；应用入口显示为 `https://alice.smith~/app/workspace/`。
+包管理输出中的身份使用 `alice.smith~`，包 ID 使用 `alice.smith~/hello`。新官方作者显示为 `dev.genmeta.tech~/workspace`；仅历史作者 `std.dhttp.net` 简写为 `std/workspace`。Jade 与 genmeta 使用相同的作者显示。应用入口显示为 `https://alice.smith~/app/workspace/`。
+
+同名跨作者时，CLI 显示当前身份、已安装包和请求包，并给出携带该身份 `--id` 的卸载、安装命令，不再提示“指定完整 ID”。卸载保留数据和 ACL；CLI 不自动替换作者。包名不匹配的宿主响应作为查询错误处理，不建议卸载无关包。
+
+例如，首次执行 `install journal` 时，若商店只有 `dev.alice.smith.dhttp.net/journal`，就选择该作者；若存在多个作者的 `journal`，则列出候选完整 ID 并报歧义，不自动安装。已安装时始终沿用登记作者，不自动添加 `dev.` 或切换到其他作者。明确作者后，包详情解析失败提示包含选择的作者和精确版本（若有）。重复安装同版本时 stderr 显示 `Already installed`，stdout 仍返回包含 `unchanged: true` 的 JSON。
 
 安装包不会自动授予 API 访问权限。商店和 Pishoo 需支持当前 WAZ ZIP 包协议；卸载还要求 Pishoo 支持包详情响应中的 `Package-Id` 校验。
 

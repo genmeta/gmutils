@@ -124,8 +124,15 @@ genmeta install std.dhttp.net/message
 ```
 
 Installation defaults to the latest published package version and the configured
-default identity. Bare installation names select the official publisher: `workspace`
-means `dev.genmeta.tech.dhttp.net/workspace`. Explicit `std.dhttp.net` package IDs remain supported for existing releases. Author names may omit `.dhttp.net`, so
+default identity. It installs missing packages, upgrades an installed package from
+the same author, and leaves the same version unchanged. Use `--version` to select
+an exact published version, including an older version. `update` remains available
+for packages that are already installed and preserves their registered author.
+Bare installation names preserve the installed author. For a first installation,
+the CLI searches all authors for an exact package-name match: one matching author
+is selected automatically; multiple matching authors are listed and require
+`AUTHOR/NAME`. Explicit package IDs select only that author, with no fallback.
+Explicit `std.dhttp.net` package IDs remain supported for existing releases. Author names may omit `.dhttp.net`, so
 `alice.smith/message` means `alice.smith.dhttp.net/message`. Update, uninstall and info resolve
 bare names against the installed catalog and preserve the registered publisher.
 The selected identity's Pishoo service must already be running and enabled.
@@ -307,8 +314,9 @@ Package identity is `author/name`; all management operations act on the entire p
 `install --info NAME` uses the same detail format. The global `--verb` flag
 continues to control debug logging independently.
 
-`install` leaves an identical installed version unchanged and directs version
-changes to `update`. `update` requires an installed package, stays with its current
+`install` installs missing packages, changes the version of a package from the
+same author, and leaves an identical installed version unchanged. `update`
+requires an installed package, stays with its current
 publisher, and selects the latest published version unless `--version` is given.
 The CLI checks these conditions before using the existing store installation API;
 the preflight is not an atomic compare-and-swap with concurrent administrators.

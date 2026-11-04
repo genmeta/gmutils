@@ -65,6 +65,9 @@ Publish uses the existing WAZ's author, even if your default has since changed.
 Project publication checks a configured author, name and version against that WAZ.
 An explicit `jade publish FILE.waz` uses only that file and does not read a project.
 
+Human output shows the actual author, for example `dev.genmeta.tech~/workspace`.
+Only the historical `std.dhttp.net` author is abbreviated as `std/workspace`.
+
 Build needs no identity credentials. Local hosting needs ordinary identity
 credentials; publication requires `codeSigning`, which `publish` helps prepare.
 Both use the certificate and key in the selected identity's normal `ssl/` directory.

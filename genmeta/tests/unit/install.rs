@@ -389,21 +389,84 @@ fn package_cli_is_top_level_and_has_no_app_or_lib_selection() {
 #[test]
 fn installed_identity_and_update_preconditions() {
     let current = json!({"id":"alice.dhttp.net/message","version":"1.0.0"});
-    assert!(validate_installed(&current, Some("message")).is_ok());
-    assert!(validate_installed(&current, Some("std.dhttp.net/message")).is_err());
-    assert!(validate_installed(&current, Some("message")).is_ok());
+    assert!(validate_installed(&current, Some("message"), "zero.ai.dhttp.net").is_ok());
+    assert!(
+        validate_installed(&current, Some("std.dhttp.net/message"), "zero.ai.dhttp.net").is_err()
+    );
+    assert!(validate_installed(&current, Some("message"), "zero.ai.dhttp.net").is_ok());
     assert_eq!(
         choose_release_target("update", "message", Some(&current)).unwrap(),
         "alice.dhttp.net/message"
     );
     assert!(choose_release_target("update", "message", None).is_err());
-    assert!(check_install_version("install", Some(&current), &current).unwrap());
+    assert!(check_install_version(Some(&current), &current, "zero.ai.dhttp.net").unwrap());
+    assert!(!check_install_version(None, &current, "zero.ai.dhttp.net").unwrap());
     let mut next = current.clone();
     next["version"] = "2.0.0".into();
-    assert!(check_install_version("install", Some(&current), &next).is_err());
-    assert!(!check_install_version("update", Some(&current), &next).unwrap());
+    assert!(!check_install_version(Some(&current), &next, "zero.ai.dhttp.net").unwrap());
+    next["version"] = "0.9.0".into();
+    assert!(!check_install_version(Some(&current), &next, "zero.ai.dhttp.net").unwrap());
     next["id"] = "std.dhttp.net/message".into();
-    assert!(check_install_version("update", Some(&current), &next).is_err());
+    assert!(check_install_version(Some(&current), &next, "zero.ai.dhttp.net").is_err());
+}
+
+#[test]
+fn author_conflicts_show_the_selected_host_and_actionable_commands() {
+    let current = json!({"id":"alice.smith.dhttp.net/hello","version":"1.0.0"});
+    let requested = json!({"id":"bob.jones.dhttp.net/hello","version":"2.0.0"});
+    let early = report(
+        validate_installed(
+            &current,
+            Some("bob.jones.dhttp.net/hello"),
+            "zero.ai.dhttp.net",
+        )
+        .unwrap_err(),
+    );
+    let late =
+        report(check_install_version(Some(&current), &requested, "zero.ai.dhttp.net").unwrap_err());
+    assert_eq!(early, late);
+    for expected in [
+        "Package name conflict on zero.ai~",
+        "Installed: alice.smith~/hello",
+        "Requested: bob.jones~/hello",
+        "genmeta uninstall alice.smith~/hello --id zero.ai~",
+        "genmeta install bob.jones~/hello --id zero.ai~",
+        "retains package data and access rules",
+        "no package was changed",
+    ] {
+        assert!(early.contains(expected), "{early}");
+    }
+    assert!(!early.contains("specify its full ID"));
+
+    let unrelated = json!({"id":"alice.smith.dhttp.net/unrelated","version":"1.0.0"});
+    let error = report(
+        validate_installed(
+            &unrelated,
+            Some("bob.jones.dhttp.net/hello"),
+            "zero.ai.dhttp.net",
+        )
+        .unwrap_err(),
+    );
+    assert!(error.contains("Package query returned alice.smith~/unrelated"));
+    assert!(!error.contains("genmeta uninstall"));
+}
+
+#[tokio::test]
+async fn missing_explicit_package_names_the_author_without_trying_other_authors() {
+    let target = normalize_target("dev.genmeta.tech/hello");
+    let mut calls = Vec::new();
+    let error = resolve(&target, Some("1.0.0"), |path| {
+        calls.push(path);
+        async { whatever!("Store package was not found") }
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(
+        calls,
+        ["/store/v1/packages/dev.genmeta.tech.dhttp.net/hello/versions/1.0.0"]
+    );
+    let message = report(error);
+    assert!(message.contains("Cannot resolve dev.genmeta.tech~/hello v1.0.0 from store.dhttp.net"));
 }
 
 #[test]
@@ -737,7 +800,7 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
         .await
         .unwrap()
         .unwrap();
-    assert!(check_install_version("update", Some(&saved), &app).unwrap());
+    assert!(check_install_version(Some(&saved), &app, "zero.ai.dhttp.net").unwrap());
     assert_eq!(
         display::package_output(success(&saved, &app, endpoint.name()).unwrap())["entry_url"],
         "https://alice~/app/demo/"
@@ -764,29 +827,100 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
 }
 
 #[test]
-fn abbreviated_authors_expand_without_changing_installed_bare_names() {
+fn abbreviated_authors_expand_without_changing_bare_names() {
+    assert_eq!(normalize_target("workspace"), "workspace");
+    assert_eq!(normalize_target("message"), "message");
+    assert_eq!(normalize_target("alice/message"), "alice.dhttp.net/message");
     assert_eq!(
-        normalize_target("workspace", true),
-        "dev.genmeta.tech.dhttp.net/workspace"
-    );
-    assert_eq!(normalize_target("message", false), "message");
-    assert_eq!(
-        normalize_target("alice/message", true),
-        "alice.dhttp.net/message"
-    );
-    assert_eq!(
-        normalize_target("alice.smith/message", false),
+        normalize_target("alice.smith/message"),
         "alice.smith.dhttp.net/message"
     );
     assert_eq!(
-        normalize_target("alice.dhttp.net/message", true),
+        normalize_target("alice.dhttp.net/message"),
         "alice.dhttp.net/message"
     );
     for id in ["std.dhttp.net/workspace", "alice.smith.dhttp.net/message"] {
-        assert_eq!(normalize_target(&display::package_id(id), true), id);
-        assert_eq!(normalize_target(&display::package_id(id), false), id);
+        assert_eq!(normalize_target(&display::package_id(id)), id);
     }
-    assert!(!valid_target(&normalize_target("@alice/message", true)));
+    assert!(!valid_target(&normalize_target("@alice/message")));
+}
+
+#[tokio::test]
+async fn first_bare_install_resolves_a_unique_nonofficial_author() {
+    let target = normalize_target("journal");
+    let selected = choose_release_target("install", &target, None).unwrap();
+    let published = release("dev.alice.smith.dhttp.net", "journal", "app", "0.1.3");
+    let mut requests = Vec::new();
+    let result = resolve(selected, Some("0.1.3"), |path| {
+        requests.push(path.clone());
+        let bytes = if path.contains('?') {
+            catalog(vec![published.clone()], 1, 1)
+        } else {
+            serde_json::to_vec(&published).unwrap()
+        };
+        async { Ok(bytes) }
+    })
+    .await
+    .unwrap();
+    assert_eq!(result["id"], "dev.alice.smith.dhttp.net/journal");
+    assert_eq!(
+        requests,
+        [
+            "/store/v1/packages?q=journal&page=1&page_size=100",
+            "/store/v1/packages/dev.alice.smith.dhttp.net/journal/versions/0.1.3"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn bare_install_keeps_the_installed_author_without_searching_the_store() {
+    // Historical author IDs are preserved rather than gaining a dev. prefix.
+    for author in ["alice.smith.dhttp.net", "dev.alice.smith.dhttp.net"] {
+        let target = normalize_target("journal");
+        let current = release(author, "journal", "app", "0.1.2");
+        validate_installed(&current, Some(&target), "zero.ai.dhttp.net").unwrap();
+        let selected = choose_release_target("install", &target, Some(&current)).unwrap();
+        let published = release(author, "journal", "app", "0.1.3");
+        let mut requests = Vec::new();
+        let result = resolve(selected, None, |path| {
+            requests.push(path);
+            let bytes = serde_json::to_vec(&published).unwrap();
+            async { Ok(bytes) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(requests, [format!("/store/v1/packages/{author}/journal")]);
+        assert!(!check_install_version(Some(&current), &result, "zero.ai.dhttp.net").unwrap());
+    }
+}
+
+#[tokio::test]
+async fn first_bare_install_lists_all_authors_without_preferring_the_official_author() {
+    let target = normalize_target("journal");
+    let selected = choose_release_target("install", &target, None).unwrap();
+    let mut requests = Vec::new();
+    let error = resolve(selected, None, |path| {
+        requests.push(path);
+        let bytes = catalog(
+            vec![
+                release("dev.genmeta.tech.dhttp.net", "journal", "app", "1.0.0"),
+                release("dev.alice.smith.dhttp.net", "journal", "app", "0.1.3"),
+            ],
+            1,
+            2,
+        );
+        async { Ok(bytes) }
+    })
+    .await
+    .unwrap_err();
+    let message = report(error);
+    assert!(message.contains("Ambiguous package name"));
+    assert!(message.contains("dev.genmeta.tech~/journal"));
+    assert!(message.contains("dev.alice.smith~/journal"));
+    assert_eq!(
+        requests,
+        ["/store/v1/packages?q=journal&page=1&page_size=100"]
+    );
 }
 
 #[test]
@@ -798,9 +932,9 @@ fn update_follows_committed_maintenance_author_and_keeps_canonical_id_checks() {
         "dev.genmeta.tech.dhttp.net/workspace"
     );
     let next = serde_json::json!({"id":"dev.genmeta.tech.dhttp.net/workspace","version":"0.3.6"});
-    assert!(!check_install_version("update", Some(&current), &next).unwrap());
+    assert!(!check_install_version(Some(&current), &next, "zero.ai.dhttp.net").unwrap());
     let other = serde_json::json!({"id":"dev.attacker.dhttp.net/workspace","version":"0.3.6"});
-    assert!(check_install_version("update", Some(&current), &other).is_err());
+    assert!(check_install_version(Some(&current), &other, "zero.ai.dhttp.net").is_err());
 }
 
 #[test]
@@ -808,7 +942,10 @@ fn installation_requires_a_host_with_developer_author_and_migration_support() {
     for version in [
         None,
         Some("0.9.0"),
-        Some("0.9.1-preview.1"),
+        Some("0.9.1-alpha.1"),
+        Some("0.9.1-beta.1"),
+        Some("0.9.1-preview"),
+        Some("0.9.1-preview.0"),
         Some("invalid"),
     ] {
         let mut headers = http::HeaderMap::new();
@@ -817,7 +954,17 @@ fn installation_requires_a_host_with_developer_author_and_migration_support() {
         }
         assert!(require_install_host(&headers).is_err());
     }
-    for version in ["0.9.1", "0.9.1+build.2", "0.10.0-preview.1", "1.0.0"] {
+    for version in [
+        "0.9.1-preview.1",
+        "0.9.1-preview.1+build.2",
+        "0.9.1-preview.2",
+        "0.9.1-preview.10",
+        "0.9.1",
+        "0.9.1+build.2",
+        "0.9.2-preview.1",
+        "0.10.0-preview.1",
+        "1.0.0",
+    ] {
         let mut headers = http::HeaderMap::new();
         headers.insert("pishoo-version", version.parse().unwrap());
         require_install_host(&headers).unwrap();

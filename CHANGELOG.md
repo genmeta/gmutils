@@ -42,9 +42,19 @@ Changes since the published gmutils 0.9.0 release.
   binding and active entitlement; apply never buys developer entitlement implicitly.
   Renew preserves the installed sequence and purpose. Developer identities require
   explicit renewal and are excluded from `renew --all`.
-- Default bare-name installs to the official author `dev.genmeta.tech.dhttp.net`.
-  Retain explicit `std.dhttp.net` compatibility and the installed publisher on
-  updates; do not rewrite historical signed packages.
+- Resolve bare-name installs using the installed author, or search all authors
+  for an exact package-name match on first installation. Select a unique author
+  automatically; list ambiguous candidates and require `AUTHOR/NAME` without
+  preferring the official author. Explicit authors never fall back to others.
+  Preserve registered authors, including historical `std.dhttp.net`, without
+  rewriting historical signed packages.
+- Let `genmeta install` change versions within the same author, including exact
+  older versions, and report an unchanged installation for the same version.
+  Cross-author conflicts identify both packages and show identity-specific
+  removal and installation commands while retaining data and access rules.
+- Show the actual author in Jade output; abbreviate only historical
+  `std.dhttp.net` as `std`. Accept Pishoo `0.9.1-preview.1` and newer for package
+  installation, and report the host's version when it needs an upgrade.
 - Print installed packages as a compact table; `install --list --verbose` and
   `install --info` show readable metadata, dependencies and API details.
 - Move crate-owned tests and helpers under `tests/`, preserving private module
