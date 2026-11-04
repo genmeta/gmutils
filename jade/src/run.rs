@@ -481,7 +481,7 @@ fn projects(root: &Path, host: &str) -> Result<(BTreeMap<String, PathBuf>, Vec<V
     Ok((locals, remote.into_values().collect()))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 fn graph_fingerprint(projects: &BTreeMap<String, PathBuf>) -> Result<Vec<u8>> {
     let mut digest = Sha256::new();
     for (name, path) in projects {
