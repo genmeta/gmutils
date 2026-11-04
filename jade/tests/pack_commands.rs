@@ -101,13 +101,22 @@ fn run_requires_ordinary_credentials_before_configuring_or_building() {
             std::fs::create_dir_all(profile.join("code-signing")).unwrap();
             std::fs::write(profile.join("code-signing/apply.pending.json"), "pending").unwrap();
         }
-        // A missing project and executable must not hide the identity setup hint.
+        project(root.path(), "app", "");
+        let manifest = root.path().join("jade.toml");
+        std::fs::write(
+            &manifest,
+            std::fs::read_to_string(&manifest)
+                .unwrap()
+                .replace("alice.dhttp.net", "dev.alex.chen"),
+        )
+        .unwrap();
+        // Missing hosting credentials must be reported before configuring or building.
         let output = Command::new(env!("CARGO_BIN_EXE_jade"))
             .env("HOME", root.path())
             .env("DHTTP_HOME", &home)
             .env("PISHOO_BIN", root.path().join("missing-pishoo"))
             .current_dir(root.path())
-            .args(["--json", "run", "--id", "dev.alex.chen"])
+            .args(["--json", "run"])
             .output()
             .unwrap();
         assert!(!output.status.success());
@@ -126,6 +135,12 @@ fn run_requires_ordinary_credentials_before_configuring_or_building() {
 fn jade_create_static_scaffolds_a_package_that_builds_without_credentials() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home/.dhttp");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("settings.toml"),
+        "[default]\nname='alex.chen.dhttp.net'\n",
+    )
+    .unwrap();
     let create = || {
         Command::new(env!("CARGO_BIN_EXE_jade"))
             .current_dir(dir.path())
@@ -145,6 +160,7 @@ fn jade_create_static_scaffolds_a_package_that_builds_without_credentials() {
     let manifest = std::fs::read_to_string(app.join("jade.toml")).unwrap();
     let config: toml::Value = toml::from_str(&manifest).unwrap();
     assert_eq!(config["package"]["name"].as_str(), Some("hello"));
+    assert!(config["package"].get("author").is_none());
     assert!(config.get("frontend").is_none());
     assert!(config.get("backend").is_none());
     assert!(app.join("public/index.html").is_file());
@@ -213,7 +229,7 @@ fn jade_create_rejects_invalid_names_before_writing() {
 }
 
 #[test]
-fn urls_and_id_mismatches_are_errors_but_missing_credentials_allow_build() {
+fn urls_and_removed_identity_flags_are_errors_but_missing_credentials_allow_build() {
     let dir = tempfile::tempdir().unwrap();
     let app = dir.path().join("app");
     project(&app, "app", "");
@@ -229,7 +245,7 @@ fn urls_and_id_mismatches_are_errors_but_missing_credentials_allow_build() {
     }
     fails(
         &pack(&home, &app, &["-i".as_ref(), "dev.bob.wang~".as_ref()]),
-        "differs from package.author",
+        "unexpected argument '-i'",
     );
     let built = pack(&home, &app, &[]);
     assert!(
@@ -637,7 +653,12 @@ fn explicit_overwrite_and_noninteractive_identity_selection_are_explicit() {
             .replace("author='alice.dhttp.net'\n", ""),
     )
     .unwrap();
-    // No configured author or default uses dev.zero.ai, regardless of local credentials.
+    std::fs::write(
+        home.join("settings.toml"),
+        "[default]\nname='alice.smith.dhttp.net'\n",
+    )
+    .unwrap();
+    // An omitted author comes from the default; installed credentials are not scanned.
     let first = pack(&home, &app, &[]);
     assert!(
         first.status.success(),
@@ -725,6 +746,13 @@ fn frontend_template_builds(template: Option<&str>) {
     );
     assert!(!app.join("web/node_modules").exists());
 
+    std::fs::write(
+        app.join("jade.toml"),
+        std::fs::read_to_string(app.join("jade.toml"))
+            .unwrap()
+            .replace("[package]", "[package]\nauthor='dev.alice.wang'"),
+    )
+    .unwrap();
     let mut build = Command::new(env!("CARGO_BIN_EXE_jade"));
     build
         .current_dir(&app)
@@ -732,7 +760,7 @@ fn frontend_template_builds(template: Option<&str>) {
         .env("NODE_ENV", "production")
         .env("npm_config_omit", "dev")
         .env("npm_config_cache", root.join("npm-cache"))
-        .args(["--json", "build", "--id", "dev.alice.wang"]);
+        .args(["--json", "build"]);
     if let Some(toolchain) = std::env::var_os("JADE_TEST_RUST_TOOLCHAIN") {
         build.env("RUSTUP_TOOLCHAIN", toolchain);
     }
@@ -784,14 +812,19 @@ fn rust_api_template_builds_without_developer_build_scripts() {
     assert!(!app.join("api/build.rs").exists());
     assert!(!app.join("api/build.sh").exists());
     assert!(!app.join("api/src/sdk.rs").exists());
+    std::fs::write(
+        app.join("jade.toml"),
+        std::fs::read_to_string(app.join("jade.toml"))
+            .unwrap()
+            .replace("[package]", "[package]\nauthor='dev.alice.wang'"),
+    )
+    .unwrap();
     let build = || {
         let mut command = Command::new(env!("CARGO_BIN_EXE_jade"));
-        command.current_dir(&app).env("DHTTP_HOME", &home).args([
-            "--json",
-            "build",
-            "--id",
-            "dev.alice.wang",
-        ]);
+        command
+            .current_dir(&app)
+            .env("DHTTP_HOME", &home)
+            .args(["--json", "build"]);
         if let Some(toolchain) = std::env::var_os("JADE_TEST_RUST_TOOLCHAIN") {
             command.env("RUSTUP_TOOLCHAIN", toolchain);
         }
@@ -851,7 +884,7 @@ fn rust_api_template_builds_without_developer_build_scripts() {
 }
 
 #[test]
-fn build_author_uses_default_or_zero_ai_without_scanning_credentials() {
+fn build_author_requires_a_default_without_scanning_credentials() {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("home/.dhttp");
     identity(&home);
@@ -868,8 +901,9 @@ fn build_author_uses_default_or_zero_ai_without_scanning_credentials() {
     .unwrap();
     let missing = pack(&home, &app, &[]);
     let result: serde_json::Value = serde_json::from_slice(&missing.stdout).unwrap();
-    assert_eq!(result["result"]["id"], "dev.zero.ai.dhttp.net/hello");
-    std::fs::remove_dir_all(app.join("build")).unwrap();
+    assert!(!missing.status.success());
+    assert_eq!(result["error"]["code"], "E_IDENTITY_REQUIRED");
+    assert!(!app.join("build").exists());
     std::fs::write(
         home.join("settings.toml"),
         "[default]\nname='dev.wang.dhttp.net'\n",
@@ -1067,7 +1101,7 @@ fn noninteractive_publication_guides_setup_without_building_or_creating_an_order
     let output = Command::new(env!("CARGO_BIN_EXE_jade"))
         .current_dir(&project)
         .env("DHTTP_HOME", &home)
-        .args(["--json", "publish", "--id", "dev.sky.lee"])
+        .args(["--json", "publish"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -1077,7 +1111,7 @@ fn noninteractive_publication_guides_setup_without_building_or_creating_an_order
         result["error"]["hint"]
             .as_str()
             .unwrap()
-            .contains("jade publish --id NAME interactively")
+            .contains("rerun this jade publish command interactively")
     );
     assert!(!project.join("build").exists());
     assert!(
@@ -1088,7 +1122,7 @@ fn noninteractive_publication_guides_setup_without_building_or_creating_an_order
     let explicit = Command::new(env!("CARGO_BIN_EXE_jade"))
         .current_dir(&project)
         .env("DHTTP_HOME", &home)
-        .args(["--json", "publish", "release.waz", "--id", "dev.sky.lee"])
+        .args(["--json", "publish", "release.waz"])
         .output()
         .unwrap();
     let result: serde_json::Value = serde_json::from_slice(&explicit.stdout).unwrap();
@@ -1096,22 +1130,17 @@ fn noninteractive_publication_guides_setup_without_building_or_creating_an_order
 }
 
 #[test]
-fn explicit_development_identity_is_preserved_and_publish_checks_that_same_author() {
+fn configured_author_is_preserved_and_project_publication_checks_the_built_author() {
     let root = tempfile::tempdir().unwrap();
-    let home = root.path().join("home");
-    test_identity::create_named(&home, "dev.alex.chen.dhttp.net");
+    let home = root.path().join("empty-home");
     let app = root.path().join("app");
     project(&app, "app", "");
     let manifest = app.join("jade.toml");
-    std::fs::write(
-        &manifest,
-        std::fs::read_to_string(&manifest)
-            .unwrap()
-            .replace("alice.dhttp.net", "dev.alex.chen.dhttp.net"),
-    )
-    .unwrap();
+    let original_manifest = std::fs::read_to_string(&manifest).unwrap();
     for name in ["dev.alex.chen", "dev.alex.chen.dhttp.net"] {
-        let output = pack(&home, &app, &["--id".as_ref(), name.as_ref()]);
+        let configured = original_manifest.replace("alice.dhttp.net", name);
+        std::fs::write(&manifest, &configured).unwrap();
+        let output = pack(&home, &app, &[]);
         assert!(
             output.status.success(),
             "{}",
@@ -1119,19 +1148,33 @@ fn explicit_development_identity_is_preserved_and_publish_checks_that_same_autho
         );
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(value["result"]["id"], "dev.alex.chen.dhttp.net/hello");
+        assert_eq!(std::fs::read_to_string(&manifest).unwrap(), configured);
     }
     let file = app.join("build/hello-1.0.0.waz");
     let original = std::fs::read(&file).unwrap();
-    for input in [app.as_path(), file.as_path()] {
+    std::fs::write(
+        &manifest,
+        original_manifest.replace("alice.dhttp.net", "dev.other.name"),
+    )
+    .unwrap();
+    for (input, expected) in [
+        (app.as_path(), "E_PACKAGE_MISMATCH"),
+        (file.as_path(), "E_DEVELOPER_CERTIFICATE_REQUIRED"),
+    ] {
         let output = Command::new(env!("CARGO_BIN_EXE_jade"))
             .env("DHTTP_HOME", &home)
             .args(["--json", "publish"])
             .arg(input)
-            .args(["--id", "dev.other.name"])
             .output()
             .unwrap();
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(value["error"]["code"], "E_IDENTITY_MISMATCH");
+        assert_eq!(value["error"]["code"], expected);
+        if expected == "E_DEVELOPER_CERTIFICATE_REQUIRED" {
+            assert_eq!(
+                value["error"]["context"]["author"],
+                "dev.alex.chen.dhttp.net"
+            );
+        }
         assert_eq!(std::fs::read(&file).unwrap(), original);
     }
 }
@@ -1171,25 +1214,23 @@ fn unsigned_build_requires_developer_credentials_only_when_publishing() {
 }
 
 #[test]
-fn a_main_name_starting_with_dev_never_replaces_its_selected_child() {
+fn a_main_name_starting_with_dev_never_replaces_its_configured_child() {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("settings.toml"),
+        "[default]\nname='dev.wang.dhttp.net'\n",
+    )
+    .unwrap();
     let app = root.path().join("app");
     project(&app, "app", "");
     let manifest = app.join("jade.toml");
-    std::fs::write(
-        &manifest,
-        std::fs::read_to_string(&manifest)
-            .unwrap()
-            .replace("alice.dhttp.net", "dev.dev.wang.dhttp.net"),
-    )
-    .unwrap();
-    for name in ["dev.wang", "dev.wang.dhttp.net"] {
-        let rejected = pack(&home, &app, &["--id".as_ref(), name.as_ref()]);
-        assert!(!rejected.status.success());
-        assert!(!app.join("build/hello-1.0.0.waz").exists());
-    }
-    let built = pack(&home, &app, &["--id".as_ref(), "dev.dev.wang".as_ref()]);
+    let configured = std::fs::read_to_string(&manifest)
+        .unwrap()
+        .replace("alice.dhttp.net", "dev.dev.wang");
+    std::fs::write(&manifest, &configured).unwrap();
+    let built = pack(&home, &app, &[]);
     assert!(
         built.status.success(),
         "{}",
@@ -1197,17 +1238,133 @@ fn a_main_name_starting_with_dev_never_replaces_its_selected_child() {
     );
     let metadata: serde_json::Value = serde_json::from_slice(&built.stdout).unwrap();
     assert_eq!(metadata["result"]["id"], "dev.dev.wang.dhttp.net/hello");
+    assert_eq!(std::fs::read_to_string(&manifest).unwrap(), configured);
     let file = app.join("build/hello-1.0.0.waz");
     let original = std::fs::read(&file).unwrap();
     let published = Command::new(env!("CARGO_BIN_EXE_jade"))
         .env("DHTTP_HOME", &home)
         .args(["--json", "publish"])
         .arg(&file)
-        .args(["--id", "dev.dev.wang"])
         .output()
         .unwrap();
     let result: serde_json::Value = serde_json::from_slice(&published.stdout).unwrap();
     assert_eq!(result["error"]["code"], "E_DEVELOPER_CERTIFICATE_REQUIRED");
+    assert_eq!(
+        result["error"]["context"]["author"],
+        "dev.dev.wang.dhttp.net"
+    );
     assert_eq!(std::fs::read(file).unwrap(), original);
-    assert!(!home.exists());
+    assert!(!home.join("dev.dev.wang").exists());
+}
+
+#[test]
+fn run_and_build_share_identity_selection_and_publish_keeps_the_built_author() {
+    for (author, default, expected) in [
+        (None, None, None),
+        (None, Some("alice.smith.dhttp.net"), Some("dev.alice.smith")),
+        (
+            None,
+            Some("dev.alice.smith.dhttp.net"),
+            Some("dev.alice.smith"),
+        ),
+        (None, Some("dev.wang.dhttp.net"), Some("dev.dev.wang")),
+        (Some("dev.bob.smith"), None, Some("dev.bob.smith")),
+        (
+            Some("dev.bob.smith.dhttp.net"),
+            Some("alice.smith.dhttp.net"),
+            Some("dev.bob.smith"),
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        if let Some(default) = default {
+            std::fs::write(
+                home.join("settings.toml"),
+                format!("[default]\nname='{default}'\n"),
+            )
+            .unwrap();
+        }
+        let app = root.path().join("app");
+        project(&app, "app", "");
+        let manifest = app.join("jade.toml");
+        let configured = std::fs::read_to_string(&manifest).unwrap().replace(
+            "author='alice.dhttp.net'\n",
+            &author
+                .map(|author| format!("author='{author}'\n"))
+                .unwrap_or_default(),
+        );
+        std::fs::write(&manifest, &configured).unwrap();
+        let built = pack(&home, &app, &[]);
+        let result: serde_json::Value = serde_json::from_slice(&built.stdout).unwrap();
+        if let Some(expected) = expected {
+            assert!(built.status.success(), "{result}");
+            assert_eq!(
+                result["result"]["id"],
+                format!("{expected}.dhttp.net/hello")
+            );
+        } else {
+            assert!(!built.status.success());
+            assert_eq!(result["error"]["code"], "E_IDENTITY_REQUIRED");
+            assert!(!app.join("build").exists());
+            assert!(!result.to_string().contains("dev.zero.ai"));
+        }
+        assert_eq!(std::fs::read_to_string(&manifest).unwrap(), configured);
+
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            // No credentials or Pishoo are installed: the setup hint exposes
+            // the identity actually selected by the run entry point.
+            let output = Command::new(env!("CARGO_BIN_EXE_jade"))
+                .env("DHTTP_HOME", &home)
+                .env("PISHOO_BIN", root.path().join("missing-pishoo"))
+                .current_dir(&app)
+                .args(["--json", "run"])
+                .output()
+                .unwrap();
+            let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert!(!output.status.success());
+            if let Some(expected) = expected {
+                assert_eq!(result["error"]["code"], "E_IDENTITY_UNAVAILABLE");
+                assert_eq!(
+                    result["error"]["hint"],
+                    format!("Run `genmeta identity apply {expected}`, then retry `jade run`.")
+                );
+            } else {
+                assert_eq!(result["error"]["code"], "E_IDENTITY_REQUIRED");
+            }
+        }
+
+        if let Some(expected) = expected {
+            let file = app.join("build/hello-1.0.0.waz");
+            let bytes = std::fs::read(&file).unwrap();
+            // Neither a different default nor no default may change an
+            // already reviewed release's author, even without package.author.
+            std::fs::write(
+                home.join("settings.toml"),
+                "[default]\nname='other.user.dhttp.net'\n",
+            )
+            .unwrap();
+            for remove_default in [false, true] {
+                if remove_default {
+                    std::fs::remove_file(home.join("settings.toml")).unwrap();
+                }
+                let output = Command::new(env!("CARGO_BIN_EXE_jade"))
+                    .env("DHTTP_HOME", &home)
+                    .current_dir(&app)
+                    .args(["--json", "publish"])
+                    .output()
+                    .unwrap();
+                let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert!(!output.status.success());
+                assert_eq!(result["error"]["code"], "E_DEVELOPER_CERTIFICATE_REQUIRED");
+                assert_eq!(
+                    result["error"]["context"]["author"],
+                    format!("{expected}.dhttp.net")
+                );
+                assert_eq!(std::fs::read(&file).unwrap(), bytes);
+            }
+            assert_eq!(std::fs::read_to_string(&manifest).unwrap(), configured);
+        }
+    }
 }

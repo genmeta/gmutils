@@ -26,25 +26,16 @@ pub(crate) fn developer_name(name: &str) -> Result<String> {
     {
         return Err(Error::new(
             "E_IDENTITY_REQUIRED",
-            "Select the actual development child with --id, for example dev.alex.chen",
+            "Set package.author to the actual development child, for example dev.alex.chen",
         ));
     }
     Ok(name)
 }
 
-pub(crate) async fn select(explicit: Option<&str>, configured: Option<&str>) -> Result<String> {
-    let configured = configured.map(normalize).transpose()?;
-    let explicit = explicit.map(developer_name).transpose()?;
-    if let (Some(explicit), Some(configured)) = (&explicit, &configured)
-        && explicit != configured
-    {
-        return Err(Error::new(
-            "E_IDENTITY_MISMATCH",
-            "The developer identity selected by --id differs from package.author",
-        ));
-    }
-    if let Some(selected) = explicit.or(configured) {
-        return Ok(selected);
+/// Shared identity for source builds and local hosting; never writes the manifest.
+pub(crate) async fn select(configured: Option<&str>) -> Result<String> {
+    if let Some(author) = configured {
+        return normalize(author);
     }
     let home = home()?;
     default_developer_name(&home).await
@@ -64,7 +55,13 @@ pub(crate) async fn default_developer_name(home: &DhttpHome) -> Result<String> {
             };
         }
     }
-    developer_name("dev.zero.ai")
+    Err(Error::new(
+        "E_IDENTITY_REQUIRED",
+        "No default identity is configured; select a development identity",
+    )
+    .hint(
+        "Set package.author in jade.toml, or set a default with `genmeta identity default NAME`.",
+    ))
 }
 
 #[cfg(test)]

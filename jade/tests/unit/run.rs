@@ -48,9 +48,15 @@ async fn build_then_run_publishes_plain_files_without_developer_credentials() {
     project(&source);
     let profile = root.path().join("profile");
     std::fs::create_dir(&profile).unwrap();
-    crate::pack::run(source.clone(), None, Some("dev.test.sky.lee".into()), false)
-        .await
-        .unwrap();
+    let manifest = source.join("jade.toml");
+    std::fs::write(
+        &manifest,
+        std::fs::read_to_string(&manifest)
+            .unwrap()
+            .replace("name='hello'", "name='hello'\nauthor='dev.test.sky.lee'"),
+    )
+    .unwrap();
+    crate::pack::run(source.clone(), None, false).await.unwrap();
     let release = source.join("build/hello-1.0.0.waz");
     let original = std::fs::read(&release).unwrap();
     assert!(
@@ -178,34 +184,29 @@ async fn stop_removes_app_and_api_but_preserves_data_and_later_publishers() {
 }
 
 #[tokio::test]
-async fn default_identity_resolves_its_child_while_explicit_identity_is_used_exactly() {
+async fn default_identity_resolves_its_child_while_configured_author_is_used_exactly() {
     let root = tempfile::tempdir().unwrap();
     let home = dhttp_home::DhttpHome::new(root.path().to_path_buf());
     assert_eq!(
-        select_host(&home, None, true).await.unwrap(),
-        "dev.zero.ai.dhttp.net"
+        crate::identity::default_developer_name(&home)
+            .await
+            .unwrap_err()
+            .code,
+        "E_IDENTITY_REQUIRED"
     );
     assert_eq!(
-        select_host(&home, Some("dev.one.ai"), true).await.unwrap(),
+        crate::identity::select(Some("dev.one.ai")).await.unwrap(),
         "dev.one.ai.dhttp.net"
     );
-    assert_eq!(
-        select_host(&home, Some("dev.zero.ai"), true).await.unwrap(),
-        "dev.zero.ai.dhttp.net"
-    );
-    for name in ["one.ai", "dev.wang"] {
-        assert_eq!(
-            select_host(&home, Some(name), true).await.unwrap_err().code,
-            "E_IDENTITY_REQUIRED"
-        );
-    }
     std::fs::write(
         home.settings_path(),
         "[default]\nname='dev.wang.dhttp.net'\n",
     )
     .unwrap();
     assert_eq!(
-        select_host(&home, None, true).await.unwrap(),
+        crate::identity::default_developer_name(&home)
+            .await
+            .unwrap(),
         "dev.dev.wang.dhttp.net"
     );
     std::fs::write(
@@ -214,7 +215,9 @@ async fn default_identity_resolves_its_child_while_explicit_identity_is_used_exa
     )
     .unwrap();
     assert_eq!(
-        select_host(&home, None, true).await.unwrap(),
+        crate::identity::default_developer_name(&home)
+            .await
+            .unwrap(),
         "dev.dev.wang.dhttp.net"
     );
 }
@@ -406,4 +409,19 @@ async fn root_static_package_never_embeds_local_dependency_configuration() {
     std::fs::remove_dir(root.path().join("public")).unwrap();
     let (_, files) = build(root.path(), "dev.zero.ai.dhttp.net").await.unwrap();
     assert!(!files.contains_key("public/jade.toml"));
+}
+
+#[test]
+fn changing_the_root_author_requires_restarting_the_running_identity() {
+    let root = tempfile::tempdir().unwrap();
+    project(root.path());
+    let manifest = root.path().join("jade.toml");
+    let initial = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(&manifest, format!("{initial}\nauthor='dev.alice.smith'\n")).unwrap();
+    projects(root.path(), "dev.alice.smith.dhttp.net").unwrap();
+    std::fs::write(&manifest, format!("{initial}\nauthor='dev.bob.smith'\n")).unwrap();
+    let error = projects(root.path(), "dev.alice.smith.dhttp.net").unwrap_err();
+    assert_eq!(error.code, "E_IDENTITY_MISMATCH");
+    assert!(error.hint.unwrap().contains("Restart jade run"));
+    projects(root.path(), "dev.bob.smith.dhttp.net").unwrap();
 }

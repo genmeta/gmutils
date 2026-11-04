@@ -13,8 +13,8 @@ Jade uses `dhttp-home`, including `DHTTP_HOME` when set. Developer credentials u
 only the normal `<profile>/ssl/fullchain.crt` and `ssl/privkey.pem`, with OCSP in
 `ssl/stapling.ocsp`. Developer issuance and renewal replace the certificate and
 private key together through the normal identity transaction. Signing, upload and
-hosting use that same installed identity. Ordinary TLS certificates cannot sign
-packages; publish guides developer setup when the installed certificate lacks
+hosting use that same installed identity selected by the author or default name.
+Ordinary TLS certificates cannot sign packages; publish guides developer setup when the installed certificate lacks
 `codeSigning`. Issued credentials are not stored or selected from
 `code-signing/<sequence>/credentials.json`, and upload creates no temporary identity.
 Pending developer requests remain retryable until SSL installation succeeds.
@@ -73,21 +73,56 @@ issuance replays the same CSR under the server ownership lock rather than creati
 a second sequence after a lost response. A new independent CSR can create another
 certificate; no additional annual subscription is needed.
 
+## Identity selection
+
+Jade's `create`, `run`, `build` and `publish` commands have no `--id` option.
+Creation writes no author and reads no credentials. Run and build both use the
+exact `package.author` when configured. Otherwise they select the `dev` child of
+the DHTTP default main name, retaining an existing development child. A default
+of `dev.wang` selects `dev.dev.wang`; defaults `dev.dev.wang` and `dev.alex.chen`
+stay unchanged. If neither author nor default is configured, they report
+`E_IDENTITY_REQUIRED`; no identity is hardcoded and installed credentials are not
+scanned to choose a name.
+
+```toml
+[package]
+# Other required metadata omitted here.
+author = "dev.alex.chen"
+```
+
+Short names and full `.dhttp.net` names are equivalent. Configured authors never
+gain or lose `dev.`. Identity selection does not write back to `jade.toml` or save
+Jade-specific preferences. With no author, keep the global default unchanged
+between run and build to use the same identity. A later default change does not
+change the author of an existing WAZ.
+
+| Command | Identity source | Required credentials |
+| --- | --- | --- |
+| `create` | None | None |
+| `run` | Configured author, otherwise default development identity | Ordinary hosting credentials |
+| `build` | Same selection as run; recorded in WAZ | None |
+| `publish` with a WAZ | Built author | Matching developer signing/upload credentials |
+| Interactive publish without a build | Configured author, otherwise default development identity | Guides setup, then asks for build |
+
+Project publication checks configured author/name/version against the built WAZ.
+An explicit file is independent of the current project and default identity.
+The visitor accessing a running application chooses a client identity independently
+of the author and host.
+
 ## Run locally
 
 ```sh
-jade run [PATH] [--id DEV_NAME] [--fresh]
+jade run [PATH] [--fresh]
 ```
 
-`--id` selects the actual development identity, for example `dev.alex.chen`.
-Without `--id`, Jade selects the `dev` child of the configured default, so a
-default of `dev.wang` selects `dev.dev.wang`, while `dev.dev.wang` and
-`dev.alex.chen` stay unchanged. Without a configured default it
-uses `dev.zero.ai`. Explicit main names are rejected instead of converted. Install
-ordinary credentials for this name first; local run
-requires no developer certificate, subscription or payment. Jade enables the
-identity's normal listener using `pishoo configure`, without changing the default
-identity or starting another daemon.
+Run hosts the application on the configured author or default development identity.
+Install ordinary credentials for this name first; local run requires no developer
+certificate, subscription or payment. Jade enables the identity's normal listener
+using `pishoo configure`, without changing the default identity or starting another
+daemon. Run builds and watches a local snapshot; it does not create or modify the
+release WAZ. Build explicitly after source changes to publish a new snapshot.
+Changing `package.author` while run is watching requires restarting run to use
+the new identity; previous local files stay in place until cleanup or replacement.
 
 App URLs are `/app/<name>/`, standard APIs use `/std/<name>/...`, and ordinary
 APIs use `/<name>/...`. There is no `/dev` URL prefix. Existing frontend and API
@@ -141,7 +176,7 @@ jade create "My Project" --name my-project
 
 Creation writes `jade.toml`, source files, preparation instructions and
 `.gitignore` into a new directory. The parent must exist. Creation does not load
-credentials. The default template is `fullstack`, with both a Vite frontend and
+credentials or record an author. The default template is `fullstack`, with both a Vite frontend and
 a Rust API. Use `--template static`, `web` or `api` to generate only the files you need.
 
 The `api` and `fullstack` starters include GET `/whoami`
@@ -168,7 +203,8 @@ license = "Apache-2.0"
 ```
 
 `name`, `version`, `description` and `license` are required. Optional package
-fields are `author`, `title`, `release-notes` and `repository`. Title defaults to
+fields are `author`, `title`, `release-notes` and `repository`. Author selects both
+the local hosting identity and release author, and can omit `.dhttp.net`. Title defaults to
 the package name and release notes to `Release VERSION`.
 
 Jade automatically finds a frontend build project from `package.json` with a
@@ -231,8 +267,8 @@ Public API, store metadata and signed ZIP dependencies use `author`.
 jade create service --template api
 cd service
 rustup target add wasm32-wasip2
-# Edit api/src/lib.rs
-jade build --id dev.alex.chen
+# Edit api/src/lib.rs; configure package.author or your DHTTP default identity.
+jade build
 jade publish build/service-0.1.0.waz
 ```
 
@@ -263,21 +299,15 @@ and component target for API projects, before building.
 ## Build and publish
 
 ```sh
-jade build [PATH] [--id DEV_NAME] [-o FILE.waz] [--overwrite]
-jade publish [PATH | FILE.waz] [--id DEV_NAME] [--email EMAIL] [--signing-sequence N]
+jade build [PATH] [-o FILE.waz] [--overwrite]
+jade publish [PATH | FILE.waz] [--email EMAIL] [--signing-sequence N]
 ```
 
-All Jade commands accept the actual development identity, for example
-`--id dev.alex.chen`. Short and full canonical names are accepted. Explicit names
-are never converted by adding or removing `dev.`. The main name `dev.wang`
-requires `--id dev.dev.wang`.
-
 Build accepts a project directory or a Jade configuration file. Its author comes
-from the exact identity selected by `--id`, then the exact `package.author`, then
-the `dev` child of the DHTTP default (or that default itself if already a dev
-child), or `dev.zero.ai` when none is configured.
-Build resolves names without reading identity or signing credentials. Explicit selection and a configured author must agree.
-Selections are not saved in Jade-specific state.
+from the exact `package.author`, otherwise the default development identity as
+described above. It resolves names without reading identity or signing credentials,
+and records the author only in the generated WAZ. It does not add an author to
+`jade.toml`.
 
 Packages default to `build/NAME-VERSION.waz`; Cargo's intermediate artifacts go to
 `build/target/`. Frontend outputs such as `web/dist/` or a root-level `dist/` stay
@@ -293,7 +323,7 @@ certificate, subscription or ordinary identity credentials are required.
 
 Publish reads one fixed build snapshot. For an unsigned WAZ, it signs that
 snapshot using the selected developer credential and verifies the resulting
-signature before uploading. The local archive is unchanged. For an already signed
+signature before saving the signed WAZ and uploading. For an already signed
 WAZ, it verifies and preserves the exact bytes, including the original signature;
 a damaged signature is rejected rather than replaced. Upload CI can upload a
 signed release with its own developer transport key when the canonical author
@@ -310,14 +340,14 @@ a mismatch reports `E_PACKAGE_MISMATCH`. Publish never runs Cargo/npm, builds a
 missing release, or chooses another version automatically.
 
 Interactive project publication guides missing developer credentials. With no
-package, it selects `--id DEV_NAME`, the configured author, or the `dev` child
-of the default identity, retaining an existing dev child and falling back to
-`dev.zero.ai` when no default is configured. It prepares matching credentials,
-then reports `E_BUILD_REQUIRED` with a build command using that same name.
+package, it selects the configured author or default development identity.
+Without either, it reports `E_IDENTITY_REQUIRED`. It prepares matching credentials,
+then reports `E_BUILD_REQUIRED` with instructions to build using that author.
 With an existing package, it prepares matching signing/upload credentials and
 continues publication. JSON and noninteractive runs only report the required next step.
-For an explicit signed file, `--id` checks the exact author; setup can
-prepare matching credentials without changing any package bytes.
+For an explicit signed file, setup prepares credentials for its exact author
+without changing any package bytes. Existing builds retain their recorded author
+even if the global default has changed or is no longer configured.
 
 Before sending a package, it reads the store catalogue and rejects the legacy
 `publisher`/`.pkg` protocol with no upload.

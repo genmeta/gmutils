@@ -18,12 +18,11 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub(super) async fn run(
     path: PathBuf,
     requested_output: Option<PathBuf>,
-    id: Option<String>,
     overwrite: bool,
 ) -> crate::error::Result<Value> {
     use crate::error::Error;
     let (project, config) = crate::project::read(&path)?;
-    let author = crate::identity::select(id.as_deref(), config.package.author.as_deref()).await?;
+    let author = crate::identity::select(config.package.author.as_deref()).await?;
     let id = format!("{author}/{}", config.package.name);
     let name = &config.package.name;
     let version = &config.package.version;

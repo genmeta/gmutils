@@ -30,50 +30,31 @@ const METADATA_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(super) async fn run(
     file: PathBuf,
-    id: Option<String>,
     email: Option<String>,
     signing_sequence: Option<u32>,
     machine: bool,
 ) -> crate::error::Result<Value> {
     use crate::error::Error;
-    let id = id
-        .as_deref()
-        .map(crate::identity::developer_name)
-        .transpose()?;
     let project = file.is_dir() || file.file_name().is_some_and(|name| name == "jade.toml");
     let interactive = !machine && std::io::IsTerminal::is_terminal(&std::io::stdin());
     let (bytes, metadata) = match read_input(&file).await {
         Ok(value) => value,
         Err(error) if error.code == "E_BUILD_REQUIRED" && project => {
             if interactive {
-                let author = prepare_project_identity(
-                    &file,
-                    id.as_deref(),
-                    email.as_deref(),
-                    None,
-                    signing_sequence,
-                    true,
-                )
-                .await?;
+                let author =
+                    prepare_project_identity(&file, email.as_deref(), None, signing_sequence, true)
+                        .await?;
                 let name = author
                     .strip_suffix(dhttp_home::DHTTP_SUFFIX)
                     .unwrap_or(&author);
-                return Err(error.hint(format!("Developer credentials are ready. Run jade build --id {name}, review the package, then run jade publish --id {name} again.")));
+                return Err(error.hint(format!("Developer credentials are ready for {name}. Set package.author = \"{name}\" in jade.toml to keep that author fixed, run jade build, review the package, then run jade publish again.")));
             }
-            return Err(error.hint("For first-time developer setup, run jade publish --id NAME interactively. Then run jade build --id NAME, review the package, and run jade publish again. For a custom output, use jade publish FILE.waz."));
+            return Err(error.hint("For first-time developer setup, rerun this jade publish command interactively. Then build with the prepared author, review the package, and run jade publish again. For a custom output, use jade publish FILE.waz."));
         }
         Err(error) => return Err(error),
     };
     let author = text(&metadata, "author").map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
     let home = crate::identity::home()?;
-    if let Some(id) = &id
-        && author != crate::identity::developer_name(id)?
-    {
-        return Err(Error::new(
-            "E_IDENTITY_MISMATCH",
-            "The package author differs from the selected development identity",
-        ));
-    }
     let profile = home.resolve_identity_profile_exactly(author).await;
     let credentials = profile
         .as_ref()
@@ -84,7 +65,6 @@ pub(super) async fn run(
         None if interactive => {
             prepare_project_identity(
                 &file,
-                id.as_deref(),
                 email.as_deref(),
                 Some(author),
                 signing_sequence,
@@ -100,8 +80,9 @@ pub(super) async fn run(
         }
         None => return Err(Error::new(
             "E_DEVELOPER_CERTIFICATE_REQUIRED",
-            "No usable developer upload credentials for this package author",
+            format!("No usable developer upload credentials for {}", crate::display::identity(author)),
         )
+        .context(json!({"author": author}))
         .hint(
             "Run jade publish interactively with this project or package to set up matching developer credentials, then retry publication.",
         )),
@@ -192,7 +173,6 @@ pub(super) async fn run(
 
 async fn prepare_project_identity(
     input: &std::path::Path,
-    requested_identity: Option<&str>,
     email: Option<&str>,
     signed_author: Option<&str>,
     sequence: Option<u32>,
@@ -212,14 +192,8 @@ async fn prepare_project_identity(
         None
     };
     let author = signed_author.or(configured.as_deref());
-    let target = match requested_identity.or(author) {
-        Some(name) => crate::identity::developer_name(name)?,
-        None => crate::identity::select(None, None).await?,
-    };
-    if author.is_some_and(|author| author != target) {
-        return Err(Error::new("E_IDENTITY_MISMATCH", "The project author differs from the selected developer name")
-            .hint(format!("Review the author migration and set package.author to {target} before building a new release.")));
-    }
+    let target = crate::identity::select(author).await?;
+    let target = crate::identity::developer_name(&target)?;
     let home = crate::identity::home()?;
     if let Ok(profile) = home.resolve_identity_profile_exactly(&target).await
         && genmeta_identity::code_signing::load(&profile, sequence)
@@ -238,7 +212,7 @@ async fn prepare_project_identity(
             "Developer credentials must be prepared before noninteractive publication",
         )
         .hint(
-            "Run jade publish --id NAME interactively for developer setup, then follow its build and publication hints.",
+            "Run jade publish interactively for developer setup, then follow its build and publication hints.",
         ));
     }
     eprintln!(

@@ -1,23 +1,20 @@
 //! Build and watch a dependency graph on a separate, ordinary development identity.
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::path::PathBuf;
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+use std::{collections::BTreeMap, path::Path};
 
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+use serde_json::json;
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
 
-pub(super) async fn run(
-    path: PathBuf,
-    id: Option<String>,
-    fresh: bool,
-    machine: bool,
-) -> Result<Value> {
+pub(super) async fn run(path: PathBuf, fresh: bool, machine: bool) -> Result<Value> {
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
-        let _ = (path, id, fresh, machine);
+        let _ = (path, fresh, machine);
         Err(Error::new(
             "E_DEV_UNSUPPORTED",
             "Local development publishing requires Linux or macOS",
@@ -26,7 +23,8 @@ pub(super) async fn run(
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         let home = crate::identity::home()?;
-        let host = select_host(&home, id.as_deref(), machine).await?;
+        let (project, config) = crate::project::read(&path)?;
+        let host = crate::identity::select(config.package.author.as_deref()).await?;
         let profile = home
             .resolve_identity_profile_exactly(&host)
             .await
@@ -47,13 +45,10 @@ pub(super) async fn run(
             })?;
         validate_host(&profile).await?;
         let profile = profile.path().canonicalize()?;
-        let (project, config) = crate::project::read(&path)?;
-        let root_author =
-            crate::identity::normalize(config.package.author.as_deref().unwrap_or(&host))?;
         let data_directory =
             profile
                 .join(".volume")
-                .join(if crate::identity::is_standard_author(&root_author) {
+                .join(if crate::identity::is_standard_author(&host) {
                     format!("std/{}", config.package.name)
                 } else {
                     config.package.name.clone()
@@ -198,6 +193,7 @@ fn remove_published(profile: &Path, name: &str, published: &std::fs::File) -> Re
     Ok(true)
 }
 
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 async fn build(path: &Path, host: &str) -> Result<(String, BTreeMap<String, Vec<u8>>)> {
     let (project, config) = crate::project::read(path)?;
     let author = crate::identity::normalize(config.package.author.as_deref().unwrap_or(host))?;
@@ -386,19 +382,19 @@ fn private_directory(path: &Path, owner: &std::fs::Metadata) -> Result<std::fs::
     Ok(file)
 }
 
-async fn select_host(
-    home: &dhttp_home::DhttpHome,
-    explicit: Option<&str>,
-    _machine: bool,
-) -> Result<String> {
-    if let Some(name) = explicit {
-        return crate::identity::developer_name(name);
-    }
-    crate::identity::default_developer_name(home).await
-}
-
 // Local paths resolve against the manifest that declares them, including nested dependencies.
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 fn projects(root: &Path, host: &str) -> Result<(BTreeMap<String, PathBuf>, Vec<Value>)> {
+    let (_, manifest) = crate::project::read_manifest(root)?;
+    if let Some(author) = manifest.package.author
+        && crate::identity::normalize(&author)? != host
+    {
+        return Err(Error::new(
+            "E_IDENTITY_MISMATCH",
+            "The project author changed while running",
+        )
+        .hint("Restart jade run after changing package.author to use the new identity."));
+    }
     fn visit(
         path: &Path,
         host: &str,
@@ -485,6 +481,7 @@ fn projects(root: &Path, host: &str) -> Result<(BTreeMap<String, PathBuf>, Vec<V
     Ok((locals, remote.into_values().collect()))
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn graph_fingerprint(projects: &BTreeMap<String, PathBuf>) -> Result<Vec<u8>> {
     let mut digest = Sha256::new();
     for (name, path) in projects {
@@ -495,6 +492,7 @@ fn graph_fingerprint(projects: &BTreeMap<String, PathBuf>) -> Result<Vec<u8>> {
     Ok(digest.finalize().to_vec())
 }
 
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 async fn validate_host(profile: &dhttp_home::identity::IdentityProfile) -> Result<()> {
     let name = profile
         .name()
@@ -536,6 +534,7 @@ async fn validate_host(profile: &dhttp_home::identity::IdentityProfile) -> Resul
     Ok(())
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn prepare_host(profile: &Path) -> Result<()> {
     // Reuse the existing daemon; this subprocess only writes its normal identity configuration.
     let executable = std::env::var_os("PISHOO_BIN").unwrap_or_else(|| "pishoo".into());
@@ -557,6 +556,7 @@ async fn prepare_host(profile: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn install_dependencies(profile: &Path, host: &str, dependencies: &[Value]) -> Result<()> {
     if dependencies.is_empty() {
         return Ok(());
@@ -570,6 +570,7 @@ async fn install_dependencies(profile: &Path, host: &str, dependencies: &[Value]
     install_from_host(&endpoint, host, dependencies).await
 }
 
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 async fn install_from_host(
     endpoint: &dhttp::Endpoint,
     host: &str,
@@ -642,6 +643,7 @@ async fn install_from_host(
     Ok(())
 }
 
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 fn source_fingerprint(root: &Path) -> Result<Vec<u8>> {
     let canonical_root = root.canonicalize()?;
     let root = canonical_root.as_path();

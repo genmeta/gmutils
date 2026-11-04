@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn all_jade_commands_require_the_actual_development_child() {
+fn developer_setup_requires_the_actual_development_child() {
     for (input, expected) in [
         ("dev.genmeta.tech", "dev.genmeta.tech.dhttp.net"),
         ("dev.genmeta.tech.dhttp.net", "dev.genmeta.tech.dhttp.net"),
@@ -43,18 +43,15 @@ fn official_author_requires_an_exact_match() {
 }
 
 #[tokio::test]
-async fn explicit_development_identity_matches_the_exact_configured_author() {
+async fn configured_author_is_normalized_without_loading_credentials() {
+    for author in ["dev.alex.chen", "dev.alex.chen.dhttp.net"] {
+        assert_eq!(
+            select(Some(author)).await.unwrap(),
+            "dev.alex.chen.dhttp.net"
+        );
+    }
     assert_eq!(
-        select(Some("dev.dev.wang"), Some("dev.dev.wang.dhttp.net"))
-            .await
-            .unwrap(),
-        "dev.dev.wang.dhttp.net"
-    );
-    assert_eq!(
-        select(Some("dev.dev.wang"), Some("dev.wang.dhttp.net"))
-            .await
-            .unwrap_err()
-            .code,
-        "E_IDENTITY_MISMATCH"
+        select(Some("https://alex.chen/")).await.unwrap_err().code,
+        "E_CONFIG_INVALID"
     );
 }

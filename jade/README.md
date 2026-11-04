@@ -12,15 +12,20 @@ the API, and run Pishoo locally.
 jade create hello
 cd hello
 rustup target add wasm32-wasip2
-jade run --id dev.alex.chen
+jade run
 ```
 
-This runs on `dev.alex.chen`. If its ordinary identity credentials are missing,
-follow Jade's `genmeta identity apply dev.alex.chen` hint, then retry.
-Jade checks these credentials before building or configuring the listener; a
-profile directory or unfinished developer request alone is insufficient.
-An unfinished developer request does not prevent ordinary identity setup.
-Local run needs no developer certificate or subscription.
+Run and build use `package.author` when configured. Otherwise they use the
+`dev` child of your DHTTP default name, retaining an existing development child.
+For example, a default of `alex.chen` selects `dev.alex.chen`. If neither author
+nor default is configured, set one before running or building; Jade does not
+invent a fallback identity.
+
+If the selected identity lacks ordinary hosting credentials, follow Jade's
+`genmeta identity apply NAME` hint, then retry. Jade checks these credentials
+before building or configuring the listener. A profile directory or unfinished
+developer request alone is insufficient. Local run needs no developer certificate
+or subscription.
 
 Open the App URL printed by Jade. Edit `web/index.html`, `web/src/main.js`,
 `web/src/style.css` and `api/src/lib.rs`; Jade rebuilds on changes.
@@ -31,46 +36,60 @@ switch and a GET `/whoami` API. The API reads the verified **visitor's** name;
 it can differ from the identity hosting the application. Displayed names omit
 `.dhttp.net`; the API returns the full name. Vite alone does not serve this API.
 
-## One name for every Jade command
+## One identity for run and build
 
-Use the same `--id dev.alex.chen` for `run`, `build` and `publish`. Jade uses
-that exact development identity for local hosting, signing and publication.
-Explicit names are never converted by adding or removing `dev.`. A main name
-such as
-`dev.wang` must be selected as `dev.dev.wang` for development.
+Jade commands have no `--id` option. Run and build use the same rule:
+
+| Configuration | Author and local host |
+| --- | --- |
+| `package.author` is set | That exact name |
+| No author; DHTTP default is a main name | Its `dev` child |
+| No author; default is already a development child | The default itself |
+| No author or default | `E_IDENTITY_REQUIRED`; configure one |
+
+For example, default `dev.wang` selects `dev.dev.wang`. A configured author is
+never rewritten by adding or removing `dev.`. Short and full names are equivalent.
+To fix the author and host, add this to the existing `[package]` table:
+
+```toml
+author = "dev.alex.chen"
+```
+
+`jade create` accepts no identity, writes no author and reads no credentials.
+Without an author, run and build use your configured default development identity.
+Build writes the chosen author into the WAZ without writing it back to `jade.toml`.
+Run watches a separate local snapshot and does not create or modify a release WAZ.
+A visitor can use a different client identity to test the application.
+
+Publish uses the existing WAZ's author, even if your default has since changed.
+Project publication checks a configured author, name and version against that WAZ.
+An explicit `jade publish FILE.waz` uses only that file and does not read a project.
+
 Build needs no identity credentials. Local hosting needs ordinary identity
 credentials; publication requires `codeSigning`, which `publish` helps prepare.
-Both use the certificate and key in the identity's normal `ssl/` directory.
+Both use the certificate and key in the selected identity's normal `ssl/` directory.
 `genmeta identity apply DEV_NAME` requests a new sequence: active developer
 entitlement for that bound name selects a developer certificate; otherwise it
 selects ordinary TLS credentials. `renew` keeps the installed sequence and purpose.
-
-Without `--id`, local run selects the `dev` child of the DHTTP default name, or
-uses `dev.zero.ai` when no default is configured. A default of `dev.wang` selects
-`dev.dev.wang`; a default of `dev.dev.wang` stays unchanged. Build uses
-`package.author` first, otherwise the same default child or `dev.zero.ai`.
-Publication setup uses that same selection when no package author is available.
-`package.author` is the actual author recorded in the package; if configured,
-it must match the
-selected developer identity. Signed metadata always keeps the full name.
 
 ## Publish and install
 
 Build and review the package before publishing:
 
 ```sh
-jade build --id dev.alex.chen
-# Review build/hello-0.1.0.waz.
-jade run --id dev.alex.chen
+jade run
 # After local testing, stop the watcher with Ctrl+C.
-jade publish --id dev.alex.chen
+jade build
+# Review build/hello-0.1.0.waz.
+jade publish
 ```
 
 Build creates an unsigned package and requires no developer certificate or
 subscription. Run also builds from source and watches for changes. Publish reads
 the existing build, prepares developer credentials when needed, signs that fixed
-content and uploads it. It leaves the local build archive unchanged and never
-rebuilds sources. An already signed package is verified and uploaded unchanged.
+content, saves the signed WAZ and uploads it without rebuilding sources.
+An already signed package is verified and uploaded unchanged. After source
+changes and local testing, run build again before publishing those changes.
 
 First-time publication may require confirming the developer subscription and
 completing checkout. As with `genmeta identity apply`, Jade shows the
@@ -80,7 +99,9 @@ indicator. The invoice's API URL is used only for status queries.
 The wait follows both the payment link and invoice deadlines, up to 15 minutes; retrying preserves the
 checkout and pending certificate request. Without a built package, publication
 asks you to build and review one first. JSON and noninteractive runs report the required next step
-without starting setup.
+without starting setup. With no package, interactive setup uses the configured
+author or default development identity, then asks you to build, review and publish.
+With a package, setup prepares credentials for its recorded author.
 
 Interactive publication shows progress during email verification, developer setup
 and upload, followed by a compact publication result. Use `--verb` for detailed

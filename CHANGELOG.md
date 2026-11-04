@@ -25,12 +25,13 @@ Changes since the published gmutils 0.9.0 release.
 - Separate Jade command responsibilities: `build` validates and writes an unsigned
   WAZ without credentials; `run` builds and watches using ordinary credentials;
   `publish` signs an existing unsigned snapshot and uploads it without rebuilding
-  sources or modifying the local archive. Valid signed packages upload unchanged.
+  sources, saving the signed WAZ before upload. Valid signed packages upload unchanged.
   Move `--signing-sequence` to publish and remove `publish --prepare`.
-- Interpret explicit Jade `--id` as the actual development child name, such as
-  `dev.alex.chen`; normalize short/full names without adding or removing `dev.`.
-  Preserve package authors and require exact matches. Defaults select the configured
-  identity's development child, or `dev.zero.ai` when no default is configured.
+- Remove Jade's `--id` option. Run and build both use `package.author`, otherwise
+  the default name's development child. Require an identity when neither is
+  configured instead of using a hardcoded fallback. Normalize short/full authors
+  without adding or removing `dev.`. Record build authors only in the WAZ, and
+  publish using that recorded author independently of later default changes.
 - Unify ordinary and developer credentials in `ssl/fullchain.crt`, `ssl/privkey.pem`
   and `ssl/stapling.ocsp`. Developer issuance/renewal installs SSL through the normal
   identity transaction; signing and upload no longer select legacy credentials,
@@ -51,6 +52,9 @@ Changes since the published gmutils 0.9.0 release.
   Root; exclude disposable fixture signing keys from the identity crate archive.
 
 ### Fixed
+
+- Compile local-run helpers only on supported production platforms, keeping
+  portable unit tests available and avoiding Windows release-build dead-code errors.
 
 - Refresh the running proxy’s OCSP staple in the background and apply validated
   replacements to later requests, including existing HTTP keep-alive connections.

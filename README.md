@@ -175,7 +175,11 @@ request/response output is independent of debug logging.
 `jade build PATH` reads `jade.toml`, runs native frontend or Rust API builds when
 needed, and writes an unsigned package locally. Static resources and prebuilt
 Components use the same command. A running Pishoo service is not required.
-The default output is `build/NAME-VERSION.waz`; `--id` selects the actual development author, such as `dev.alice.smith`; explicit names are normalized without adding or removing `dev.`. Without `--id`, build uses `package.author`, then the default identity’s development child, or `dev.zero.ai` when no default is configured.
+The default output is `build/NAME-VERSION.waz`. Run and build use `package.author`,
+otherwise the default identity's development child; if neither is configured,
+Jade asks you to configure an identity. Short and full author names are equivalent,
+and configured names never gain or lose `dev.`. Build records the author in the
+WAZ without updating `jade.toml`; publish uses that recorded author.
 See [Jade](jade/README.md) for configuration, templates and JSON output.
 
 ## Access policies
@@ -259,8 +263,12 @@ requests, including requests on existing HTTP keep-alive connections.
 ## Package management
 
 Project creation, builds and publication use the independent [Jade project](jade/README.md)
-and its `jade` executable. `jade run --id dev.alice.smith` builds and watches local projects using ordinary identity credentials; no developer subscription is needed. `jade publish` guides developer certificate application
-when needed; `genmeta identity renew NAME` renews an installed developer identity. The gmutils Debian and Homebrew packages install both `genmeta`
+and its `jade` executable. `jade run` builds and watches local projects using
+ordinary identity credentials; no developer subscription is needed. Run and build
+use `package.author`, or the default name's development child when no author is
+configured. Configure one of these sources before running or building; Jade has
+no `--id` option or hardcoded fallback identity. `jade publish` guides developer
+certificate application when needed; `genmeta identity renew NAME` renews an installed developer identity. The gmutils Debian and Homebrew packages install both `genmeta`
 and `jade`. For a source installation, use `cargo install --path jade --locked`
 from this checkout. Installation, updates, queries and removal use `genmeta`.
 
@@ -269,19 +277,19 @@ The development workflow uses `jade.toml` and existing native build tools.
 ```sh
 # Static starter; build needs no identity credentials.
 jade create ./hello --template static
-jade build ./hello --id dev.alice.smith
+jade build ./hello
 jade publish ./hello/build/hello-0.1.0.waz
 
 # Rust API starter; Jade invokes Cargo, with no developer-written build script.
 jade create ./service --template api
 rustup target add wasm32-wasip2
-jade build ./service --id dev.alice.smith
+jade build ./service
 jade publish ./service/build/service-0.1.0.waz
 
 # Default fullstack starter; the Vite frontend calls the generated Rust /hello API.
 jade create ./application
 rustup target add wasm32-wasip2
-jade build ./application --id dev.alice.smith
+jade build ./application
 jade publish ./application/build/application-0.1.0.waz
 
 genmeta install dev.genmeta.tech.dhttp.net/workspace --id alice.smith

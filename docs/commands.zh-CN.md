@@ -76,9 +76,9 @@ genmeta --version
 | `access`、`mount`、`unmount`、包安装管理命令 | `--id` 选择管理和认证使用的身份；不传则使用默认身份 |
 | `curl`、`proxy`、`nslookup` | 显式 `--id` 优先，否则尝试默认身份；找不到默认配置或身份时可退回匿名；显式身份加载失败会报错 |
 | `doctor net` | 仅在显式传 `--id` 时加载身份，不自动选择默认身份 |
-| `jade run` | 显式 `--id` 直接选实际开发子名字；省略时选默认身份的开发子名字，无默认则用 `dev.zero.ai` |
-| `jade build` | 作者依次取显式 `--id`、`package.author`、默认开发子名字或 `dev.zero.ai`；无需凭据 |
-| `jade publish` | 使用已构建包的实际作者；显式 `--id` 必须精确匹配，不改作者、不重建 |
+| `jade run` | 不接受 `--id`；使用 `package.author`，未配置时使用默认名字的开发子名字；两者都没有则报错 |
+| `jade build` | 与 run 使用同一身份规则，作者写入 WAZ，不回写配置；无需凭据 |
+| `jade publish` | 不接受 `--id`；使用已构建包作者，项目显式作者必须匹配，不改作者、不重建 |
 
 `identity` 支持 `-g/--global`；`listen`、`access`、`curl`、`proxy`、`nslookup`、`doctor net` 支持 `--global`。`mount/unmount` 和包命令当前使用用户目录，没有 `--global` 参数。
 
@@ -400,7 +400,7 @@ jade create ./application --template fullstack   # 前端调用 Rust 后端 API
 jade create "My Project" --name my-project
 ```
 
-`PATH` 必填，父目录需已存在，目标路径须为新目录。默认以目录名作为包名；`--name` 可独立指定小写字母开头、最多 63 个小写字母/数字/连字符的名称。创建无需身份凭据，模板生成配置、源码、`.gitignore` 和准备说明。
+`PATH` 必填，父目录需已存在，目标路径须为新目录。默认以目录名作为包名；`--name` 可独立指定小写字母开头、最多 63 个小写字母/数字/连字符的名称。创建无需身份凭据，默认不写作者，模板生成配置、源码、`.gitignore` 和准备说明。
 
 默认模板为 `fullstack`，同时生成前端和后端 API；仅需静态页面、前端或后端时，分别指定 `--template static`、`web` 或 `api`。
 
@@ -410,8 +410,9 @@ jade create "My Project" --name my-project
 jade create ./hello-api
 cd hello-api
 rustup target add wasm32-wasip2
-jade run --id dev.alex.chen      # 普通身份凭据即可；修改源码自动重建，Ctrl+C 停止
-jade build --id dev.alex.chen
+# 在 jade.toml 的 [package] 中配置 author，或预先配置 DHTTP 默认身份
+jade run      # 普通身份凭据即可；修改源码自动重建，Ctrl+C 停止
+jade build
 jade publish build/hello-api-0.1.0.waz
 
 # 安装到该身份正在运行的 Pishoo 服务，再调用后端
@@ -425,7 +426,7 @@ Pishoo 提供后端 HTTP 监听，并将接口挂载在包名路径下；安装�
 ### run：本地运行并监听
 
 ```sh
-jade run [PATH] [--id DEV_NAME] [--fresh]
+jade run [PATH] [--fresh]
 ```
 
 run 使用实际开发子名字的普通身份凭据，无需开发者证书、订阅或支付。缺少凭据时先执行 `genmeta identity apply dev.alex.chen`。Jade 通过本机 Pishoo 配置启用普通监听，构建后原子发布到身份目录的 `dev/<name>/`，使用正常 `/app/<name>/`、`/std/<name>/...` 或 `/<name>/...` URL，不使用 `/dev` URL。
@@ -437,7 +438,7 @@ run 使用实际开发子名字的普通身份凭据，无需开发者证书、�
 ### build：构建未签名包
 
 ```sh
-jade build [PATH] [--id DEV_NAME] [-o FILE.waz] [--overwrite]
+jade build [PATH] [-o FILE.waz] [--overwrite]
 ```
 
 `PATH` 为项目目录或 Jade 配置文件，默认当前目录的 `jade.toml`。最小静态配置：
@@ -457,14 +458,14 @@ license = "Apache-2.0"
 
 Rust 后端自动从根目录的 `Cargo.toml`、`api/Cargo.toml` 或 `lib/Cargo.toml` 发现，多个 Rust 工程会报错。没有 Rust 源码时，使用根目录预编译的 `lib.wasm`；源码旁的旧产物不参与选择。安装 `wasm32-wasip2` 目标后，在 `api/src/lib.rs` 中直接使用 `wasip2` 实现 HTTP 入口和业务逻辑，修改路由时同步更新文件末尾的 `ROUTES` 元数据。Jade 调用 Cargo，并根据路由元数据生成和嵌入 OpenAPI，无需另写构建脚本，也无需 `[backend]` 或宿主能力用途声明。完整配置见 [Jade 参考](../jade/REFERENCE.md)。
 
-所有 Jade 命令统一传实际开发子名字，例如 `--id dev.alex.chen`；只规范化短名／全名，不自动添加或剥离 `dev.`。主名字 `dev.wang` 应显式传 `dev.dev.wang`。构建作者依次取 `--id` 原值、`package.author` 原值、DHTTP 默认身份的 dev 子名字（默认已为开发子名字则原样使用）；无配置时使用 `dev.zero.ai`。显式身份须与配置作者一致，默认身份 `dev.wang` 对应 `dev.dev.wang`，不扫描本地签名凭据选作者。凭据使用 dhttp-home 的目录约定，支持 `DHTTP_HOME`。
+所有 Jade 命令均不接受 `--id`。run/build 使用相同身份规则：已配置 `package.author` 时使用该实际名字；否则选择 DHTTP 默认主名字的 dev 子名字，默认已经是开发子名字则原样使用。两者都没有时返回 `E_IDENTITY_REQUIRED`，不扫描本地凭据或使用硬编码兜底。默认 `dev.wang` 对应 `dev.dev.wang`。作者接受短名／全名，不自动添加或剥离 `dev.`。例如在 `[package]` 中设置 `author = "dev.alex.chen"`，即可固定作者和本地宿主。凭据使用 dhttp-home 的目录约定，支持 `DHTTP_HOME`。build 仅把作者写入 WAZ，不回写 jade.toml；run 不生成或修改正式 WAZ。访问者由客户端独立选择身份。
 
 包默认写入 `build/NAME-VERSION.waz`，Rust 编译缓存位于 `build/target/`，与前端的 `web/dist/` 或根目录 `dist/` 分开。内容收集会排除 `build/` 和旧版 `.jade/`；已有项目应将 `/build/` 加入 `.gitignore`。重复构建可以原子更新同包、同版本、同 owner 的有效产物；失败保留旧包。显式 `-o` 文件已存在时需加 `--overwrite`。
 
 ```sh
-jade build ./hello --id dev.alex.chen
+jade build ./hello
 jade build ./hello --json
-jade build ./hello -o ./hello.waz --overwrite --id dev.alex.chen
+jade build ./hello -o ./hello.waz --overwrite
 ```
 
 ### publish：签名并发布已有构建
@@ -475,10 +476,10 @@ jade build ./hello -o ./hello.waz --overwrite --id dev.alex.chen
 jade publish                    # 当前项目的 build/NAME-VERSION.waz
 jade publish ./hello             # 指定项目目录
 jade publish ./hello/build/hello-0.1.0.waz
-jade publish --id dev.alex.chen      # 首次缺凭据时引导开发者设置
+jade publish      # 首次缺凭据时引导开发者设置
 ```
 
-publish 从已有构建读取实际作者。未签名包使用该身份正常 `ssl/` 中的开发者凭据签名并上传固定快照，不修改本地归档；已签名包先完成验签、作者/owner 和本地吊销检查，再原样上传，损坏签名不会重签。交互模式可引导开发者设置、订阅确认和支付；JSON／非交互不触发设置或下单。缺包时提示显式 build，不重建源码。`--signing-sequence` 仅用于 publish，必须匹配已安装 ssl 序列；没有 `--prepare` 入口。上传凭据换证不要求改写仍有效的历史包。相同内容的同版本重复发布视为成功，不同内容返回版本冲突；响应丢失后只读核验，无法确认时返回 `E_PUBLISH_OUTCOME_UNKNOWN`。
+publish 从已有构建读取实际作者。未签名包使用该身份正常 `ssl/` 中的开发者凭据签名、保存本地 WAZ 并上传固定快照；已签名包先完成验签、作者/owner 和本地吊销检查，再原样上传，损坏签名不会重签。交互模式可引导开发者设置、订阅确认和支付；JSON／非交互不触发设置或下单。缺包时提示显式 build，不重建源码。`--signing-sequence` 仅用于 publish，必须匹配已安装 ssl 序列；没有 `--prepare` 入口。上传凭据换证不要求改写仍有效的历史包。相同内容的同版本重复发布视为成功，不同内容返回版本冲突；响应丢失后只读核验，无法确认时返回 `E_PUBLISH_OUTCOME_UNKNOWN`。
 
 `.waz` 使用标准 ZIP，MIME 为 `application/zip`，可同时包含静态页面、后端组件和可选文档。压缩包和解压后总内容分别限制为 64 MiB。`payload_sha256` 表示内容摘要，`package_sha256` 表示包含签名的完整文件摘要。
 
@@ -628,15 +629,15 @@ genmeta curl --verb --id alice.smith -v https://alice.smith.dhttp.net/
 ## 本地开发与开发者身份
 
 ```sh
-jade run [PATH] [--id DEV_NAME] [--fresh]
-jade publish --id DEV_NAME  # 首次引导凭据设置，缺包时提示 build
-jade build --id DEV_NAME
+jade run [PATH] [--fresh]
+jade publish  # 首次引导凭据设置，缺包时提示 build
+jade build
 jade publish
 ```
 
-`jade run --id DEV_NAME` 直接使用实际开发子名字，不转换显式输入；省略 `--id` 时，按名字结构选择默认身份的 dev 子名字，例如默认 `dev.wang` 选择 `dev.dev.wang`、默认 `dev.dev.wang` 保持原样；无配置时使用 `dev.zero.ai`。复用现有 Pishoo 进程，用普通身份凭据启用开发身份监听，不要求开发者证书或订阅。App、标准 Lib、普通 Lib 分别使用正常 `/app/<名称>/`、`/std/<名称>/...`、`/<名称>/...`，不再使用 `/dev` URL。依赖有 `path` 时，相对于声明的 `jade.toml` 递归构建并监听本地项目，核对 author/name/version；无 `path` 时从商店安装声明的精确版本。`path` 不写入发布包。本地构建完成后原子发布到开发身份 `dev/<名称>/`，包括 manifest.json、lib.wasm 和 app/；构建失败保留原文件，运行仅允许真实主人。数据使用开发身份的 `.volume/<名称>` 或 `.volume/std/<名称>`，与基础身份隔离；Ctrl+C/SIGTERM 仅清理本次发布的本地代码，不删除后来发布者的替换目录、商店依赖或数据。`--fresh` 显式归档旧开发数据。SIGKILL／断电后的残留文件需手动移除，不自动搬迁旧 `dev-data`。
+`jade run` 与 build 统一使用 `package.author` 或默认名字的 dev 子名字；默认已经是开发子名字则原样使用。两者都没有则提示配置身份，不使用任何固定兜底名字。运行期间修改根项目的作者需要重启 run，避免继续发布到旧身份。复用现有 Pishoo 进程，用普通身份凭据启用开发身份监听，不要求开发者证书或订阅。App、标准 Lib、普通 Lib 分别使用正常 `/app/<名称>/`、`/std/<名称>/...`、`/<名称>/...`，不再使用 `/dev` URL。依赖有 `path` 时，相对于声明的 `jade.toml` 递归构建并监听本地项目，核对 author/name/version；无 `path` 时从商店安装声明的精确版本。`path` 不写入发布包。本地构建完成后原子发布到开发身份 `dev/<名称>/`，包括 manifest.json、lib.wasm 和 app/；构建失败保留原文件，运行仅允许真实主人。数据使用开发身份的 `.volume/<名称>` 或 `.volume/std/<名称>`，与基础身份隔离；Ctrl+C/SIGTERM 仅清理本次发布的本地代码，不删除后来发布者的替换目录、商店依赖或数据。`--fresh` 显式归档旧开发数据。SIGKILL／断电后的残留文件需手动移除，不自动搬迁旧 `dev-data`。
 
-`jade publish --id dev.alex.chen` 在缺少凭据时引导准备 `dev.alex.chen.dhttp.net` 开发者凭据。权益不足时确认年费及自动续费报价，复用 `identity apply` 的付款链接、二维码和等待进度；遵守账单过期时间，最长等待 15 分钟，服务端确认权益生效后继续；取消、超时和重试保留原购买操作与 CSR；已有包时继续上传，没有包时提示显式 `jade build`、审阅后再次 publish。非交互和 JSON 模式只报告下一步，不启动交互设置或下单。一个主名字只绑定一个固定 dev 子名字，同一 dev 下证书／序列数量不限，多设备不重复购买年费。
+`jade publish` 使用已有包作者对应的开发者凭据，缺少时交互引导准备；没有包时按配置作者或默认开发身份准备，两者都没有则报错。权益不足时确认年费及自动续费报价，复用 `identity apply` 的付款链接、二维码和等待进度；遵守账单过期时间，最长等待 15 分钟，服务端确认权益生效后继续；取消、超时和重试保留原购买操作与 CSR；已有包时继续上传，没有包时提示显式 `jade build`、审阅后再次 publish。非交互和 JSON 模式只报告下一步，不启动交互设置或下单。一个主名字只绑定一个固定 dev 子名字，同一 dev 下证书／序列数量不限，多设备不重复购买年费。
 
 `genmeta identity apply NAME` 为目标名字申请新证书序列并替换本机 `ssl/`，服务端依据实际开发者绑定及有效权益自动签发带 `codeSigning` 的开发者证书或普通 TLS 证书，不要求客户端指定用途，也不改写请求目标名字。未开通时直接申请普通证书，不触发开发者购买。`jade publish` 缺少签名权益时仍可交互引导开通；证书和私钥同样保存在普通 `ssl/`。不提供独立 developer 命令或 `identity apply --developer`。`genmeta identity renew NAME` 沿已安装序列及既有用途续签，开发者续签继续核对权益，不降级为普通 TLS。
 
