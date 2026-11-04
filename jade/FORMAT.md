@@ -8,13 +8,17 @@ this format only; previous WEBC release files must be rebuilt from source.
 
 ```text
 manifest.json       Required package metadata
-signature.json      Required publisher signature and certificate chain
+signature.json      Publisher signature and chain (required for published releases)
 backend.wasm        Optional WASI HTTP Component, with embedded OpenAPI
 public/index.html   Required when a frontend is present
 public/...          Frontend files
 README.md           Optional documentation
 CHANGELOG.md        Optional documentation
 ```
+
+`jade build` creates this archive without `signature.json`. `jade publish` adds
+that envelope to the upload snapshot; store publication and host installation
+continue to require a valid signature. Local build archives remain unchanged.
 
 At least a backend or frontend must be present. Jade automatically includes the
 project root's `README.md` and `CHANGELOG.md` when they are regular files. Missing

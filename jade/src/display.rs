@@ -25,6 +25,10 @@ pub(super) fn package_id(id: &str) -> Cow<'_, str> {
     }
 }
 
+#[cfg(test)]
+#[path = "../tests/unit/display.rs"]
+mod tests;
+
 fn path(value: &Value) -> String {
     let path = Path::new(value.as_str().unwrap_or_default());
     std::env::current_dir()
@@ -53,11 +57,21 @@ fn argument(text: &str) -> String {
     }
 }
 
-pub(super) fn success(command: &str, machine: bool, result: Value) -> Result<()> {
+pub(super) fn success(command: &str, machine: bool, verbose: bool, result: Value) -> Result<()> {
     let mut stdout = std::io::stdout().lock();
     if machine {
         let envelope = json!({"schema_version":1,"command":command,"status":"ok","result":result});
         writeln!(stdout, "{envelope}")?;
+    } else if command == "run" {
+        writeln!(
+            stdout,
+            "Stopped watching; {}. Test data retained.",
+            if result["removed"] == true {
+                "development App/API removed"
+            } else {
+                "no owned development files to remove"
+            }
+        )?;
     } else if command == "create" {
         let project = path(&result["path"]);
         writeln!(
@@ -67,6 +81,23 @@ pub(super) fn success(command: &str, machine: bool, result: Value) -> Result<()>
             project
         )?;
         writeln!(stdout, "Build: jade build {}", argument(&project))?;
+    } else if command == "publish" && !verbose {
+        let outcome = if result["outcome"] == "already-published" {
+            "Unchanged"
+        } else {
+            "Published"
+        };
+        writeln!(
+            stdout,
+            "{outcome:>12} {} v{}{}",
+            package_id(result["id"].as_str().unwrap_or_default()),
+            result["version"].as_str().unwrap_or_default(),
+            if result["outcome"] == "already-published" {
+                " (already published)"
+            } else {
+                ""
+            }
+        )?;
     } else {
         writeln!(
             stdout,

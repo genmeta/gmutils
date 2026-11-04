@@ -1958,7 +1958,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta"
-version = "0.9.0"
+version = "0.9.1-preview.1"
 dependencies = [
  "bytes",
  "clap",
@@ -1982,6 +1982,7 @@ dependencies = [
  "qrustls",
  "qtls",
  "rustls-pemfile",
+ "semver",
  "serde_json",
  "snafu",
  "tempfile",
@@ -1995,7 +1996,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-access"
-version = "0.5.0-preview.4"
+version = "0.5.0-preview.5"
 dependencies = [
  "axum",
  "clap",
@@ -2021,7 +2022,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-curl"
-version = "0.8.0-preview.4"
+version = "0.8.0-preview.5"
 dependencies = [
  "async-compression",
  "bytes",
@@ -2048,7 +2049,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-discover"
-version = "0.5.0-preview.3"
+version = "0.5.0-preview.4"
 dependencies = [
  "clap",
  "dhttp",
@@ -2064,7 +2065,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-doctor"
-version = "0.5.0-preview.3"
+version = "0.5.0-preview.4"
 dependencies = [
  "clap",
  "genmeta-nat",
@@ -2075,7 +2076,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-identity"
-version = "0.5.0"
+version = "0.5.1-preview.1"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -2091,15 +2092,19 @@ dependencies = [
  "http-body-util",
  "indicatif",
  "inquire",
+ "libc",
  "nix",
  "p384",
  "pkcs8",
  "qrcode",
  "qrustls",
+ "qtls",
  "reqwest",
+ "rustls-webpki",
  "sea-orm",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "snafu",
  "tempfile",
  "time",
@@ -2115,7 +2120,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nat"
-version = "0.6.0-preview.3"
+version = "0.6.0-preview.4"
 dependencies = [
  "clap",
  "dhttp",
@@ -2133,7 +2138,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nslookup"
-version = "0.6.0-preview.3"
+version = "0.6.0-preview.4"
 dependencies = [
  "clap",
  "dhttp",
@@ -2150,7 +2155,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-proxy"
-version = "0.5.0-preview.3"
+version = "0.5.0-preview.4"
 dependencies = [
  "bytes",
  "clap",
@@ -2777,9 +2782,11 @@ dependencies = [
  "dirs",
  "dyns",
  "futures",
+ "genmeta-identity",
  "http",
  "http-body",
  "http-body-util",
+ "indicatif",
  "inquire",
  "libc",
  "qbase",
@@ -2798,6 +2805,7 @@ dependencies = [
  "toml",
  "tower",
  "tracing",
+ "tracing-indicatif",
  "tracing-subscriber",
  "url",
  "urlencoding",
@@ -4491,9 +4499,9 @@ checksum = "eec689c0bc40ff2458a5977b6619cb718087084a18e02a131c599b62d05e1a5f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "aws-lc-rs",
  "ring",

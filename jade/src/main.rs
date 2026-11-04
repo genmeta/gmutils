@@ -1,6 +1,14 @@
 use std::{io::IsTerminal, process::ExitCode};
 
 use clap::Parser;
+use indicatif::ProgressStyle;
+use tracing_indicatif::{
+    IndicatifLayer,
+    filter::{IndicatifFilter, hide_indicatif_span_fields},
+};
+use tracing_subscriber::{
+    Layer, fmt::format::DefaultFields, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 mod archive;
 mod cli;
@@ -10,6 +18,7 @@ mod identity;
 mod pack;
 mod package;
 mod project;
+mod run;
 mod upload;
 
 #[cfg(test)]
@@ -59,26 +68,43 @@ async fn main() -> ExitCode {
                 .take_while(|arg| *arg != "--")
                 .filter_map(|arg| arg.to_str())
                 .find(|arg| !arg.starts_with('-'))
-                .filter(|arg| matches!(*arg, "create" | "build" | "publish"));
+                .filter(|arg| matches!(*arg, "create" | "build" | "publish" | "run"));
             return display::failure(command, json, &error::Error::new("E_USAGE", error));
         }
     };
-    tracing_subscriber::fmt()
-        .with_max_level(if cli.verb {
-            tracing::level_filters::LevelFilter::DEBUG
-        } else {
-            tracing::level_filters::LevelFilter::OFF
-        })
-        .with_ansi(std::io::stderr().is_terminal())
-        .with_writer(std::io::stderr)
+    let indicatif_layer = IndicatifLayer::new()
+        .with_span_field_formatter(hide_indicatif_span_fields(DefaultFields::new()))
+        .with_progress_style(
+            ProgressStyle::with_template("{span_child_prefix}{spinner} {msg}")
+                .expect("BUG: static progress bar template is valid"),
+        );
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(std::io::stderr().is_terminal())
+                .with_writer(indicatif_layer.get_stderr_writer())
+                .with_filter(if cli.verb {
+                    tracing::level_filters::LevelFilter::DEBUG
+                } else {
+                    tracing::level_filters::LevelFilter::OFF
+                }),
+        )
+        .with(
+            (!cli.json && std::io::stderr().is_terminal())
+                .then(|| indicatif_layer.with_filter(IndicatifFilter::new(false))),
+        )
         .init();
     let command = cli.options.name();
-    let result = tokio::select! {
-        result = cli::run(cli.options, cli.json) => result,
-        _ = tokio::signal::ctrl_c() => Err(error::Error::new("E_CANCELLED", "Command cancelled")),
+    let result = if command == "run" {
+        cli::run(cli.options, cli.json).await
+    } else {
+        tokio::select! {
+            result = cli::run(cli.options, cli.json) => result,
+            _ = tokio::signal::ctrl_c() => Err(error::Error::new("E_CANCELLED", "Command cancelled")),
+        }
     };
     match result {
-        Ok(value) => match display::success(command, cli.json, value) {
+        Ok(value) => match display::success(command, cli.json, cli.verb, value) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => display::failure(Some(command), cli.json, &error),
         },
@@ -90,57 +116,5 @@ async fn main() -> ExitCode {
 }
 
 #[cfg(test)]
-mod tests {
-    use clap::{CommandFactory, error::ErrorKind};
-
-    use super::*;
-
-    #[test]
-    fn exposes_only_project_commands() {
-        let command = Cli::command();
-        assert_eq!(
-            command
-                .get_subcommands()
-                .map(|command| command.get_name())
-                .collect::<Vec<_>>(),
-            ["create", "build", "publish"]
-        );
-        for args in [
-            vec!["jade", "create", "hello"],
-            vec!["jade", "build"],
-            vec!["jade", "publish", "hello.waz"],
-        ] {
-            assert!(Cli::try_parse_from(args).is_ok());
-        }
-        for args in [
-            vec!["jade", "create", "hello", "--id", "alice"],
-            vec!["jade", "publish", "hello.waz", "--id", "alice"],
-            vec!["jade", "build", "--no-build"],
-            vec!["jade", "build", "--manifest-path", "jade.toml"],
-        ] {
-            assert!(Cli::try_parse_from(args).is_err());
-        }
-    }
-
-    #[test]
-    fn global_output_flags_and_help_work_at_every_level() {
-        for args in [
-            vec!["jade", "--json", "--verb", "build"],
-            vec!["jade", "build", "--json", "--verb"],
-        ] {
-            let parsed = Cli::try_parse_from(args).unwrap();
-            assert!(parsed.json && parsed.verb);
-        }
-        for command in [None, Some("create"), Some("build"), Some("publish")] {
-            for (flag, kind) in [
-                ("--help", ErrorKind::DisplayHelp),
-                ("--version", ErrorKind::DisplayVersion),
-            ] {
-                let mut args = vec!["jade"];
-                args.extend(command);
-                args.push(flag);
-                assert_eq!(Cli::try_parse_from(args).unwrap_err().kind(), kind);
-            }
-        }
-    }
-}
+#[path = "../tests/unit/cli_main.rs"]
+mod tests;

@@ -18,7 +18,7 @@ pub(super) enum Command {
     /// Create a project in a new directory
     #[command(
         version,
-        after_help = "Examples:\n  jade create hello                             # Vite frontend + Rust API (default)\n  jade create website --template static         # Static HTML\n  jade create frontend --template web           # Vite frontend\n  jade create service --template api            # Rust HTTP API\n  jade create application --template fullstack  # Frontend calling a Rust API\n\nAPI and fullstack templates include GET /hello."
+        after_help = "Examples:\n  jade create hello                             # Vite frontend + Rust API (default)\n  jade create website --template static         # Static HTML\n  jade create frontend --template web           # Vite frontend\n  jade create service --template api            # Rust HTTP API\n  jade create application --template fullstack  # Frontend calling a Rust API\n\nAPI and fullstack templates include GET /whoami."
     )]
     Create {
         path: PathBuf,
@@ -29,15 +29,12 @@ pub(super) enum Command {
         #[arg(long, value_enum, default_value = "fullstack")]
         template: Template,
     },
-    /// Build sources or declared artifacts and sign a package
+    /// Build sources or declared artifacts into an unsigned package
     #[command(version)]
     Build {
         /// Project directory or Jade configuration file
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// Signing identity; must match package.author when configured
-        #[arg(short, long, value_name = "AUTHOR")]
-        id: Option<String>,
         /// Package output file (default build/NAME-VERSION.waz)
         #[arg(short, long, value_name = "FILE.waz")]
         output: Option<PathBuf>,
@@ -45,9 +42,28 @@ pub(super) enum Command {
         #[arg(long, requires = "output")]
         overwrite: bool,
     },
-    /// Publish one signed package using its author's credentials
+    /// Build and watch local projects on the selected development identity
     #[command(version)]
-    Publish { file: PathBuf },
+    Run {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Archive previous test data and start with an empty directory
+        #[arg(long)]
+        fresh: bool,
+    },
+    /// Sign and publish a built package; never rebuild sources
+    #[command(version)]
+    Publish {
+        /// Project directory, jade.toml, or a built FILE.waz
+        #[arg(default_value = ".", value_name = "PATH")]
+        file: PathBuf,
+        /// Account email used only when developer setup is needed
+        #[arg(long)]
+        email: Option<String>,
+        /// Developer certificate sequence for signing and upload
+        #[arg(long)]
+        signing_sequence: Option<u32>,
+    },
 }
 
 impl Command {
@@ -56,6 +72,7 @@ impl Command {
             Self::Create { .. } => "create",
             Self::Build { .. } => "build",
             Self::Publish { .. } => "publish",
+            Self::Run { .. } => "run",
         }
     }
 }
@@ -68,11 +85,15 @@ pub(super) async fn run(command: Command, machine: bool) -> Result<Value> {
         } => create(path, name, template),
         Command::Build {
             path,
-            id,
             output,
             overwrite,
-        } => crate::pack::run(path, output, id, overwrite, machine).await,
-        Command::Publish { file } => crate::upload::run(file).await,
+        } => crate::pack::run(path, output, overwrite).await,
+        Command::Run { path, fresh } => crate::run::run(path, fresh, machine).await,
+        Command::Publish {
+            file,
+            email,
+            signing_sequence,
+        } => crate::upload::run(file, email, signing_sequence, machine).await,
     }
 }
 
@@ -136,18 +157,23 @@ fn create(path: PathBuf, name: Option<String>, template: Template) -> Result<Val
             )?;
             fs::write(
                 root.join("web/index.html"),
-                format!(
-                    "<!doctype html>\n<html lang=\"en\"><meta charset=\"utf-8\"><title>{name}</title><main id=\"app\"></main><script type=\"module\" src=\"/src/main.js\"></script></html>\n"
-                ),
+                include_str!("../templates/web/index.html").replace("__JADE_NAME__", &name),
             )?;
-            let content = if matches!(template, Template::Fullstack) {
-                format!(
-                    "const app = document.querySelector('#app');\napp.textContent = 'Loading…';\nfetch('/{name}/hello').then(response => {{ if (!response.ok) throw new Error(`HTTP ${{response.status}}`); return response.json(); }}).then(data => app.textContent = data.message).catch(error => app.textContent = error.message);\n"
-                )
+            let api = if matches!(template, Template::Fullstack) {
+                format!("\"/{name}/whoami\"")
             } else {
-                format!("document.querySelector('#app').textContent = 'Hello from {name}';\n")
+                "null".to_owned()
             };
-            fs::write(root.join("web/src/main.js"), content)?;
+            fs::write(
+                root.join("web/src/main.js"),
+                include_str!("../templates/web/src/main.js")
+                    .replace("__JADE_NAME__", &name)
+                    .replace("__JADE_API__", &api),
+            )?;
+            fs::write(
+                root.join("web/src/style.css"),
+                include_str!("../templates/web/src/style.css"),
+            )?;
             ignore.push_str("/web/node_modules/\n/web/dist/\n");
         }
         Template::Api => {}
@@ -169,6 +195,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
+pishoo-sdk = {{ version = "=0.1.0-preview.2", git = "https://github.com/genmeta/pishoo.git", rev = "daa6cde34dcabd642136ce662945bdaebb830e0f" }}
 wasip2 = "=1.0.4"
 serde_json = "1"
 "#
@@ -187,34 +214,24 @@ serde_json = "1"
     fs::write(root.join(".gitignore"), ignore)?;
     let mut readme = format!("# {name}\n\n");
     if matches!(template, Template::Web | Template::Fullstack) {
-        readme.push_str("Edit files under `web/`. `jade build` installs frontend dependencies, including build tools, before running the build script. Install Node.js and npm before building.\n\n");
+        readme.push_str("Frontend: `web/index.html`, `web/src/main.js` and `web/src/style.css`. Requires Node.js and npm.\n\n");
     }
     if matches!(template, Template::Api | Template::Fullstack) {
-        readme.push_str("Install the component target with `rustup target add wasm32-wasip2`. Edit handlers and the WASI HTTP entry point in `api/src/lib.rs`, and keep its `ROUTES` metadata in sync when changing routes. The template uses `wasip2` directly. Jade invokes Cargo and embeds OpenAPI from the route metadata; no build script is needed.\n\n");
+        readme.push_str("API: `api/src/lib.rs`. Requires Rust with `wasm32-wasip2` installed. Keep `ROUTES` in sync with the handlers.\n\n");
     }
-    readme.push_str(&format!("Build and publish using your signing identity (replace `alice.smith` below). Provision credentials using the DHTTP identity tools.\n\n```sh\njade build --id alice.smith\njade publish build/{name}-0.1.0.waz\n```\n\nSigned packages and Cargo's `target/` cache are written under `build/`.\n"));
-    readme.push_str("\nJade automatically includes root-level `README.md` and `CHANGELOG.md` when present. No declaration in `jade.toml` is needed; missing files are skipped.\n");
-    if matches!(template, Template::Api | Template::Fullstack) {
+    readme.push_str("## Develop locally\n\nStart Pishoo, then run:\n\n```sh\njade run\n```\n\nRun and build both use `package.author` when configured. Otherwise they select the `dev` child of your DHTTP default identity, retaining an existing development child. For example, a default of `alex.chen` selects `dev.alex.chen`; a main name `dev.wang` selects `dev.dev.wang`. If neither author nor default is configured, Jade asks you to configure one. It never invents a fallback name. The selected identity needs ordinary hosting credentials; follow Jade's setup hint if they are missing. No developer certificate or subscription is needed. Changes rebuild automatically; Ctrl+C removes local code and keeps data.\n\nThe visitor accessing the application can differ from its author and host. Local run does not generate or change the release WAZ.\n\n");
+    if matches!(
+        template,
+        Template::Static | Template::Web | Template::Fullstack
+    ) {
         readme.push_str(&format!(
-            r#"
-## Call the backend API
-
-The starter in `api/src/lib.rs` implements GET `/hello`.
-Pishoo provides the HTTP listener and mounts this route under `/{name}`.
-After publishing, install the package on your running Pishoo service, then call it
-with `genmeta curl` (replace the author and host identities as needed):
-
-```sh
-genmeta install alice.smith.dhttp.net/{name} --id alice.smith
-genmeta curl --id alice.smith -f https://alice.smith.dhttp.net/{name}/hello
-# {{"message":"Hello from Rust"}}
-```
-"#
+            "Open `/app/{name}/` on the development identity, using the URL printed by Jade.\n\n"
         ));
     }
-    if matches!(template, Template::Fullstack) {
-        readme.push_str(&format!("\nThe frontend in `web/src/main.js` calls `/{name}/hello` and displays the JSON response's `message`. Open the installed package's `entry_url` to try it. Vite's dev server serves only the frontend; API requests require the Pishoo service.\n"));
+    if matches!(template, Template::Api | Template::Fullstack) {
+        readme.push_str(&format!("GET `/{name}/whoami` returns the verified visitor's name, or `anonymous`. The visitor can differ from the hosting identity.\n\n"));
     }
+    readme.push_str(&format!("## Build and publish\n\nAfter testing, build and review the unsigned package, then publish it:\n\n```sh\njade build\n# Review build/{name}-0.1.0.waz, then upload it.\njade publish\n```\n\nThis project starts without `package.author`. With no author, run and build use your default development identity. Build records the author in the WAZ without writing it back to `jade.toml`. Publish uses the existing package's author, even if your default identity has since changed. Build requires no identity credentials or subscription. Publish guides first-time developer setup, signs the existing build, saves the signed WAZ and uploads it without rebuilding sources. Already signed packages are verified and uploaded unchanged. Run after source changes does not update the release; build again before publishing those changes.\n\nTo fix the author and host, add `author = \"dev.alex.chen\"` under `[package]` in `jade.toml`. Short names and full `.dhttp.net` names are equivalent. Configured names never gain or lose `dev.`. Jade commands have no `--id` option. When publishing from a project, its configured author must match the built author. An explicit `jade publish FILE.waz` uses only that package.\n\nBuild output and Cargo's cache go under `build/`. Root `README.md` and `CHANGELOG.md` are included when present.\n"));
     fs::write(root.join("README.md"), readme)?;
     commit_directory(root, &target).map_err(|e| {
         Error::new(

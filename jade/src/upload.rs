@@ -1,47 +1,157 @@
 //! Single-package publication; the trusted store validates uploaded releases.
-use std::{path::PathBuf, time::Duration};
+use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use dhttp_home::certificate::OwnerHash;
 use http::{HeaderValue, StatusCode, Uri, header};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use snafu::{FromString, OptionExt, ResultExt, Whatever, whatever};
 use tokio::io::AsyncWriteExt;
+use tracing_indicatif::span_ext::IndicatifSpanExt;
 
 use crate::package::{
     PACKAGE_LIMIT, digest, inspect_package, owner_hash, package_certificates, payload_digest,
     read_snapshot, signature_envelope, text, version_path,
 };
 
-const STORE_NAME: &str = "store.dhttp.net";
-const STORE_OWNER: &str = "ffc3e50e1dfb7baca1cc07a7cbfcf8cb34a9bf5a9c25024fcf9a9786bb230746";
-const JSON_LIMIT: usize = 1024 * 1024;
+const STORE_NAME: &str = match option_env!("PISHOO_REGISTRY_NAME") {
+    Some(value) => value,
+    None => "store.dhttp.net",
+};
+const STORE_OWNER: &str = match option_env!("PISHOO_REGISTRY_OWNER_HASH") {
+    Some(value) => value,
+    None => "ffc3e50e1dfb7baca1cc07a7cbfcf8cb34a9bf5a9c25024fcf9a9786bb230746",
+};
+// A detailed release may carry a base64-encoded 4 MiB issuer CRL.
+const JSON_LIMIT: usize = 8 * 1024 * 1024;
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(180);
 const METADATA_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub(super) async fn run(file: PathBuf) -> crate::error::Result<Value> {
+pub(super) async fn run(
+    file: PathBuf,
+    email: Option<String>,
+    signing_sequence: Option<u32>,
+    machine: bool,
+) -> crate::error::Result<Value> {
     use crate::error::Error;
-    let bytes = read_snapshot(&file)
-        .await
-        .map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
-    let metadata = inspect_package(&bytes).await?;
+    let project = file.is_dir() || file.file_name().is_some_and(|name| name == "jade.toml");
+    let interactive = !machine && std::io::IsTerminal::is_terminal(&std::io::stdin());
+    let (bytes, metadata) = match read_input(&file).await {
+        Ok(value) => value,
+        Err(error) if error.code == "E_BUILD_REQUIRED" && project => {
+            if interactive {
+                let author =
+                    prepare_project_identity(&file, email.as_deref(), None, signing_sequence, true)
+                        .await?;
+                let name = author
+                    .strip_suffix(dhttp_home::DHTTP_SUFFIX)
+                    .unwrap_or(&author);
+                return Err(error.hint(format!("Developer credentials are ready for {name}. Set package.author = \"{name}\" in jade.toml to keep that author fixed, run jade build, review the package, then run jade publish again.")));
+            }
+            return Err(error.hint("For first-time developer setup, rerun this jade publish command interactively. Then build with the prepared author, review the package, and run jade publish again. For a custom output, use jade publish FILE.waz."));
+        }
+        Err(error) => return Err(error),
+    };
     let author = text(&metadata, "author").map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
     let home = crate::identity::home()?;
-    let (local_certificates, _) = crate::identity::credentials(&home, author).await?;
+    let profile = home.resolve_identity_profile_exactly(author).await;
+    let credentials = profile
+        .as_ref()
+        .ok()
+        .and_then(|profile| genmeta_identity::code_signing::load(profile, signing_sequence).ok());
+    let credentials = match credentials {
+        Some(credentials) => credentials,
+        None if interactive => {
+            prepare_project_identity(
+                &file,
+                email.as_deref(),
+                Some(author),
+                signing_sequence,
+                true,
+            )
+            .await?;
+            let profile = home
+                .resolve_identity_profile_exactly(author)
+                .await
+                .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
+            genmeta_identity::code_signing::load(&profile, signing_sequence)
+                .map_err(|e| Error::new("E_DEVELOPER_CERTIFICATE_REQUIRED", e))?
+        }
+        None => return Err(Error::new(
+            "E_DEVELOPER_CERTIFICATE_REQUIRED",
+            format!("No usable developer upload credentials for {}", crate::display::identity(author)),
+        )
+        .context(json!({"author": author}))
+        .hint(
+            "Run jade publish interactively with this project or package to set up matching developer credentials, then retry publication.",
+        )),
+    };
+    let local_certificates = credentials
+        .chain()
+        .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
+    let files = crate::archive::waz_read(&bytes).map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
+    let bytes = if files.contains_key("signature.json") {
+        bytes
+    } else {
+        let key = credentials
+            .key()
+            .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
+        let signing_key = qtls::default_provider()
+            .key_provider
+            .load_private_key(key)
+            .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
+        if !machine {
+            eprintln!("{:>12} {}", "Signing", crate::display::identity(author));
+        }
+        let signed = sign_package(files, &local_certificates, &signing_key)
+            .map_err(|e| Error::new("E_SIGNATURE_INVALID", e))?;
+        inspect_package(&signed).await?;
+        persist_signed_snapshot(&file, &bytes, &signed)?;
+        signed
+    };
     let certificates =
         package_certificates(&bytes).map_err(|e| Error::new("E_SIGNATURE_INVALID", e))?;
-    if local_certificates != certificates {
+    if owner_hash(&local_certificates).map_err(|e| Error::new("E_IDENTITY_MISMATCH", e))?
+        != owner_hash(&certificates).map_err(|e| Error::new("E_IDENTITY_MISMATCH", e))?
+    {
         return Err(Error::new(
             "E_IDENTITY_MISMATCH",
-            "Package signer differs from current author credentials",
+            "Package signer owner differs from TLS uploader owner",
         )
-        .hint("Run jade build again with the current credentials"));
+        .hint("Use TLS upload credentials with the same author domain and owner_hash as the developer signer"));
     }
     let owner = owner_hash(&certificates).map_err(|e| Error::new("E_SIGNATURE_INVALID", e))?;
     let profile = home
         .resolve_identity_profile(author)
         .await
         .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
+    genmeta_identity::code_signing::check_local_revocations(
+        &certificates,
+        &profile.path().join("trust/code-signing"),
+    )
+    .map_err(|e| Error::new("E_PUBLISH_REJECTED", e))?;
+    let name = text(&metadata, "name").map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
+    let version = text(&metadata, "version").map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
+    let id = format!("{author}/{name}");
+    if !machine {
+        eprintln!(
+            "{:>12} {} v{version} to {STORE_NAME}",
+            "Uploading",
+            crate::display::package_id(&id)
+        );
+    }
+    let progress = tracing::info_span!("cli_progress", indicatif.pb_show = tracing::field::Empty);
+    progress.pb_set_message(&format!(
+        "Publishing {} v{version}...",
+        crate::display::package_id(&id),
+    ));
+    progress.pb_start();
+    tokio::time::timeout(METADATA_TIMEOUT, init_network())
+        .await
+        .map_err(|e| Error::new("E_PUBLISH_REJECTED", e))?
+        .map_err(|e| Error::new("E_PUBLISH_REJECTED", e))?;
+    // Signing and upload share the selected identity's normal SSL credentials and OCSP cache.
     let endpoint = tokio::time::timeout(
         METADATA_TIMEOUT,
         dhttp::Endpoint::load_from_with_ocsp(profile.path()),
@@ -54,11 +164,172 @@ pub(super) async fn run(file: PathBuf) -> crate::error::Result<Value> {
         .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
     verify_author(&metadata, &certificates, &authority)
         .map_err(|e| Error::new("E_IDENTITY_MISMATCH", e))?;
-    tokio::time::timeout(METADATA_TIMEOUT, init_network())
+    // Certificate purpose, validity and WAZ signature were verified locally by inspect_package.
+    // Paid entitlement is enforced only when the developer certificate is issued or renewed.
+    let result = publish(&endpoint, &bytes, &metadata, &owner).await;
+    drop(progress);
+    result
+}
+
+async fn prepare_project_identity(
+    input: &std::path::Path,
+    email: Option<&str>,
+    signed_author: Option<&str>,
+    sequence: Option<u32>,
+    interactive: bool,
+) -> crate::error::Result<String> {
+    use crate::error::Error;
+    let configured = if input.is_dir() || input.file_name().is_some_and(|name| name == "jade.toml")
+    {
+        let (_, config) = crate::project::read_manifest(input)?;
+        config
+            .package
+            .author
+            .as_deref()
+            .map(crate::identity::normalize)
+            .transpose()?
+    } else {
+        None
+    };
+    let author = signed_author.or(configured.as_deref());
+    let target = crate::identity::select(author).await?;
+    let target = crate::identity::developer_name(&target)?;
+    let home = crate::identity::home()?;
+    if let Ok(profile) = home.resolve_identity_profile_exactly(&target).await
+        && genmeta_identity::code_signing::load(&profile, sequence)
+            .and_then(|credentials| credentials.validate_transport(&target))
+            .is_ok()
+    {
+        return Ok(target);
+    }
+    if sequence.is_some() {
+        return Err(Error::new("E_DEVELOPER_CERTIFICATE_REQUIRED", "The explicitly selected developer sequence is unavailable")
+            .hint("Renew or install that sequence in ssl, or omit --signing-sequence to provision a new credential."));
+    }
+    if !interactive {
+        return Err(Error::new(
+            "E_DEVELOPER_CERTIFICATE_REQUIRED",
+            "Developer credentials must be prepared before noninteractive publication",
+        )
+        .hint(
+            "Run jade publish interactively for developer setup, then follow its build and publication hints.",
+        ));
+    }
+    eprintln!(
+        "A developer certificate is required for {}. We'll guide you through the application.",
+        crate::display::identity(&target)
+    );
+    let server = genmeta_identity::cert_server::CertServer::new(genmeta_identity::DHTTP_CA_SERVICE)
+        .map_err(|e| Error::new("E_DEVELOPER_SETUP", e))?;
+    let result = genmeta_identity::cli::prepare_for_publish(&home, &server, &target, email, true)
         .await
-        .map_err(|e| Error::new("E_PUBLISH_REJECTED", e))?
-        .map_err(|e| Error::new("E_PUBLISH_REJECTED", e))?;
-    publish(&endpoint, &bytes, &metadata, &owner).await
+        .map_err(|e| Error::new("E_DEVELOPER_SETUP", e))?;
+    if result["domain"] != target {
+        return Err(Error::new(
+            "E_IDENTITY_MISMATCH",
+            "The provisioned developer name differs from the requested author",
+        ));
+    }
+    eprintln!(
+        "{:>12} developer credentials for {}",
+        "Ready",
+        crate::display::identity(&target)
+    );
+    Ok(target)
+}
+
+fn sign_package(
+    mut files: BTreeMap<String, Vec<u8>>,
+    certificates: &[qtls::CertificateDer<'_>],
+    signing_key: &std::sync::Arc<dyn rustls::sign::SigningKey>,
+) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let digest = crate::archive::waz_payload(&files);
+    let mut input = b"pishoo-waz-signature-v1\0".to_vec();
+    for offset in (0..digest.len()).step_by(2) {
+        input.push(u8::from_str_radix(&digest[offset..offset + 2], 16)?);
+    }
+    let mut signature = None;
+    for scheme in [
+        qtls::SignatureScheme::RSA_PSS_SHA512,
+        qtls::SignatureScheme::ECDSA_NISTP256_SHA256,
+        qtls::SignatureScheme::ECDSA_NISTP384_SHA384,
+        qtls::SignatureScheme::ED25519,
+    ] {
+        if let Some(signer) = signing_key.choose_scheme(&[scheme]) {
+            signature = Some(signer.sign(&input)?);
+            break;
+        }
+    }
+    let envelope = json!({"version":1,
+        "certificates":certificates.iter().map(|c|STANDARD.encode(c.as_ref())).collect::<Vec<_>>(),
+        "signature":STANDARD.encode(signature.ok_or("unsupported signing key")?)});
+    files.insert(
+        "signature.json".into(),
+        serde_json::to_vec_pretty(&envelope)?,
+    );
+    let bytes = crate::archive::waz_write(&files)
+        .map_err(|error| -> Box<dyn std::error::Error> { error })?;
+    if crate::package::payload_digest(&bytes)? != digest {
+        return Err("final package content differs from signed payload".into());
+    }
+    Ok(bytes)
+}
+
+/// Resolve a project to its exact prebuilt release; source discovery and build
+/// commands intentionally do not participate in publication.
+async fn read_input(input: &std::path::Path) -> crate::error::Result<(Vec<u8>, Value)> {
+    use crate::error::Error;
+    crate::pack::reject_url(input.as_os_str()).map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
+    let project = if input.is_dir() || input.file_name().is_some_and(|name| name == "jade.toml") {
+        let (root, config) = crate::project::read_manifest(input)?;
+        let author = config
+            .package
+            .author
+            .as_deref()
+            .map(crate::identity::normalize)
+            .transpose()?;
+        let (metadata, annotation) =
+            config.metadata(author.as_deref().unwrap_or("jade-validation.dhttp.net"))?;
+        crate::pack::validate_metadata(&metadata, &annotation, false)
+            .map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
+        let file = root.join(crate::project::BUILD_DIR).join(format!(
+            "{}-{}.waz",
+            config.package.name, config.package.version
+        ));
+        if !file.try_exists()? {
+            return Err(Error::new("E_BUILD_REQUIRED", "The configured package version has not been built")
+                .hint("Run jade build first, review the package, then run jade publish again. For a custom output, use jade publish FILE.waz.")
+                .context(json!({"file":file,"name":config.package.name,"version":config.package.version})));
+        }
+        Some((file, config, author))
+    } else {
+        None
+    };
+    let file = project
+        .as_ref()
+        .map_or(input, |(file, _, _)| file.as_path());
+    let bytes = read_snapshot(file)
+        .await
+        .map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
+    let files = crate::archive::waz_read(&bytes).map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
+    // A present signature must verify; never repair or re-sign a damaged release.
+    let metadata = if files.contains_key("signature.json") {
+        inspect_package(&bytes).await?
+    } else {
+        crate::package::inspect_contents(&bytes).await?
+    };
+    if let Some((_, config, author)) = project
+        && (metadata["name"] != config.package.name
+            || metadata["version"] != config.package.version
+            || author.is_some_and(|author| metadata["author"] != author))
+    {
+        return Err(Error::new(
+            "E_PACKAGE_MISMATCH",
+            "The built package does not match jade.toml",
+        )
+        .hint("Run jade build for this project, or explicitly select the intended FILE.waz."));
+    }
+    Ok((bytes, metadata))
 }
 
 fn verify_author(
@@ -67,11 +338,10 @@ fn verify_author(
     authority: &dhttp::LocalAuthority,
 ) -> Result<(), Whatever> {
     if authority.name() != text(metadata, "author")?
-        || certificates != authority.certificates()
         || owner_hash(certificates)? != owner_hash(authority.certificates())?
     {
         whatever!(
-            "package signer differs from current author credentials; run jade build again with the current credentials"
+            "TLS uploader and developer signer must have the same canonical domain and owner_hash"
         );
     }
     Ok(())
@@ -83,7 +353,7 @@ fn store_uri(path: &str) -> Result<Uri, Whatever> {
         .whatever_context("invalid fixed store URI")
 }
 
-async fn init_network() -> Result<(), Whatever> {
+pub(crate) async fn init_network() -> Result<(), Whatever> {
     let mdns = ddns::install_resolvers(&[ddns::DnsScheme::Mdns, ddns::DnsScheme::H3])
         .whatever_context("failed to initialize DHTTP DNS")?;
     let network = dhttp::DhttpNetwork::init()
@@ -498,5 +768,52 @@ fn check_catalogue(response: &http::Response<Vec<u8>>) -> Result<(), Whatever> {
 }
 
 #[cfg(test)]
-#[path = "upload_tests.rs"]
+#[path = "../tests/unit/upload.rs"]
 mod tests;
+
+/// Commit signed bytes before any network publication. Retry the exact same WAZ.
+fn persist_signed_snapshot(
+    input: &std::path::Path,
+    original: &[u8],
+    bytes: &[u8],
+) -> crate::error::Result<()> {
+    let path = if input.is_dir() || input.file_name().is_some_and(|name| name == "jade.toml") {
+        let (root, config) = crate::project::read_manifest(input)?;
+        root.join(crate::project::BUILD_DIR).join(format!(
+            "{}-{}.waz",
+            config.package.name, config.package.version
+        ))
+    } else {
+        input.to_path_buf()
+    };
+    if std::fs::read(&path)? != original {
+        return Err(crate::error::Error::new(
+            "E_PACKAGE_MISMATCH",
+            "Package snapshot changed during signing; preserve both artifacts before retrying",
+        ));
+    }
+    persist_signed_file(&path, bytes)
+}
+
+fn persist_signed_file(path: &std::path::Path, bytes: &[u8]) -> crate::error::Result<()> {
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    if !path.symlink_metadata()?.file_type().is_file() {
+        return Err(crate::error::Error::new(
+            "E_PACKAGE_INVALID",
+            "Package snapshot must be a regular file",
+        ));
+    }
+    let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+    staged.write_all(bytes)?;
+    staged.as_file().sync_all()?;
+    staged
+        .persist(path)
+        .map_err(|e| crate::error::Error::new("E_PACKAGE_INVALID", e))?;
+    #[cfg(unix)]
+    std::fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}

@@ -1,8 +1,5 @@
-//! Select existing DHTTP credentials without storing Jade-specific preferences.
-use std::io::IsTerminal;
-
+//! Resolve package authors without loading credentials or storing Jade preferences.
 use dhttp_home::{DhttpHome, HomeScope};
-use futures::StreamExt;
 
 use crate::error::{Error, Result};
 
@@ -19,140 +16,59 @@ pub(crate) fn normalize(name: &str) -> Result<String> {
     })
 }
 
-pub(crate) async fn select(
-    explicit: Option<&str>,
-    configured: Option<&str>,
-    machine: bool,
-) -> Result<String> {
-    let configured = configured.map(normalize).transpose()?;
-    let explicit = explicit.map(normalize).transpose()?;
-    if let (Some(explicit), Some(configured)) = (&explicit, &configured)
-        && explicit != configured
+/// Validate an explicitly selected development child without rewriting its name.
+pub(crate) fn developer_name(name: &str) -> Result<String> {
+    let name = normalize(name)?;
+    let child = name.strip_suffix(dhttp_home::DHTTP_SUFFIX).unwrap();
+    if !child
+        .strip_prefix("dev.")
+        .is_some_and(|root| root.contains('.'))
     {
         return Err(Error::new(
-            "E_IDENTITY_MISMATCH",
-            "--id differs from package.author",
+            "E_IDENTITY_REQUIRED",
+            "Set package.author to the actual development child, for example dev.alex.chen",
         ));
     }
-    let home = home()?;
-    let selected = match explicit.or(configured) {
-        Some(selected) => Some(selected),
-        None => {
-            if home.settings_path().try_exists()? {
-                let settings = home
-                    .load_settings()
-                    .await
-                    .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
-                settings
-                    .settings()
-                    .default_identity_name()
-                    .map(|name| name.as_full().to_owned())
-            } else {
-                None
-            }
-        }
-    };
-    if let Some(selected) = selected {
-        credentials(&home, &selected).await?;
-        return Ok(selected);
-    }
-    let names = home.identity_profile_names();
-    futures::pin_mut!(names);
-    let mut candidates = Vec::new();
-    while let Some(name) = names.next().await {
-        let name = name.map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
-        if credentials(&home, &name).await.is_ok() {
-            candidates.push(name);
-        }
-    }
-    candidates.sort();
-    candidates.dedup();
-    match candidates.len() {
-        0 => Err(Error::new(
-            "E_IDENTITY_UNAVAILABLE",
-            "No usable local identity credentials",
-        )
-        .hint("Prepare an identity with genmeta identity apply, then run jade build --id NAME")),
-        1 => Ok(candidates.remove(0)),
-        _ if machine || !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() => Err(
-            Error::new("E_IDENTITY_REQUIRED", "Select a signing identity")
-                .hint("Run jade build --id NAME"),
-        ),
-        _ => inquire::Select::new(
-            "Signing identity (local credentials available):",
-            candidates,
-        )
-        .prompt()
-        .map_err(|e| match e {
-            inquire::InquireError::OperationCanceled
-            | inquire::InquireError::OperationInterrupted => {
-                Error::new("E_CANCELLED", "Identity selection cancelled")
-            }
-            _ => Error::new("E_IDENTITY_REQUIRED", e).hint("Run jade build --id NAME"),
-        }),
-    }
+    Ok(name)
 }
 
-pub(crate) async fn credentials(
-    home: &DhttpHome,
-    name: &str,
-) -> Result<(
-    Vec<qtls::CertificateDer<'static>>,
-    qtls::PrivateKeyDer<'static>,
-)> {
-    let profile = home.resolve_identity_profile(name).await.map_err(|e| {
-        Error::new(
-            "E_IDENTITY_UNAVAILABLE",
-            format!("Cannot find local credentials for {name}: {e}"),
-        )
-    })?;
-    let certs = profile.load_certs().await.map_err(|e| {
-        Error::new(
-            "E_IDENTITY_UNAVAILABLE",
-            format!("Cannot load local credentials for {name}: {e}"),
-        )
-    })?;
-    let key = profile.load_key().await.map_err(|e| {
-        Error::new(
-            "E_IDENTITY_UNAVAILABLE",
-            format!("Cannot load local credentials for {name}: {e}"),
-        )
-    })?;
-    crate::package::check_certificates(&certs, name)
-        .map_err(|e| Error::new("E_IDENTITY_MISMATCH", e))?;
-    let (_, certificate) = x509_parser::parse_x509_certificate(certs[0].as_ref())
-        .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
-    if !certificate.validity().is_valid() {
-        return Err(Error::new(
-            "E_IDENTITY_UNAVAILABLE",
-            format!("Signing certificate for {name} is outside its validity period"),
-        ));
+/// Shared identity for source builds and local hosting; never writes the manifest.
+pub(crate) async fn select(configured: Option<&str>) -> Result<String> {
+    if let Some(author) = configured {
+        return normalize(author);
     }
-    let signer = qtls::default_provider()
-        .key_provider
-        .load_private_key(key.clone_key())
-        .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
-    let signature = signer
-        .choose_scheme(&[
-            qtls::SignatureScheme::RSA_PSS_SHA512,
-            qtls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            qtls::SignatureScheme::ECDSA_NISTP384_SHA384,
-            qtls::SignatureScheme::ED25519,
-        ])
-        .ok_or_else(|| Error::new("E_IDENTITY_UNAVAILABLE", "Unsupported local signing key"))?
-        .sign(b"jade-local-credentials-v1\0")
-        .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
-    if !dhttp_home::certificate::verify_signature(
-        certificate.public_key().raw,
-        b"jade-local-credentials-v1\0",
-        &signature,
+    let home = home()?;
+    default_developer_name(&home).await
+}
+
+/// Only a default main identity selects a child; an existing dev child stays exact.
+pub(crate) async fn default_developer_name(home: &DhttpHome) -> Result<String> {
+    if home.settings_path().try_exists()? {
+        let settings = home
+            .load_settings()
+            .await
+            .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
+        if let Some(name) = settings.settings().default_identity_name() {
+            return match developer_name(name.as_full()) {
+                Ok(name) => Ok(name),
+                Err(_) => normalize(&format!("dev.{}", name.as_full())),
+            };
+        }
+    }
+    Err(Error::new(
+        "E_IDENTITY_REQUIRED",
+        "No default identity is configured; select a development identity",
     )
-    .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?
-    {
-        return Err(Error::new(
-            "E_IDENTITY_UNAVAILABLE",
-            "Local private key does not match its certificate",
-        ));
-    }
-    Ok((certs, key))
+    .hint(
+        "Set package.author in jade.toml, or set a default with `genmeta identity default NAME`.",
+    ))
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/identity.rs"]
+mod tests;
+
+/// Exact standard publishers retain the existing API and data namespace.
+pub(crate) fn is_standard_author(author: &str) -> bool {
+    matches!(author, "std.dhttp.net" | "dev.genmeta.tech.dhttp.net")
 }

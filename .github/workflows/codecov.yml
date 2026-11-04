@@ -29,16 +29,27 @@ jobs:
         run: cargo build --locked --bin pishoo
       - uses: taiki-e/install-action@cargo-llvm-cov
       # Limit test parallelism to 1 thread to avoid resource contention
-      - run: |
+      # Coverage uses a dedicated disposable test build for all instrumented runs.
+      - name: Run coverage with isolated test Root
+        shell: bash
+        run: |
+          export CARGO_TARGET_DIR="$PWD/target/code-signing-coverage"
+          export DHTTP_ROOT_CA_PEM="$(cat genmeta-identity/tests/fixtures/code-signing/root.cert.pem)"
           cargo llvm-cov clean --workspace
           cargo llvm-cov --locked --all-features --workspace --no-report -- --test-threads=1
       - name: Cover host configuration and identity activation
         env:
           PISHOO_BIN: ${{ github.workspace }}/.coverage-host/target/debug/pishoo
+        shell: bash
         run: |
+          export CARGO_TARGET_DIR="$PWD/target/code-signing-coverage"
+          export DHTTP_ROOT_CA_PEM="$(cat genmeta-identity/tests/fixtures/code-signing/root.cert.pem)"
           cargo llvm-cov --locked --all-features -p genmeta-identity --lib --no-report -- cli::flow::site::tests --ignored --test-threads=1
           cargo llvm-cov --locked --all-features -p genmeta-identity --lib --no-report -- cli::flow::apply::tests --ignored --test-threads=1
-      - run: cargo llvm-cov report --lcov --output-path lcov.info
+      - name: Report coverage
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/code-signing-coverage
+        run: cargo llvm-cov report --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

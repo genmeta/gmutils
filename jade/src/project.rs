@@ -39,12 +39,13 @@ pub(crate) struct Package {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Dependency {
-    author: String,
-    name: String,
-    version: String,
+    pub(crate) author: String,
+    pub(crate) name: String,
+    pub(crate) version: String,
+    pub(crate) path: Option<PathBuf>,
 }
 
-pub(crate) fn read(path: &Path) -> Result<(PathBuf, Manifest)> {
+pub(crate) fn read_manifest(path: &Path) -> Result<(PathBuf, Manifest)> {
     crate::pack::reject_url(path.as_os_str()).map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
     let path = if path.is_dir() {
         path.join("jade.toml")
@@ -54,7 +55,7 @@ pub(crate) fn read(path: &Path) -> Result<(PathBuf, Manifest)> {
     let source = crate::pack::read_bounded(&path, 1024 * 1024)
         .map_err(|e| Error::new("E_CONFIG_INVALID", e).context(json!({"file":path})))?;
     let source = std::str::from_utf8(&source).map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
-    let mut manifest: Manifest = toml::from_str(source).map_err(|e: toml::de::Error| {
+    let manifest: Manifest = toml::from_str(source).map_err(|e: toml::de::Error| {
         let mut context = json!({"file":path});
         if let Some(span) = e.span() {
             let prefix = &source[..span.start.min(source.len())];
@@ -71,7 +72,13 @@ pub(crate) fn read(path: &Path) -> Result<(PathBuf, Manifest)> {
         Error::new("E_CONFIG_INVALID", format!("{}: {e}", path.display())).context(context)
     })?;
     let path = std::fs::canonicalize(&path)?;
-    let root = path.parent().unwrap();
+    Ok((path.parent().unwrap().to_path_buf(), manifest))
+}
+
+pub(crate) fn read(path: &Path) -> Result<(PathBuf, Manifest)> {
+    let (root, mut manifest) = read_manifest(path)?;
+    let path = root.join("jade.toml");
+    let root = root.as_path();
     manifest.frontend = discover_frontend(root)?;
     manifest.backend = discover_backend(root)?;
     if manifest.frontend.is_none() && manifest.backend.is_none() {
@@ -809,7 +816,7 @@ pub(crate) fn validate_component(
         {
             return Err(invalid(&format!("Unsupported OpenAPI path: {path}")));
         }
-        if author == "std.dhttp.net"
+        if crate::identity::is_standard_author(author)
             && path != &format!("/{name}")
             && !path.starts_with(&format!("/{name}/"))
         {
@@ -969,168 +976,5 @@ fn http_resource(resolve: &wit_parser::Resolve, mut ty: wit_parser::Type, name: 
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reads_frontends_without_a_frontend_section() {
-        for (source, build) in [
-            (".", true),
-            ("web", true),
-            ("app", true),
-            (".", false),
-            ("web", false),
-            ("app", false),
-            ("public", false),
-            ("dist", false),
-            ("web/dist", false),
-            ("app/dist", false),
-        ] {
-            let root = tempfile::tempdir().unwrap();
-            let manifest_path = root.path().join("jade.toml");
-            let original =
-                "[package]\nname='hello'\nversion='1.0.0'\ndescription='Test'\nlicense='MIT'\n";
-            std::fs::write(&manifest_path, original).unwrap();
-            let directory = root.path().join(source);
-            std::fs::create_dir_all(&directory).unwrap();
-            if build {
-                std::fs::write(
-                    directory.join("package.json"),
-                    r#"{"scripts":{"build":"vite build"}}"#,
-                )
-                .unwrap();
-                // Sources must win over static templates and previous build output.
-                for stale in ["public", "dist", "web/dist", "app/dist"] {
-                    std::fs::create_dir_all(root.path().join(stale)).unwrap();
-                    std::fs::write(root.path().join(stale).join("index.html"), "stale").unwrap();
-                }
-            } else {
-                std::fs::write(directory.join("index.html"), "<h1>Static</h1>").unwrap();
-            }
-            let (_, manifest) = read(root.path()).unwrap();
-            assert_eq!(manifest.frontend.as_deref(), Some(Path::new(source)));
-            assert_eq!(
-                manifest.metadata("alice.dhttp.net").unwrap().1["entry"],
-                "/"
-            );
-            assert!(manifest.backend.is_none());
-            std::fs::write(
-                &manifest_path,
-                format!("{original}\n[frontend]\npath='{source}'\n"),
-            )
-            .unwrap();
-            assert!(
-                read(root.path())
-                    .unwrap_err()
-                    .to_string()
-                    .contains("unknown field")
-            );
-        }
-    }
-
-    #[test]
-    fn ambiguous_frontends_fail_instead_of_choosing_one() {
-        for (sources, marker, content) in [
-            (
-                [".", "web"],
-                "package.json",
-                r#"{"scripts":{"build":"vite build"}}"#,
-            ),
-            ([".", "public"], "index.html", "static"),
-            (["dist", "web/dist"], "index.html", "prebuilt"),
-        ] {
-            let root = tempfile::tempdir().unwrap();
-            for source in sources {
-                std::fs::create_dir_all(root.path().join(source)).unwrap();
-                std::fs::write(root.path().join(source).join(marker), content).unwrap();
-            }
-            let error = discover_frontend(&root.path().canonicalize().unwrap())
-                .unwrap_err()
-                .to_string();
-            assert!(error.contains("Multiple frontend sources found"), "{error}");
-        }
-    }
-
-    #[test]
-    fn reads_backend_projects_without_a_backend_section() {
-        for source in [".", "api", "lib", "lib.wasm"] {
-            let root = tempfile::tempdir().unwrap();
-            std::fs::write(
-                root.path().join("jade.toml"),
-                "[package]\nname='hello'\nversion='1.0.0'\ndescription='Test'\nlicense='MIT'\n",
-            )
-            .unwrap();
-            if source == "lib.wasm" {
-                std::fs::write(root.path().join(source), b"\0asm\x0d\0\x01\0").unwrap();
-            } else {
-                let directory = root.path().join(source);
-                std::fs::create_dir_all(&directory).unwrap();
-                std::fs::write(
-                    directory.join("Cargo.toml"),
-                    "[package]\nname='hello'\nversion='1.0.0'\n",
-                )
-                .unwrap();
-                std::fs::write(root.path().join("lib.wasm"), "stale build output").unwrap();
-            }
-            let (_, manifest) = read(root.path()).unwrap();
-            assert_eq!(manifest.backend.as_deref(), Some(Path::new(source)));
-            assert!(
-                manifest
-                    .metadata("alice.dhttp.net")
-                    .unwrap()
-                    .1
-                    .get("host")
-                    .is_none()
-            );
-
-            let manifest_path = root.path().join("jade.toml");
-            let original = std::fs::read_to_string(&manifest_path).unwrap();
-            std::fs::write(&manifest_path, format!("{original}\n[backend]\npath='.'\n")).unwrap();
-            assert!(
-                read(root.path())
-                    .unwrap_err()
-                    .to_string()
-                    .contains("unknown field")
-            );
-        }
-    }
-
-    #[test]
-    fn ambiguous_backends_are_rejected_before_building() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::write(
-            root.path().join("jade.toml"),
-            "[package]\nname='hello'\nversion='1.0.0'\ndescription='Test'\nlicense='MIT'\n",
-        )
-        .unwrap();
-        std::fs::create_dir(root.path().join("api")).unwrap();
-        std::fs::write(root.path().join("api/Cargo.toml"), "").unwrap();
-        std::fs::write(root.path().join("Cargo.toml"), "").unwrap();
-        let error = read(root.path()).unwrap_err().to_string();
-        assert!(
-            error.contains("Multiple Rust backend sources found"),
-            "{error}"
-        );
-        assert!(error.contains("Cargo.toml, api/Cargo.toml"), "{error}");
-    }
-
-    #[test]
-    fn package_manager_uses_bun_locks_and_rejects_ambiguous_locks() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path();
-        assert_eq!(node_manager(path, &json!({})).unwrap(), "npm");
-        std::fs::write(path.join("bun.lock"), "{}").unwrap();
-        assert_eq!(node_manager(path, &json!({})).unwrap(), "bun");
-        std::fs::write(path.join("package-lock.json"), "{}").unwrap();
-        assert!(node_manager(path, &json!({})).is_err());
-        assert_eq!(
-            node_manager(path, &json!({"packageManager":"bun@1.2.16"})).unwrap(),
-            "bun"
-        );
-        assert_eq!(
-            node_manager(path, &json!({"packageManager":"npm@10"})).unwrap(),
-            "npm"
-        );
-        assert!(node_manager(path, &json!({"packageManager":"unsupported@1"})).is_err());
-    }
-}
+#[path = "../tests/unit/project.rs"]
+mod tests;

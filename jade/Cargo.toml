@@ -17,11 +17,13 @@ ddns = { workspace = true }
 dhttp = { workspace = true }
 dhttp-home = { workspace = true, features = ["manage"] }
 dhttp-identity = { workspace = true }
+genmeta-identity = { workspace = true, features = ["cli"] }
 dirs = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
 inquire = { workspace = true }
+indicatif = { workspace = true }
 qtls = { workspace = true }
 rustix = { version = "1", features = ["fs"] }
 rustls = { workspace = true }
@@ -33,6 +35,7 @@ tempfile = "3"
 tokio = { workspace = true }
 toml = "1"
 tracing = { workspace = true }
+tracing-indicatif = { workspace = true }
 tracing-subscriber = { workspace = true }
 url = "2"
 urlencoding = { workspace = true }
@@ -46,11 +49,11 @@ zip = { version = "6", default-features = false, features = ["deflate"] }
 libc = "0.2"
 
 [dev-dependencies]
+qprotocol = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 http-body = "1"
 qbase = { workspace = true }
-qprotocol = { workspace = true }
 rcgen = "0.14"
 rustls-pemfile = "2"
 tower = { version = "0.5", features = ["util"] }

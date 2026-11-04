@@ -496,23 +496,5 @@ async fn init_network(schemes: &[ddns::DnsScheme], binds: &[String]) -> dhttp::R
 }
 
 #[cfg(test)]
-mod tests {
-    use clap::Parser;
-
-    use super::*;
-
-    #[test]
-    fn options_accept_global_flag() {
-        let options = Options::try_parse_from(["genmeta-proxy", "--global"]).unwrap();
-
-        assert_eq!(options.home_scope(), dhttp_home::HomeScope::Global);
-    }
-
-    #[test]
-    fn options_accept_legacy_bind_and_daemon_aliases() {
-        let options =
-            Options::try_parse_from(["genmeta-proxy", "--bind", "127.0.0.1:16081", "-d"]).unwrap();
-
-        assert!(options.daemon);
-    }
-}
+#[path = "../tests/unit/lib.rs"]
+mod tests;

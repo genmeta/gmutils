@@ -55,6 +55,7 @@ struct ErrorEnvelope {
     #[serde(deserialize_with = "deserialize_error_code")]
     code: String,
     message: String,
+    invoice_no: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -134,6 +135,23 @@ fn normalize_api_code(code: &str) -> &str {
         "1303" => "subdomain_conflict",
         "1304" => "subdomain_quota_exceeded",
         "1407" => "cert_sequence_not_found",
+        "1420" => "certificate_key_reuse_not_allowed",
+        "1421" => "certificate_renewal_idempotency_invalid",
+        "1422" => "certificate_renewal_idempotency_conflict",
+        "1426" => "certificate_status_unavailable",
+        "1427" => "code_signing_unavailable",
+        "1428" => "code_signing_entitlement_required",
+        "1429" => "code_signing_identity_required",
+        "1430" => "certificate_purpose_mismatch",
+        "1432" => "certificate_serial_ambiguous",
+        "1433" => "purchase_idempotency_invalid",
+        "1434" => "purchase_idempotency_conflict",
+        "1435" => "purchase_in_progress",
+        "1436" => "purchase_ended",
+        "1437" => "developer_root_required",
+        "1438" => "developer_domain_conflict",
+        "1439" => "developer_domain_required",
+        "1440" => "developer_domain_managed",
         _ => code,
     }
 }
@@ -203,7 +221,18 @@ fn parse_subdomain_quota_quote(
 
 pub fn parse_error_body(status: reqwest::StatusCode, body: &[u8]) -> Result<(), Error> {
     let parsed = serde_json::from_slice::<ErrorResponse>(body).context(JsonSnafu {})?;
-    let ErrorEnvelope { code, message } = parsed.error;
+    let ErrorEnvelope {
+        code,
+        mut message,
+        invoice_no,
+    } = parsed.error;
+    if normalize_api_code(&code) == "purchase_in_progress"
+        && let Some(invoice) = invoice_no.filter(|n| {
+            n.starts_with("INV") && n.len() <= 100 && n.bytes().all(|b| b.is_ascii_alphanumeric())
+        })
+    {
+        message.push_str(&format!(" (invoice_no={invoice})"));
+    }
     ApiSnafu {
         status,
         message: user_facing_api_message(&code, &message),
@@ -462,6 +491,7 @@ impl<'a> CertificateRenewalRequest<'a> {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct InvoiceDetail {
+    pub payment_entry: Option<PaymentEntryInfo>,
     pub invoice_no: String,
     pub domain: String,
     pub status: String,
@@ -673,6 +703,7 @@ impl CertServer {
         parse_dhttp_response(response).await
     }
 
+    #[cfg(feature = "cli")]
     async fn send_identity_profile_json<T: DeserializeOwned>(
         &self,
         profile_dir: &Path,
@@ -684,6 +715,7 @@ impl CertServer {
             .await
     }
 
+    #[cfg(feature = "cli")]
     async fn send_identity_profile_json_with_idempotency<T: DeserializeOwned>(
         &self,
         profile_dir: &Path,
@@ -919,6 +951,7 @@ impl CertServer {
         .await
     }
 
+    #[cfg(feature = "cli")]
     pub(crate) async fn create_subdomain_with_identity_profile(
         &self,
         profile_dir: &Path,
@@ -1019,6 +1052,7 @@ impl CertServer {
         .await
     }
 
+    #[cfg(feature = "cli")]
     pub(crate) async fn issue_cert_with_identity_profile(
         &self,
         profile_dir: &Path,
@@ -1107,6 +1141,7 @@ impl CertServer {
         .await
     }
 
+    #[cfg(feature = "cli")]
     pub(crate) async fn renew_cert_with_identity_profile_request(
         &self,
         profile_dir: &Path,
@@ -1253,283 +1288,220 @@ async fn init_network(schemes: &[ddns::DnsScheme], binds: &[String]) -> dhttp::R
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+#[path = "../tests/unit/cert_server.rs"]
+mod tests;
 
-    #[test]
-    fn service_url_preserves_the_configured_authority() {
-        _ = rustls::crypto::ring::default_provider().install_default();
-        let configured = CertServer::new("https://api.genmeta.net").unwrap();
-        assert_eq!(
-            configured.service_url("/v2/cert"),
-            "https://api.genmeta.net/v2/cert"
-        );
+/// Public evidence for an exact leaf instance. Never substitute a sequence's current leaf.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SigningCertificateStatus {
+    pub domain: String,
+    pub purpose: String,
+    pub kind: String,
+    pub sequence: u32,
+    pub ski: Option<String>,
+    pub issuer_id: Option<String>,
+    pub serial_number: Option<String>,
+    pub fingerprint_sha256: String,
+    pub cert_pem: String,
+    pub valid_not_before: i64,
+    pub valid_not_after: i64,
+    pub revoked_at: Option<i64>,
+    pub checked_at: i64,
+    pub revocation_status: String,
+    pub issuer_status: String,
+    pub publication_allowed: bool,
+}
 
-        let custom_port = CertServer::new("https://api.example.test:8443").unwrap();
-        assert_eq!(
-            custom_port.service_url("/v2/cert"),
-            "https://api.example.test:8443/v2/cert"
-        );
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeveloperCertificate {
+    pub purpose: String,
+    #[serde(flatten)]
+    pub certificate: CertificateDetail,
+}
 
-        let local = CertServer::new("http://127.0.0.1:38080").unwrap();
-        assert_eq!(
-            local.service_url("/v2/cert"),
-            "http://127.0.0.1:38080/v2/cert"
-        );
+impl CertServer {
+    /// Account-only product APIs intentionally never fall back to a TLS identity.
+    pub async fn code_signing_pricing(&self, domain: &str) -> Result<Value, Error> {
+        parse_response(
+            self.http_client
+                .get(self.service_url("/v2/pricing"))
+                .query(&[("domain", domain)])
+                .send()
+                .await?,
+        )
+        .await
     }
 
-    #[test]
-    fn parses_v2_error_envelope() {
-        let payload =
-            br#"{"error":{"code":"domain_forbidden","message":"domain access is forbidden"}}"#;
-        let error = parse_error_body(reqwest::StatusCode::FORBIDDEN, payload).unwrap_err();
-        match error {
-            Error::Api {
-                status,
-                code,
-                message,
-            } => {
-                assert_eq!(status, reqwest::StatusCode::FORBIDDEN);
-                assert_eq!(code, "domain_forbidden");
-                assert_eq!(message, "domain access is forbidden");
-            }
-            other => panic!("unexpected error: {other:?}"),
+    pub async fn code_signing_subscriptions(
+        &self,
+        token: &str,
+        domain: &str,
+    ) -> Result<Value, Error> {
+        parse_response(
+            self.http_client
+                .get(self.service_url("/v2/subscription"))
+                .bearer_auth(token)
+                .query(&[("product", "code_signing"), ("domain", domain)])
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub async fn purchase_code_signing(
+        &self,
+        token: &str,
+        domain: &str,
+        key: &str,
+    ) -> Result<Value, Error> {
+        if !(8..=200).contains(&key.len()) || !key.is_ascii() {
+            return Err(Error::without_source(
+                "Idempotency-Key must contain 8–200 ASCII characters".into(),
+            ));
         }
+        parse_response(
+            self.http_client
+                .post(self.service_url("/v2/subscription"))
+                .bearer_auth(token)
+                .header("Idempotency-Key", idempotency_header(key)?)
+                .json(&json!({"domain":domain,"product":"code_signing"}))
+                .send()
+                .await?,
+        )
+        .await
     }
 
-    #[test]
-    fn api_code_helpers_match_api_errors() {
-        let error = Error::Api {
-            status: reqwest::StatusCode::CONFLICT,
-            code: "starter_domain_limit_reached".to_string(),
-            message: "starter plan is limited to 3 free domains per account".to_string(),
-        };
-
-        assert_eq!(error.api_code(), Some("starter_domain_limit_reached"));
-        assert!(error.is_api_code("starter_domain_limit_reached"));
-        assert!(!error.is_api_code("domain_not_found"));
-        assert!(error.is_api(
-            reqwest::StatusCode::CONFLICT,
-            "starter_domain_limit_reached"
-        ));
-        assert!(!error.is_api(
-            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-            "starter_domain_limit_reached"
-        ));
+    pub async fn set_code_signing_renewal(
+        &self,
+        token: &str,
+        subscription_no: &str,
+        auto_renew: bool,
+    ) -> Result<Value, Error> {
+        parse_response(
+            self.http_client
+                .patch(self.service_url("/v2/subscription"))
+                .bearer_auth(token)
+                .json(&json!({"subscription_no":subscription_no,"auto_renew":auto_renew}))
+                .send()
+                .await?,
+        )
+        .await
     }
 
-    #[test]
-    fn invalid_idempotency_key_is_rejected_without_panicking() {
-        let error = idempotency_header("renew-v1\ninvalid").unwrap_err();
-        assert!(error.to_string().starts_with("invalid idempotency key:"));
+    pub async fn code_signing_certificates(
+        &self,
+        token: &str,
+        domain: &str,
+        page: usize,
+    ) -> Result<CertificateListPage, Error> {
+        parse_response(
+            self.http_client
+                .get(self.service_url("/v2/cert"))
+                .bearer_auth(token)
+                .query(&[
+                    ("domain", domain),
+                    ("purpose", "code_signing"),
+                    ("page", &page.to_string()),
+                    ("page_size", "100"),
+                ])
+                .send()
+                .await?,
+        )
+        .await
     }
 
-    #[test]
-    fn api_error_displays_the_certserver_problem_message_verbatim() {
-        let error = Error::Api {
-            status: reqwest::StatusCode::FORBIDDEN,
-            code: "domain_forbidden".to_string(),
-            message: "domain access is forbidden".to_string(),
-        };
-
-        assert_eq!(error.to_string(), "domain access is forbidden");
+    pub async fn issue_developer_certificate(
+        &self,
+        token: &str,
+        domain: &str,
+        device: &str,
+        csr: &str,
+    ) -> Result<DeveloperCertificate, Error> {
+        parse_response(self.http_client.post(self.service_url("/v2/cert"))
+            .bearer_auth(token).json(&json!({"domain":domain,"purpose":"code_signing","kind":"primary","device_name":device,"csr":csr}))
+            .send().await?).await
     }
 
-    #[test]
-    fn parses_numeric_v2_error_code_and_preserves_the_wire_value() {
-        let payload = br#"{"error":{"code":1101,"message":"The email address is invalid."}}"#;
-        let error = parse_error_body(reqwest::StatusCode::BAD_REQUEST, payload).unwrap_err();
-
-        assert_eq!(error.api_code(), Some("email_invalid"));
-        assert_eq!(error.to_string(), "The email address is invalid.");
-        match error {
-            Error::Api { code, .. } => assert_eq!(code, "1101"),
-            other => panic!("unexpected error: {other:?}"),
-        }
+    pub async fn renew_developer_certificate(
+        &self,
+        token: &str,
+        domain: &str,
+        sequence: u32,
+        csr: &str,
+        key: &str,
+    ) -> Result<DeveloperCertificate, Error> {
+        parse_response(self.http_client.post(self.service_url("/v2/cert/renew"))
+            .bearer_auth(token).header("Idempotency-Key",idempotency_header(key)?)
+            .json(&json!({"domain":domain,"purpose":"code_signing","kind":"primary","sequence":sequence,"csr":csr}))
+            .send().await?).await
     }
 
-    #[test]
-    fn unknown_numeric_error_code_remains_decimal() {
-        let payload = br#"{"error":{"code":2999,"message":"future problem"}}"#;
-        let error = parse_error_body(reqwest::StatusCode::CONFLICT, payload).unwrap_err();
-
-        assert_eq!(error.api_code(), Some("2999"));
-        assert_eq!(error.to_string(), "future problem");
+    pub async fn revoke_developer_certificate(
+        &self,
+        token: &str,
+        serial: &str,
+        issuer: &str,
+        whole_sequence: bool,
+    ) -> Result<Value, Error> {
+        parse_response(self.http_client.post(self.service_url("/v2/cert/revoke"))
+            .bearer_auth(token).json(&json!({"serial_number":serial,"issuer_id":issuer,"scope":if whole_sequence {"sequence"} else {"certificate"},"reason_code":0}))
+            .send().await?).await
     }
 
-    #[test]
-    fn subdomain_quota_error_explains_how_to_add_seats() {
-        let payload = br#"{"error":{"code":1304,"message":"The parent name has no available sub-identity slots."}}"#;
-        let error =
-            parse_error_body(reqwest::StatusCode::UNPROCESSABLE_ENTITY, payload).unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "The parent identity has reached its sub-identity seat limit. Update your subscription plan to add more seats, then try again."
-        );
+    pub async fn exact_certificate_status(
+        &self,
+        domain: &str,
+        fingerprint: &str,
+    ) -> Result<SigningCertificateStatus, Error> {
+        parse_response(
+            self.http_client
+                .get(self.service_url("/v2/cert"))
+                .header(header::CACHE_CONTROL, "no-cache, no-store")
+                .query(&[("domain", domain), ("fingerprint_sha256", fingerprint)])
+                .timeout(std::time::Duration::from_secs(30))
+                .send()
+                .await?,
+        )
+        .await
     }
+}
 
-    #[test]
-    fn malformed_error_code_stays_a_json_response_error() {
-        let payload = br#"{"error":{"code":true,"message":"invalid envelope"}}"#;
-        assert!(matches!(
-            parse_error_body(reqwest::StatusCode::BAD_REQUEST, payload),
-            Err(Error::Json { .. })
-        ));
+impl CertServer {
+    pub async fn developer_certificate_detail(
+        &self,
+        token: &str,
+        serial: &str,
+    ) -> Result<DeveloperCertificate, Error> {
+        parse_response(
+            self.http_client
+                .get(self.service_url("/v2/cert"))
+                .bearer_auth(token)
+                .query(&[("serial_number", serial)])
+                .send()
+                .await?,
+        )
+        .await
     }
+}
 
-    #[test]
-    fn domain_availability_response_reads_pricing_envelope() {
-        let payload = r#"
-        {
-          "domain":"alice.smith.dhttp.net",
-          "availability":"conflict",
-          "currency":"USD",
-          "prices":[
-            {"interval":"monthly","amount":500},
-            {"interval":"yearly","amount":3000,"discount":0.5}
-          ]
-        }
-        "#;
-        let response: DomainAvailabilityResponse = serde_json::from_str(payload).unwrap();
-        assert_eq!(response.domain, "alice.smith.dhttp.net");
-        assert_eq!(response.availability, "conflict");
-        assert_eq!(response.currency, "USD");
-        assert_eq!(response.monthly_amount(), Some(500));
-        assert_eq!(response.yearly_amount(), Some(3000));
-        assert!(!response.is_free());
-    }
+#[cfg(test)]
+#[path = "../tests/unit/cert_server_developer.rs"]
+mod developer_tests;
 
-    #[test]
-    fn domain_registration_requests_disable_implicit_auto_renewal() {
-        let token_request = serde_json::to_value(CreateDomainRequest::new(
-            "alice.smith.dhttp.net",
-            None,
-            None,
-        ))
-        .unwrap();
-        let email_request = serde_json::to_value(CreateDomainRequest::new(
-            "alice.smith.dhttp.net",
-            Some("alice@example.test"),
-            Some("123456"),
-        ))
-        .unwrap();
-
-        assert_eq!(token_request["auto_renew"], false);
-        assert!(token_request.get("email").is_none());
-        assert!(token_request.get("verify_code").is_none());
-        assert_eq!(email_request["auto_renew"], false);
-        assert_eq!(email_request["email"], "alice@example.test");
-        assert_eq!(email_request["verify_code"], "123456");
-    }
-
-    #[test]
-    fn create_domain_response_accepts_payment_payload() {
-        let payload = r#"
-        {
-          "domain":"alice.smith.dhttp.net",
-          "quotes":{"currency":"USD","monthly":9900,"yearly":99000,"default_billing_cycle":"yearly"},
-          "reservation":{"reservation_no":"RSV123","status":"reserved","expires_at":1760001800},
-          "payment_entry":{"url":"https://dhttp.net/checkout/ckt_123","checkout_token":"ckt_123","expires_at":1760000300},
-          "next_action":"payment",
-          "auth":{"email":"alice@example.com","is_new_user":true,"access_token":"token","token_expires_at":1760090000}
-        }
-        "#;
-        let response: CreateDomainResponse = serde_json::from_str(payload).unwrap();
-        assert_eq!(response.domain, "alice.smith.dhttp.net");
-        assert_eq!(response.next_action, "payment");
-        assert_eq!(response.payment_entry.unwrap().checkout_token, "ckt_123");
-        assert_eq!(response.auth.unwrap().access_token, "token");
-    }
-
-    #[test]
-    fn subdomain_quota_error_details_are_parsed() {
-        let payload = br#"{
-          "error": {
-            "code": 1304,
-            "message": "subdomain quota exceeded",
-            "details": {
-              "domain": "phone.alice.smith.dhttp.net",
-              "quota_quote": {
-                "due": 500,
-                "currency": "USD",
-                "days_left": 120,
-                "days_total": 365,
-                "renewal": 1200
-              }
-            }
-          }
-        }"#;
-
-        assert_eq!(
-            parse_subdomain_quota_quote(reqwest::StatusCode::UNPROCESSABLE_ENTITY, payload)
-                .unwrap(),
-            Some(SubdomainQuotaQuote {
-                domain: "phone.alice.smith.dhttp.net".to_string(),
-                due: 500,
-                currency: "USD".to_string(),
-                days_left: 120,
-                days_total: 365,
-                renewal: 1200,
-            })
-        );
-    }
-
-    #[test]
-    fn subdomain_quota_error_details_accept_missing_term_fields() {
-        let payload = br#"{
-          "error": {
-            "code": "subdomain_quota_exceeded",
-            "message": "subdomain quota exceeded",
-            "details": {
-              "domain": "phone.alice.smith.dhttp.net",
-              "quota_quote": {
-                "due": 500,
-                "currency": "USD"
-              }
-            }
-          }
-        }"#;
-
-        assert_eq!(
-            parse_subdomain_quota_quote(reqwest::StatusCode::UNPROCESSABLE_ENTITY, payload)
-                .unwrap(),
-            Some(SubdomainQuotaQuote {
-                domain: "phone.alice.smith.dhttp.net".to_string(),
-                due: 500,
-                currency: "USD".to_string(),
-                days_left: 0,
-                days_total: 0,
-                renewal: 0,
-            })
-        );
-    }
-
-    #[test]
-    fn subdomain_quota_error_details_accept_flat_quote_fields() {
-        let payload = br#"{
-          "error": {
-            "code": "subdomain_quota_exceeded",
-            "message": "subdomain quota exceeded",
-            "details": {
-              "domain": "phone.alice.smith.dhttp.net",
-              "due": 500,
-              "currency": "USD"
-            }
-          }
-        }"#;
-
-        assert_eq!(
-            parse_subdomain_quota_quote(reqwest::StatusCode::UNPROCESSABLE_ENTITY, payload)
-                .unwrap(),
-            Some(SubdomainQuotaQuote {
-                domain: "phone.alice.smith.dhttp.net".to_string(),
-                due: 500,
-                currency: "USD".to_string(),
-                days_left: 0,
-                days_total: 0,
-                renewal: 0,
-            })
-        );
+impl CertServer {
+    pub async fn cancel_code_signing_renewal(
+        &self,
+        token: &str,
+        subscription_no: &str,
+    ) -> Result<Value, Error> {
+        parse_response(
+            self.http_client
+                .post(self.service_url("/v2/subscription/cancel"))
+                .bearer_auth(token)
+                .json(&json!({"subscription_no":subscription_no}))
+                .send()
+                .await?,
+        )
+        .await
     }
 }

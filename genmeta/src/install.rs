@@ -10,8 +10,14 @@ use tokio::io::AsyncWriteExt;
 
 use crate::display;
 
-const STORE: &str = "store.dhttp.net";
-const STORE_OWNER: &str = "ffc3e50e1dfb7baca1cc07a7cbfcf8cb34a9bf5a9c25024fcf9a9786bb230746";
+const STORE: &str = match option_env!("PISHOO_REGISTRY_NAME") {
+    Some(value) => value,
+    None => "store.dhttp.net",
+};
+const STORE_OWNER: &str = match option_env!("PISHOO_REGISTRY_OWNER_HASH") {
+    Some(value) => value,
+    None => "ffc3e50e1dfb7baca1cc07a7cbfcf8cb34a9bf5a9c25024fcf9a9786bb230746",
+};
 const JSON_LIMIT: usize = 2 * 1024 * 1024;
 const RESOLUTION_BYTES: usize = 20 * 1024 * 1024;
 const CANDIDATE_LIMIT: u64 = 10_000;
@@ -39,13 +45,11 @@ fn valid_target(target: &str) -> bool {
     }
 }
 
-fn normalize_target(target: &str, standard_bare: bool) -> String {
-    if let Some((author, name)) = target.split_once('/') {
-        if let Some(author) = dhttp_home::normalize_name(author) {
-            return format!("{author}/{name}");
-        }
-    } else if standard_bare && valid_name(target) {
-        return format!("std.dhttp.net/{target}");
+fn normalize_target(target: &str) -> String {
+    if let Some((author, name)) = target.split_once('/')
+        && let Some(author) = dhttp_home::normalize_name(author)
+    {
+        return format!("{author}/{name}");
     }
     target.to_owned()
 }
@@ -228,7 +232,13 @@ where
             .map(|v| format!("/versions/{v}"))
             .unwrap_or_default()
     );
-    let bytes = get(path).await?;
+    let bytes = get(path).await.whatever_context(format!(
+        "Cannot resolve {}{} from {STORE}",
+        display::package_id(&id),
+        version
+            .map(|version| format!(" v{version}"))
+            .unwrap_or_default()
+    ))?;
     let value = decode_resolution(&bytes, &mut remaining)?;
     validate_release(&value, Some(&id), version)?;
     validate_detail(&value)?;
@@ -496,6 +506,7 @@ async fn catalog(
     owner: &OwnerHash,
     target: Option<&str>,
     require_removal_support: bool,
+    require_signing_support: bool,
 ) -> Result<Option<Value>, Whatever> {
     let path = match target {
         Some(target) => format!("/std/sys/pkg?name={}", target.rsplit('/').next().unwrap()),
@@ -507,6 +518,7 @@ async fn catalog(
             .header(header::ACCEPT, http::HeaderValue::from_static("application/json"))
             .await.whatever_context(format!("Cannot query the selected identity service. {SERVICE}"))?;
         verify_remote(&response, endpoint.name(), owner)?;
+        if require_signing_support { require_install_host(response.headers())?; }
         let status = response.status();
         let package_id = response.headers().get("package-id").cloned();
         if status == StatusCode::NOT_FOUND && target.is_some() {
@@ -519,7 +531,7 @@ async fn catalog(
         let value: Value = serde_json::from_slice(&bytes)
             .whatever_context("Invalid installed package catalog")?;
         if let Some(target) = target {
-            validate_installed(&value, Some(target))?;
+            validate_installed(&value, Some(target), endpoint.name())?;
             if require_removal_support {
                 ensure_whatever!(package_id.as_ref().and_then(|header| header.to_str().ok()) == value["id"].as_str(),
                     "The service does not support identity-checked removal; update Pishoo before removing this package");
@@ -529,30 +541,29 @@ async fn catalog(
                 whatever!("Installed package catalog must be an array");
             };
             for item in items {
-                validate_installed(item, None)?;
+                validate_installed(item, None, endpoint.name())?;
             }
         }
         Ok(Some(value))
     }).await.whatever_context("Package query timed out; no package was changed")?
 }
 
-fn validate_installed(value: &Value, target: Option<&str>) -> Result<(), Whatever> {
+fn validate_installed(value: &Value, target: Option<&str>, host: &str) -> Result<(), Whatever> {
     let id = value["id"].as_str().unwrap_or("");
     ensure_whatever!(
         valid_target(id) && value["version"].as_str().is_some_and(valid_version),
-        "Invalid installed package identity, type or version"
+        "Invalid installed package identity or version"
     );
     if let Some(target) = target {
         ensure_whatever!(
-            if target.contains('/') {
-                id == target
-            } else {
-                id.rsplit('/').next() == Some(target)
-            },
-            "Installed package is {}, not {}; specify its full ID explicitly",
+            id.rsplit('/').next() == target.rsplit('/').next(),
+            "Package query returned {}, but {} was requested; no package was changed",
             display::package_id(id),
             display::package_id(target)
         );
+        if target.contains('/') {
+            require_same_package(id, target, host)?;
+        }
     }
     Ok(())
 }
@@ -592,7 +603,9 @@ fn choose_release_target<'a>(
     target: &'a str,
     current: Option<&'a Value>,
 ) -> Result<&'a str, Whatever> {
-    if operation == "update" {
+    if operation == "update"
+        || (operation == "install" && !target.contains('/') && current.is_some())
+    {
         let Some(current) = current else {
             whatever!(
                 "Package {} is not installed; use genmeta install",
@@ -611,30 +624,35 @@ fn choose_release_target<'a>(
     }
 }
 
+fn require_same_package(installed: &str, requested: &str, host: &str) -> Result<(), Whatever> {
+    ensure_whatever!(
+        installed == requested,
+        "Package name conflict on {}.\n  Installed: {}\n  Requested: {}\nTo switch authors, uninstall the installed package first:\n  genmeta uninstall {} --id {}\n  genmeta install {} --id {}\nUninstalling retains package data and access rules; no package was changed",
+        display::identity(host),
+        display::package_id(installed),
+        display::package_id(requested),
+        display::package_id(installed),
+        display::identity(host),
+        display::package_id(requested),
+        display::identity(host)
+    );
+    Ok(())
+}
+
 fn check_install_version(
-    operation: &str,
     current: Option<&Value>,
     release: &Value,
+    host: &str,
 ) -> Result<bool, Whatever> {
     let Some(current) = current else {
         return Ok(false);
     };
-    ensure_whatever!(
-        current["id"] == release["id"],
-        "Name is already installed as {}; remove it explicitly before installing {}",
-        display::package_id(current["id"].as_str().unwrap()),
-        display::package_id(release["id"].as_str().unwrap())
-    );
-    if current["version"] == release["version"] {
-        return Ok(true);
-    }
-    ensure_whatever!(
-        operation == "update",
-        "Package {} is already installed at {}; use genmeta update to change its version",
-        display::package_id(current["id"].as_str().unwrap()),
-        current["version"]
-    );
-    Ok(false)
+    require_same_package(
+        current["id"].as_str().unwrap(),
+        release["id"].as_str().unwrap(),
+        host,
+    )?;
+    Ok(current["version"] == release["version"])
 }
 
 pub(super) async fn run(
@@ -642,8 +660,9 @@ pub(super) async fn run(
     target: Option<String>,
     id: Option<String>,
     version: Option<String>,
+    verbose: bool,
 ) -> Result<(), Whatever> {
-    let target = target.map(|target| normalize_target(&target, operation == "install"));
+    let target = target.map(|target| normalize_target(&target));
     if let Some(target) = &target {
         validate_input(target, version.as_deref())?;
     }
@@ -661,27 +680,35 @@ pub(super) async fn run(
             .whatever_context("Local credentials have no valid owner hash")?;
     let owner = ski.owner_hash().clone();
     if operation == "list" {
-        let packages =
-            display::package_output(catalog(&endpoint, &owner, None, false).await?.unwrap());
+        let packages = catalog(&endpoint, &owner, None, false, false)
+            .await?
+            .unwrap();
         println!(
             "{}",
-            serde_json::to_string_pretty(&packages).whatever_context("Cannot encode catalog")?
+            display::package_list(packages.as_array().unwrap(), verbose)
         );
         return Ok(());
     }
     let target = target.as_deref().unwrap();
-    let current = catalog(&endpoint, &owner, Some(target), operation == "remove").await?;
+    let current = catalog(
+        &endpoint,
+        &owner,
+        Some(target),
+        operation == "remove",
+        matches!(operation, "install" | "update"),
+    )
+    .await?;
     if matches!(operation, "info" | "remove") {
         let Some(current) = current else {
             whatever!("Package {} is not installed", display::package_id(target))
         };
-        let output = if operation == "remove" {
-            tokio::time::timeout(RESOLUTION_TIMEOUT, remove(&endpoint, &owner, &current))
-                .await
-                .whatever_context("Removal timed out; query the catalog before retrying")??
-        } else {
-            current
-        };
+        if operation == "info" {
+            println!("{}", display::package_details(&current));
+            return Ok(());
+        }
+        let output = tokio::time::timeout(RESOLUTION_TIMEOUT, remove(&endpoint, &owner, &current))
+            .await
+            .whatever_context("Removal timed out; query the catalog before retrying")??;
         println!(
             "{}",
             serde_json::to_string_pretty(&display::package_output(output))
@@ -700,14 +727,20 @@ pub(super) async fn run(
         async move { store_get(endpoint, &path).await }
     })
     .await?;
-    let output = if check_install_version(operation, current.as_ref(), &release)? {
+    let output = if check_install_version(current.as_ref(), &release, endpoint.name())? {
+        eprintln!(
+            "Already installed {} v{} on {}",
+            display::package_id(selected),
+            release["version"].as_str().unwrap(),
+            display::identity(endpoint.name())
+        );
         let mut output = success(current.as_ref().unwrap(), &release, endpoint.name())?;
         output["unchanged"] = true.into();
         output
     } else {
         eprintln!(
-            "{} package {} {} for identity {}",
-            if operation == "update" {
+            "{} package {} v{} for identity {}",
+            if current.is_some() {
                 "Updating"
             } else {
                 "Installing"
@@ -804,5 +837,19 @@ async fn host_exchange(
 }
 
 #[cfg(test)]
-#[path = "install/tests.rs"]
+#[path = "../tests/unit/install.rs"]
 mod tests;
+
+fn require_install_host(headers: &http::HeaderMap) -> Result<(), Whatever> {
+    let minimum = semver::Version::parse("0.9.1-preview.1").expect("valid minimum Pishoo version");
+    let reported = headers
+        .get("pishoo-version")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("unknown (missing Pishoo-Version)");
+    let version = semver::Version::parse(reported).ok();
+    ensure_whatever!(
+        version.is_some_and(|version| version >= minimum),
+        "Package installation requires Pishoo 0.9.1-preview.1 or newer; the selected service reports {reported}. Upgrade Pishoo and restart its service before installing or updating packages"
+    );
+    Ok(())
+}

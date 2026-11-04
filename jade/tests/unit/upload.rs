@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::engine::general_purpose::STANDARD;
 use sha2::{Digest, Sha256};
 use webc::v3::{
     SignatureAlgorithm, Timestamps,
@@ -36,6 +36,9 @@ fn catalogue_preflight_rejects_the_legacy_store_protocol() {
 fn upload_cli_accepts_only_the_designed_arguments() {
     use clap::Parser;
     for args in [
+        vec!["jade", "publish"],
+        vec!["jade", "publish", "."],
+        vec!["jade", "publish", "jade.toml"],
         vec!["jade", "publish", "package.waz"],
         vec!["jade", "publish", "package.waz", "--json"],
     ] {
@@ -44,9 +47,10 @@ fn upload_cli_accepts_only_the_designed_arguments() {
             crate::cli::Command::Publish { .. }
         ));
     }
-    assert!(crate::Cli::try_parse_from(["jade", "publish"]).is_err());
+    assert!(crate::Cli::try_parse_from(["jade", "publish", "--prepare"]).is_err());
+    assert!(crate::Cli::try_parse_from(["jade", "build", "--signing-sequence", "1"]).is_err());
+    assert!(crate::Cli::try_parse_from(["jade", "publish", "--signing-sequence", "1"]).is_ok());
     for flag in [
-        "--id",
         "--kind",
         "--name",
         "--version",
@@ -96,7 +100,7 @@ fn build(metadata: &Value, authority: Option<&dhttp::LocalAuthority>, content: &
             input.push(u8::from_str_radix(&payload[i..i + 2], 16).unwrap());
         }
         let signature = authority
-            .sign(qtls::SignatureScheme::ECDSA_NISTP256_SHA256, &input)
+            .sign(qtls::SignatureScheme::ECDSA_NISTP384_SHA384, &input)
             .unwrap();
         files.insert("signature.json".into(), serde_json::to_vec(&json!({"version":1,
             "certificates":authority.certificates().iter().map(|c|STANDARD.encode(c.as_ref())).collect::<Vec<_>>(),
@@ -144,7 +148,7 @@ fn build_projection(
         let doc=serde_json::to_vec(&json!({"openapi":"3.1.0","info":{"title":"Upload API","description":content,"version":"1.0.0"},
             "paths":{"/page":{"get":{"operationId":"readPage","summary":"Read page","responses":{"200":{"description":"OK"}}}}}})).unwrap();
         let backend = crate::pack::embedded_openapi(
-            include_bytes!("../tests/fixtures/upload-handler.wasm").to_vec(),
+            include_bytes!("../fixtures/upload-handler.wasm").to_vec(),
             Some(&doc),
         )
         .unwrap();
@@ -188,23 +192,12 @@ fn build_projection(
 }
 
 fn local(name: &str, owner: &str) -> dhttp::LocalAuthority {
-    let mut params = rcgen::CertificateParams::new(vec![name.to_owned()]).unwrap();
-    let ski = format!("0:0:{owner}");
-    let mut der = vec![4, ski.len() as u8];
-    der.extend_from_slice(ski.as_bytes());
-    params
-        .custom_extensions
-        .push(rcgen::CustomExtension::from_oid_content(
-            &[2, 5, 29, 14],
-            der,
-        ));
-    let key = rcgen::KeyPair::generate().unwrap();
-    let cert = params.self_signed(&key).unwrap();
+    let (certificates, key) = crate::test_credentials::developer(name, owner);
     dhttp::LocalAuthority::new(
         &qtls::default_provider(),
         Arc::from(name),
-        vec![cert.der().clone()],
-        qtls::PrivateKeyDer::try_from(key.serialize_der()).unwrap(),
+        certificates,
+        key,
         vec![1],
     )
     .unwrap()
@@ -304,7 +297,10 @@ fn parses_manifest_without_treating_it_as_verified_and_preserves_payload_identit
         );
         let chain = package_certificates(&original).unwrap();
         assert!(verify_author(&metadata, &chain, &alice).is_ok());
-        assert!(verify_author(&metadata, &chain, &rotated).is_err());
+        assert!(
+            verify_author(&metadata, &chain, &rotated).is_ok(),
+            "same-owner key rotation is allowed"
+        );
         let mut wrong = metadata.clone();
         wrong["author"] = "bob.dhttp.net".into();
         assert!(verify_author(&wrong, &chain, &alice).is_err());
@@ -452,9 +448,11 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
     )));
     let store = endpoint(root.path(), "store", STORE_NAME).await;
     let client = endpoint(root.path(), "alice", "alice.dhttp.net").await;
-    let rotated = endpoint(root.path(), "rotated", "alice.dhttp.net").await;
-    let authority = client.local_authority().unwrap();
-    let rotated_authority = rotated.local_authority().unwrap();
+    // Sign packages with trusted developer credentials, independently of the
+    // ordinary TLS credentials generated for the loopback transport fixture.
+    let authority = local("alice.dhttp.net", &owner);
+    let rotated_authority = local("alice.dhttp.net", &owner);
+    let upload_authority = client.local_authority().unwrap();
     let packages = Arc::new(Mutex::new(BTreeMap::<String, (Vec<u8>, Value)>::new()));
     let puts = Arc::new(AtomicUsize::new(0));
     let gets = Arc::new(AtomicUsize::new(0));
@@ -493,7 +491,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
                 let bytes = request.into_body().collect().await?.to_bytes().to_vec();
                 let metadata = inspect_package(&bytes).await?;
                 assert_eq!(version_path(&metadata).unwrap(), path);
-                assert_eq!(package_certificates(&bytes).unwrap(), remote.certificates());
+                assert_eq!(owner_hash(&package_certificates(&bytes).unwrap()).unwrap(), owner_hash(remote.certificates()).unwrap());
                 let payload = payload_digest(&bytes).unwrap();
                 let proof = release(&metadata, &bytes, &owner);
                 let mut saved = packages.lock().unwrap();
@@ -536,7 +534,12 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
         let metadata = metadata(kind, &format!("note-{kind}"), json!([]));
         let bytes = build(&metadata, Some(&authority), "test");
         let checked = inspect_package(&bytes).await.unwrap();
-        verify_author(&checked, &package_certificates(&bytes).unwrap(), &authority).unwrap();
+        verify_author(
+            &checked,
+            &package_certificates(&bytes).unwrap(),
+            &upload_authority,
+        )
+        .unwrap();
         assert_eq!(
             publish(&client, &bytes, &checked, &owner).await.unwrap()["outcome"],
             "published"
@@ -550,9 +553,10 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
             verify_author(
                 &checked,
                 &package_certificates(&rotated_package).unwrap(),
-                &authority
+                &upload_authority
             )
-            .is_err()
+            .is_ok(),
+            "same-owner signing key rotation remains valid for upload"
         );
         // A CLI run loads one author endpoint. Same-name endpoints share a
         // connection pool, so test resigning with its retained real credentials.
@@ -761,4 +765,142 @@ async fn a_valid_container_with_a_forged_signature_is_rejected_locally() {
     assert!(crate::archive::waz_read(&forged).is_ok());
     let error = inspect_package(&forged).await.unwrap_err();
     assert_eq!(error.code, "E_SIGNATURE_INVALID");
+}
+
+fn publish_project(root: &Path, name: &str, version: &str, author: &str) {
+    std::fs::write(root.join("jade.toml"), format!("[package]\nname='{name}'\nversion='{version}'\nauthor='{author}'\ndescription='Test'\nlicense='MIT'\n")).unwrap();
+    std::fs::create_dir_all(root.join("build")).unwrap();
+}
+
+#[tokio::test]
+async fn project_publish_reads_only_the_exact_prebuilt_package_and_preserves_bytes() {
+    let root = tempfile::tempdir().unwrap();
+    publish_project(root.path(), "note", "1.0.0", "alice.dhttp.net");
+    // Publication must not inspect or execute a frontend build script.
+    std::fs::write(
+        root.path().join("package.json"),
+        "not valid JSON and not a build input",
+    )
+    .unwrap();
+    let authority = local("alice.dhttp.net", &"a".repeat(64));
+    let bytes = build(
+        &metadata("app", "note", json!([])),
+        Some(&authority),
+        "prebuilt",
+    );
+    let file = root.path().join("build/note-1.0.0.waz");
+    std::fs::write(&file, &bytes).unwrap();
+    for input in [
+        root.path().to_path_buf(),
+        root.path().join("jade.toml"),
+        file.clone(),
+    ] {
+        let (snapshot, identity) = read_input(&input).await.unwrap();
+        assert_eq!(snapshot, bytes);
+        assert_eq!(identity["name"], "note");
+        assert_eq!(std::fs::read(&file).unwrap(), bytes);
+    }
+}
+
+#[tokio::test]
+async fn project_publish_never_falls_back_to_another_version_or_builds_a_missing_package() {
+    let root = tempfile::tempdir().unwrap();
+    publish_project(root.path(), "note", "2.0.0", "alice.dhttp.net");
+    std::fs::write(root.path().join("build/note-1.0.0.waz"), "old output").unwrap();
+    let error = read_input(root.path()).await.unwrap_err();
+    assert_eq!(error.code, "E_BUILD_REQUIRED");
+    assert!(error.hint.unwrap().contains("jade build"));
+    assert!(!root.path().join("build/note-2.0.0.waz").exists());
+}
+
+#[tokio::test]
+async fn project_publish_rejects_renamed_packages_with_the_wrong_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let authority = local("alice.dhttp.net", &"a".repeat(64));
+    let bytes = build(
+        &metadata("app", "note", json!([])),
+        Some(&authority),
+        "prebuilt",
+    );
+    for (name, version, author) in [
+        ("other", "1.0.0", "alice.dhttp.net"),
+        ("note", "2.0.0", "alice.dhttp.net"),
+        ("note", "1.0.0", "bob.dhttp.net"),
+    ] {
+        publish_project(root.path(), name, version, author);
+        std::fs::write(
+            root.path().join(format!("build/{name}-{version}.waz")),
+            &bytes,
+        )
+        .unwrap();
+        assert_eq!(
+            read_input(root.path()).await.unwrap_err().code,
+            "E_PACKAGE_MISMATCH"
+        );
+    }
+}
+
+#[tokio::test]
+async fn publication_signs_only_the_built_payload_and_preserves_the_source_archive() {
+    let root = tempfile::tempdir().unwrap();
+    publish_project(root.path(), "note", "1.0.0", "alice.dhttp.net");
+    let unsigned = build(
+        &metadata("app", "note", json!([])),
+        None,
+        "reviewed content",
+    );
+    let file = root.path().join("build/note-1.0.0.waz");
+    std::fs::write(&file, &unsigned).unwrap();
+    // Source discovery must not participate in signing a previously built snapshot.
+    std::fs::write(root.path().join("package.json"), "invalid JSON").unwrap();
+    let (snapshot, _) = read_input(root.path()).await.unwrap();
+    assert!(inspect_package(&snapshot).await.is_err());
+    let files = crate::archive::waz_read(&snapshot).unwrap();
+    let (certificates, key) = credentials::developer("alice.dhttp.net", &"a".repeat(64));
+    let key = qtls::default_provider()
+        .key_provider
+        .load_private_key(key)
+        .unwrap();
+    let signed = sign_package(files.clone(), &certificates, &key).unwrap();
+    assert_eq!(inspect_package(&signed).await.unwrap()["name"], "note");
+    assert_eq!(
+        payload_digest(&signed).unwrap(),
+        payload_digest(&snapshot).unwrap()
+    );
+    let mut released = crate::archive::waz_read(&signed).unwrap();
+    assert!(released.remove("signature.json").is_some());
+    assert_eq!(released, files);
+    assert_eq!(std::fs::read(&file).unwrap(), unsigned);
+    std::fs::write(&file, &signed).unwrap();
+    assert_eq!(read_input(root.path()).await.unwrap().0, signed);
+    let mut tampered = crate::archive::waz_read(&signed).unwrap();
+    tampered.insert("public/index.html".into(), b"tampered".to_vec());
+    std::fs::write(&file, crate::archive::waz_write(&tampered).unwrap()).unwrap();
+    assert_eq!(
+        read_input(root.path()).await.unwrap_err().code,
+        "E_SIGNATURE_INVALID"
+    );
+}
+
+#[test]
+fn signed_snapshot_is_durable_before_upload_and_changed_inputs_are_preserved() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("app.waz");
+    std::fs::write(&file, b"unsigned").unwrap();
+    persist_signed_snapshot(&file, b"unsigned", b"signed bytes").unwrap();
+    assert_eq!(std::fs::read(&file).unwrap(), b"signed bytes");
+    assert!(persist_signed_snapshot(&file, b"unsigned", b"another signature").is_err());
+    assert_eq!(std::fs::read(&file).unwrap(), b"signed bytes");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&file, root.path().join("link.waz")).unwrap();
+        assert!(
+            persist_signed_snapshot(
+                &root.path().join("link.waz"),
+                b"signed bytes",
+                b"replacement"
+            )
+            .is_err()
+        );
+    }
 }

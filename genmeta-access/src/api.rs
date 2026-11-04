@@ -266,4 +266,5 @@ pub(crate) async fn execute<T: Transport>(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/api.rs"]
 mod tests;

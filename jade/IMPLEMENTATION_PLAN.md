@@ -1,3 +1,5 @@
+当前身份选择及发布引导以 [README](README.md) 和 [REFERENCE](REFERENCE.md) 为准：Jade 已移除 --id；run/build 统一使用 package.author，未配置时使用默认名字的 dev 子名字；两者都没有则报错，不硬编码兜底名字。publish 使用已有包作者，不重新构建；以下为首轮实施记录。
+
 # Jade 实施规划
 
 日期：2026-10-23。状态：首轮实现已落地，本地验收通过；跨平台结果由 CI 确认。用法见 [README](README.md)，领域术语见 [CONTEXT.md](../CONTEXT.md)。
@@ -14,17 +16,18 @@ Jade 完成三件事：准备项目、生成签名包、发布指定包。首轮
 jade create hello
 cd hello
 rustup target add wasm32-wasip2
-jade build --id alice.smith
+jade build
 jade publish build/hello-0.1.0.waz
 ```
 
 | 命令 | 职责与选项 |
 | --- | --- |
 | `jade create PATH` | 创建新项目；`--name NAME` 指定包短名称，默认取目录名；`--template TEMPLATE` 选择初始文件，默认 fullstack（前端和后端 API） |
-| `jade build [PATH]` | 构建、校验并签名；`--id AUTHOR` 选择身份，`-o/--output FILE` 指定包文件，`--overwrite` 允许替换显式指定的已有普通文件 |
-| `jade publish FILE` | 校验并上传指定签名包，使用包内作者对应的凭据 |
+| `jade run [PATH]` | 使用配置作者或默认开发身份构建并监听本地项目，`--fresh` 归档旧测试数据 |
+| `jade build [PATH]` | 构建、校验并生成未签名包；使用配置作者或默认开发身份，`-o/--output FILE` 指定包文件，`--overwrite` 允许替换显式指定的已有普通文件 |
+| `jade publish [PATH 或 FILE]` | 对已有快照签名并上传，已签名包验签后原样上传；使用包内作者对应的凭据，不重新构建 |
 
-三个命令共用 `--json` 和 `--verb`：前者输出机器结果，后者将调试日志写入 stderr。
+四个命令共用 `--json` 和 `--verb`：前者输出机器结果，后者将调试日志写入 stderr。
 
 build 的 PATH 可为项目目录或 Jade 配置文件，默认当前目录下的 `jade.toml`。CLI 相对路径以当前工作目录为基准，配置内路径以配置文件所在目录为基准。
 
@@ -36,15 +39,11 @@ create 提供 static、web、api、fullstack 四个初始文件预设；默认�
 
 包标识由规范作者身份和包短名称组成，例如 `alice.smith.dhttp.net/hello`。配置和命令中的 `alice.smith` 会规范化为完整名称，终端可展示为 `alice.smith~`。
 
-build 按以下顺序确定签名身份：
+run/build 统一使用 `package.author`，未配置时选择全局默认主名字的 dev 子名字；默认已是开发子名字则原样使用。两者都没有时返回 `E_IDENTITY_REQUIRED`，不扫描凭据或硬编码兜底名字。Jade 不接受 `--id`。
 
-1. 指定 `--id` 时使用该身份；若配置了 `package.author`，两者须一致。
-2. 否则使用 `package.author`；未配置时使用已有的 DHTTP 默认身份。
-3. 都未设置时，唯一可用身份自动选中；多个候选在交互终端中选择，非交互模式返回 `E_IDENTITY_REQUIRED`。
+build 不要求凭据，把作者写入 WAZ，不回写 jade.toml。run 使用同名身份的普通凭据，本地快照不修改正式 WAZ。访问者身份由客户端独立选择。
 
-已指定的身份凭据不可用时报告错误。交互要求 stdin 和 stderr 均为 TTY，且未启用 `--json`。选择只作用于本次构建，证书和私钥继续由 DHTTP 管理。
-
-publish 从包中取得作者和 owner，直接读取匹配凭据。首轮使用与包内证书一致的凭据；证书更换后重新 build 签名。本地校验通过后再准备认证网络端点。
+publish 从已有包中取得作者和 owner，直接读取匹配凭据。项目配置作者必须与包作者一致，全局默认身份改变不影响已有包。缺包时交互准备配置作者或默认开发身份的凭据，再提示显式 build、审阅、publish；JSON 和非交互模式不启动设置或下单。
 
 ## 4. 项目配置
 

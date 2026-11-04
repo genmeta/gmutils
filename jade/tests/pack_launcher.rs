@@ -36,7 +36,7 @@ fn config(root: &Path) {
 }
 
 #[test]
-fn npm_uses_literal_working_directory_and_failure_preserves_the_signed_output() {
+fn npm_uses_literal_working_directory_and_failure_preserves_the_built_output() {
     let root = tempfile::Builder::new()
         .prefix("jade $(touch unexpected) ")
         .tempdir()
@@ -129,6 +129,11 @@ fn created_web_projects_install_build_tools_before_building_with_each_manager() 
         let root = tempfile::tempdir().unwrap();
         let home = root.path().join("home/.dhttp");
         test_identity::create(&home);
+        std::fs::write(
+            home.join("settings.toml"),
+            "[default]\nname='alice.smith.dhttp.net'\n",
+        )
+        .unwrap();
         let bin = root.path().join("bin");
         std::fs::create_dir(&bin).unwrap();
         let created = Command::new(env!("CARGO_BIN_EXE_jade"))

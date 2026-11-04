@@ -1,0 +1,1 @@
+TEST ONLY fixtures copied from the shared developer certificate integration vectors (CertServer baseline ce3518f). All private keys in this directory are disposable test material and must never be used for production. Production validation always uses the compiled DHTTP Root; the fixture Root is supplied only to private unit-test helpers.

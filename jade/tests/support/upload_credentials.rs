@@ -188,3 +188,61 @@ pub fn generate(root: &Path, names: &[(&str, &str, &str)]) {
         }
     }
 }
+
+/// Disposable codeSigning leaf under the shared isolated Root. Never a production identity.
+pub fn developer(
+    name: &str,
+    owner: &str,
+) -> (
+    Vec<qtls::CertificateDer<'static>>,
+    qtls::PrivateKeyDer<'static>,
+) {
+    use rcgen::{
+        BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose,
+        IsCa, Issuer, KeyIdMethod, KeyPair, KeyUsagePurpose,
+    };
+    use rustls::pki_types::pem::PemObject;
+    let ca_pem =
+        include_str!("../../../genmeta-identity/tests/fixtures/code-signing/code-issuer.cert.pem");
+    let ca = qtls::CertificateDer::from_pem_slice(ca_pem.as_bytes()).unwrap();
+    let ca_key = KeyPair::from_pem(include_str!(
+        "../../../genmeta-identity/tests/fixtures/code-signing/code-issuer.key.pem"
+    ))
+    .unwrap();
+    let (_, parsed) = x509_parser::parse_x509_certificate(ca.as_ref()).unwrap();
+    let mut issuer_params = CertificateParams::default();
+    issuer_params.distinguished_name = DistinguishedName::new();
+    issuer_params
+        .distinguished_name
+        .push(DnType::CommonName, "TEST ONLY code-issuer");
+    issuer_params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
+    let ski = parsed
+        .extensions()
+        .iter()
+        .find_map(|e| {
+            if let x509_parser::extensions::ParsedExtension::SubjectKeyIdentifier(id) =
+                e.parsed_extension()
+            {
+                Some(id.0.to_vec())
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    issuer_params.key_identifier_method = KeyIdMethod::PreSpecified(ski);
+    let issuer = Issuer::new(issuer_params, ca_key);
+    let mut params = CertificateParams::new(vec![name.into()]).unwrap();
+    params.distinguished_name = DistinguishedName::new();
+    params.distinguished_name.push(DnType::CommonName, name);
+    params.is_ca = IsCa::ExplicitNoCa;
+    params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::CodeSigning];
+    let ski = format!("1:0:{owner}");
+    params.key_identifier_method = KeyIdMethod::PreSpecified(ski.as_bytes().to_vec());
+    let key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
+    let cert = params.signed_by(&key, &issuer).unwrap();
+    (
+        vec![cert.der().clone(), ca],
+        qtls::PrivateKeyDer::try_from(key.serialize_der()).unwrap(),
+    )
+}

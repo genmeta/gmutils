@@ -13,7 +13,7 @@ use super::{
     },
 };
 use crate::{
-    cert_server::{CertServer, CertificateDetail, CertificateRenewalRequest},
+    cert_server::{CertServer, CertificateDetail},
     cli::{Apply, Error, prompt::InquireResultExt},
 };
 
@@ -162,9 +162,7 @@ enum RequestFailure {
 struct CertificateRequest<'a> {
     target: &'a IdentityTarget,
     kind: IdentityKind,
-    sequence: Option<u32>,
     device_name: &'a str,
-    renewal_operation_key: Option<&'a str>,
 }
 
 async fn request_certificate(
@@ -176,9 +174,7 @@ async fn request_certificate(
     let CertificateRequest {
         target,
         kind,
-        sequence,
         device_name,
-        renewal_operation_key,
     } = request;
     key_material.ensure_key().map_err(RequestFailure::Local)?;
     super::progress::run(super::progress::REQUEST_CERT, async {
@@ -186,22 +182,8 @@ async fn request_certificate(
             .csr_pem()
             .map_err(RequestFailure::Local)?
             .to_string();
-        let result = match (proof, sequence) {
-            (CertificateProof::AccessToken(token), Some(sequence)) => {
-                let request = CertificateRenewalRequest::new(
-                    target.full_name(),
-                    kind.as_str(),
-                    sequence,
-                    Some(device_name),
-                    &csr_pem,
-                )
-                .with_idempotency_key(
-                    renewal_operation_key
-                        .expect("an existing sequence requires a renewal operation key"),
-                );
-                cert_server.renew_cert_request(token, request).await
-            }
-            (CertificateProof::AccessToken(token), None) => {
+        let result = match proof {
+            CertificateProof::AccessToken(token) => {
                 cert_server
                     .issue_cert(
                         token,
@@ -213,23 +195,7 @@ async fn request_certificate(
                     )
                     .await
             }
-            (CertificateProof::IdentityProfile(profile_dir), Some(sequence)) => {
-                let request = CertificateRenewalRequest::new(
-                    target.full_name(),
-                    kind.as_str(),
-                    sequence,
-                    Some(device_name),
-                    &csr_pem,
-                )
-                .with_idempotency_key(
-                    renewal_operation_key
-                        .expect("an existing sequence requires a renewal operation key"),
-                );
-                cert_server
-                    .renew_cert_with_identity_profile_request(profile_dir, request)
-                    .await
-            }
-            (CertificateProof::IdentityProfile(profile_dir), None) => {
+            CertificateProof::IdentityProfile(profile_dir) => {
                 cert_server
                     .issue_cert_with_identity_profile(
                         profile_dir,
@@ -344,28 +310,6 @@ fn should_register_with_parent(
         )
 }
 
-fn should_register_with_email(remote: RemoteTargetState) -> bool {
-    matches!(
-        remote,
-        RemoteTargetState::Missing | RemoteTargetState::Unknown
-    )
-}
-
-fn replacement_sequence(
-    resolved: &ResolvedApplyTarget,
-    requested_kind: IdentityKind,
-) -> Option<u32> {
-    let local = resolved.local.as_ref()?;
-    let local_kind = match local.usage? {
-        super::local::IdentityUsage::BothClientAndServer => IdentityKind::Primary,
-        super::local::IdentityUsage::ClientOnly => IdentityKind::Secondary,
-    };
-
-    (local_kind == requested_kind)
-        .then_some(local.sequence)
-        .flatten()
-}
-
 #[derive(Debug)]
 enum ApplyAttempt {
     Certificate(Box<CertificateDetail>),
@@ -374,31 +318,27 @@ enum ApplyAttempt {
 
 struct ApplyAttemptContext<'a> {
     command: &'a Apply,
-    dhttp_home: &'a DhttpHome,
     cert_server: &'a CertServer,
     kind: IdentityKind,
     device_name: &'a str,
     interactive: bool,
     key_material: &'a mut super::key_material::LazyKeyMaterial,
-    renewal_operation_key: Option<&'a str>,
 }
 
-async fn attempt_apply_with_candidates(
+async fn attempt_apply_with_candidates<L: super::auth_plan::ExactIdentityLoader>(
     resolved: &mut ResolvedApplyTarget,
     context: ApplyAttemptContext<'_>,
+    loader: L,
 ) -> Result<ApplyAttempt, Error> {
     let ApplyAttemptContext {
         command,
-        dhttp_home,
         cert_server,
         kind,
         device_name,
         interactive,
         key_material,
-        renewal_operation_key,
     } = context;
     let specs = super::auth_plan::candidate_specs(&resolved.target, resolved.remote);
-    let loader = super::auth_plan::HomeExactIdentityLoader::new(dhttp_home);
     let mut candidates = super::auth_plan::AuthCandidateRunner::new(loader, specs);
     let mut last_rejection = None;
 
@@ -435,9 +375,7 @@ async fn attempt_apply_with_candidates(
                     CertificateRequest {
                         target: &resolved.target,
                         kind,
-                        sequence: replacement_sequence(resolved, kind),
                         device_name,
-                        renewal_operation_key,
                     },
                     key_material,
                 )
@@ -472,7 +410,10 @@ async fn attempt_apply_with_candidates(
                 )
                 .await?;
 
-                if should_register_with_email(resolved.remote) {
+                if matches!(
+                    resolved.remote,
+                    RemoteTargetState::Missing | RemoteTargetState::Unknown
+                ) {
                     let outcome =
                         register_with_email(cert_server, &resolved.target, &token, interactive)
                             .await?;
@@ -486,9 +427,7 @@ async fn attempt_apply_with_candidates(
                     CertificateRequest {
                         target: &resolved.target,
                         kind,
-                        sequence: replacement_sequence(resolved, kind),
                         device_name,
-                        renewal_operation_key,
                     },
                     key_material,
                 )
@@ -511,9 +450,7 @@ async fn attempt_apply_with_candidates(
                             CertificateRequest {
                                 target: &resolved.target,
                                 kind,
-                                sequence: replacement_sequence(resolved, kind),
                                 device_name,
-                                renewal_operation_key,
                             },
                             key_material,
                         )
@@ -631,7 +568,7 @@ async fn install_and_finish(
         &super::install::InstallExpectation {
             target: resolved.target.dhttp_name(),
             kind: APPLY_CERTIFICATE_KIND,
-            sequence: replacement_sequence(resolved, APPLY_CERTIFICATE_KIND),
+            sequence: None,
         },
         key_pem,
         certificate_action(resolved),
@@ -649,10 +586,34 @@ async fn install_and_finish(
             "failed to remove installed renewal material"
         );
     }
+    finish_installed(InstallFinishContext {
+        dhttp_home,
+        home_scope,
+        resolved,
+        interactive,
+    })
+    .await
+}
+
+async fn finish_installed(context: InstallFinishContext<'_>) -> Result<(), Error> {
+    let InstallFinishContext {
+        dhttp_home,
+        home_scope,
+        resolved,
+        interactive,
+    } = context;
     super::transcript::print_line(INSTALLED);
 
+    let profile = dhttp_home
+        .identity_profile(resolved.target.full_name())
+        .expect("validated identity name");
+    let developer = crate::cli::developer::installed_sequence(&profile)?.is_some();
+    if developer {
+        crate::cli::developer::require_manual_renewal(dhttp_home, resolved.target.full_name())
+            .await;
+    }
     #[cfg(unix)]
-    {
+    if !developer {
         let identity_enabled = match super::auto_renew::enable_identity(
             dhttp_home,
             resolved.target.dhttp_name(),
@@ -702,64 +663,27 @@ pub(crate) async fn run(
     super::transcript::print_line(APPLY_OPENING);
     let interactive = std::io::stdin().is_terminal();
     let mut resolved = resolve_apply_target(command, dhttp_home, cert_server, interactive).await?;
-    authorize_local_replacement(&resolved, command.force, interactive).await?;
     let kind = APPLY_CERTIFICATE_KIND;
     let device_name =
         super::device::resolve_device_name(command.device_name.as_deref(), home_scope);
-    let replacement_sequence = replacement_sequence(&resolved, kind);
-    let pending_renewal = match replacement_sequence {
-        Some(sequence) => match super::key_material::PendingRenewal::load(
-            dhttp_home,
-            resolved.target.dhttp_name(),
-            kind.as_str(),
-            sequence,
-        )
-        .await?
-        {
-            Some(pending) => Some(pending),
-            None => Some(
-                super::key_material::PendingRenewal::create(
-                    dhttp_home,
-                    resolved.target.dhttp_name(),
-                    kind.as_str(),
-                    sequence,
-                    &device_name,
-                )
-                .await?,
-            ),
-        },
-        None => None,
-    };
-    let request_device_name = pending_renewal
-        .as_ref()
-        .map(|pending| pending.device_name())
-        .unwrap_or(&device_name)
-        .to_string();
-    let mut key_material = match pending_renewal.as_ref() {
-        Some(pending) => super::key_material::LazyKeyMaterial::from_existing(
-            resolved.target.dhttp_name(),
-            pending.key_pem().to_string(),
-            pending.csr_pem().to_string(),
-        ),
-        None => super::key_material::LazyKeyMaterial::for_name(resolved.target.dhttp_name()),
-    };
-    let renewal_operation_key = pending_renewal
-        .as_ref()
-        .map(|pending| pending.operation_key());
+    authorize_local_replacement(&resolved, command.force, interactive).await?;
+    // Apply allocates a fresh sequence using the server's current entitlement policy.
+    // Renew alone preserves a sequence and its certificate purpose.
+    let mut key_material =
+        super::key_material::LazyKeyMaterial::for_name(resolved.target.dhttp_name());
 
     loop {
         match attempt_apply_with_candidates(
             &mut resolved,
             ApplyAttemptContext {
                 command,
-                dhttp_home,
                 cert_server,
                 kind,
-                device_name: &request_device_name,
+                device_name: &device_name,
                 interactive,
                 key_material: &mut key_material,
-                renewal_operation_key,
             },
+            super::auth_plan::HomeExactIdentityLoader::new(dhttp_home),
         )
         .await?
         {
@@ -784,329 +708,5 @@ pub(crate) async fn run(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::{
-        path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    use super::*;
-    use crate::cli::flow::local::{IdentityUsage, LocalIdentityStatus, LocalIdentitySummary};
-
-    struct ServerFixture {
-        root: PathBuf,
-        home: DhttpHome,
-        target: IdentityTarget,
-    }
-
-    impl ServerFixture {
-        async fn new(label: &str) -> Self {
-            let nonce = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("clock after epoch")
-                .as_nanos();
-            let root = std::env::temp_dir().join(format!(
-                "genmeta-identity-apply-server-{label}-{}-{nonce}",
-                std::process::id()
-            ));
-            let home = DhttpHome::new(root.clone());
-            let target = IdentityTarget::parse("alice.smith").unwrap();
-            tokio::fs::create_dir_all(
-                home.identity_profile((target.dhttp_name()).as_full())
-                    .expect("validated identity name")
-                    .path(),
-            )
-            .await
-            .unwrap();
-            Self { root, home, target }
-        }
-
-        fn profile(&self) -> dhttp_home::identity::IdentityProfile {
-            self.home
-                .identity_profile((self.target.dhttp_name()).as_full())
-                .expect("validated identity name")
-        }
-    }
-
-    impl Drop for ServerFixture {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.root);
-        }
-    }
-
-    fn command(name: Option<&str>) -> Apply {
-        Apply {
-            name: name.map(ToOwned::to_owned),
-            force: false,
-            device_name: None,
-            email: None,
-            verify_code: None,
-        }
-    }
-
-    #[test]
-    fn auto_renew_enabled_copy_includes_the_identity_name() {
-        assert_eq!(
-            auto_renew_enabled_message("alice.smith"),
-            "✔ Automatic certificate renewal enabled for alice.smith."
-        );
-    }
-
-    fn resolved_with(status: Option<LocalIdentityStatus>) -> ResolvedApplyTarget {
-        ResolvedApplyTarget {
-            target: IdentityTarget::parse("alice.smith").unwrap(),
-            remote: RemoteTargetState::Unknown,
-            local: status.map(|status| LocalIdentitySummary {
-                target: IdentityTarget::parse("alice.smith").unwrap(),
-                usage: Some(IdentityUsage::BothClientAndServer),
-                sequence: Some(0),
-                valid_from: Some(1_700_000_000),
-                expires_at: Some(1_900_000_000),
-                status,
-                dir: PathBuf::from("/tmp/alice.smith"),
-                is_default: false,
-            }),
-        }
-    }
-
-    #[test]
-    fn certificate_action_tracks_exact_local_material_lifecycle() {
-        assert_eq!(
-            certificate_action(&resolved_with(None)),
-            dhttp::log::cert::CertificateAction::Apply,
-        );
-        assert_eq!(
-            certificate_action(&resolved_with(Some(LocalIdentityStatus::Invalid {
-                detail: "certificate is unreadable".to_string(),
-            }))),
-            dhttp::log::cert::CertificateAction::Replace,
-        );
-        assert_eq!(
-            certificate_action(&resolved_with(Some(LocalIdentityStatus::Ready {
-                expires_at: 1_900_000_000,
-            }))),
-            dhttp::log::cert::CertificateAction::Replace,
-        );
-    }
-
-    #[test]
-    fn replacement_reuses_sequence_only_for_the_same_certificate_kind() {
-        assert_eq!(
-            replacement_sequence(&resolved_with(None), IdentityKind::Primary),
-            None
-        );
-        let resolved = resolved_with(Some(LocalIdentityStatus::Incomplete {
-            detail: "private key is missing".to_string(),
-        }));
-        assert_eq!(
-            replacement_sequence(&resolved, IdentityKind::Primary),
-            Some(0),
-        );
-        assert_eq!(
-            replacement_sequence(&resolved, IdentityKind::Secondary),
-            None,
-        );
-
-        let mut secondary = resolved;
-        secondary.local.as_mut().unwrap().usage = Some(IdentityUsage::ClientOnly);
-        assert_eq!(
-            replacement_sequence(&secondary, IdentityKind::Secondary),
-            Some(0),
-        );
-        assert_eq!(
-            replacement_sequence(&secondary, IdentityKind::Primary),
-            None,
-        );
-    }
-
-    #[test]
-    fn replacement_without_local_usage_or_sequence_requests_a_new_chain() {
-        let mut resolved = resolved_with(Some(LocalIdentityStatus::Invalid {
-            detail: "certificate metadata is incomplete".to_string(),
-        }));
-        resolved.local.as_mut().unwrap().usage = None;
-        assert_eq!(replacement_sequence(&resolved, IdentityKind::Primary), None,);
-
-        resolved.local.as_mut().unwrap().usage = Some(IdentityUsage::BothClientAndServer);
-        resolved.local.as_mut().unwrap().sequence = None;
-        assert_eq!(replacement_sequence(&resolved, IdentityKind::Primary), None,);
-    }
-
-    #[test]
-    fn apply_copy_matches_the_approved_transcript() {
-        assert_eq!(
-            APPLY_OPENING,
-            "Applying identity, generating ECC key pair locally, then requesting and deploying certificate."
-        );
-        assert_eq!(NEW_NAME_FREE, "This new name is yours now.");
-        assert_eq!(
-            INSTALLED,
-            "✔ Identity successfully installed on this device."
-        );
-    }
-
-    #[test]
-    fn apply_always_requests_a_client_and_server_certificate() {
-        assert_eq!(APPLY_CERTIFICATE_KIND, IdentityKind::Primary);
-        assert_eq!(APPLY_CERTIFICATE_KIND.as_str(), "primary");
-    }
-
-    #[tokio::test]
-    async fn noninteractive_apply_does_not_create_server_configuration_or_default_files() {
-        let fixture = ServerFixture::new("client").await;
-        assert!(
-            !offer_server_activation(&fixture.home, &fixture.target, false)
-                .await
-                .unwrap()
-        );
-        assert!(!fixture.profile().config_db_path().exists());
-        assert!(
-            !fixture
-                .profile()
-                .join(".volume/sys/setting/database")
-                .exists()
-        );
-        assert!(!fixture.profile().join(".volume/sys/file").exists());
-        assert!(!fixture.profile().join("file/welcome/index.html").exists());
-    }
-
-    #[tokio::test]
-    #[ignore = "requires matching PISHOO_BIN; run the cross-repository configuration tests"]
-    async fn noninteractive_apply_keeps_listening_disabled() {
-        let fixture = ServerFixture::new("disabled").await;
-        let profile = fixture.profile();
-        let config = super::super::site::ServerConfig::for_profile(&profile);
-        config.create_disabled().await.unwrap();
-        assert!(
-            !offer_server_activation(&fixture.home, &fixture.target, false)
-                .await
-                .unwrap()
-        );
-        assert_eq!(
-            config.state().await.unwrap(),
-            super::super::site::ServerConfigState::Disabled
-        );
-    }
-
-    #[tokio::test]
-    #[ignore = "requires matching PISHOO_BIN; run the cross-repository configuration tests"]
-    async fn apply_keeps_an_enabled_pishoo_configuration() {
-        let fixture = ServerFixture::new("enabled").await;
-        let config = super::super::site::ServerConfig::for_profile(&fixture.profile());
-        config.create_disabled().await.unwrap();
-        config.enable().await.unwrap();
-        for interactive in [false, true] {
-            assert!(
-                offer_server_activation(&fixture.home, &fixture.target, interactive)
-                    .await
-                    .unwrap()
-            );
-        }
-        assert_eq!(
-            config.state().await.unwrap(),
-            super::super::site::ServerConfigState::Enabled
-        );
-    }
-
-    #[tokio::test]
-    async fn installed_identity_survives_service_configuration_failure() {
-        let fixture = ServerFixture::new("broken-service").await;
-        let path = fixture.profile().join(".volume/sys/setting/database");
-        std::fs::create_dir_all(&path).unwrap();
-        assert!(
-            !offer_server_activation(&fixture.home, &fixture.target, false)
-                .await
-                .unwrap()
-        );
-        assert!(path.is_dir());
-    }
-
-    #[test]
-    fn explicit_target_is_parsed_without_remote_preclassification() {
-        assert_eq!(
-            explicit_target_from_command(&command(Some("alice.smith")))
-                .unwrap()
-                .unwrap()
-                .short_name(),
-            "alice.smith"
-        );
-        assert!(
-            explicit_target_from_command(&command(None))
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[tokio::test]
-    async fn replacement_authorization_prevents_noninteractive_side_effects_without_force() {
-        let ready = resolved_with(Some(LocalIdentityStatus::Ready {
-            expires_at: 1_900_000_000,
-        }));
-        assert!(
-            authorize_local_replacement(&ready, false, false)
-                .await
-                .is_err()
-        );
-        authorize_local_replacement(&ready, true, false)
-            .await
-            .unwrap();
-
-        let invalid = resolved_with(Some(LocalIdentityStatus::Invalid {
-            detail: "certificate is unreadable".to_string(),
-        }));
-        authorize_local_replacement(&invalid, false, false)
-            .await
-            .unwrap();
-    }
-
-    #[test]
-    fn missing_targets_are_replanned_to_the_safe_candidate_order() {
-        let root = IdentityTarget::parse("alice.smith").unwrap();
-        let child = IdentityTarget::parse("phone.alice.smith").unwrap();
-        assert_eq!(
-            super::super::auth_plan::candidate_specs(&root, RemoteTargetState::Missing),
-            vec![super::super::auth_plan::AuthCandidateSpec::Email]
-        );
-        assert_eq!(
-            super::super::auth_plan::candidate_specs(&child, RemoteTargetState::Missing),
-            vec![
-                super::super::auth_plan::AuthCandidateSpec::Identity(
-                    dhttp_identity::name::DhttpName::try_from("alice.smith")
-                        .unwrap()
-                        .into_owned()
-                ),
-                super::super::auth_plan::AuthCandidateSpec::Email,
-            ]
-        );
-    }
-
-    #[test]
-    fn explicit_targets_register_only_with_the_direct_parent_proof() {
-        let root = IdentityTarget::parse("alice.smith").unwrap();
-        let child = IdentityTarget::parse("phone.alice.smith").unwrap();
-
-        assert!(!should_register_with_parent(
-            &root,
-            RemoteTargetState::Unknown,
-            "alice.smith.dhttp.net",
-        ));
-        assert!(!should_register_with_parent(
-            &child,
-            RemoteTargetState::Unknown,
-            "phone.alice.smith.dhttp.net",
-        ));
-        assert!(should_register_with_parent(
-            &child,
-            RemoteTargetState::Unknown,
-            "alice.smith.dhttp.net",
-        ));
-        assert!(!should_register_with_parent(
-            &child,
-            RemoteTargetState::Exists,
-            "alice.smith.dhttp.net",
-        ));
-        assert!(should_register_with_email(RemoteTargetState::Unknown));
-        assert!(should_register_with_email(RemoteTargetState::Missing));
-        assert!(!should_register_with_email(RemoteTargetState::Exists));
-    }
-}
+#[path = "../../../tests/unit/cli/flow/apply.rs"]
+mod tests;

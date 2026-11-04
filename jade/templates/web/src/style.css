@@ -1,0 +1,57 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  color: #232421;
+  background: #fff;
+  color-scheme: light;
+  font-synthesis: none;
+  --accent: #28634f;
+  --muted: #62635e;
+  --border: #dedfd9;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100dvh; display: flex; flex-direction: column; }
+main { flex: 1; }
+a { color: inherit; text-underline-offset: 0.2em; }
+button { font: inherit; cursor: pointer; }
+button, a { touch-action: manipulation; }
+[hidden] { display: none !important; }
+a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+::selection { background: #dceae5; }
+.skip-link { position: fixed; top: 1rem; left: 1rem; padding: 0.75rem 1rem; background: #232421; color: #fff; transform: translateY(-200%); }
+.skip-link:focus { transform: none; }
+.masthead, footer { width: min(100%, 72rem); margin-inline: auto; padding: 1rem 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.masthead { min-height: 4.5rem; border-bottom: 1px solid var(--border); }
+.wordmark, h1, h2 { font-family: "Iowan Old Style", "Palatino Linotype", "Songti SC", Georgia, serif; }
+.wordmark { min-width: 0; font-size: 1.5rem; font-weight: 700; text-decoration: none; overflow-wrap: anywhere; }
+.wordmark span { color: var(--accent); }
+.masthead-note { flex-shrink: 0; color: var(--muted); font-size: 0.75rem; }
+.hero { display: grid; place-items: center; min-height: 42dvh; padding: 4rem 1.5rem; }
+.identity { width: 100%; max-width: 64rem; text-align: center; }
+.eyebrow { margin: 0 0 1.25rem; color: var(--muted); font-size: 0.875rem; }
+h1 { margin: 0; font-size: clamp(2.5rem, 6vw, 5rem); font-weight: 500; line-height: 1.12; overflow-wrap: anywhere; }
+.status { display: flex; align-items: center; justify-content: center; gap: 0.625rem; margin: 1.5rem 0 0; color: var(--muted); font-size: 0.875rem; line-height: 1.6; }
+.status::before { content: ""; flex-shrink: 0; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0.25rem #28634f18; }
+.status[data-state="loading"]::before, .status[data-state="anonymous"]::before { background: #85877f; box-shadow: 0 0 0 0.25rem #85877f18; }
+.status[data-state="error"]::before { background: #a84635; box-shadow: 0 0 0 0.25rem #a8463518; }
+.retry { margin-top: 1rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 0.25rem; background: #fff; color: var(--accent); }
+.welcome { border-block: 1px solid var(--border); background: #f3f5f2; padding: 3rem 1.5rem; }
+.welcome-layout { max-width: 66rem; margin-inline: auto; display: grid; gap: 2.5rem; }
+.section-kicker { margin: 0 0 1rem; color: var(--accent); font-size: 0.75rem; font-weight: 650; letter-spacing: 0.08em; }
+h2 { max-width: 32rem; margin: 0; font-size: clamp(2rem, 4vw, 3rem); font-weight: 500; line-height: 1.18; text-wrap: balance; }
+.welcome-copy { max-width: 33rem; margin: 1.25rem 0 0; color: var(--muted); font-size: 0.9375rem; line-height: 1.75; }
+.primary-link { display: inline-flex; align-items: center; min-height: 3rem; margin-top: 1.5rem; padding: 0.75rem 1.25rem; border-radius: 0.375rem; color: #fff; background: var(--accent); font-size: 0.875rem; font-weight: 600; text-decoration: none; }
+.primary-link:hover { background: #1f4f3f; }
+.principles { display: grid; gap: 1.25rem; }
+.principles article { border-top: 1px solid #ced0c9; padding-top: 1rem; }
+h3 { margin: 0; font-size: 0.9375rem; font-weight: 650; }
+.principles p { margin: 0.5rem 0 0; color: var(--muted); font-size: 0.875rem; line-height: 1.6; }
+footer { min-height: 4rem; color: var(--muted); font-size: 0.75rem; }
+footer > span { overflow-wrap: anywhere; min-width: 0; }
+.footer-actions { display: flex; align-items: center; gap: 1.25rem; flex-shrink: 0; }
+.footer-actions a, .language-toggle { display: inline-flex; align-items: center; min-height: 2.75rem; }
+.language-toggle { padding: 0 0.25rem; border: 0; background: transparent; color: inherit; text-decoration: underline; text-underline-offset: 0.2em; }
+@media (min-width: 48rem) {
+  .masthead, footer { padding-inline: 3rem; }
+  .welcome { padding: 3.5rem 3rem; }
+  .welcome-layout { grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: 4rem; align-items: center; }
+}
