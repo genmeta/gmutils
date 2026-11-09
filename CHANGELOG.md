@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.9.1] - Unreleased
+## [0.9.1] - 2026-11-09
 
 - Generate new Rust API/fullstack projects under `wasm/`; detect existing `wasm/`, `api/` and `lib/` layouts without changing frontend API modules.
 - Release the launcher and utility crates with their independent stable versions; bundle Jade 0.1.1.
