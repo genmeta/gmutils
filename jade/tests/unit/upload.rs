@@ -9,7 +9,7 @@ use webc::v3::{
 
 use super::*;
 use crate::{
-    package::{bounded_read, manifest_identity},
+    package::{bounded_read, manifest_identity, signature_envelope},
     test_credentials as credentials,
 };
 
@@ -492,21 +492,15 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
                 let metadata = inspect_package(&bytes).await?;
                 assert_eq!(version_path(&metadata).unwrap(), path);
                 assert_eq!(owner_hash(&package_certificates(&bytes).unwrap()).unwrap(), owner_hash(remote.certificates()).unwrap());
-                let payload = payload_digest(&bytes).unwrap();
                 let proof = release(&metadata, &bytes, &owner);
                 let mut saved = packages.lock().unwrap();
-                if let Some((existing, proof)) = saved.get(&path) {
-                    return Ok(if payload_digest(existing).unwrap() == payload {
-                        response(StatusCode::OK, proof.clone())
-                    } else { response(StatusCode::CONFLICT, json!({"error":"version_conflict","message":"different content"})) });
+                if saved.contains_key(&path) {
+                    return Ok(response(StatusCode::CONFLICT, json!({"code":"package_version_conflict","message":"version already uploaded"})));
                 }
                 for dependency in metadata["dependencies"].as_array().unwrap() {
-                    let key = format!("/store/v1/packages/{}/{}/versions/{}", dependency["author"].as_str().unwrap(),
-                        dependency["name"].as_str().unwrap(), dependency["version"].as_str().unwrap());
-                    if saved.get(&key).is_none_or(|(_, release)| release["status"] != "published") {
+                    if !saved.values().any(|(_, release)| release["name"] == dependency["name"] && release["version"] == dependency["version"] && release["status"] == "published") {
                         return Ok(response(StatusCode::UNPROCESSABLE_ENTITY, json!({"error":"dependency_unavailable",
-                            "message":format!("Lib {}/{}@{} is missing or withdrawn", dependency["author"].as_str().unwrap(),
-                                dependency["name"].as_str().unwrap(), dependency["version"].as_str().unwrap())})));
+                            "message":format!("Package {}@{} is missing or withdrawn", dependency["name"].as_str().unwrap(), dependency["version"].as_str().unwrap())})));
                     }
                 }
                 if metadata["name"] != "unsaved" { saved.insert(path.clone(), (bytes, proof.clone())); }
@@ -545,8 +539,11 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
             "published"
         );
         assert_eq!(
-            publish(&client, &bytes, &checked, &owner).await.unwrap()["outcome"],
-            "already-published"
+            publish(&client, &bytes, &checked, &owner)
+                .await
+                .unwrap_err()
+                .code,
+            "E_VERSION_CONFLICT"
         );
         let rotated_package = build(&metadata, Some(&rotated_authority), "test");
         assert!(
@@ -564,13 +561,16 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
         assert_ne!(digest(&bytes), digest(&resigned));
         let before = gets.load(Ordering::SeqCst);
         assert_eq!(
-            publish(&client, &resigned, &checked, &owner).await.unwrap()["outcome"],
-            "already-published"
+            publish(&client, &resigned, &checked, &owner)
+                .await
+                .unwrap_err()
+                .code,
+            "E_VERSION_CONFLICT"
         );
         assert_eq!(
             gets.load(Ordering::SeqCst),
-            before + 1,
-            "resigning must download the retained original"
+            before,
+            "duplicate rejection only reads the catalogue"
         );
         assert!(
             publish(
@@ -590,7 +590,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
         *tampered.last_mut().unwrap() ^= 1;
         assert!(inspect_package(&tampered).await.is_err());
     }
-    let dependency = json!([{"author":"alice.dhttp.net","name":"backend","version":"1.0.0"}]);
+    let dependency = json!([{"name":"backend","version":"1.0.0"}]);
     for kind in ["app", "lib"] {
         let metadata = metadata(kind, &format!("parent-{kind}"), dependency.clone());
         let bytes = build(&metadata, Some(&authority), "parent");
@@ -598,7 +598,7 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
             .await
             .unwrap_err()
             .to_string();
-        assert!(error.contains("alice.dhttp.net/backend@1.0.0"), "{error}");
+        assert!(error.contains("backend@1.0.0"), "{error}");
     }
     // Any published Pkg can satisfy an exact package dependency.
     let lib = metadata("app", "backend", json!([]));
@@ -650,8 +650,8 @@ async fn real_http3_publish_retry_dependencies_and_read_only_recovery() {
         )
         .await
         .unwrap_err()
-        .to_string()
-        .contains("withdrawn")
+        .code
+            == "E_VERSION_CONFLICT"
     );
     for name in ["lost", "unsaved", "redirect", "trailer"] {
         let metadata = metadata("app", name, json!([]));
@@ -903,4 +903,15 @@ fn signed_snapshot_is_durable_before_upload_and_changed_inputs_are_preserved() {
             .is_err()
         );
     }
+}
+
+#[test]
+fn publication_confirmation_requires_the_complete_uploaded_archive() {
+    let bytes = b"exact uploaded archive";
+    let release = json!({"package_sha256":digest(bytes),"size":bytes.len()});
+    confirm_release(&release, bytes).unwrap();
+    assert!(confirm_release(&release, b"different signed archive").is_err());
+    let mut wrong_size = release;
+    wrong_size["size"] = 1.into();
+    assert!(confirm_release(&wrong_size, bytes).is_err());
 }

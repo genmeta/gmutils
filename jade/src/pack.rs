@@ -493,12 +493,18 @@ pub(crate) fn validate_metadata(wapm: &Value, annotation: &Value, has_backend: b
         .ok_or("dependencies requires an explicit array with at most 100 packages")?;
     let mut ids = HashSet::new();
     for dep in deps {
-        let dep_id = format!("{}/{}", text(dep, "publisher")?, text(dep, "name")?);
-        if dep.as_object().is_none_or(|o| o.len() != 3)
-            || !valid_id(&dep_id)
+        let dep_name = text(dep, "name")?;
+        let publisher = dep
+            .get("publisher")
+            .map(|_| text(dep, "publisher"))
+            .transpose()?;
+        if dep
+            .as_object()
+            .is_none_or(|o| o.len() != 2 + usize::from(publisher.is_some()))
+            || !valid_id(&format!("{}/{dep_name}", publisher.unwrap_or(author)))
             || !valid_version(text(dep, "version")?)
-            || !ids.insert(dep_id.clone())
-            || dep_id == id
+            || !ids.insert(dep_name)
+            || dep_name == name
         {
             return Err("invalid, duplicate or self package dependency".into());
         }

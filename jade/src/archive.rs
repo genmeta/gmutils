@@ -303,14 +303,19 @@ pub(crate) fn waz_convert(bytes: &[u8]) -> WazResult<Vec<u8>> {
     let mut dependencies_out = Vec::new();
     for dependency in dependencies {
         if dependency.as_object().is_none_or(|v| {
-            v.len() != 3
-                || !v.contains_key("author")
+            v.len() != 2 + usize::from(v.contains_key("author"))
                 || !v.contains_key("name")
                 || !v.contains_key("version")
         }) {
-            return Err("WAZ dependency requires author, name and version".into());
+            return Err(
+                "WAZ dependency requires name and version (legacy author is optional)".into(),
+            );
         }
-        dependencies_out.push(json!({"publisher":dependency["author"],"name":dependency["name"],"version":dependency["version"]}));
+        let mut item = json!({"name":dependency["name"],"version":dependency["version"]});
+        if let Some(author) = dependency.get("author") {
+            item["publisher"] = author.clone();
+        }
+        dependencies_out.push(item);
     }
     let has_frontend = document.get("frontend").is_some();
     let has_backend = document.get("backend").is_some();
@@ -389,7 +394,13 @@ pub(crate) fn waz_export(
         .as_array()
         .ok_or("missing dependencies")?
         .iter()
-        .map(|v| json!({"author":v["publisher"],"name":v["name"],"version":v["version"]}))
+        .map(|v| {
+            let mut item = json!({"name":v["name"],"version":v["version"]});
+            if let Some(author) = v.get("publisher") {
+                item["author"] = author.clone();
+            }
+            item
+        })
         .collect::<Vec<_>>();
     let mut manifest = json!({"format":"waz/1","package":package,"dependencies":dependencies});
     let mut files = std::collections::BTreeMap::new();

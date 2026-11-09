@@ -283,7 +283,7 @@ fn invalid_declarations_and_missing_artifacts_do_not_publish() {
         (
             "app",
             "dependencies=[]",
-            "dependencies=[{author='alice.dhttp.net',name='hello',version='01.0.0'}]",
+            "dependencies=[{name='hello',version='01.0.0'}]",
             "dependency",
         ),
         (
@@ -307,7 +307,7 @@ fn invalid_declarations_and_missing_artifacts_do_not_publish() {
         (
             "lib",
             "dependencies=[]",
-            "dependencies=[{author='alice.dhttp.net',name='hello',version='1.0.0'}]",
+            "dependencies=[{name='hello',version='1.0.0'}]",
             "dependency",
         ),
     ] {
@@ -809,9 +809,12 @@ fn rust_api_template_builds_without_developer_build_scripts() {
         "{}",
         String::from_utf8_lossy(&created.stderr)
     );
-    assert!(!app.join("api/build.rs").exists());
-    assert!(!app.join("api/build.sh").exists());
-    assert!(!app.join("api/src/sdk.rs").exists());
+    assert!(!app.join("wasm/build.rs").exists());
+    assert!(!app.join("wasm/build.sh").exists());
+    assert!(!app.join("wasm/src/sdk.rs").exists());
+    assert!(app.join("wasm/src/lib.rs").is_file());
+    assert!(app.join("wasm/Cargo.toml").is_file());
+    assert!(!app.join("api").exists());
     std::fs::write(
         app.join("jade.toml"),
         std::fs::read_to_string(app.join("jade.toml"))
@@ -861,7 +864,7 @@ fn rust_api_template_builds_without_developer_build_scripts() {
     assert_eq!(doc.len(), 1);
     assert!(doc[0]["paths"]["/whoami"]["get"].is_object());
     assert_eq!(doc[0]["paths"].as_object().unwrap().len(), 1);
-    let source = app.join("api/src/lib.rs");
+    let source = app.join("wasm/src/lib.rs");
     std::fs::write(
         &source,
         std::fs::read_to_string(&source)

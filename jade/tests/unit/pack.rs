@@ -35,7 +35,7 @@ async fn static_resources_exclude_local_dependency_projects_and_nested_manifests
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     std::fs::write(root.join("index.html"), "application").unwrap();
-    std::fs::write(root.join("jade.toml"), "[package]\nname='application'\nversion='1.0.0'\ndescription='Test'\nlicense='MIT'\n[[dependencies]]\nauthor='dev.alex.chen'\nname='child'\nversion='1.0.0'\npath='packages/child/config.toml'\n").unwrap();
+    std::fs::write(root.join("jade.toml"), "[package]\nname='application'\nversion='1.0.0'\ndescription='Test'\nlicense='MIT'\n[[dependencies]]\nname='child'\nversion='1.0.0'\npath='packages/child/config.toml'\n").unwrap();
     for directory in ["packages/child", "assets/indirect"] {
         let path = root.join(directory);
         std::fs::create_dir_all(path.join("build")).unwrap();

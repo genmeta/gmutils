@@ -37,8 +37,8 @@ pub(crate) enum IdentityUsage {
 impl IdentityUsage {
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::BothClientAndServer => "both client and server",
-            Self::ClientOnly => "client only",
+            Self::BothClientAndServer => "clientAuth, serverAuth",
+            Self::ClientOnly => "clientAuth",
         }
     }
 }

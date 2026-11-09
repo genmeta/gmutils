@@ -65,7 +65,7 @@ license = "Apache-2.0"
 无构建工程时查找根目录、web/、app/、public/ 的 index.html；仍未找到时才查找 dist/、web/dist/、app/dist/。
 同一阶段有多个候选时报错，旧构建产物不会覆盖源码选择。
 
-后端自动识别根目录的 Cargo.toml、api/Cargo.toml 或 lib/Cargo.toml；
+后端自动识别根目录的 Cargo.toml、wasm/Cargo.toml 或 lib/Cargo.toml；
 多个 Rust 工程时报错。无 Rust 源码时才使用根目录 lib.wasm，已有旧产物不影响源码构建。
 纯后端项目只需 package，不再配置 backend。
 

@@ -92,7 +92,8 @@ pub(super) async fn run(path: PathBuf, fresh: bool, machine: bool) -> Result<Val
                         let manifest: Value = serde_json::from_slice(&files["manifest.json"]).map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
                         if result["has_api"] == true {
                             let prefix = if crate::identity::is_standard_author(manifest["package"]["author"].as_str().unwrap_or("")) { "/std" } else { "" };
-                            result["api"] = format!("https://{host}{prefix}/{name}").into();
+                            let route = if prefix == "/std" && name == "message" { "comm/message" } else { &name };
+                            result["api"] = format!("https://{host}{prefix}/{route}").into();
                         }
                         if result["has_app"] == true {
                             result["app"] = format!("https://{host}/app/{name}/").into();
@@ -397,20 +398,17 @@ fn projects(root: &Path, host: &str) -> Result<(BTreeMap<String, PathBuf>, Vec<V
     }
     fn visit(
         path: &Path,
-        host: &str,
         active: &mut Vec<PathBuf>,
         locals: &mut BTreeMap<String, PathBuf>,
-        versions: &mut BTreeMap<String, (String, String)>,
+        versions: &mut BTreeMap<String, String>,
         remote: &mut BTreeMap<String, Value>,
     ) -> Result<()> {
         let (root, manifest) = crate::project::read(path)?;
         if active.contains(&root) {
             return Err(Error::new("E_CONFIG_INVALID", "Local dependency cycle"));
         }
-        let author =
-            crate::identity::normalize(manifest.package.author.as_deref().unwrap_or(host))?;
         let name = &manifest.package.name;
-        let identity = (author.clone(), manifest.package.version.clone());
+        let identity = manifest.package.version.clone();
         if let Some(previous) = versions.insert(name.clone(), identity.clone())
             && previous != identity
         {
@@ -430,8 +428,7 @@ fn projects(root: &Path, host: &str) -> Result<(BTreeMap<String, PathBuf>, Vec<V
         }
         active.push(root.clone());
         for dependency in &manifest.dependencies {
-            let author = crate::identity::normalize(&dependency.author)?;
-            let identity = (author.clone(), dependency.version.clone());
+            let identity = dependency.version.clone();
             if let Some(previous) = versions.insert(dependency.name.clone(), identity.clone())
                 && previous != identity
             {
@@ -445,22 +442,20 @@ fn projects(root: &Path, host: &str) -> Result<(BTreeMap<String, PathBuf>, Vec<V
                 let (_, local) = crate::project::read(&path)?;
                 if local.package.name != dependency.name
                     || local.package.version != dependency.version
-                    || crate::identity::normalize(local.package.author.as_deref().unwrap_or(host))?
-                        != author
                 {
                     return Err(Error::new(
                         "E_CONFIG_INVALID",
                         format!(
-                            "Local dependency {} does not match author/name/version",
+                            "Local dependency {} does not match name/version",
                             dependency.name
                         ),
                     ));
                 }
-                visit(&path, host, active, locals, versions, remote)?;
+                visit(&path, active, locals, versions, remote)?;
             } else {
                 remote.insert(
                     dependency.name.clone(),
-                    json!({"author":author,"name":dependency.name,"version":dependency.version}),
+                    json!({"name":dependency.name,"version":dependency.version}),
                 );
             }
         }
@@ -472,7 +467,6 @@ fn projects(root: &Path, host: &str) -> Result<(BTreeMap<String, PathBuf>, Vec<V
     let mut remote = BTreeMap::new();
     visit(
         root,
-        host,
         &mut Vec::new(),
         &mut locals,
         &mut BTreeMap::new(),
@@ -625,8 +619,7 @@ async fn install_from_host(
             }
             let installed: Value =
                 serde_json::from_slice(&bytes).map_err(|e| Error::new("E_INSTALL_FAILED", e))?;
-            if installed["author"] != dependency["author"]
-                || installed["name"] != dependency["name"]
+            if installed["name"] != dependency["name"]
                 || installed["version"] != dependency["version"]
             {
                 return Err(Error::new(

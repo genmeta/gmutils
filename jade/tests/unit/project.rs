@@ -81,7 +81,7 @@ fn ambiguous_frontends_fail_instead_of_choosing_one() {
 
 #[test]
 fn reads_backend_projects_without_a_backend_section() {
-    for source in [".", "api", "lib", "lib.wasm"] {
+    for source in [".", "wasm", "lib", "lib.wasm"] {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(
             root.path().join("jade.toml"),
@@ -131,15 +131,15 @@ fn ambiguous_backends_are_rejected_before_building() {
         "[package]\nname='hello'\nversion='1.0.0'\ndescription='Test'\nlicense='MIT'\n",
     )
     .unwrap();
-    std::fs::create_dir(root.path().join("api")).unwrap();
-    std::fs::write(root.path().join("api/Cargo.toml"), "").unwrap();
+    std::fs::create_dir(root.path().join("wasm")).unwrap();
+    std::fs::write(root.path().join("wasm/Cargo.toml"), "").unwrap();
     std::fs::write(root.path().join("Cargo.toml"), "").unwrap();
     let error = read(root.path()).unwrap_err().to_string();
     assert!(
         error.contains("Multiple Rust backend sources found"),
         "{error}"
     );
-    assert!(error.contains("Cargo.toml, api/Cargo.toml"), "{error}");
+    assert!(error.contains("Cargo.toml, wasm/Cargo.toml"), "{error}");
 }
 
 #[test]
@@ -160,4 +160,28 @@ fn package_manager_uses_bun_locks_and_rejects_ambiguous_locks() {
         "npm"
     );
     assert!(node_manager(path, &json!({"packageManager":"unsupported@1"})).is_err());
+}
+
+#[test]
+fn dependencies_are_exact_names_without_authors_or_published_paths() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("index.html"), "app").unwrap();
+    let manifest = "[package]\nname='parent'\nversion='1.0.0'\ndescription='Test'\nlicense='MIT'\n[[dependencies]]\nname='child'\nversion='2.0.0'\npath='../child'\n";
+    std::fs::write(root.path().join("jade.toml"), manifest).unwrap();
+    let (_, config) = read(root.path()).unwrap();
+    assert_eq!(
+        config.metadata("alice.dhttp.net").unwrap().1["dependencies"],
+        serde_json::json!([{"name":"child","version":"2.0.0"}])
+    );
+    std::fs::write(
+        root.path().join("jade.toml"),
+        format!("{manifest}author='alice.dhttp.net'\n"),
+    )
+    .unwrap();
+    assert!(
+        read(root.path())
+            .unwrap_err()
+            .message
+            .contains("unknown field")
+    );
 }

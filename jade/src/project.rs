@@ -39,7 +39,6 @@ pub(crate) struct Package {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Dependency {
-    pub(crate) author: String,
     pub(crate) name: String,
     pub(crate) version: String,
     pub(crate) path: Option<PathBuf>,
@@ -156,7 +155,7 @@ fn discover_backend(root: &Path) -> Result<Option<PathBuf>> {
     let mut candidates = Vec::new();
     for (marker, source) in [
         ("Cargo.toml", "."),
-        ("api/Cargo.toml", "api"),
+        ("wasm/Cargo.toml", "wasm"),
         ("lib/Cargo.toml", "lib"),
     ] {
         match std::fs::symlink_metadata(root.join(marker)) {
@@ -177,7 +176,7 @@ fn discover_backend(root: &Path) -> Result<Option<PathBuf>> {
                     .join(", ")
             ),
         )
-        .hint("Keep one Rust backend source: Cargo.toml, api/Cargo.toml or lib/Cargo.toml"));
+        .hint("Keep one Rust backend source: Cargo.toml, wasm/Cargo.toml or lib/Cargo.toml"));
     }
     if let Some((_, source)) = candidates.pop() {
         return Ok(Some(source));
@@ -198,9 +197,15 @@ impl Manifest {
         if let Some(repository) = &package.repository {
             wapm["repository"] = repository.clone().into();
         }
-        let dependencies = self.dependencies.iter().map(|dep| Ok(json!({
-            "publisher":crate::identity::normalize(&dep.author)?,"name":dep.name,"version":dep.version
-        }))).collect::<Result<Vec<_>>>()?;
+        let dependencies = self
+            .dependencies
+            .iter()
+            .map(|dep| {
+                json!({
+                    "name":dep.name,"version":dep.version
+                })
+            })
+            .collect::<Vec<_>>();
         let mut annotation = json!({"title":package.title.as_ref().unwrap_or(&package.name),
             "changelog":package.release_notes.clone().unwrap_or_else(||format!("Release {}",package.version)),
             "dependencies":dependencies});
@@ -816,9 +821,14 @@ pub(crate) fn validate_component(
         {
             return Err(invalid(&format!("Unsupported OpenAPI path: {path}")));
         }
+        let route = if name == "message" {
+            "comm/message"
+        } else {
+            name
+        };
         if crate::identity::is_standard_author(author)
-            && path != &format!("/{name}")
-            && !path.starts_with(&format!("/{name}/"))
+            && path != &format!("/{route}")
+            && !path.starts_with(&format!("/{route}/"))
         {
             return Err(invalid(
                 "Standard API paths must stay under their package name",

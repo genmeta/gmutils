@@ -50,7 +50,7 @@ source. The existing `release-notes` setting remains a short release summary.
 
 All shown package fields are required; `repository` is an optional HTTPS URL.
 Author is a canonical DHTTP identity, name is a package short name, and version is
-`MAJOR.MINOR.PATCH`. Dependencies use exact `{ "author", "name", "version" }`
+`MAJOR.MINOR.PATCH`. Dependencies use exact `{ "name", "version" }`
 objects, with at most 100 entries. The optional `backend` and `frontend` fields
 must match the actual runtime files and use the fixed paths shown above. Unknown
 manifest and package fields are rejected.
