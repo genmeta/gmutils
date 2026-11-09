@@ -1958,7 +1958,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta"
-version = "0.9.1-preview.1"
+version = "0.9.1"
 dependencies = [
  "bytes",
  "clap",
@@ -1996,7 +1996,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-access"
-version = "0.5.0-preview.5"
+version = "0.5.0"
 dependencies = [
  "axum",
  "clap",
@@ -2022,7 +2022,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-curl"
-version = "0.8.0-preview.5"
+version = "0.8.0"
 dependencies = [
  "async-compression",
  "bytes",
@@ -2049,7 +2049,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-discover"
-version = "0.5.0-preview.4"
+version = "0.5.0"
 dependencies = [
  "clap",
  "dhttp",
@@ -2065,7 +2065,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-doctor"
-version = "0.5.0-preview.4"
+version = "0.5.0"
 dependencies = [
  "clap",
  "genmeta-nat",
@@ -2076,7 +2076,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-identity"
-version = "0.5.1-preview.1"
+version = "0.5.1"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -2120,7 +2120,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nat"
-version = "0.6.0-preview.4"
+version = "0.6.0"
 dependencies = [
  "clap",
  "dhttp",
@@ -2138,7 +2138,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-nslookup"
-version = "0.6.0-preview.4"
+version = "0.6.0"
 dependencies = [
  "clap",
  "dhttp",
@@ -2155,7 +2155,7 @@ dependencies = [
 
 [[package]]
 name = "genmeta-proxy"
-version = "0.5.0-preview.4"
+version = "0.5.0"
 dependencies = [
  "bytes",
  "clap",
@@ -2771,7 +2771,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jade"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.23.1",
  "bytes",

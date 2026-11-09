@@ -1,5 +1,12 @@
 # Jade
 
+Dependencies contain only an exact `name` and `version`; local Jade declarations
+may also set `path`, which is omitted from the release. The store resolves each
+package name to its unique author. A name stays reserved after withdrawal.
+Cross-author name claims return `409 package_name_conflict`; every repeated
+version upload, including identical bytes, returns `409 package_version_conflict`.
+Historical signed dependencies with authors remain readable without rewriting packages.
+
 Create a Pishoo application, build it, run it locally, then sign and publish its
 `.waz` package. This guide uses the example name `alex.chen` (Alex Chen); replace it with your own name.
 
@@ -28,7 +35,7 @@ developer request alone is insufficient. Local run needs no developer certificat
 or subscription.
 
 Open the App URL printed by Jade. Edit `web/index.html`, `web/src/main.js`,
-`web/src/style.css` and `api/src/lib.rs`; Jade rebuilds on changes.
+`web/src/style.css` and `wasm/src/lib.rs`; Jade rebuilds on changes.
 Ctrl+C removes this run's local code and keeps development data.
 
 The default template includes an English welcome page with a Chinese language

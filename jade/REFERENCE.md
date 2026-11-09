@@ -139,19 +139,17 @@ calls therefore use the same paths as an installed application.
 
 ```toml
 [[dependencies]]
-author = "dev.genmeta.tech.dhttp.net"
 name = "profile"
 version = "0.3.0"
 path = "../profile"
 
 [[dependencies]]
-author = "dev.genmeta.tech.dhttp.net"
 name = "message"
 version = "0.2.1"
 ```
 
 Dependencies with `path` are built and watched locally, recursively. Paths resolve
-relative to their declaring `jade.toml`; local author/name/version must match.
+relative to their declaring `jade.toml`; local name/version must match.
 Dependencies without `path` are installed from the store at the exact declared
 version. Conflicting versions, dependency cycles and duplicate local names fail
 explicitly. `path` is omitted from release metadata. Build and publish do not
@@ -189,7 +187,7 @@ credentials or record an author. The default template is `fullstack`, with both 
 a Rust API. Use `--template static`, `web` or `api` to generate only the files you need.
 
 The `api` and `fullstack` starters include GET `/whoami`
-handlers in `api/src/lib.rs`. The default fullstack welcome page calls
+handlers in `wasm/src/lib.rs`. The default fullstack welcome page calls
 `/<package-name>/whoami` and displays the verified visitor identity, or `anonymous`.
 It defaults to English, remembers manual English/Chinese language choices, and
 includes mobile layouts, loading and error states, and retry. Displayed identity
@@ -224,7 +222,7 @@ an error. Source takes precedence over existing build output. No `[frontend]`
 or `[backend]` section is accepted.
 
 Jade automatically finds a Rust backend through `Cargo.toml` at the project root,
-`api/Cargo.toml` or `lib/Cargo.toml`. Multiple Rust projects are an error. When no
+`wasm/Cargo.toml` or `lib/Cargo.toml`. Multiple Rust projects are an error. When no
 Rust source is present, Jade uses a prebuilt `lib.wasm` in the project root;
 existing `lib.wasm` output is ignored when building source.
 
@@ -250,12 +248,11 @@ target-specific configuration.
 
 Runtime artifact paths stay within the project; Rust and frontend source
 dependencies are managed by Cargo/npm. Runtime package dependencies use exact
-author, name and version. For local development, an optional `path` resolves
+name and version. For local development, an optional `path` resolves
 relative to the declaring `jade.toml`, including nested dependencies:
 
 ```toml
 [[dependencies]]
-author = "dev.genmeta.tech.dhttp.net"
 name = "message"
 version = "1.2.3"
 path = "../message"
@@ -264,11 +261,11 @@ path = "../message"
 `jade run` builds and watches dependencies with `path`; dependencies without it
 are installed from the store at the declared version. Local package coordinates
 must match. The path is omitted from release metadata; signed releases retain the
-exact author, name and version dependency.
+exact name and version dependency. The store resolves the unique author.
 
 Backend discovery replaces the old `[backend]` and `[backend.host]` sections;
 remove them from existing projects. Host capabilities need no purpose declarations.
-Public API, store metadata and signed ZIP dependencies use `author`.
+The package itself retains its actual `author`. New dependency entries contain only `name` and `version`; readers preserve historical signed dependencies with authors.
 
 ## Write a Rust API
 
@@ -276,12 +273,12 @@ Public API, store metadata and signed ZIP dependencies use `author`.
 jade create service --template api
 cd service
 rustup target add wasm32-wasip2
-# Edit api/src/lib.rs; configure package.author or your DHTTP default identity.
+# Edit wasm/src/lib.rs; configure package.author or your DHTTP default identity.
 jade build
 jade publish build/service-0.1.0.waz
 ```
 
-The generated `api/src/lib.rs` uses `wasip2` directly for the WASI HTTP entry
+The generated `wasm/src/lib.rs` uses `wasip2` directly for the WASI HTTP entry
 point, `serde_json` for JSON and a pinned Pishoo SDK for caller identity. It implements
 GET `/whoami` without a local SDK module or custom request/response wrappers.
 
@@ -367,8 +364,9 @@ under `<author profile>/trust/code-signing/<issuer DER SHA256>.crl`. No list mea
 current revocation is unknown; a known revoked certificate is refused, and a stale
 list requires an independently distributed replacement. Registry records a portable signed publication receipt for historical installation.
 
-Publication returns `published` or `already-published` for identical content.
-Different content at the same version is a conflict. An uncertain upload performs
+Publication returns `published` for a new version. Every repeated version upload,
+including identical bytes, returns a conflict. Package names remain reserved by
+their first successful author, including after withdrawal. An uncertain upload performs
 one read-only reconciliation; if unconfirmed it reports
 `E_PUBLISH_OUTCOME_UNKNOWN`. Upload writes are not automatically repeated.
 

@@ -104,17 +104,17 @@ pub(crate) fn format_info(summary: &LocalIdentitySummary, now: i64, ansi: bool) 
         marker(summary),
         compact_identity_label(summary)
     )];
+    let mut usages = Vec::new();
     if let Some(usage) = summary.usage {
-        lines.push(format!("  usage: {}", usage.label()));
+        usages.push(usage.label());
     }
-    lines.push(format!(
-        "  code signing: {}",
-        match summary.code_signing {
-            Some(true) => "yes",
-            Some(false) => "no",
-            None => "unknown",
-        }
-    ));
+    if summary.code_signing == Some(true) {
+        usages.push("codeSigning");
+    }
+    if usages.is_empty() {
+        usages.push("unknown");
+    }
+    lines.push(format!("  usage: {}", usages.join(", ")));
     if let Some(sequence) = summary.sequence {
         lines.push(format!("  sequence: {sequence}"));
     }

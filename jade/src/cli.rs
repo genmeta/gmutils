@@ -179,9 +179,9 @@ fn create(path: PathBuf, name: Option<String>, template: Template) -> Result<Val
         Template::Api => {}
     }
     if matches!(template, Template::Api | Template::Fullstack) {
-        fs::create_dir_all(root.join("api/src"))?;
+        fs::create_dir_all(root.join("wasm/src"))?;
         fs::write(
-            root.join("api/Cargo.toml"),
+            root.join("wasm/Cargo.toml"),
             format!(
                 r#"[package]
 name = "{name}"
@@ -202,10 +202,10 @@ serde_json = "1"
             ),
         )?;
         fs::write(
-            root.join("api/src/lib.rs"),
-            include_str!("../templates/api/src/lib.rs"),
+            root.join("wasm/src/lib.rs"),
+            include_str!("../templates/wasm/src/lib.rs"),
         )?;
-        ignore.push_str("/api/target/\n");
+        ignore.push_str("/wasm/target/\n");
     }
     fs::write(
         root.join("jade.toml"),
@@ -217,7 +217,7 @@ serde_json = "1"
         readme.push_str("Frontend: `web/index.html`, `web/src/main.js` and `web/src/style.css`. Requires Node.js and npm.\n\n");
     }
     if matches!(template, Template::Api | Template::Fullstack) {
-        readme.push_str("API: `api/src/lib.rs`. Requires Rust with `wasm32-wasip2` installed. Keep `ROUTES` in sync with the handlers.\n\n");
+        readme.push_str("API: `wasm/src/lib.rs`. Requires Rust with `wasm32-wasip2` installed. Keep `ROUTES` in sync with the handlers.\n\n");
     }
     readme.push_str("## Develop locally\n\nStart Pishoo, then run:\n\n```sh\njade run\n```\n\nRun and build both use `package.author` when configured. Otherwise they select the `dev` child of your DHTTP default identity, retaining an existing development child. For example, a default of `alex.chen` selects `dev.alex.chen`; a main name `dev.wang` selects `dev.dev.wang`. If neither author nor default is configured, Jade asks you to configure one. It never invents a fallback name. The selected identity needs ordinary hosting credentials; follow Jade's setup hint if they are missing. No developer certificate or subscription is needed. Changes rebuild automatically; Ctrl+C removes local code and keeps data.\n\nThe visitor accessing the application can differ from its author and host. Local run does not generate or change the release WAZ.\n\n");
     if matches!(

@@ -12,7 +12,7 @@ use tracing_indicatif::span_ext::IndicatifSpanExt;
 
 use crate::package::{
     PACKAGE_LIMIT, digest, inspect_package, owner_hash, package_certificates, payload_digest,
-    read_snapshot, signature_envelope, text, version_path,
+    read_snapshot, text, version_path,
 };
 
 const STORE_NAME: &str = match option_env!("PISHOO_REGISTRY_NAME") {
@@ -538,10 +538,10 @@ async fn get(
 fn http_failure(response: &http::Response<Vec<u8>>) -> Whatever {
     let hint = match response.status() {
         StatusCode::CONFLICT => {
-            " Increase the package version; existing versions cannot be overwritten."
+            " Package names belong to their first author; use a new version for an existing package or a different name for another author."
         }
         StatusCode::UNPROCESSABLE_ENTITY | StatusCode::BAD_REQUEST => {
-            " Publish any missing exact Lib dependencies first."
+            " Publish any missing exact package dependencies first."
         }
         StatusCode::GONE => " This version remains withdrawn; retrying does not restore it.",
         _ => "",
@@ -598,48 +598,11 @@ fn release_metadata(
     Ok(release)
 }
 
-async fn confirm_release(
-    endpoint: &dhttp::Endpoint,
-    release: &Value,
-    bytes: &[u8],
-    metadata: &Value,
-    owner: &str,
-    first: bool,
-) -> Result<(), Whatever> {
-    if release["package_sha256"] == digest(bytes) {
-        if release["size"].as_u64() != Some(bytes.len() as u64) {
-            whatever!("saved package size mismatch");
-        }
-        return Ok(());
-    }
-    if first {
-        whatever!("first publication response package digest differs from uploaded snapshot");
-    }
-    let response = get(endpoint, text(release, "download_path")?, true).await?;
-    if response.status() != StatusCode::OK {
-        return Err(http_failure(&response));
-    }
-    let saved = response.body();
-    if digest(saved) != release["package_sha256"]
-        || release["size"].as_u64() != Some(saved.len() as u64)
+fn confirm_release(release: &Value, bytes: &[u8]) -> Result<(), Whatever> {
+    if release["package_sha256"] != digest(bytes)
+        || release["size"].as_u64() != Some(bytes.len() as u64)
     {
-        whatever!("downloaded saved package digest or size differs from trusted store metadata");
-    }
-    let saved_metadata = inspect_package(saved)
-        .await
-        .map_err(|e| Whatever::without_source(e.to_string()))?;
-    for key in ["id", "author", "name", "version"] {
-        if saved_metadata[key] != metadata[key] {
-            whatever!("saved package identity differs from upload");
-        }
-    }
-    if signature_envelope(saved)?["certificates"] != release["signer_certificates"]
-        || owner_hash(&package_certificates(saved)?)? != owner
-    {
-        whatever!("saved signer differs from trusted store proof or author owner_hash");
-    }
-    if payload_digest(saved)? != payload_digest(bytes)? {
-        whatever!("this version already has different content; increase the package version");
+        whatever!("saved package differs from the complete uploaded snapshot");
     }
     Ok(())
 }
@@ -660,7 +623,7 @@ async fn reconcile(
         return Err(http_failure(&response));
     }
     let release = release_metadata(&response, metadata, owner)?;
-    confirm_release(endpoint, &release, bytes, metadata, owner, false).await?;
+    confirm_release(&release, bytes)?;
     Ok(success(&release, "published", &payload_digest(bytes)?))
 }
 
@@ -685,33 +648,23 @@ async fn publish(
     )
     .await;
     let uncertain = match response {
-        Ok(response) if matches!(response.status(), StatusCode::OK | StatusCode::CREATED) => {
+        Ok(response) if response.status() == StatusCode::CREATED => {
             let confirmed = async {
                 let release = release_metadata(&response, metadata, owner)?;
-                confirm_release(
-                    endpoint,
-                    &release,
-                    bytes,
-                    metadata,
-                    owner,
-                    response.status() == StatusCode::CREATED,
-                )
-                .await?;
-                Ok::<_, Whatever>(success(
-                    &release,
-                    if response.status() == StatusCode::CREATED {
-                        "published"
-                    } else {
-                        "already-published"
-                    },
-                    &payload_digest(bytes)?,
-                ))
+                confirm_release(&release, bytes)?;
+                Ok::<_, Whatever>(success(&release, "published", &payload_digest(bytes)?))
             }
             .await;
             match confirmed {
                 Ok(value) => return Ok(value),
                 Err(error) => error,
             }
+        }
+        Ok(response) if response.status() == StatusCode::OK => {
+            return Err(Error::new(
+                "E_VERSION_CONFLICT",
+                "This package version has already been uploaded",
+            ));
         }
         Ok(response) if !response.status().is_server_error() => {
             let code = if response.status() == StatusCode::CONFLICT {

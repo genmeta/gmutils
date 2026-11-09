@@ -841,7 +841,7 @@ async fn host_exchange(
 mod tests;
 
 fn require_install_host(headers: &http::HeaderMap) -> Result<(), Whatever> {
-    let minimum = semver::Version::parse("0.9.1-preview.1").expect("valid minimum Pishoo version");
+    let minimum = semver::Version::parse("0.9.1").expect("valid minimum Pishoo version");
     let reported = headers
         .get("pishoo-version")
         .and_then(|value| value.to_str().ok())
@@ -849,7 +849,7 @@ fn require_install_host(headers: &http::HeaderMap) -> Result<(), Whatever> {
     let version = semver::Version::parse(reported).ok();
     ensure_whatever!(
         version.is_some_and(|version| version >= minimum),
-        "Package installation requires Pishoo 0.9.1-preview.1 or newer; the selected service reports {reported}. Upgrade Pishoo and restart its service before installing or updating packages"
+        "Package installation requires Pishoo 0.9.1 or newer; the selected service reports {reported}. Upgrade Pishoo and restart its service before installing or updating packages"
     );
     Ok(())
 }

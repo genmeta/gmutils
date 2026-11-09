@@ -946,6 +946,10 @@ fn installation_requires_a_host_with_developer_author_and_migration_support() {
         Some("0.9.1-beta.1"),
         Some("0.9.1-preview"),
         Some("0.9.1-preview.0"),
+        Some("0.9.1-preview.1"),
+        Some("0.9.1-preview.1+build.2"),
+        Some("0.9.1-preview.2"),
+        Some("0.9.1-preview.10"),
         Some("invalid"),
     ] {
         let mut headers = http::HeaderMap::new();
@@ -955,10 +959,6 @@ fn installation_requires_a_host_with_developer_author_and_migration_support() {
         assert!(require_install_host(&headers).is_err());
     }
     for version in [
-        "0.9.1-preview.1",
-        "0.9.1-preview.1+build.2",
-        "0.9.1-preview.2",
-        "0.9.1-preview.10",
         "0.9.1",
         "0.9.1+build.2",
         "0.9.2-preview.1",

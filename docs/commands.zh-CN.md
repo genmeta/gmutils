@@ -1,6 +1,6 @@
 # gmutils 命令使用指南
 
-本文按当前仓库源码整理，核对日期：2026-11-04。主程序 `genmeta` 的版本为 `0.9.1-preview.1`，独立项目 `jade` 的版本为 `0.1.0`，各工具子模块有各自的版本号。安装方式见 [README](../README.md#install) 和 [Jade](../jade/README.md)。
+本文按当前仓库源码整理，核对日期：2026-11-06。主程序 `genmeta` 的版本为 `0.9.1`，独立项目 `jade` 的版本为 `0.1.1`，各工具子模块有各自的版本号。安装方式见 [README](../README.md#install) 和 [Jade](../jade/README.md)。
 
 `gmutils` 是工具集名称，统一命令入口是：
 
@@ -405,7 +405,7 @@ jade create "My Project" --name my-project
 
 默认模板为 `fullstack`，同时生成前端和后端 API；仅需静态页面、前端或后端时，分别指定 `--template static`、`web` 或 `api`。
 
-`api` 和 `fullstack` 模板的 `api/src/lib.rs` 包含 GET `/whoami`。默认全栈模板提供类似 whoami 的身份欢迎页，请求 `/<包名>/whoami` 展示访问者身份，匿名访问显示 `anonymous`；默认英文，支持手动切换中英文、语言偏好记忆、手机布局和失败重试。页面展示的名字省略 `.dhttp.net` 后缀，API 仍返回完整的已验证身份。身份通过固定版本的 Pishoo SDK 从已认证连接读取，不读取身份请求头，响应禁止缓存。修改 `web/index.html`、`web/src/main.js` 和 `web/src/style.css` 即可定制页面。纯前端 `web` 模板使用相同设计，不请求 API。以下示例从新目录创建全栈应用（`alex.chen` 替换为自己的身份）：
+`api` 和 `fullstack` 模板的 `wasm/src/lib.rs` 包含 GET `/whoami`。默认全栈模板提供类似 whoami 的身份欢迎页，请求 `/<包名>/whoami` 展示访问者身份，匿名访问显示 `anonymous`；默认英文，支持手动切换中英文、语言偏好记忆、手机布局和失败重试。页面展示的名字省略 `.dhttp.net` 后缀，API 仍返回完整的已验证身份。身份通过固定版本的 Pishoo SDK 从已认证连接读取，不读取身份请求头，响应禁止缓存。修改 `web/index.html`、`web/src/main.js` 和 `web/src/style.css` 即可定制页面。纯前端 `web` 模板使用相同设计，不请求 API。以下示例从新目录创建全栈应用（`alex.chen` 替换为自己的身份）：
 
 ```sh
 jade create ./hello-api
@@ -457,7 +457,7 @@ license = "Apache-2.0"
 
 有有效 build 脚本的前端工程会先通过 npm/pnpm/Bun 安装依赖（包含 Vite 等开发依赖），再运行 build 脚本；每次构建都会同步依赖，无需手动执行 npm install。包管理器优先取 `packageManager`，其次按锁文件识别，均未提供时使用 npm。构建脚本须将资源输出到前端工程目录下的 `dist/`。无 build 脚本时直接收集包含 `index.html` 的静态目录。Node.js、包管理器和 Rust 工具链仍需预先安装。
 
-Rust 后端自动从根目录的 `Cargo.toml`、`api/Cargo.toml` 或 `lib/Cargo.toml` 发现，多个 Rust 工程会报错。没有 Rust 源码时，使用根目录预编译的 `lib.wasm`；源码旁的旧产物不参与选择。安装 `wasm32-wasip2` 目标后，在 `api/src/lib.rs` 中直接使用 `wasip2` 实现 HTTP 入口和业务逻辑，修改路由时同步更新文件末尾的 `ROUTES` 元数据。Jade 调用 Cargo，并根据路由元数据生成和嵌入 OpenAPI，无需另写构建脚本，也无需 `[backend]` 或宿主能力用途声明。完整配置见 [Jade 参考](../jade/REFERENCE.md)。
+Rust 后端自动从根目录的 `Cargo.toml`、`wasm/Cargo.toml` 或 `lib/Cargo.toml` 发现，多个 Rust 工程会报错。没有 Rust 源码时，使用根目录预编译的 `lib.wasm`；源码旁的旧产物不参与选择。安装 `wasm32-wasip2` 目标后，在 `wasm/src/lib.rs` 中直接使用 `wasip2` 实现 HTTP 入口和业务逻辑，修改路由时同步更新文件末尾的 `ROUTES` 元数据。Jade 调用 Cargo，并根据路由元数据生成和嵌入 OpenAPI，无需另写构建脚本，也无需 `[backend]` 或宿主能力用途声明。完整配置见 [Jade 参考](../jade/REFERENCE.md)。
 
 所有 Jade 命令均不接受 `--id`。run/build 使用相同身份规则：已配置 `package.author` 时使用该实际名字；否则选择 DHTTP 默认主名字的 dev 子名字，默认已经是开发子名字则原样使用。两者都没有时返回 `E_IDENTITY_REQUIRED`，不扫描本地凭据或使用硬编码兜底。默认 `dev.wang` 对应 `dev.dev.wang`。作者接受短名／全名，不自动添加或剥离 `dev.`。例如在 `[package]` 中设置 `author = "dev.alex.chen"`，即可固定作者和本地宿主。凭据使用 dhttp-home 的目录约定，支持 `DHTTP_HOME`。build 仅把作者写入 WAZ，不回写 jade.toml；run 不生成或修改正式 WAZ。访问者由客户端独立选择身份。
 

@@ -141,6 +141,15 @@ fn watcher_tracks_contents_and_ignores_build_outputs_and_dependencies() {
     assert_eq!(source_fingerprint(root.path()).unwrap(), before);
     std::fs::write(root.path().join("public/index.html"), "second").unwrap();
     assert_ne!(source_fingerprint(root.path()).unwrap(), before);
+    std::fs::create_dir_all(root.path().join("wasm/src")).unwrap();
+    std::fs::write(root.path().join("wasm/src/lib.rs"), "first").unwrap();
+    let before = source_fingerprint(root.path()).unwrap();
+    std::fs::write(root.path().join("wasm/src/lib.rs"), "second").unwrap();
+    assert_ne!(source_fingerprint(root.path()).unwrap(), before);
+    let before = source_fingerprint(root.path()).unwrap();
+    std::fs::create_dir_all(root.path().join("wasm/target")).unwrap();
+    std::fs::write(root.path().join("wasm/target/output.wasm"), "generated").unwrap();
+    assert_eq!(source_fingerprint(root.path()).unwrap(), before);
 }
 
 #[test]
@@ -232,7 +241,7 @@ async fn local_dependencies_resolve_from_each_manifest_and_paths_stay_out_of_pac
         project(path);
     }
     let app_manifest = std::fs::read_to_string(app.join("jade.toml")).unwrap();
-    std::fs::write(app.join("jade.toml"), format!("{app_manifest}\n[[dependencies]]\nauthor='std.dhttp.net'\nname='profile'\nversion='1.0.0'\npath='../profile'\n\n[[dependencies]]\nauthor='std.dhttp.net'\nname='message'\nversion='0.2.1'\n")).unwrap();
+    std::fs::write(app.join("jade.toml"), format!("{app_manifest}\n[[dependencies]]\nname='profile'\nversion='1.0.0'\npath='../profile'\n\n[[dependencies]]\nname='message'\nversion='0.2.1'\n")).unwrap();
     let local_manifest = std::fs::read_to_string(local.join("jade.toml"))
         .unwrap()
         .replace("name='hello'", "name='profile'\nauthor='std.dhttp.net'");
@@ -240,10 +249,7 @@ async fn local_dependencies_resolve_from_each_manifest_and_paths_stay_out_of_pac
     let (locals, remote) = projects(&app.join("jade.toml"), "dev.zero.ai.dhttp.net").unwrap();
     assert_eq!(locals.len(), 2);
     assert_eq!(locals["profile"], local.canonicalize().unwrap());
-    assert_eq!(
-        remote,
-        vec![json!({"author":"std.dhttp.net","name":"message","version":"0.2.1"})]
-    );
+    assert_eq!(remote, vec![json!({"name":"message","version":"0.2.1"})]);
     let before = graph_fingerprint(&locals).unwrap();
     std::fs::write(local.join("public/index.html"), "local dependency changed").unwrap();
     assert_ne!(before, graph_fingerprint(&locals).unwrap());
@@ -255,7 +261,7 @@ async fn local_dependencies_resolve_from_each_manifest_and_paths_stay_out_of_pac
             .as_array()
             .unwrap()
             .iter()
-            .all(|dep| dep.get("path").is_none())
+            .all(|dep| dep.get("path").is_none() && dep.get("author").is_none())
     );
     assert!(!String::from_utf8_lossy(&files["manifest.json"]).contains("../profile"));
     std::fs::write(
@@ -273,14 +279,18 @@ fn dependency_cycles_and_conflicting_versions_are_rejected() {
     let root = tempfile::tempdir().unwrap();
     project(root.path());
     let manifest = std::fs::read_to_string(root.path().join("jade.toml")).unwrap();
-    std::fs::write(root.path().join("jade.toml"), format!("{manifest}\n[[dependencies]]\nauthor='dev.zero.ai'\nname='hello'\nversion='1.0.0'\npath='.'\n")).unwrap();
+    std::fs::write(
+        root.path().join("jade.toml"),
+        format!("{manifest}\n[[dependencies]]\nname='hello'\nversion='1.0.0'\npath='.'\n"),
+    )
+    .unwrap();
     assert!(
         projects(root.path(), "dev.zero.ai.dhttp.net")
             .unwrap_err()
             .message
-            .contains("cycle")
+            .contains("dependency")
     );
-    std::fs::write(root.path().join("jade.toml"), format!("{manifest}\n[[dependencies]]\nauthor='std.dhttp.net'\nname='message'\nversion='0.2.1'\n\n[[dependencies]]\nauthor='std.dhttp.net'\nname='message'\nversion='0.3.0'\n")).unwrap();
+    std::fs::write(root.path().join("jade.toml"), format!("{manifest}\n[[dependencies]]\nname='message'\nversion='0.2.1'\n\n[[dependencies]]\nname='message'\nversion='0.3.0'\n")).unwrap();
     assert!(projects(root.path(), "dev.zero.ai.dhttp.net").is_err());
 }
 
@@ -342,7 +352,7 @@ async fn real_http3_installs_exact_dependencies_using_ordinary_identity_credenti
         .unwrap(),
     );
     let incorrect = Arc::new(AtomicBool::new(false));
-    let dependency = json!({"author":"std.dhttp.net","name":"message","version":"0.2.1"});
+    let dependency = json!({"name":"message","version":"0.2.1"});
     let listener = endpoint
         .listen(
             dhttp::Scope::Loopback.into(),

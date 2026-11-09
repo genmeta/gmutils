@@ -110,10 +110,10 @@ genmeta curl --id alice.smith -f \
 
 ```sh
 # alice.smith 允许对方向自己发消息；在 alice.smith 的设备执行
-genmeta access --id alice.smith /std/message allow bob.jones.dhttp.net --method PUT
+genmeta access --id alice.smith /std/comm/message allow bob.jones.dhttp.net --method PUT
 
 # 对方允许 alice.smith 向自己发消息；在对方的设备执行
-genmeta access --id bob.jones /std/message allow alice.smith.dhttp.net --method PUT
+genmeta access --id bob.jones /std/comm/message allow alice.smith.dhttp.net --method PUT
 ```
 
 实际能力及其接口以各自的 `GET /std/acl/permissions` 返回值为准。不要把安装成功、申请已排队、联系人批准或单向授权当作双向聊天已完成。

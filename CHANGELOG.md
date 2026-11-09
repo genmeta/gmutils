@@ -1,6 +1,15 @@
 # Changelog
 
-## [Unreleased]
+## [0.9.1] - Unreleased
+
+- Generate new Rust API/fullstack projects under `wasm/`; detect existing `wasm/`, `api/` and `lib/` layouts without changing frontend API modules.
+- Release the launcher and utility crates with their independent stable versions; bundle Jade 0.1.1.
+- Declare new Jade/WAZ dependencies using exact name/version and optional local path; preserve package authors and historical signed packages.
+- Treat every repeated upload as a version conflict; reconcile uncertain results only against the exact saved bytes.
+- Display certificate clientAuth/serverAuth/codeSigning usages together.
+- Require Pishoo 0.9.1 for installation with the current package contract.
+- Carry forward preview.1 developer identity setup, unified ssl credentials, local jade run, unsigned build and explicit signing/publication.
+
 
 ## [0.9.1-preview.1] - 2026-11-04
 
