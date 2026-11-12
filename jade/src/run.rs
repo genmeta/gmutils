@@ -92,8 +92,16 @@ pub(super) async fn run(path: PathBuf, fresh: bool, machine: bool) -> Result<Val
                         let manifest: Value = serde_json::from_slice(&files["manifest.json"]).map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
                         if result["has_api"] == true {
                             let prefix = if crate::identity::is_standard_author(manifest["package"]["author"].as_str().unwrap_or("")) { "/std" } else { "" };
-                            let route = if prefix == "/std" && name == "message" { "comm/message" } else { &name };
-                            result["api"] = format!("https://{host}{prefix}/{route}").into();
+                            let document = wasmparser::Parser::new(0).parse_all(&files["backend.wasm"])
+                                .find_map(|payload| match payload {
+                                    Ok(wasmparser::Payload::CustomSection(section)) if section.name() == "pishoo:openapi" => Some(section.data()),
+                                    _ => None,
+                                }).ok_or_else(|| Error::new("E_ARTIFACT_INVALID", "Missing backend OpenAPI"))?;
+                            let document: Value = serde_json::from_slice(document).map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
+                            let path = document["paths"].as_object().and_then(|paths| paths.keys().next())
+                                .ok_or_else(|| Error::new("E_ARTIFACT_INVALID", "Missing API path"))?;
+                            let base = if prefix == "/std" { "/std".to_owned() } else { format!("/{name}") };
+                            result["api"] = format!("https://{host}{base}{path}").into();
                         }
                         if result["has_app"] == true {
                             result["app"] = format!("https://{host}/app/{name}/").into();

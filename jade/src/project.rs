@@ -754,7 +754,7 @@ pub(crate) fn validate_component(
     bytes: &[u8],
     version: &str,
     author: &str,
-    name: &str,
+    _name: &str,
 ) -> Result<()> {
     let invalid = |message: &str| Error::new("E_ARTIFACT_INVALID", message);
     if bytes.get(..8) != Some(b"\0asm\x0d\0\x01\0") {
@@ -821,17 +821,22 @@ pub(crate) fn validate_component(
         {
             return Err(invalid(&format!("Unsupported OpenAPI path: {path}")));
         }
-        let route = if name == "message" {
-            "comm/message"
-        } else {
-            name
-        };
         if crate::identity::is_standard_author(author)
-            && path != &format!("/{route}")
-            && !path.starts_with(&format!("/{route}/"))
+            && [
+                "/std",
+                "/sys",
+                "/acl",
+                "/contact",
+                "/contacts",
+                "/forward",
+                "/file",
+                "/pishoo",
+            ]
+            .iter()
+            .any(|prefix| path == prefix || path.starts_with(&format!("{prefix}/")))
         {
             return Err(invalid(
-                "Standard API paths must stay under their package name",
+                "Standard API paths conflict with a native namespace",
             ));
         }
         for method in [
@@ -926,14 +931,20 @@ pub(crate) fn validate_component(
                 _ => false,
             }
         } else {
-            package.namespace == "pishoo"
-                && package.name == "identity"
+            let identity = package.name == "identity"
                 && package.version.as_ref().is_some_and(|v| {
                     v.major == 0
                         && ((v.minor == 1
                             && matches!(interface_name, "request-identity" | "signatures"))
                             || (v.minor == 2 && interface_name == "request-identity"))
-                })
+                });
+            let execution = package.name == "execution"
+                && interface_name == "runtime"
+                && package
+                    .version
+                    .as_ref()
+                    .is_some_and(|v| v.major == 0 && v.minor == 1 && v.patch == 0);
+            package.namespace == "pishoo" && (identity || execution)
         };
         if !supported {
             return Err(invalid(&format!(

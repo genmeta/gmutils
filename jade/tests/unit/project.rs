@@ -185,3 +185,21 @@ fn dependencies_are_exact_names_without_authors_or_published_paths() {
             .contains("unknown field")
     );
 }
+
+#[test]
+fn standard_http_paths_follow_declarations_and_reserve_native_services() {
+    let backend = include_bytes!("../fixtures/wasi-http-read-request-then-respond.wasm");
+    for (path, accepted) in [
+        ("/run/python", true),
+        ("/comm/message", true),
+        ("/runner", true),
+        ("/sys/listen", false),
+        ("/file", false),
+        ("/forward/name", false),
+    ] {
+        let document=serde_json::to_vec(&json!({"openapi":"3.1.0","info":{"title":"Python","version":"0.1.0"},"paths":{path:{"post":{"operationId":"execute","summary":"Execute","responses":{"200":{"description":"ok"}}}}}})).unwrap();
+        let bytes = crate::pack::embedded_openapi(backend.to_vec(), Some(&document)).unwrap();
+        let result = validate_component(&bytes, "0.1.0", "dev.genmeta.tech.dhttp.net", "python");
+        assert_eq!(result.is_ok(), accepted, "{path}: {result:?}");
+    }
+}

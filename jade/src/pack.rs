@@ -290,6 +290,18 @@ fn assemble_files(
 }
 
 pub(crate) fn embedded_openapi(mut backend: Vec<u8>, source: Option<&[u8]>) -> Result<Vec<u8>> {
+    let mut commands = BTreeMap::new();
+    let mut names = HashSet::new();
+    backend = lift_commands(&backend, true, &mut commands, &mut names)?;
+    for (name, program) in commands {
+        let mut payload = Vec::new();
+        wasm_write_length(name.len(), &mut payload);
+        payload.extend_from_slice(name.as_bytes());
+        payload.extend_from_slice(&program);
+        backend.push(0);
+        wasm_write_length(payload.len(), &mut backend);
+        backend.extend_from_slice(&payload);
+    }
     let mut offset = 8;
     let mut embedded = None;
     while offset < backend.len() {
@@ -353,6 +365,66 @@ pub(crate) fn embedded_openapi(mut backend: Vec<u8>, source: Option<&[u8]>) -> R
         return Err("backend with embedded OpenAPI exceeds 64 MiB".into());
     }
     Ok(backend)
+}
+
+// Rust places custom sections on its core module. Publish declared command
+// resources on the containing backend, where the execution host validates them.
+fn lift_commands(
+    bytes: &[u8],
+    top_level: bool,
+    commands: &mut BTreeMap<String, Vec<u8>>,
+    names: &mut HashSet<String>,
+) -> Result<Vec<u8>> {
+    let header = bytes.get(..8).ok_or("truncated WASM header")?;
+    let component = header == b"\0asm\x0d\0\x01\0";
+    if !component && header != b"\0asm\x01\0\0\0" {
+        return Err("invalid WASM header".into());
+    }
+    let mut result = header.to_vec();
+    let mut offset = 8;
+    while offset < bytes.len() {
+        let section_start = offset;
+        let id = bytes[offset];
+        let (length, start) = wasm_length(bytes, offset + 1)?;
+        let end = start
+            .checked_add(length)
+            .filter(|end| *end <= bytes.len())
+            .ok_or("truncated WASM section")?;
+        offset = end;
+        if id == 0 {
+            let (length, name_start) = wasm_length(&bytes[..end], start)?;
+            let name_end = name_start
+                .checked_add(length)
+                .filter(|end| *end <= offset)
+                .ok_or("truncated custom section name")?;
+            let name = std::str::from_utf8(&bytes[name_start..name_end])?;
+            if let Some(program) = name.strip_prefix("pishoo:command/") {
+                if program.is_empty()
+                    || program.len() > 64
+                    || !program
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+                    || !names.insert(name.to_owned())
+                    || !bytes[name_end..end].starts_with(b"\0asm\x0d\0\x01\0")
+                {
+                    return Err("invalid or duplicate command component".into());
+                }
+                if !top_level {
+                    commands.insert(name.to_owned(), bytes[name_end..end].to_vec());
+                    continue;
+                }
+            }
+        }
+        if component && matches!(id, 1 | 4) {
+            let nested = lift_commands(&bytes[start..end], false, commands, names)?;
+            result.push(id);
+            wasm_write_length(nested.len(), &mut result);
+            result.extend_from_slice(&nested);
+        } else {
+            result.extend_from_slice(&bytes[section_start..end]);
+        }
+    }
+    Ok(result)
 }
 
 fn wasm_length(bytes: &[u8], mut offset: usize) -> Result<(usize, usize)> {
