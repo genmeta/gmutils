@@ -45,21 +45,15 @@ pub(super) async fn run(path: PathBuf, fresh: bool, machine: bool) -> Result<Val
             })?;
         validate_host(&profile).await?;
         let profile = profile.path().canonicalize()?;
-        let data_directory =
-            profile
-                .join(".volume")
-                .join(if crate::identity::is_standard_author(&host) {
-                    format!(
-                        "std/{}",
-                        if config.package.name == "comm/message" {
-                            "message".to_owned()
-                        } else {
-                            config.package.name.replace('/', "%2F")
-                        }
-                    )
-                } else {
-                    config.package.name.replace('/', "%2F")
-                });
+        let data_directory = profile.join(".volume").join(
+            if crate::identity::is_standard_author(&host)
+                && !config.package.name.starts_with("std/")
+            {
+                format!("std/{}", config.package.name)
+            } else {
+                config.package.name.to_owned()
+            },
+        );
         projects(&project, &host)?;
         prepare_host(&profile).await?;
         let mut published_directories = BTreeMap::new();
@@ -93,13 +87,13 @@ pub(super) async fn run(path: PathBuf, fresh: bool, machine: bool) -> Result<Val
                     }
                     // Build the complete local graph before replacing any running files.
                     for (name, files) in built {
-                        let (mut result, directory) = publish(&profile, &name, &files, reset_data)?;
+                        let (mut result, directory) = publish(&profile, &name, &files, reset_data, published_directories.get(&name))?;
                         published_directories.insert(name.clone(), directory);
                         result["host"] = host.clone().into();
-                        let manifest: Value = serde_json::from_slice(&files["manifest.json"]).map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
+                        let manifest = crate::archive::waz_manifest(&files).map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
                         if result["has_api"] == true {
                             let prefix = if crate::identity::is_standard_author(manifest["package"]["author"].as_str().unwrap_or("")) { "/std" } else { "" };
-                            let document = wasmparser::Parser::new(0).parse_all(&files["backend.wasm"])
+                            let document = wasmparser::Parser::new(0).parse_all(crate::archive::waz_backend(&files).ok_or_else(|| Error::new("E_ARTIFACT_INVALID", "Missing backend"))?)
                                 .find_map(|payload| match payload {
                                     Ok(wasmparser::Payload::CustomSection(section)) if section.name() == "pishoo:openapi" => Some(section.data()),
                                     _ => None,
@@ -111,7 +105,7 @@ pub(super) async fn run(path: PathBuf, fresh: bool, machine: bool) -> Result<Val
                             result["api"] = format!("https://{host}{base}{path}").into();
                         }
                         if result["has_app"] == true {
-                            result["app"] = format!("https://{host}/app/{}/", name.replace('/', "%2F")).into();
+                            result["app"] = format!("https://{host}/app/{}/", name.to_owned()).into();
                         }
                         if machine {
                             eprintln!("{}", json!({"command":"run","event":"published","result":result}));
@@ -185,28 +179,272 @@ pub(super) async fn run(path: PathBuf, fresh: bool, machine: bool) -> Result<Val
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn remove_published(profile: &Path, name: &str, published: &std::fs::File) -> Result<bool> {
     use std::os::unix::fs::MetadataExt;
-    let dev = profile.join("dev");
-    if !dev.try_exists()? {
-        return Ok(false);
-    }
-    let root = private_directory(&dev, &profile.metadata()?)?;
+    let owner = profile.metadata()?;
+    let root = private_directory(profile, &owner)?;
     rustix::fs::flock(&root, rustix::fs::FlockOperation::LockExclusive)
         .map_err(std::io::Error::from)?;
-    let path = dev.join(name.replace('/', "%2F"));
-    let current = match path.symlink_metadata() {
+    let marker_relative = format!("lib/{name}.preview");
+    package_directory(
+        profile,
+        Path::new(&marker_relative)
+            .parent()
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        &owner,
+    )?;
+    let marker = profile.join(marker_relative);
+    let current = match marker.symlink_metadata() {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(error.into()),
     };
-    // A later publisher may have replaced the same slot. Never remove its files.
     let published = published.metadata()?;
     if !current.is_dir() || current.dev() != published.dev() || current.ino() != published.ino() {
         return Ok(false);
     }
-    std::fs::remove_dir_all(&path)
-        .map_err(|e| Error::new("E_DEV_CLEANUP", e).context(json!({"directory":path})))?;
+    let mut moves = Vec::new();
+    if let Err(error) = restore_preview(profile, name, &marker, &mut moves) {
+        rollback_moves(&moves)?;
+        return Err(error);
+    }
+    std::fs::remove_dir_all(&marker)?;
+    std::fs::File::open(marker.parent().unwrap())?.sync_all()?;
     root.sync_all()?;
     Ok(true)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn preview_paths(name: &str, manifest: &Value) -> Result<Vec<(&'static str, PathBuf)>> {
+    let version = manifest["package"]["version"].as_str().unwrap_or("");
+    if manifest["package"]["name"] != name
+        || name.split('/').any(|part| {
+            part.is_empty()
+                || !part.as_bytes()[0].is_ascii_lowercase()
+                || !part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+        || version.is_empty()
+        || version.len() > 128
+        || !version
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
+    {
+        return Err(Error::new(
+            "E_ARTIFACT_INVALID",
+            "Invalid preview package name or version",
+        ));
+    }
+    let lib = if crate::identity::is_standard_author(
+        manifest["package"]["author"].as_str().unwrap_or(""),
+    ) && !name.starts_with("std/")
+    {
+        "lib/std"
+    } else {
+        "lib"
+    };
+    Ok(vec![
+        ("lib", PathBuf::from(format!("{lib}/{name}.wasm.{version}"))),
+        ("app", PathBuf::from(format!("app/{name}.{version}"))),
+        ("app_link", PathBuf::from(format!("app/{name}"))),
+    ])
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn move_resource(from: &Path, to: &Path, moves: &mut Vec<(PathBuf, PathBuf)>) -> Result<()> {
+    std::fs::rename(from, to)?;
+    moves.push((from.to_owned(), to.to_owned()));
+    std::fs::File::open(from.parent().unwrap())?.sync_all()?;
+    std::fs::File::open(to.parent().unwrap())?.sync_all()?;
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn rollback_moves(moves: &[(PathBuf, PathBuf)]) -> Result<()> {
+    for (from, to) in moves.iter().rev() {
+        std::fs::rename(to, from)?;
+        std::fs::File::open(from.parent().unwrap())?.sync_all()?;
+        std::fs::File::open(to.parent().unwrap())?.sync_all()?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn published_paths(
+    name: &str,
+    manifest: &Value,
+    state: &Value,
+) -> Result<Vec<(&'static str, PathBuf)>> {
+    let mut paths = preview_paths(name, manifest)?;
+    if state["layout"] != "versions" {
+        let version = manifest["package"]["version"].as_str().unwrap();
+        let lib = if crate::identity::is_standard_author(
+            manifest["package"]["author"].as_str().unwrap_or(""),
+        ) && !name.starts_with("std/")
+        {
+            "lib/std"
+        } else {
+            "lib"
+        };
+        paths = vec![
+            ("lib", PathBuf::from(format!("{lib}/{name}_{version}.wasm"))),
+            ("app", PathBuf::from(format!("app/{name}"))),
+        ];
+    }
+    Ok(paths)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn verify_published_files(profile: &Path, name: &str, published: &std::fs::File) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let replaced = || {
+        Error::new(
+            "E_DEV_REPLACED",
+            "Published resources were taken over; restart jade run to start a new preview.",
+        )
+    };
+    let owner = profile.metadata()?;
+    let marker = profile.join(format!("lib/{name}.preview"));
+    let current = marker.symlink_metadata().map_err(|_| replaced())?;
+    let previous = published.metadata()?;
+    if !current.is_dir() || current.dev() != previous.dev() || current.ino() != previous.ino() {
+        return Err(replaced());
+    }
+    let manifest: Value = serde_json::from_reader(private_resource(
+        &marker.join("manifest.json"),
+        &owner,
+        false,
+    )?)
+    .map_err(|error| Error::new("E_ARTIFACT_INVALID", error))?;
+    let state: Value =
+        serde_json::from_reader(private_resource(&marker.join("state.json"), &owner, false)?)
+            .map_err(|error| Error::new("E_ARTIFACT_INVALID", error))?;
+    for (kind, relative) in published_paths(name, &manifest, &state)? {
+        if state[kind].is_null() {
+            continue;
+        }
+        let current = profile
+            .join(relative)
+            .symlink_metadata()
+            .map_err(|_| replaced())?;
+        if state[kind]["dev"].as_u64() != Some(current.dev())
+            || state[kind]["ino"].as_u64() != Some(current.ino())
+        {
+            return Err(replaced());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn restore_preview(
+    profile: &Path,
+    name: &str,
+    marker: &Path,
+    moves: &mut Vec<(PathBuf, PathBuf)>,
+) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let owner = profile.metadata()?;
+    private_directory(marker, &owner)?;
+    let manifest: Value = serde_json::from_reader(private_resource(
+        &marker.join("manifest.json"),
+        &owner,
+        false,
+    )?)
+    .map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
+    let state: Value =
+        serde_json::from_reader(private_resource(&marker.join("state.json"), &owner, false)?)
+            .map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
+    let paths = published_paths(name, &manifest, &state)?;
+    for (kind, relative) in paths {
+        if state[kind].is_null() {
+            continue;
+        }
+        package_directory(
+            profile,
+            relative.parent().unwrap().to_str().unwrap(),
+            &owner,
+        )?;
+        let path = profile.join(&relative);
+        let current = match path.symlink_metadata() {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        // A later watcher or formal installer owns a different inode.
+        if state[kind]["dev"].as_u64() != Some(current.dev())
+            || state[kind]["ino"].as_u64() != Some(current.ino())
+        {
+            continue;
+        }
+        preview_resource(&path, &owner, kind, name)?;
+        move_resource(&path, &marker.join(format!("retired-{kind}")), moves)?;
+        let previous = marker.join(format!("previous-{kind}"));
+        if previous.try_exists()? {
+            preview_resource(&previous, &owner, kind, name)?;
+            move_resource(&previous, &path, moves)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn preview_resource(path: &Path, owner: &std::fs::Metadata, kind: &str, name: &str) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = path.symlink_metadata()?;
+    if kind == "app_link" && metadata.file_type().is_symlink() {
+        let target = std::fs::read_link(path)?;
+        let leaf = name.rsplit('/').next().unwrap();
+        let valid = target
+            .to_str()
+            .and_then(|target| target.strip_prefix(&format!("{leaf}.")))
+            .is_some_and(|version| {
+                !version.is_empty()
+                    && version.len() <= 128
+                    && version.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+')
+                    })
+            });
+        if !valid || metadata.uid() != owner.uid() || metadata.dev() != owner.dev() {
+            return Err(Error::new(
+                "E_OUTPUT_CONFLICT",
+                "Invalid preview frontend link",
+            ));
+        }
+    } else {
+        private_resource(path, owner, kind != "lib")?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn private_resource(
+    path: &Path,
+    owner: &std::fs::Metadata,
+    directory: bool,
+) -> Result<std::fs::File> {
+    use std::os::unix::fs::MetadataExt;
+    let flags = rustix::fs::OFlags::RDONLY
+        | rustix::fs::OFlags::NOFOLLOW
+        | rustix::fs::OFlags::NONBLOCK
+        | rustix::fs::OFlags::CLOEXEC;
+    let file = std::fs::File::from(
+        rustix::fs::open(path, flags, rustix::fs::Mode::empty()).map_err(std::io::Error::from)?,
+    );
+    let metadata = file.metadata()?;
+    if metadata.uid() != owner.uid()
+        || metadata.dev() != owner.dev()
+        || metadata.mode() & 0o022 != 0
+        || (directory && !metadata.is_dir())
+        || (!directory && (!metadata.is_file() || metadata.nlink() != 1))
+    {
+        return Err(Error::new(
+            "E_OUTPUT_CONFLICT",
+            "Preview resources must be owned regular files and directories",
+        ));
+    }
+    Ok(file)
 }
 
 #[cfg(any(test, target_os = "linux", target_os = "macos"))]
@@ -231,6 +469,7 @@ fn publish(
     name: &str,
     files: &BTreeMap<String, Vec<u8>>,
     fresh: bool,
+    published: Option<&std::fs::File>,
 ) -> Result<(Value, std::fs::File)> {
     use std::{
         fs::File,
@@ -238,21 +477,38 @@ fn publish(
         os::unix::fs::{MetadataExt, PermissionsExt},
     };
     let owner = profile.metadata()?;
-    let dev = profile.join("dev");
-    let root = private_directory(&dev, &owner)?;
+    let root = private_directory(profile, &owner)?;
     rustix::fs::flock(&root, rustix::fs::FlockOperation::LockExclusive)
         .map_err(std::io::Error::from)?;
-    let staged = tempfile::Builder::new().prefix(".jade-").tempdir_in(&dev)?;
-    let has_api = files.contains_key("backend.wasm");
-    let has_app = files.contains_key("public/index.html");
-    for (source, bytes) in files {
-        let target = if source == "manifest.json" {
+    if let Some(published) = published {
+        verify_published_files(profile, name, published)?;
+    }
+    let staged = tempfile::Builder::new()
+        .prefix(".jade-")
+        .tempdir_in(profile)?;
+    let has_api = crate::archive::waz_backend(files).is_some();
+    let has_app = files.contains_key("public/index.html") || files.contains_key("web/index.html");
+    let preview_manifest = serde_json::to_vec(
+        &crate::archive::waz_manifest(files).map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?,
+    )
+    .map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
+    for (source, content) in files {
+        let bytes = if source == "manifest.toml" {
+            &preview_manifest
+        } else {
+            content
+        };
+        let target = if source == "manifest.json" || source == "manifest.toml" {
             Some("manifest.json".to_owned())
-        } else if source == "backend.wasm" {
+        } else if source == "backend.wasm" || source.starts_with("wasm/") {
             Some("lib.wasm".to_owned())
         } else {
             source
-                .strip_prefix("public/")
+                .strip_prefix(if files.contains_key("manifest.toml") {
+                    "web/"
+                } else {
+                    "public/"
+                })
                 .map(|relative| format!("app/{relative}"))
         };
         let Some(target) = target else {
@@ -293,26 +549,57 @@ fn publish(
     own(staged.path(), &owner)?;
     let data_root = profile.join(".volume");
     let _data = private_directory(&data_root, &owner)?;
-    let manifest: Value = serde_json::from_slice(&files["manifest.json"])
-        .map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
-    let data_root = if crate::identity::is_standard_author(
-        manifest["package"]["author"].as_str().unwrap_or(""),
-    ) {
+    rustix::fs::flock(&_data, rustix::fs::FlockOperation::LockExclusive)
+        .map_err(std::io::Error::from)?;
+    let manifest =
+        crate::archive::waz_manifest(files).map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
+    let standard =
+        crate::identity::is_standard_author(manifest["package"]["author"].as_str().unwrap_or(""));
+    let data_root = if standard && !name.starts_with("std/") {
         let standard = data_root.join("std");
         private_directory(&standard, &owner)?;
         standard
     } else {
         data_root
     };
-    let data_name = if crate::identity::is_standard_author(
-        manifest["package"]["author"].as_str().unwrap_or(""),
-    ) && name == "comm/message"
-    {
-        "message".to_owned()
-    } else {
-        name.replace('/', "%2F")
-    };
-    let data = data_root.join(data_name);
+    let data = data_root.join(name);
+    package_directory(
+        &data_root,
+        name.rsplit_once('/').map_or("", |(parent, _)| parent),
+        &owner,
+    )?;
+    if !data.try_exists()? {
+        let legacy_name = if standard {
+            name.strip_prefix("std/").unwrap_or(name)
+        } else {
+            name
+        };
+        let legacy_root = if standard {
+            profile.join(".volume/std")
+        } else {
+            data_root.clone()
+        };
+        let mut legacy = vec![legacy_root.join(legacy_name.replace('/', "%2F"))];
+        if standard && legacy_name == "comm/message" {
+            legacy.push(legacy_root.join("message"));
+        }
+        let legacy = legacy
+            .into_iter()
+            .filter(|path| path != &data && path.try_exists().unwrap_or(true))
+            .collect::<Vec<_>>();
+        if legacy.len() > 1 {
+            return Err(Error::new(
+                "E_OUTPUT_CONFLICT",
+                "Multiple previous data directories require reconciliation",
+            ));
+        }
+        if let Some(previous) = legacy.first() {
+            private_directory(previous, &owner)?;
+            std::fs::rename(previous, &data)?;
+            std::fs::File::open(previous.parent().unwrap())?.sync_all()?;
+            std::fs::File::open(data.parent().unwrap())?.sync_all()?;
+        }
+    }
     if fresh && data.try_exists()? {
         let _ = private_directory(&data, &owner)?;
         let previous = tempfile::Builder::new()
@@ -322,53 +609,150 @@ fn publish(
         std::fs::rename(&data, &previous)?;
     }
     let _ = private_directory(&data, &owner)?;
-    let target = dev.join(name.replace('/', "%2F"));
-    let flags = match target.symlink_metadata() {
-        Ok(metadata)
-            if metadata.is_dir()
-                && metadata.uid() == owner.uid()
-                && metadata.mode() & 0o022 == 0 =>
-        {
-            rustix::fs::RenameFlags::EXCHANGE
-        }
-        Ok(_) => {
+    let marker_relative = format!("lib/{name}.preview");
+    let marker = profile.join(&marker_relative);
+    let parent = package_directory(
+        profile,
+        Path::new(&marker_relative)
+            .parent()
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        &owner,
+    )?;
+    let paths = preview_paths(name, &manifest)?;
+    let mut moves = Vec::new();
+    let mut exchanged = false;
+    let result = (|| -> Result<std::fs::File> {
+        let exists = marker.try_exists()?;
+        if exists {
+            restore_preview(profile, name, &marker, &mut moves)?;
+        } else if marker.symlink_metadata().is_ok() {
             return Err(Error::new(
                 "E_OUTPUT_CONFLICT",
-                "Development destination must be an owned directory",
+                "Preview marker must be an owned directory",
             ));
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            rustix::fs::RenameFlags::NOREPLACE
+        let mut state = json!({"layout":"versions"});
+        if has_app {
+            let version = manifest["package"]["version"].as_str().unwrap();
+            let leaf = name.rsplit('/').next().unwrap();
+            let link = staged.path().join("app-link");
+            std::os::unix::fs::symlink(format!("{leaf}.{version}"), &link)?;
+            if unsafe { libc::geteuid() } == 0 {
+                rustix::fs::chownat(
+                    rustix::fs::CWD,
+                    &link,
+                    Some(rustix::fs::Uid::from_raw(owner.uid())),
+                    Some(rustix::fs::Gid::from_raw(owner.gid())),
+                    rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+                )
+                .map_err(std::io::Error::from)?;
+            }
         }
-        Err(error) => return Err(error.into()),
-    };
-    rustix::fs::renameat_with(
-        &root,
-        staged.path().file_name().unwrap(),
-        &root,
-        name.replace('/', "%2F"),
-        flags,
-    )
-    .map_err(std::io::Error::from)?;
-    root.sync_all()?;
-    // EXCHANGE leaves the previous artifacts in staged; removing those files does
-    // not affect already-open HTTP files or previously compiled WASM instances.
-    // Keep the directory inode alive until this publisher stops, so a reused
-    // inode can never make cleanup mistake a later publisher's directory for ours.
-    let metadata = std::fs::File::from(
-        rustix::fs::open(
-            &target,
-            rustix::fs::OFlags::RDONLY
-                | rustix::fs::OFlags::DIRECTORY
-                | rustix::fs::OFlags::NOFOLLOW,
-            rustix::fs::Mode::empty(),
-        )
-        .map_err(std::io::Error::from)?,
-    );
-    Ok((
-        json!({"name":name,"directory":target,"data_directory":data,"has_api":has_api,"has_app":has_app}),
-        metadata,
-    ))
+        for (kind, relative) in paths {
+            if (kind == "lib" && !has_api) || (kind != "lib" && !has_app) {
+                continue;
+            }
+            package_directory(
+                profile,
+                relative.parent().unwrap().to_str().unwrap(),
+                &owner,
+            )?;
+            let path = profile.join(relative);
+            match path.symlink_metadata() {
+                Ok(_) => {
+                    preview_resource(&path, &owner, kind, name)?;
+                    move_resource(
+                        &path,
+                        &staged.path().join(format!("previous-{kind}")),
+                        &mut moves,
+                    )?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            let source = staged.path().join(match kind {
+                "lib" => "lib.wasm",
+                "app" => "app",
+                _ => "app-link",
+            });
+            move_resource(&source, &path, &mut moves)?;
+            let metadata = path.symlink_metadata()?;
+            state[kind] = json!({"dev":metadata.dev(),"ino":metadata.ino()});
+        }
+        let state_path = staged.path().join("state.json");
+        std::fs::write(
+            &state_path,
+            serde_json::to_vec(&state).map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?,
+        )?;
+        own(&state_path, &owner)?;
+        std::fs::set_permissions(&state_path, std::fs::Permissions::from_mode(0o600))?;
+        File::open(&state_path)?.sync_all()?;
+        let published = File::open(staged.path())?;
+        published.sync_all()?;
+        if exists {
+            rustix::fs::renameat_with(
+                &root,
+                staged.path().file_name().unwrap(),
+                &parent,
+                marker.file_name().unwrap(),
+                rustix::fs::RenameFlags::EXCHANGE,
+            )
+            .map_err(std::io::Error::from)?;
+            exchanged = true;
+        } else {
+            move_resource(staged.path(), &marker, &mut moves)?;
+        }
+        parent.sync_all()?;
+        root.sync_all()?;
+        Ok(published)
+    })();
+    match result {
+        Ok(published) => Ok((
+            json!({"name":name,"directory":marker,"data_directory":data,"has_api":has_api,"has_app":has_app}),
+            published,
+        )),
+        Err(error) => {
+            let rollback = (|| -> Result<()> {
+                if exchanged {
+                    rustix::fs::renameat_with(
+                        &root,
+                        staged.path().file_name().unwrap(),
+                        &parent,
+                        marker.file_name().unwrap(),
+                        rustix::fs::RenameFlags::EXCHANGE,
+                    )
+                    .map_err(std::io::Error::from)?;
+                }
+                rollback_moves(&moves)
+            })();
+            if let Err(rollback_error) = rollback {
+                let recovery = staged.keep();
+                return Err(Error::new("E_DEV_CLEANUP", rollback_error)
+                    .context(json!({"directory":recovery,"publication_error":error.json()})));
+            }
+            Err(error)
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn package_directory(
+    root: &Path,
+    relative: &str,
+    owner: &std::fs::Metadata,
+) -> Result<std::fs::File> {
+    let mut path = root.to_path_buf();
+    let mut directory = private_directory(&path, owner)?;
+    for part in Path::new(relative).components() {
+        let std::path::Component::Normal(part) = part else {
+            return Err(Error::new("E_CONFIG_INVALID", "Invalid package directory"));
+        };
+        path.push(part);
+        directory = private_directory(&path, owner)?;
+    }
+    Ok(directory)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -423,23 +807,13 @@ fn projects(root: &Path, host: &str) -> Result<(BTreeMap<String, PathBuf>, Vec<V
         path: &Path,
         active: &mut Vec<PathBuf>,
         locals: &mut BTreeMap<String, PathBuf>,
-        versions: &mut BTreeMap<String, String>,
-        remote: &mut BTreeMap<String, Value>,
+        remote: &mut BTreeMap<(String, String), Value>,
     ) -> Result<()> {
         let (root, manifest) = crate::project::read(path)?;
         if active.contains(&root) {
             return Err(Error::new("E_CONFIG_INVALID", "Local dependency cycle"));
         }
         let name = &manifest.package.name;
-        let identity = manifest.package.version.clone();
-        if let Some(previous) = versions.insert(name.clone(), identity.clone())
-            && previous != identity
-        {
-            return Err(Error::new(
-                "E_CONFIG_INVALID",
-                format!("Conflicting dependency versions or authors for {name}"),
-            ));
-        }
         if let Some(previous) = locals.get(name) {
             if previous != &root {
                 return Err(Error::new(
@@ -451,15 +825,6 @@ fn projects(root: &Path, host: &str) -> Result<(BTreeMap<String, PathBuf>, Vec<V
         }
         active.push(root.clone());
         for dependency in &manifest.dependencies {
-            let identity = dependency.version.clone();
-            if let Some(previous) = versions.insert(dependency.name.clone(), identity.clone())
-                && previous != identity
-            {
-                return Err(Error::new(
-                    "E_CONFIG_INVALID",
-                    format!("Conflicting dependency {}", dependency.name),
-                ));
-            }
             if let Some(path) = &dependency.path {
                 let path = root.join(path);
                 let (_, local) = crate::project::read(&path)?;
@@ -474,10 +839,10 @@ fn projects(root: &Path, host: &str) -> Result<(BTreeMap<String, PathBuf>, Vec<V
                         ),
                     ));
                 }
-                visit(&path, active, locals, versions, remote)?;
+                visit(&path, active, locals, remote)?;
             } else {
                 remote.insert(
-                    dependency.name.clone(),
+                    (dependency.name.clone(), dependency.version.clone()),
                     json!({"name":dependency.name,"version":dependency.version}),
                 );
             }
@@ -488,13 +853,7 @@ fn projects(root: &Path, host: &str) -> Result<(BTreeMap<String, PathBuf>, Vec<V
     }
     let mut locals = BTreeMap::new();
     let mut remote = BTreeMap::new();
-    visit(
-        root,
-        &mut Vec::new(),
-        &mut locals,
-        &mut BTreeMap::new(),
-        &mut remote,
-    )?;
+    visit(root, &mut Vec::new(), &mut locals, &mut remote)?;
     Ok((locals, remote.into_values().collect()))
 }
 

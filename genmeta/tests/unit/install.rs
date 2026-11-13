@@ -6,7 +6,7 @@ fn release(author: &str, name: &str, _kind: &str, version: &str) -> Value {
         "id": format!("{author}/{name}"), "author": author, "name": name,
         "version": version, "status": "published", "size": 4096,
         "package_sha256": "a".repeat(64), "author_owner_hash": "b".repeat(64),
-        "download_path": format!("/store/v1/{collection}/{author}/{}/versions/{version}/package.waz", name.replace('/', "%2F")),
+        "download_path": format!("/store/v1/{collection}/{author}/{}/versions/{version}/package.waz", name.to_owned()),
         "title": "Package", "description": "Description", "changelog": "Initial release", "dependencies": [],
     });
     value
@@ -275,7 +275,7 @@ fn release_validation_rejects_withdrawn_and_mismatched_proofs() {
 fn success_requires_matching_identity_version_and_saved_entry() {
     for (author, displayed_id) in [
         ("dev.dhttp.net", "dev~/workspace"),
-        ("std.dhttp.net", "std/workspace"),
+        ("std.dhttp.net", "std~/workspace"),
     ] {
         let release = release(author, "workspace", "app", "0.2.0");
         let mut installed = release.clone();
@@ -992,6 +992,47 @@ fn hierarchical_names_and_qualified_ids_keep_the_entire_package_name() {
     );
     assert_eq!(
         store_id("dev.genmeta.tech.dhttp.net/comm/group"),
-        "dev.genmeta.tech.dhttp.net/comm%2Fgroup"
+        "dev.genmeta.tech.dhttp.net/comm/group"
+    );
+}
+
+#[tokio::test]
+async fn std_namespace_names_never_fall_back_to_a_short_publisher() {
+    let target = normalize_target("std/comm/message");
+    assert_eq!(target, "std/comm/message");
+    assert!(valid_target(&target));
+    let mut requests = Vec::new();
+    let result = resolve(&target, Some("0.3.4"), |path| {
+        requests.push(path);
+        async { Ok(catalog(vec![], 1, 0)) }
+    })
+    .await;
+    assert!(result.is_err());
+    assert_eq!(
+        requests,
+        ["/store/v1/packages?q=std%2Fcomm%2Fmessage&page=1&page_size=100"]
+    );
+    assert_eq!(normalize_target("std~/message"), "std.dhttp.net/message");
+}
+
+#[tokio::test]
+async fn std_namespace_names_resolve_as_complete_store_names() {
+    let published = release("dev.genmeta.tech.dhttp.net", "std/profile", "lib", "0.3.1");
+    let mut requests = Vec::new();
+    let selected = resolve("std/profile", Some("0.3.1"), |path| {
+        requests.push(path.clone());
+        let bytes = if path.contains('?') {
+            catalog(vec![published.clone()], 1, 1)
+        } else {
+            serde_json::to_vec(&published).unwrap()
+        };
+        async { Ok(bytes) }
+    })
+    .await
+    .unwrap();
+    assert_eq!(selected["name"], "std/profile");
+    assert_eq!(
+        requests[1],
+        "/store/v1/packages/dev.genmeta.tech.dhttp.net/std/profile/versions/0.3.1"
     );
 }

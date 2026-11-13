@@ -458,14 +458,15 @@ fn optional_project_documents_are_collected_for_frontend_backend_and_combined_pa
         identity(&home);
         let app = dir.path().join(kind);
         project(&app, kind, "");
+        std::fs::create_dir(app.join("docs")).unwrap();
         let mut previous = None;
         for names in [
             vec![],
-            vec!["README.md"],
-            vec!["CHANGELOG.md"],
-            vec!["README.md", "CHANGELOG.md"],
+            vec!["docs/manual.md"],
+            vec!["docs/topic.md"],
+            vec!["docs/manual.md", "docs/topic.md"],
         ] {
-            for name in ["README.md", "CHANGELOG.md"] {
+            for name in ["docs/manual.md", "docs/topic.md"] {
                 if names.contains(&name) {
                     std::fs::write(app.join(name), format!("# {name}\nPackage documentation\n"))
                         .unwrap();
@@ -492,7 +493,7 @@ fn optional_project_documents_are_collected_for_frontend_backend_and_combined_pa
             let documents = package.get_volume("metadata");
             assert_eq!(documents.is_some(), !names.is_empty());
             if let Some(documents) = documents {
-                assert_eq!(documents.read_dir("/").unwrap().len(), names.len());
+                assert_eq!(documents.read_dir("/docs").unwrap().len(), names.len());
                 for name in &names {
                     assert_eq!(
                         documents.read_file(format!("/{name}")).unwrap().0.as_ref(),
@@ -502,8 +503,10 @@ fn optional_project_documents_are_collected_for_frontend_backend_and_combined_pa
             }
             let manifest = serde_json::to_value(package.manifest()).unwrap();
             assert_eq!(
-                manifest["package"]["wapm"].get("readme").is_some(),
-                names.contains(&"README.md")
+                manifest["package"]["pishoo"]["docs"]
+                    .get("manual")
+                    .is_some(),
+                names.contains(&"docs/manual.md")
             );
             assert!(
                 package
@@ -525,7 +528,8 @@ fn invalid_project_documents_preserve_the_existing_package() {
     identity(&home);
     let app = dir.path().join("app");
     project(&app, "app", "");
-    let document = app.join("README.md");
+    std::fs::create_dir(app.join("docs")).unwrap();
+    let document = app.join("docs/manual.md");
     std::fs::write(&document, "# Readme").unwrap();
     let built = pack(&home, &app, &[]);
     assert!(
@@ -535,9 +539,13 @@ fn invalid_project_documents_preserve_the_existing_package() {
     );
     let output = app.join("build/hello-1.0.0.waz");
     let before = std::fs::read(&output).unwrap();
+    let config = app.join("jade.toml");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str("\n[docs]\nmanual='docs/manual.md'\n");
+    std::fs::write(&config, text).unwrap();
     std::fs::remove_file(&document).unwrap();
     std::fs::create_dir(&document).unwrap();
-    fails(&pack(&home, &app, &[]), "regular files");
+    fails(&pack(&home, &app, &[]), "manual");
     assert_eq!(std::fs::read(&output).unwrap(), before);
     std::fs::remove_dir(&document).unwrap();
     #[cfg(unix)]
@@ -564,7 +572,12 @@ fn repeated_builds_are_atomic_and_root_static_projects_exclude_build_outputs() {
     project(&app, "app", "");
     std::fs::remove_dir_all(app.join("public")).unwrap();
     std::fs::write(app.join("index.html"), "<h1>First</h1>").unwrap();
-    std::fs::write(app.join("README.md"), "# Root project").unwrap();
+    std::fs::write(app.join("README.md"), "# External introduction").unwrap();
+    std::fs::create_dir(app.join("docs")).unwrap();
+    std::fs::write(app.join("docs/manual.md"), "# Root project").unwrap();
+    std::fs::write(app.join(".gitignore"), "/docs/source/\n").unwrap();
+    std::fs::create_dir(app.join("docs/source")).unwrap();
+    std::fs::write(app.join("docs/source/local notes.md"), "private notes").unwrap();
     std::fs::create_dir_all(app.join("build/target")).unwrap();
     std::fs::write(app.join("build/target/not-a-resource"), "excluded").unwrap();
     std::fs::create_dir_all(app.join(".jade/target")).unwrap();
@@ -600,7 +613,7 @@ fn repeated_builds_are_atomic_and_root_static_projects_exclude_build_outputs() {
         container
             .get_volume("metadata")
             .unwrap()
-            .read_file("/README.md")
+            .read_file("/docs/manual.md")
             .unwrap()
             .0
             .as_ref(),

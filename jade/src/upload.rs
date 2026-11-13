@@ -91,7 +91,12 @@ pub(super) async fn run(
         .chain()
         .map_err(|e| Error::new("E_IDENTITY_UNAVAILABLE", e))?;
     let files = crate::archive::waz_read(&bytes).map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
-    let bytes = if files.contains_key("signature.json") {
+    let bytes = if files.contains_key("signature.json")
+        || crate::archive::waz_manifest(&files)
+            .map_err(|e| Error::new("E_PACKAGE_INVALID", e))?
+            .get("signature")
+            .is_some()
+    {
         bytes
     } else {
         let key = credentials
@@ -243,8 +248,15 @@ fn sign_package(
     certificates: &[qtls::CertificateDer<'_>],
     signing_key: &std::sync::Arc<dyn rustls::sign::SigningKey>,
 ) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let digest = crate::archive::waz_payload(&files);
-    let mut input = b"pishoo-waz-signature-v1\0".to_vec();
+    let digest = crate::archive::waz_payload(&files)
+        .map_err(|error| -> Box<dyn std::error::Error> { error })?;
+    let modern = files.contains_key("manifest.toml");
+    let mut input = if modern {
+        b"pishoo-waz-signature-v2\0"
+    } else {
+        b"pishoo-waz-signature-v1\0"
+    }
+    .to_vec();
     for offset in (0..digest.len()).step_by(2) {
         input.push(u8::from_str_radix(&digest[offset..offset + 2], 16)?);
     }
@@ -263,10 +275,21 @@ fn sign_package(
     let envelope = json!({"version":1,
         "certificates":certificates.iter().map(|c|STANDARD.encode(c.as_ref())).collect::<Vec<_>>(),
         "signature":STANDARD.encode(signature.ok_or("unsupported signing key")?)});
-    files.insert(
-        "signature.json".into(),
-        serde_json::to_vec_pretty(&envelope)?,
-    );
+    if modern {
+        let manifest = files
+            .get_mut("manifest.toml")
+            .ok_or("missing manifest.toml")?;
+        if !manifest.ends_with(b"\n") {
+            return Err("unsigned manifest must end with a newline".into());
+        }
+        let signature = json!({"signature":{"version":1,"certificates":envelope["certificates"],"value":envelope["signature"]}});
+        manifest.extend_from_slice(toml::to_string_pretty(&signature)?.as_bytes());
+    } else {
+        files.insert(
+            "signature.json".into(),
+            serde_json::to_vec_pretty(&envelope)?,
+        );
+    }
     let bytes = crate::archive::waz_write(&files)
         .map_err(|error| -> Box<dyn std::error::Error> { error })?;
     if crate::package::payload_digest(&bytes)? != digest {
@@ -292,11 +315,19 @@ async fn read_input(input: &std::path::Path) -> crate::error::Result<(Vec<u8>, V
             config.metadata(author.as_deref().unwrap_or("jade-validation.dhttp.net"))?;
         crate::pack::validate_metadata(&metadata, &annotation, false)
             .map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
-        let file = root.join(crate::project::BUILD_DIR).join(format!(
+        let canonical = root.join(crate::project::BUILD_DIR).join(format!(
             "{}-{}.waz",
-            config.package.name.replace('/', "%2F"),
-            config.package.version
+            config.package.name, config.package.version
         ));
+        let file = if canonical.try_exists()? {
+            canonical
+        } else {
+            root.join(crate::project::BUILD_DIR).join(format!(
+                "{}-{}.waz",
+                config.package.name.replace('/', "%2F"),
+                config.package.version
+            ))
+        };
         if !file.try_exists()? {
             return Err(Error::new("E_BUILD_REQUIRED", "The configured package version has not been built")
                 .hint("Run jade build first, review the package, then run jade publish again. For a custom output, use jade publish FILE.waz.")
@@ -314,7 +345,12 @@ async fn read_input(input: &std::path::Path) -> crate::error::Result<(Vec<u8>, V
         .map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
     let files = crate::archive::waz_read(&bytes).map_err(|e| Error::new("E_PACKAGE_INVALID", e))?;
     // A present signature must verify; never repair or re-sign a damaged release.
-    let metadata = if files.contains_key("signature.json") {
+    let metadata = if files.contains_key("signature.json")
+        || crate::archive::waz_manifest(&files)
+            .map_err(|e| Error::new("E_PACKAGE_INVALID", e))?
+            .get("signature")
+            .is_some()
+    {
         inspect_package(&bytes).await?
     } else {
         crate::package::inspect_contents(&bytes).await?
@@ -733,11 +769,19 @@ fn persist_signed_snapshot(
 ) -> crate::error::Result<()> {
     let path = if input.is_dir() || input.file_name().is_some_and(|name| name == "jade.toml") {
         let (root, config) = crate::project::read_manifest(input)?;
-        root.join(crate::project::BUILD_DIR).join(format!(
+        let canonical = root.join(crate::project::BUILD_DIR).join(format!(
             "{}-{}.waz",
-            config.package.name.replace('/', "%2F"),
-            config.package.version
-        ))
+            config.package.name, config.package.version
+        ));
+        if canonical.try_exists()? {
+            canonical
+        } else {
+            root.join(crate::project::BUILD_DIR).join(format!(
+                "{}-{}.waz",
+                config.package.name.replace('/', "%2F"),
+                config.package.version
+            ))
+        }
     } else {
         input.to_path_buf()
     };

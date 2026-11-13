@@ -101,13 +101,13 @@ async fn static_resources_exclude_local_dependency_projects_and_nested_manifests
     .unwrap();
     let archive = crate::archive::waz_write(&files).unwrap();
     let packaged = crate::archive::waz_read(&archive).unwrap();
-    assert_eq!(packaged["public/index.html"], b"application");
-    assert_eq!(packaged["public/assets/style.css"], b"body {}");
+    assert_eq!(packaged["web/index.html"], b"application");
+    assert_eq!(packaged["web/assets/style.css"], b"body {}");
     assert!(
         !packaged
             .keys()
-            .any(|path| path.starts_with("public/packages/child/")
-                || path.starts_with("public/assets/indirect/"))
+            .any(|path| path.starts_with("web/packages/child/")
+                || path.starts_with("web/assets/indirect/"))
     );
     assert!(!packaged.values().any(|bytes| {
         bytes
@@ -131,4 +131,26 @@ fn hierarchical_package_identity_is_not_reduced_to_its_leaf() {
     ] {
         assert!(!valid_id(&format!("dev.genmeta.tech.dhttp.net/{name}")));
     }
+}
+
+#[tokio::test]
+async fn new_standard_lib_builds_require_the_std_namespace() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("jade.toml"),
+        "[package]\nname='profile'\nversion='1.0.0'\ndescription='Test'\nlicense='MIT'\n",
+    )
+    .unwrap();
+    std::fs::write(root.path().join("lib.wasm"), b"\0asm\x0d\0\x01\0").unwrap();
+    let (project, config) = crate::project::read(root.path()).unwrap();
+    let error = build_files(
+        &project,
+        &config,
+        "dev.genmeta.tech.dhttp.net",
+        &root.path().join("build/output.waz"),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "E_CONFIG_INVALID");
+    assert!(error.message.contains("std/"));
 }

@@ -137,7 +137,7 @@ fn create(path: PathBuf, name: Option<String>, template: Template) -> Result<Val
         .tempdir_in(&parent)?;
     let root = temporary.path();
     let source_name = name.replace('/', "-");
-    let config = json!({"package":{"name":name,"version":"0.1.0","description":format!("{name} application"),"license":"Apache-2.0"}});
+    let config = json!({"package":{"name":name,"version":"0.1.0","description":format!("{name} application"),"license":"Apache-2.0"},"docs":{"manual":"docs/manual.md"}});
     let mut ignore = format!("/{}/\n", crate::project::BUILD_DIR);
     match template {
         Template::Static => {
@@ -213,6 +213,25 @@ serde_json = "1"
         toml::to_string_pretty(&config).map_err(|e| Error::new("E_INTERNAL", e))?,
     )?;
     fs::write(root.join(".gitignore"), ignore)?;
+    fs::create_dir(root.join("docs"))?;
+    let mut manual = format!(
+        "# {name}\n\n## NAME\n\n{name} - identity-aware Pishoo application\n\n## SYNOPSIS\n\n"
+    );
+    if matches!(
+        template,
+        Template::Static | Template::Web | Template::Fullstack
+    ) {
+        manual.push_str(&format!("`/app/{name}/`\n\n"));
+    }
+    if matches!(template, Template::Api | Template::Fullstack) {
+        manual.push_str(&format!("`GET /{name}/whoami`\n\n"));
+    }
+    manual.push_str("## DESCRIPTION\n\nThe package runs on a Pishoo hosting identity. Requests use the authenticated visitor identity supplied by the host.\n\n");
+    if matches!(template, Template::Api | Template::Fullstack) {
+        manual.push_str(&format!("## API\n\n`GET /{name}/whoami` returns the authenticated visitor's name, or `anonymous`.\n\n"));
+    }
+    manual.push_str("## PERMISSIONS\n\nThe host checks the visitor's identity, HTTP method and requested path against its ACL. Configure access on the hosting identity.\n\n## FILES\n\nThe WAZ release contains the declared frontend and backend resources and this manual.\n\n## COMPATIBILITY\n\nThe release manifest records the package version and WAZ format.\n");
+    fs::write(root.join("docs/manual.md"), manual)?;
     let mut readme = format!("# {name}\n\n");
     if matches!(template, Template::Web | Template::Fullstack) {
         readme.push_str("Frontend: `web/index.html`, `web/src/main.js` and `web/src/style.css`. Requires Node.js and npm.\n\n");
@@ -232,7 +251,7 @@ serde_json = "1"
     if matches!(template, Template::Api | Template::Fullstack) {
         readme.push_str(&format!("GET `/{name}/whoami` returns the verified visitor's name, or `anonymous`. The visitor can differ from the hosting identity.\n\n"));
     }
-    readme.push_str(&format!("## Build and publish\n\nAfter testing, build and review the unsigned package, then publish it:\n\n```sh\njade build\n# Review build/{name}-0.1.0.waz, then upload it.\njade publish\n```\n\nThis project starts without `package.author`. With no author, run and build use your default development identity. Build records the author in the WAZ without writing it back to `jade.toml`. Publish uses the existing package's author, even if your default identity has since changed. Build requires no identity credentials or subscription. Publish guides first-time developer setup, signs the existing build, saves the signed WAZ and uploads it without rebuilding sources. Already signed packages are verified and uploaded unchanged. Run after source changes does not update the release; build again before publishing those changes.\n\nTo fix the author and host, add `author = \"dev.alex.chen\"` under `[package]` in `jade.toml`. Short names and full `.dhttp.net` names are equivalent. Configured names never gain or lose `dev.`. Jade commands have no `--id` option. When publishing from a project, its configured author must match the built author. An explicit `jade publish FILE.waz` uses only that package.\n\nBuild output and Cargo's cache go under `build/`. Root `README.md` and `CHANGELOG.md` are included when present.\n"));
+    readme.push_str(&format!("## Build and publish\n\nAfter testing, build and review the unsigned package, then publish it:\n\n```sh\njade build\n# Review build/{name}-0.1.0.waz, then upload it.\njade publish\n```\n\nThis project starts without `package.author`. With no author, run and build use your default development identity. Build records the author in the WAZ without writing it back to `jade.toml`. Publish uses the existing package's author, even if your default identity has since changed. Build requires no identity credentials or subscription. Publish guides first-time developer setup, signs the existing build, saves the signed WAZ and uploads it without rebuilding sources. Already signed packages are verified and uploaded unchanged. Run after source changes does not update the release; build again before publishing those changes.\n\nTo fix the author and host, add `author = \"dev.alex.chen\"` under `[package]` in `jade.toml`. Short names and full `.dhttp.net` names are equivalent. Configured names never gain or lose `dev.`. Jade commands have no `--id` option. When publishing from a project, its configured author must match the built author. An explicit `jade publish FILE.waz` uses only that package.\n\nBuild output and Cargo's cache go under `build/`. `docs/*.md` manuals are included recursively. Configure external README and CHANGELOG URLs under `[docs]` in `jade.toml`.\n"));
     fs::write(root.join("README.md"), readme)?;
     commit_directory(root, &target).map_err(|e| {
         Error::new(

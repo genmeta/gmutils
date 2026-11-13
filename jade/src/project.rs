@@ -23,6 +23,8 @@ pub(crate) struct Manifest {
     pub backend: Option<PathBuf>,
     #[serde(default)]
     pub dependencies: Vec<Dependency>,
+    #[serde(default)]
+    pub docs: std::collections::BTreeMap<String, String>,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
@@ -209,6 +211,9 @@ impl Manifest {
         let mut annotation = json!({"title":package.title.as_ref().unwrap_or(&package.name),
             "changelog":package.release_notes.clone().unwrap_or_else(||format!("Release {}",package.version)),
             "dependencies":dependencies});
+        if !self.docs.is_empty() {
+            annotation["docs"] = json!(self.docs);
+        }
         if self.frontend.is_some() {
             annotation["entry"] = "/".into();
         }

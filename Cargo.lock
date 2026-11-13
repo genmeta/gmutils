@@ -2786,6 +2786,7 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
+ "ignore",
  "indicatif",
  "inquire",
  "libc",

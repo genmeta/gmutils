@@ -12,11 +12,7 @@ pub(super) fn identity(name: &str) -> Cow<'_, str> {
     }
 }
 pub(super) fn publisher(name: &str) -> Cow<'_, str> {
-    if name == "std.dhttp.net" {
-        Cow::Borrowed("std")
-    } else {
-        identity(name)
-    }
+    identity(name)
 }
 pub(super) fn package_id(id: &str) -> Cow<'_, str> {
     match id.split_once('/') {

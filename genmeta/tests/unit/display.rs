@@ -18,7 +18,7 @@ fn package_list_shows_only_name_author_and_version() {
         rows,
         [
             vec!["NAME", "AUTHOR", "VERSION"],
-            vec!["message", "std", "0.2.1"],
+            vec!["message", "std~", "0.2.1"],
             vec!["workspace", "dev.genmeta.tech~", "0.3.6"],
             vec!["legacy", "-", "1.0.0"],
         ]
@@ -45,7 +45,7 @@ fn verbose_packages_use_readable_fields_dependencies_and_api_lines() {
         "  License: MIT",
         "  Repository: https://example.com/workspace",
         "  App: /app/workspace/",
-        "  Dependencies:\n    std/profile 0.3.0",
+        "  Dependencies:\n    std~/profile 0.3.0",
         "  APIs:\n    GET /workspace/status",
     ] {
         assert!(output.contains(expected), "missing {expected:?}: {output}");

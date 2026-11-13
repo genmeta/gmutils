@@ -57,7 +57,7 @@ fn package_name(target: &str) -> &str {
 
 fn store_id(id: &str) -> String {
     let (author, name) = id.split_once('/').unwrap();
-    format!("{author}/{}", name.replace('/', "%2F"))
+    format!("{author}/{name}")
 }
 
 fn valid_target(target: &str) -> bool {
@@ -241,6 +241,7 @@ where
             page += 1;
         }
         if matches.is_empty()
+            && !target.starts_with("std/")
             && let Some((author, name)) = target.split_once('/')
             && let Some(author) = dhttp_home::normalize_name(author)
         {
@@ -563,7 +564,7 @@ async fn catalog(
         if status == StatusCode::NOT_FOUND && let Some(target) = target {
             // An exact hierarchical name takes priority. If absent, retain the
             // historical short-author spelling for installed package commands.
-            if !qualified(target) && let Some((author, name)) = target.split_once('/')
+            if !qualified(target) && !target.starts_with("std/") && let Some((author, name)) = target.split_once('/')
                 && let Some(author) = dhttp_home::normalize_name(author) {
                 let qualified_target = format!("{author}/{name}");
                 return Box::pin(catalog(endpoint, owner, Some(&qualified_target), require_removal_support, require_signing_support)).await;

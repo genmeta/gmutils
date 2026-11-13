@@ -24,6 +24,7 @@ http = { workspace = true }
 http-body-util = { workspace = true }
 inquire = { workspace = true }
 indicatif = { workspace = true }
+ignore = "0.4"
 qtls = { workspace = true }
 rustix = { version = "1", features = ["fs"] }
 rustls = { workspace = true }

@@ -133,42 +133,48 @@ release WAZ. Build explicitly after source changes to publish a new snapshot.
 Changing `package.author` while run is watching requires restarting run to use
 the new identity; previous local files stay in place until cleanup or replacement.
 
-App URLs are `/app/<name>/`, standard APIs use `/std/<name>/...`, and ordinary
-APIs use `/<name>/...`. There is no `/dev` URL prefix. Existing frontend and API
-calls therefore use the same paths as an installed application.
+App URLs are `/app/<full-name>/`, standard APIs use `/std<declared-path>`, and
+ordinary APIs use `/<full-name>/...`. Development and installed applications use
+these same paths. Complete names such as `std/comm/message` map directly to
+filesystem directories.
 
 ```toml
 [[dependencies]]
-name = "profile"
-version = "0.3.0"
+name = "std/profile"
+version = "0.3.1"
 path = "../profile"
 
 [[dependencies]]
-name = "message"
-version = "0.2.1"
+name = "std/comm/message"
+version = "0.3.4"
 ```
 
 Dependencies with `path` are built and watched locally, recursively. Paths resolve
 relative to their declaring `jade.toml`; local name/version must match.
 Dependencies without `path` are installed from the store at the exact declared
-version. Conflicting versions, dependency cycles and duplicate local names fail
-explicitly. `path` is omitted from release metadata. Build and publish do not
+version. Different remote versions can coexist. Dependency cycles and duplicate
+local project names fail explicitly. `path` is omitted from release metadata. Build and publish do not
 recursively build dependencies. Local dependency source trees and nested Jade
 projects are excluded when collecting static frontend resources.
 
-Jade watches every local project and publishes each complete directory atomically
-to `<dev-identity>/dev/<name>/`, containing `manifest.json`, optional `lib.wasm`,
-and optional `app/`. Pishoo reads App files per request and compiles changed WASM
-lazily. Build failures retain previous files. Local files require the real owner;
-native services and installed dependencies keep normal routing and authorization.
-Pishoo checks file existence, the real owner and file permissions; identity-name prefixes do not determine permission to execute these unsigned files.
+Jade builds every local project before publishing. Under the identity directory
+lock, each publication atomically replaces the versioned WASM file, publishes its
+versioned frontend directory and selects the App entry. The companion
+`lib/<full-name>.preview/` stores package metadata, ownership and displaced
+resources. Pishoo reads static files on request and caches compiled code by its
+file identity and dependency snapshot.
 
-Development data belongs to the dev identity, in `.volume/<name>` or
-`.volume/std/<name>`, separate from the base identity. Ctrl+C/SIGTERM removes only
-local code directories still owned by this watcher, preserving data and store
-installations. `--fresh` archives previous local data explicitly. Later publishers'
-replacements survive older watchers stopping. SIGKILL/power loss cannot clean up;
-remove leftover `dev/<name>` directories manually. Old `dev-data` is left intact.
+Development data belongs to the selected identity. Every version of a package
+uses the same `.volume/<full-name>/` directory, with historical standard names
+retaining their implicit standard root. Ctrl+C/SIGTERM restores only resources
+still owned by this watcher and preserves business data. `--fresh` archives the
+previous data explicitly. A watcher that loses ownership reports
+`E_DEV_REPLACED`; an explicit new `jade run` starts a new preview.
+
+Browser requests may select an installed exact version with
+`Pishoo-Package-Version`. Same-identity WASI HTTP calls use the executing Lib's
+exact dependency bindings. Package versions sharing a database require compatible
+business schemas and read/write behavior.
 
 ## Create a project
 
@@ -370,15 +376,20 @@ their first successful author, including after withdrawal. An uncertain upload p
 one read-only reconciliation; if unconfirmed it reports
 `E_PUBLISH_OUTCOME_UNKNOWN`. Upload writes are not automatically repeated.
 
-`.waz` is a standard ZIP with MIME `application/zip`. It contains `manifest.json`,
-`signature.json` after publication signing, optional `backend.wasm`, and frontend files under `public/`.
-Root-level `README.md` and `CHANGELOG.md` are automatically included when present;
-missing documents are skipped and need no declaration in `jade.toml`.
-`payload_sha256` identifies the metadata, runtime files and documents and stays
-the same when signed; `package_sha256` identifies the complete ZIP and changes
-when a signature is added. See [the WAZ format](FORMAT.md).
-Old WEBC release files are rejected and must be rebuilt from source. Deploy updated
-store and host readers before publishing the new ZIP packages.
+New `.waz` releases use WAZ v2 in a standard ZIP with MIME `application/zip`.
+The archive contains `manifest.toml`, an optional `wasm/<full-package-name>.wasm`,
+frontend files under `web/`, and English man-style Markdown under `docs/`.
+Jade collects Markdown recursively while respecting project ignore rules.
+`[docs]` in `jade.toml` declares the manual and external README/CHANGELOG URLs.
+
+Publication appends a final `[signature]` table containing the certificate chain
+and signature value. `payload_sha256` covers the original manifest prefix before
+that table and all other release files. `package_sha256` covers the complete
+signed ZIP. See [the WAZ format](FORMAT.md) for exact bytes and limits.
+
+Historical WAZ v1 JSON packages retain their original layout and signing rules.
+Old WEBC release files require rebuilding from source. Rollout prepares the
+store and host readers before publishing WAZ v2 application packages.
 
 ## Output and validation
 
