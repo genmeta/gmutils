@@ -112,7 +112,7 @@ fn create(path: PathBuf, name: Option<String>, template: Template) -> Result<Val
             )
         })?;
     if !crate::pack::valid_id(&format!("jade-template.dhttp.net/{name}")) {
-        return Err(Error::new("E_CONFIG_INVALID","Package name must start with a lowercase letter and contain at most 63 lowercase letters, digits or hyphens").hint("Use --name to choose a package name independently of the directory"));
+        return Err(Error::new("E_CONFIG_INVALID","Package name must contain at most 63 lowercase letters, digits, hyphens or slash separators; each segment must start with a letter").hint("Use --name to choose a package name independently of the directory"));
     }
     if fs::symlink_metadata(&path).is_ok() {
         return Err(Error::new(
@@ -136,6 +136,7 @@ fn create(path: PathBuf, name: Option<String>, template: Template) -> Result<Val
         .prefix(".jade-create-")
         .tempdir_in(&parent)?;
     let root = temporary.path();
+    let source_name = name.replace('/', "-");
     let config = json!({"package":{"name":name,"version":"0.1.0","description":format!("{name} application"),"license":"Apache-2.0"}});
     let mut ignore = format!("/{}/\n", crate::project::BUILD_DIR);
     match template {
@@ -150,7 +151,7 @@ fn create(path: PathBuf, name: Option<String>, template: Template) -> Result<Val
         }
         Template::Web | Template::Fullstack => {
             fs::create_dir_all(root.join("web/src"))?;
-            fs::write(root.join("web/package.json"),serde_json::to_string_pretty(&json!({"name":name,"version":"0.1.0","private":true,"type":"module","scripts":{"dev":"vite","build":"vite build"},"devDependencies":{"vite":"^8.3.0"}})).map_err(|e|Error::new("E_INTERNAL",e))?)?;
+            fs::write(root.join("web/package.json"),serde_json::to_string_pretty(&json!({"name":source_name,"version":"0.1.0","private":true,"type":"module","scripts":{"dev":"vite","build":"vite build"},"devDependencies":{"vite":"^8.3.0"}})).map_err(|e|Error::new("E_INTERNAL",e))?)?;
             fs::write(
                 root.join("web/vite.config.js"),
                 "export default { base: './' };\n",
@@ -184,7 +185,7 @@ fn create(path: PathBuf, name: Option<String>, template: Template) -> Result<Val
             root.join("wasm/Cargo.toml"),
             format!(
                 r#"[package]
-name = "{name}"
+name = "{source_name}"
 version = "0.1.0"
 edition = "2024"
 publish = false

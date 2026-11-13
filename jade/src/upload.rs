@@ -294,7 +294,8 @@ async fn read_input(input: &std::path::Path) -> crate::error::Result<(Vec<u8>, V
             .map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
         let file = root.join(crate::project::BUILD_DIR).join(format!(
             "{}-{}.waz",
-            config.package.name, config.package.version
+            config.package.name.replace('/', "%2F"),
+            config.package.version
         ));
         if !file.try_exists()? {
             return Err(Error::new("E_BUILD_REQUIRED", "The configured package version has not been built")
@@ -734,7 +735,8 @@ fn persist_signed_snapshot(
         let (root, config) = crate::project::read_manifest(input)?;
         root.join(crate::project::BUILD_DIR).join(format!(
             "{}-{}.waz",
-            config.package.name, config.package.version
+            config.package.name.replace('/', "%2F"),
+            config.package.version
         ))
     } else {
         input.to_path_buf()

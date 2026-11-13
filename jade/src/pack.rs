@@ -30,7 +30,7 @@ pub(super) async fn run(
     let output = requested_output.unwrap_or_else(|| {
         project
             .join(crate::project::BUILD_DIR)
-            .join(format!("{name}-{version}.waz"))
+            .join(format!("{}-{version}.waz", name.replace('/', "%2F")))
     });
     reject_url(output.as_os_str()).map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
     let output = resolved_output(&output).map_err(|e| Error::new("E_OUTPUT_CONFLICT", e))?;
@@ -494,11 +494,16 @@ fn valid_version(value: &str) -> bool {
 pub(super) fn valid_id(id: &str) -> bool {
     id.split_once('/').is_some_and(|(publisher, name)| {
         dhttp_home::normalize_name(publisher).as_deref() == Some(publisher)
-            && (1..=63).contains(&name.len())
-            && name.as_bytes()[0].is_ascii_lowercase()
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            && name.len() <= 63
+            && name.split('/').all(|segment| {
+                segment
+                    .as_bytes()
+                    .first()
+                    .is_some_and(u8::is_ascii_lowercase)
+                    && segment
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            })
     })
 }
 

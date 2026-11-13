@@ -6,7 +6,7 @@ fn release(author: &str, name: &str, _kind: &str, version: &str) -> Value {
         "id": format!("{author}/{name}"), "author": author, "name": name,
         "version": version, "status": "published", "size": 4096,
         "package_sha256": "a".repeat(64), "author_owner_hash": "b".repeat(64),
-        "download_path": format!("/store/v1/{collection}/{author}/{name}/versions/{version}/package.waz"),
+        "download_path": format!("/store/v1/{collection}/{author}/{}/versions/{version}/package.waz", name.replace('/', "%2F")),
         "title": "Package", "description": "Description", "changelog": "Initial release", "dependencies": [],
     });
     value
@@ -23,7 +23,14 @@ fn report(error: Whatever) -> String {
 
 #[test]
 fn input_accepts_only_store_names_and_exact_versions() {
-    for name in ["workspace", "dev.dhttp.net/workspace", "dev.dhttp.net/chat"] {
+    for name in [
+        "workspace",
+        "dev.dhttp.net/workspace",
+        "dev.dhttp.net/chat",
+        "comm/group",
+        "dev/workspace",
+        "dev.dhttp.net/a/b",
+    ] {
         assert!(validate_input(name, Some("0.2.0")).is_ok());
     }
     for name in [
@@ -36,8 +43,6 @@ fn input_accepts_only_store_names_and_exact_versions() {
         "~/workspace",
         "C:\\workspace",
         "workspace.waz",
-        "dev/workspace",
-        "dev.dhttp.net/a/b",
         "https://github.com/a/b",
         "file:///tmp/a",
         "Workspace",
@@ -830,7 +835,7 @@ async fn host_api_commands_authenticate_and_preserve_methods_bodies_and_errors()
 fn abbreviated_authors_expand_without_changing_bare_names() {
     assert_eq!(normalize_target("workspace"), "workspace");
     assert_eq!(normalize_target("message"), "message");
-    assert_eq!(normalize_target("alice/message"), "alice.dhttp.net/message");
+    assert_eq!(normalize_target("alice/message"), "alice/message");
     assert_eq!(
         normalize_target("alice.smith/message"),
         "alice.smith.dhttp.net/message"
@@ -840,7 +845,12 @@ fn abbreviated_authors_expand_without_changing_bare_names() {
         "alice.dhttp.net/message"
     );
     for id in ["std.dhttp.net/workspace", "alice.smith.dhttp.net/message"] {
-        assert_eq!(normalize_target(&display::package_id(id)), id);
+        let displayed = display::package_id(id);
+        if displayed.starts_with("std/") {
+            assert_eq!(normalize_target(&displayed), displayed);
+        } else {
+            assert_eq!(normalize_target(&displayed), id);
+        }
     }
     assert!(!valid_target(&normalize_target("@alice/message")));
 }
@@ -969,4 +979,19 @@ fn installation_requires_a_host_with_developer_author_and_migration_support() {
         headers.insert("pishoo-version", version.parse().unwrap());
         require_install_host(&headers).unwrap();
     }
+}
+
+#[test]
+fn hierarchical_names_and_qualified_ids_keep_the_entire_package_name() {
+    assert_eq!(normalize_target("comm/group"), "comm/group");
+    assert!(valid_target("comm/group"));
+    assert!(valid_target("dev.genmeta.tech.dhttp.net/comm/group"));
+    assert_eq!(
+        package_name("dev.genmeta.tech.dhttp.net/comm/group"),
+        "comm/group"
+    );
+    assert_eq!(
+        store_id("dev.genmeta.tech.dhttp.net/comm/group"),
+        "dev.genmeta.tech.dhttp.net/comm%2Fgroup"
+    );
 }

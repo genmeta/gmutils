@@ -259,7 +259,7 @@ fn paths_and_protocol_proofs_are_exact() {
             );
         }
     }
-    for name in ["../bad", "a/b", "Bad", "a%2fb", "", "name?x", "name#x"] {
+    for name in ["../bad", "a//b", "Bad", "a%2fb", "", "name?x", "name#x"] {
         assert!(version_path(&metadata("app", name, json!([]))).is_err());
     }
     for version in [
@@ -914,4 +914,12 @@ fn publication_confirmation_requires_the_complete_uploaded_archive() {
     let mut wrong_size = release;
     wrong_size["size"] = 1.into();
     assert!(confirm_release(&wrong_size, bytes).is_err());
+}
+
+#[test]
+fn hierarchical_package_store_paths_encode_the_name_as_one_segment() {
+    assert_eq!(
+        version_path(&metadata("app", "comm/group", json!([]))).unwrap(),
+        "/store/v1/packages/alice.dhttp.net/comm%2Fgroup/versions/1.0.0"
+    );
 }

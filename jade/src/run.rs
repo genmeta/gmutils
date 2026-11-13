@@ -49,9 +49,16 @@ pub(super) async fn run(path: PathBuf, fresh: bool, machine: bool) -> Result<Val
             profile
                 .join(".volume")
                 .join(if crate::identity::is_standard_author(&host) {
-                    format!("std/{}", config.package.name)
+                    format!(
+                        "std/{}",
+                        if config.package.name == "comm/message" {
+                            "message".to_owned()
+                        } else {
+                            config.package.name.replace('/', "%2F")
+                        }
+                    )
                 } else {
-                    config.package.name.clone()
+                    config.package.name.replace('/', "%2F")
                 });
         projects(&project, &host)?;
         prepare_host(&profile).await?;
@@ -104,7 +111,7 @@ pub(super) async fn run(path: PathBuf, fresh: bool, machine: bool) -> Result<Val
                             result["api"] = format!("https://{host}{base}{path}").into();
                         }
                         if result["has_app"] == true {
-                            result["app"] = format!("https://{host}/app/{name}/").into();
+                            result["app"] = format!("https://{host}/app/{}/", name.replace('/', "%2F")).into();
                         }
                         if machine {
                             eprintln!("{}", json!({"command":"run","event":"published","result":result}));
@@ -185,7 +192,7 @@ fn remove_published(profile: &Path, name: &str, published: &std::fs::File) -> Re
     let root = private_directory(&dev, &profile.metadata()?)?;
     rustix::fs::flock(&root, rustix::fs::FlockOperation::LockExclusive)
         .map_err(std::io::Error::from)?;
-    let path = dev.join(name);
+    let path = dev.join(name.replace('/', "%2F"));
     let current = match path.symlink_metadata() {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
@@ -297,17 +304,25 @@ fn publish(
     } else {
         data_root
     };
-    let data = data_root.join(name);
+    let data_name = if crate::identity::is_standard_author(
+        manifest["package"]["author"].as_str().unwrap_or(""),
+    ) && name == "comm/message"
+    {
+        "message".to_owned()
+    } else {
+        name.replace('/', "%2F")
+    };
+    let data = data_root.join(data_name);
     if fresh && data.try_exists()? {
         let _ = private_directory(&data, &owner)?;
         let previous = tempfile::Builder::new()
-            .prefix(&format!(".{name}-previous-"))
+            .prefix(&format!(".{}-previous-", name.replace('/', "%2F")))
             .tempdir_in(&data_root)?
             .keep();
         std::fs::rename(&data, &previous)?;
     }
     let _ = private_directory(&data, &owner)?;
-    let target = dev.join(name);
+    let target = dev.join(name.replace('/', "%2F"));
     let flags = match target.symlink_metadata() {
         Ok(metadata)
             if metadata.is_dir()
@@ -331,7 +346,7 @@ fn publish(
         &root,
         staged.path().file_name().unwrap(),
         &root,
-        name,
+        name.replace('/', "%2F"),
         flags,
     )
     .map_err(std::io::Error::from)?;

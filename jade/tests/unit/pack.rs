@@ -115,3 +115,20 @@ async fn static_resources_exclude_local_dependency_projects_and_nested_manifests
             .any(|part| part == b"/private/")
     }));
 }
+
+#[test]
+fn hierarchical_package_identity_is_not_reduced_to_its_leaf() {
+    for name in ["message", "comm/message", "live/video/room"] {
+        assert!(valid_id(&format!("dev.genmeta.tech.dhttp.net/{name}")));
+    }
+    for name in [
+        "comm//group",
+        "/comm/group",
+        "comm/../group",
+        "comm/group/",
+        "comm%2Fgroup",
+        "comm/Group",
+    ] {
+        assert!(!valid_id(&format!("dev.genmeta.tech.dhttp.net/{name}")));
+    }
+}

@@ -286,16 +286,22 @@ pub(crate) fn version_path(metadata: &Value) -> Result<String, Whatever> {
         });
     if normalized.as_full() != author
         || name.len() > 63
-        || !name.as_bytes()[0].is_ascii_lowercase()
-        || !name
-            .bytes()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        || !name.split('/').all(|segment| {
+            segment
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_lowercase)
+                && segment
+                    .bytes()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        })
         || !valid_version
     {
         whatever!("invalid normalized package identity or exact version");
     }
     Ok(format!(
-        "/store/v1/packages/{author}/{name}/versions/{version}"
+        "/store/v1/packages/{author}/{}/versions/{version}",
+        name.replace('/', "%2F")
     ))
 }
 
