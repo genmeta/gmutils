@@ -25,6 +25,18 @@ pub(super) enum DeveloperCommand {
     Renew { sequence: u32 },
 }
 
+fn developer_output(mut value: Value) -> Value {
+    for key in ["domain", "root_domain"] {
+        if let Some(name) = value[key]
+            .as_str()
+            .and_then(|name| name.strip_suffix(dhttp_home::DHTTP_SUFFIX))
+        {
+            value[key] = format!("{name}~").into();
+        }
+    }
+    value
+}
+
 impl Developer {
     pub(super) async fn run(&self, home: &DhttpHome, server: &CertServer) -> Result<(), Error> {
         let token = run_cert_server_email_session(
@@ -40,7 +52,7 @@ impl Developer {
             .await?;
         println!(
             "{}",
-            serde_json::to_string_pretty(&value)
+            serde_json::to_string_pretty(&developer_output(value))
                 .map_err(|e| Error::without_source(e.to_string()))?
         );
         Ok(())

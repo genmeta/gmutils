@@ -23,6 +23,8 @@ pub(crate) struct Manifest {
     pub backend: Option<PathBuf>,
     #[serde(default)]
     pub dependencies: Vec<Dependency>,
+    #[serde(default)]
+    pub docs: std::collections::BTreeMap<String, String>,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
@@ -209,6 +211,9 @@ impl Manifest {
         let mut annotation = json!({"title":package.title.as_ref().unwrap_or(&package.name),
             "changelog":package.release_notes.clone().unwrap_or_else(||format!("Release {}",package.version)),
             "dependencies":dependencies});
+        if !self.docs.is_empty() {
+            annotation["docs"] = json!(self.docs);
+        }
         if self.frontend.is_some() {
             annotation["entry"] = "/".into();
         }
@@ -754,7 +759,7 @@ pub(crate) fn validate_component(
     bytes: &[u8],
     version: &str,
     author: &str,
-    name: &str,
+    _name: &str,
 ) -> Result<()> {
     let invalid = |message: &str| Error::new("E_ARTIFACT_INVALID", message);
     if bytes.get(..8) != Some(b"\0asm\x0d\0\x01\0") {
@@ -806,9 +811,11 @@ pub(crate) fn validate_component(
         .as_object()
         .ok_or_else(|| invalid("OpenAPI paths must be an object"))?;
     let mut operation_ids = HashSet::new();
+    let mut declared = Vec::<&str>::new();
     for (path, item) in paths {
         if !path.starts_with('/')
-            || path.contains(['{', '}', '?', '#', '%', '\\'])
+            || path.contains(['?', '#', '%', '\\'])
+            || !valid_path_parameters(path)
             || path.contains("//")
             || path.chars().any(|c| c.is_whitespace() || c.is_control())
             || path.split('/').any(|s| s == "." || s == "..")
@@ -821,17 +828,26 @@ pub(crate) fn validate_component(
         {
             return Err(invalid(&format!("Unsupported OpenAPI path: {path}")));
         }
-        let route = if name == "message" {
-            "comm/message"
-        } else {
-            name
-        };
+        if declared.iter().any(|other| api_paths_overlap(other, path)) {
+            return Err(invalid("Overlapping OpenAPI paths"));
+        }
+        declared.push(path);
         if crate::identity::is_standard_author(author)
-            && path != &format!("/{route}")
-            && !path.starts_with(&format!("/{route}/"))
+            && [
+                "/std",
+                "/sys",
+                "/acl",
+                "/contact",
+                "/contacts",
+                "/forward",
+                "/file",
+                "/pishoo",
+            ]
+            .iter()
+            .any(|prefix| path == prefix || path.starts_with(&format!("{prefix}/")))
         {
             return Err(invalid(
-                "Standard API paths must stay under their package name",
+                "Standard API paths conflict with a native namespace",
             ));
         }
         for method in [
@@ -926,14 +942,21 @@ pub(crate) fn validate_component(
                 _ => false,
             }
         } else {
-            package.namespace == "pishoo"
-                && package.name == "identity"
+            let identity = package.name == "identity"
                 && package.version.as_ref().is_some_and(|v| {
                     v.major == 0
                         && ((v.minor == 1
                             && matches!(interface_name, "request-identity" | "signatures"))
-                            || (v.minor == 2 && interface_name == "request-identity"))
-                })
+                            || (v.minor == 2 && interface_name == "request-identity")
+                            || (v.minor == 3 && v.patch == 0 && interface_name == "call-context"))
+                });
+            let execution = package.name == "execution"
+                && interface_name == "runtime"
+                && package
+                    .version
+                    .as_ref()
+                    .is_some_and(|v| v.major == 0 && v.minor == 1 && v.patch == 0);
+            package.namespace == "pishoo" && (identity || execution)
         };
         if !supported {
             return Err(invalid(&format!(
@@ -983,6 +1006,48 @@ fn http_resource(resolve: &wit_parser::Resolve, mut ty: wit_parser::Type, name: 
         }
     }
     false
+}
+
+fn valid_path_parameters(path: &str) -> bool {
+    if path
+        .trim_start_matches('/')
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .contains(['{', '}'])
+    {
+        return false;
+    }
+    let mut names = HashSet::new();
+    path.split('/').all(|segment| {
+        if !segment.contains(['{', '}']) {
+            return true;
+        }
+        let Some(name) = segment.strip_prefix('{').and_then(|v| v.strip_suffix('}')) else {
+            return false;
+        };
+        !name.is_empty()
+            && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            && names.insert(name)
+    })
+}
+fn api_paths_overlap(left: &str, right: &str) -> bool {
+    let mut right = right.split('/');
+    for left in left.split('/') {
+        let Some(right) = right.next() else {
+            return false;
+        };
+        if left == right {
+            continue;
+        }
+        if left.is_empty() || right.is_empty() {
+            return false;
+        }
+        if !left.starts_with('{') && !right.starts_with('{') {
+            return false;
+        }
+    }
+    right.next().is_none()
 }
 
 #[cfg(test)]

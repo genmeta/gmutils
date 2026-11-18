@@ -1,7 +1,7 @@
 [package]
 name = "jade"
 description = "Create, build, sign and publish Pishoo packages"
-version = "0.1.1"
+version = "0.1.2-preview.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -24,6 +24,7 @@ http = { workspace = true }
 http-body-util = { workspace = true }
 inquire = { workspace = true }
 indicatif = { workspace = true }
+ignore = "0.4"
 qtls = { workspace = true }
 rustix = { version = "1", features = ["fs"] }
 rustls = { workspace = true }

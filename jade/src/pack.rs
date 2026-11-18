@@ -30,7 +30,7 @@ pub(super) async fn run(
     let output = requested_output.unwrap_or_else(|| {
         project
             .join(crate::project::BUILD_DIR)
-            .join(format!("{name}-{version}.waz"))
+            .join(format!("{}-{version}.waz", name.to_owned()))
     });
     reject_url(output.as_os_str()).map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
     let output = resolved_output(&output).map_err(|e| Error::new("E_OUTPUT_CONFLICT", e))?;
@@ -144,7 +144,18 @@ pub(crate) async fn build_files(
     output: &Path,
 ) -> crate::error::Result<BTreeMap<String, Vec<u8>>> {
     use crate::error::Error;
-    let (mut wapm, annotation) = config.metadata(author)?;
+    let (wapm, annotation) = config.metadata(author)?;
+    if config.backend.is_some()
+        && crate::identity::is_standard_author(author)
+        && !config.package.name.starts_with("std/")
+    {
+        return Err(Error::new(
+            "E_CONFIG_INVALID",
+            "Standard Lib package names must start with std/",
+        )
+        .hint("Use the complete std/ package name in jade.toml and its dependency declarations."));
+    }
+
     validate_metadata(&wapm, &annotation, config.backend.is_some())
         .map_err(|e| Error::new("E_CONFIG_INVALID", e))?;
     let name = &config.package.name;
@@ -183,7 +194,6 @@ pub(crate) async fn build_files(
     }
     let mut count = 1;
     let mut remaining = 64 * 1024 * 1024 - backend.len();
-    let mut documents = BTreeMap::new();
     let mut excluded_content = excluded.to_vec();
     for path in config
         .dependencies
@@ -208,28 +218,11 @@ pub(crate) async fn build_files(
         }
         excluded_content.push(path);
     }
-    for name in ["README.md", "CHANGELOG.md"] {
-        let path = project.join(name);
-        excluded_content.push(path.clone());
-        match std::fs::symlink_metadata(&path) {
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(Error::new("E_ARTIFACT_INVALID", error)),
-        }
-        let bytes = read_bounded(&path, (16 * 1024 * 1024).min(remaining))
-            .map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
-        remaining -= bytes.len();
-        count += 1;
-        documents.insert(
-            name.parse().map_err(|e| Error::new("E_INTERNAL", e))?,
-            DirEntry::File(FileEntry::owned(bytes, Timestamps::default())),
-        );
-        if name == "README.md" {
-            wapm["readme"] = json!({"volume":"metadata","path":"/README.md"});
-        }
-    }
-    let documents =
-        (!documents.is_empty()).then(|| Directory::new(documents, Timestamps::default()));
+    excluded_content.extend([
+        project.join("README.md"),
+        project.join("CHANGELOG.md"),
+        project.join("docs"),
+    ]);
     let content = directory
         .as_ref()
         .map(|directory| {
@@ -244,8 +237,30 @@ pub(crate) async fn build_files(
         })
         .transpose()
         .map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
-    assemble_files(&wapm, &annotation, &backend, content, documents)
-        .map_err(|e| Error::new("E_ARTIFACT_INVALID", e))
+    let mut files = assemble_files(&wapm, &annotation, &backend, content, None)
+        .map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
+    let docs = project.join("docs");
+    if docs.try_exists()? {
+        collect_manuals(&docs, &mut files, &mut count, &mut remaining)
+            .map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
+    }
+    let mut manifest =
+        crate::archive::waz_manifest(&files).map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
+    if files.contains_key("docs/manual.md") {
+        if manifest.get("docs").is_none() {
+            manifest["docs"] = json!({});
+        }
+        if manifest["docs"].get("manual").is_none() {
+            manifest["docs"]["manual"] = "docs/manual.md".into();
+        }
+    }
+    files.insert(
+        "manifest.toml".into(),
+        toml::to_string_pretty(&manifest)
+            .map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?
+            .into_bytes(),
+    );
+    Ok(files)
 }
 
 fn assemble_files(
@@ -290,6 +305,18 @@ fn assemble_files(
 }
 
 pub(crate) fn embedded_openapi(mut backend: Vec<u8>, source: Option<&[u8]>) -> Result<Vec<u8>> {
+    let mut commands = BTreeMap::new();
+    let mut names = HashSet::new();
+    backend = lift_commands(&backend, true, &mut commands, &mut names)?;
+    for (name, program) in commands {
+        let mut payload = Vec::new();
+        wasm_write_length(name.len(), &mut payload);
+        payload.extend_from_slice(name.as_bytes());
+        payload.extend_from_slice(&program);
+        backend.push(0);
+        wasm_write_length(payload.len(), &mut backend);
+        backend.extend_from_slice(&payload);
+    }
     let mut offset = 8;
     let mut embedded = None;
     while offset < backend.len() {
@@ -353,6 +380,66 @@ pub(crate) fn embedded_openapi(mut backend: Vec<u8>, source: Option<&[u8]>) -> R
         return Err("backend with embedded OpenAPI exceeds 64 MiB".into());
     }
     Ok(backend)
+}
+
+// Rust places custom sections on its core module. Publish declared command
+// resources on the containing backend, where the execution host validates them.
+fn lift_commands(
+    bytes: &[u8],
+    top_level: bool,
+    commands: &mut BTreeMap<String, Vec<u8>>,
+    names: &mut HashSet<String>,
+) -> Result<Vec<u8>> {
+    let header = bytes.get(..8).ok_or("truncated WASM header")?;
+    let component = header == b"\0asm\x0d\0\x01\0";
+    if !component && header != b"\0asm\x01\0\0\0" {
+        return Err("invalid WASM header".into());
+    }
+    let mut result = header.to_vec();
+    let mut offset = 8;
+    while offset < bytes.len() {
+        let section_start = offset;
+        let id = bytes[offset];
+        let (length, start) = wasm_length(bytes, offset + 1)?;
+        let end = start
+            .checked_add(length)
+            .filter(|end| *end <= bytes.len())
+            .ok_or("truncated WASM section")?;
+        offset = end;
+        if id == 0 {
+            let (length, name_start) = wasm_length(&bytes[..end], start)?;
+            let name_end = name_start
+                .checked_add(length)
+                .filter(|end| *end <= offset)
+                .ok_or("truncated custom section name")?;
+            let name = std::str::from_utf8(&bytes[name_start..name_end])?;
+            if let Some(program) = name.strip_prefix("pishoo:command/") {
+                if program.is_empty()
+                    || program.len() > 64
+                    || !program
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+                    || !names.insert(name.to_owned())
+                    || !bytes[name_end..end].starts_with(b"\0asm\x0d\0\x01\0")
+                {
+                    return Err("invalid or duplicate command component".into());
+                }
+                if !top_level {
+                    commands.insert(name.to_owned(), bytes[name_end..end].to_vec());
+                    continue;
+                }
+            }
+        }
+        if component && matches!(id, 1 | 4) {
+            let nested = lift_commands(&bytes[start..end], false, commands, names)?;
+            result.push(id);
+            wasm_write_length(nested.len(), &mut result);
+            result.extend_from_slice(&nested);
+        } else {
+            result.extend_from_slice(&bytes[section_start..end]);
+        }
+    }
+    Ok(result)
 }
 
 fn wasm_length(bytes: &[u8], mut offset: usize) -> Result<(usize, usize)> {
@@ -422,11 +509,16 @@ fn valid_version(value: &str) -> bool {
 pub(super) fn valid_id(id: &str) -> bool {
     id.split_once('/').is_some_and(|(publisher, name)| {
         dhttp_home::normalize_name(publisher).as_deref() == Some(publisher)
-            && (1..=63).contains(&name.len())
-            && name.as_bytes()[0].is_ascii_lowercase()
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            && name.len() <= 63
+            && name.split('/').all(|segment| {
+                segment
+                    .as_bytes()
+                    .first()
+                    .is_some_and(u8::is_ascii_lowercase)
+                    && segment
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            })
     })
 }
 
@@ -481,7 +573,7 @@ pub(crate) fn validate_metadata(wapm: &Value, annotation: &Value, has_backend: b
         o.keys().any(|k| {
             !matches!(
                 k.as_str(),
-                "title" | "dependencies" | "changelog" | "entry" | "host"
+                "title" | "dependencies" | "changelog" | "entry" | "host" | "docs"
             )
         })
     }) {
@@ -606,6 +698,58 @@ pub(crate) fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
         return Err(format!("build artifact exceeds size limit: {}", path.display()).into());
     }
     Ok(bytes)
+}
+
+fn collect_manuals(
+    directory: &Path,
+    files: &mut BTreeMap<String, Vec<u8>>,
+    count: &mut usize,
+    remaining: &mut usize,
+) -> Result<()> {
+    if !std::fs::symlink_metadata(directory)?.is_dir() {
+        return Err("manuals require real directories".into());
+    }
+    for entry in ignore::WalkBuilder::new(directory)
+        .hidden(false)
+        .follow_links(false)
+        .git_global(false)
+        .git_exclude(false)
+        .require_git(false)
+        .build()
+    {
+        let entry = entry?;
+        if entry.depth() > 32 {
+            return Err("manual directory depth exceeds 32".into());
+        }
+        let kind = entry.file_type().ok_or("missing manual file type")?;
+        if kind.is_dir() {
+            continue;
+        }
+        if !kind.is_file() {
+            return Err("manuals must be regular files without symlinks or special files".into());
+        }
+        if entry
+            .path()
+            .extension()
+            .is_none_or(|extension| extension != "md")
+        {
+            continue;
+        }
+        let relative = entry.path().strip_prefix(directory)?;
+        let name = relative
+            .to_str()
+            .ok_or("invalid manual filename")?
+            .replace('\\', "/");
+        let bytes = read_bounded(entry.path(), (16 * 1024 * 1024).min(*remaining))?;
+        std::str::from_utf8(&bytes)?;
+        *remaining -= bytes.len();
+        *count += 1;
+        if *count > 4096 {
+            return Err("too many package files".into());
+        }
+        files.insert(format!("docs/{name}"), bytes);
+    }
+    Ok(())
 }
 
 fn public_directory(

@@ -36,7 +36,14 @@ or subscription.
 
 Open the App URL printed by Jade. Edit `web/index.html`, `web/src/main.js`,
 `web/src/style.css` and `wasm/src/lib.rs`; Jade rebuilds on changes.
-Ctrl+C removes this run's local code and keeps development data.
+The selected development identity stores each backend as
+`lib/<full-name>.wasm.<project-version>` and frontend as
+`app/<full-name>.<project-version>/`. The active App entry links to its version directory. `lib/<name>.preview/` records file ownership and
+retains overwritten resources. Complete package name segments form directories.
+Ctrl+C restores resources still owned by this watcher and keeps development data.
+A running watcher reports `E_DEV_REPLACED` after an installer or another watcher
+takes over its files. Restart `jade run` to start a new preview.
+See the [host directory tree](../../pishoo-projects/pishoo/docs/jade-run.md#files-and-data).
 
 The default template includes an English welcome page with a Chinese language
 switch and a GET `/whoami` API. The API reads the verified **visitor's** name;
@@ -143,8 +150,9 @@ jade create hello --template fullstack  # Default
 
 `jade.toml` contains package metadata and optional exact runtime dependencies.
 Jade discovers frontend and Rust source directories automatically. Build output
-and Cargo's cache go under `build/`. Root `README.md` and `CHANGELOG.md` are included
-in the package when present. `--json` produces machine-readable output.
+and Cargo's cache go under `build/`. English man-style manuals in `docs/` are included
+recursively, respecting project ignore rules. Configure external README and CHANGELOG
+URLs under `[docs]` in `jade.toml`. `--json` produces machine-readable output.
 
 See [the reference](REFERENCE.md) for configuration, local dependencies, credentials,
 publication checks and validation commands, or [the WAZ format](FORMAT.md).

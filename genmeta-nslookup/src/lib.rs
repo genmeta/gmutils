@@ -20,7 +20,7 @@ pub struct Options {
     #[arg(long, global = true)]
     verb: bool,
 
-    /// Name to query (only a trailing ~ expands to .dhttp.net)
+    /// Name to query (use a trailing ~ for a DHTTP identity)
     #[arg(index = 1, value_parser = parse_query_name)]
     name: String,
 
@@ -48,6 +48,40 @@ pub struct Options {
     #[arg(long = "interface", value_name = "bind", default_value = "*",
           hide = cfg!(not(debug_assertions)))]
     binds: Vec<BindPattern>,
+}
+
+pub fn display_identity(name: &str) -> std::borrow::Cow<'_, str> {
+    let mut rendered = String::new();
+    let mut copied = 0;
+    let lowercase = name.to_ascii_lowercase();
+    for (start, _) in lowercase.match_indices("dhttp.net") {
+        let end = start + "dhttp.net".len();
+        if name
+            .as_bytes()
+            .get(end)
+            .is_some_and(|next| next.is_ascii_alphanumeric() || matches!(next, b'.' | b'_' | b'-'))
+        {
+            continue;
+        }
+        let begin = match start.checked_sub(1).map(|index| name.as_bytes()[index]) {
+            Some(b'.') => start - 1,
+            Some(previous)
+                if previous.is_ascii_alphanumeric() || matches!(previous, b'_' | b'-') =>
+            {
+                continue;
+            }
+            _ => start,
+        };
+        rendered.push_str(&name[copied..begin]);
+        rendered.push('~');
+        copied = end;
+    }
+    if copied == 0 {
+        std::borrow::Cow::Borrowed(name)
+    } else {
+        rendered.push_str(&name[copied..]);
+        std::borrow::Cow::Owned(rendered)
+    }
 }
 
 fn parse_query_name(input: &str) -> Result<String, String> {
@@ -80,7 +114,7 @@ pub enum Error {
     },
     #[snafu(display("failed to build dhttp endpoint"))]
     BuildEndpoint { source: dhttp::Error },
-    #[snafu(display("failed to lookup dns records of `{name}`"))]
+    #[snafu(display("failed to lookup dns records of `{}`", display_identity(name)))]
     LookUp {
         name: String,
         source: std::io::Error,
@@ -171,7 +205,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
             })?;
 
     if options.streaming {
-        println!("Name: {}:", options.name);
+        println!("Name: {}:", display_identity(&options.name));
         let mut last_source = None;
         while let Some((source, endpoint_addr)) = lookup.next().await {
             if !last_source.as_ref().is_some_and(|last| last == &source) {
@@ -192,7 +226,7 @@ pub async fn run(options: Options) -> Result<(), Error> {
         });
         collect.await;
 
-        println!("Name: {}:", options.name);
+        println!("Name: {}:", display_identity(&options.name));
         for (source, endpoint_addrs) in endpoint_addrs.into_iter() {
             println!("{source}:");
             for endpoint_addr in endpoint_addrs.into_iter().collect::<HashSet<_>>() {

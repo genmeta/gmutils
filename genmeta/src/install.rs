@@ -30,23 +30,48 @@ const SERVICE: &str = "Start or enable the correct Pishoo service for the select
 
 fn valid_name(name: &str) -> bool {
     name.len() <= 63
-        && name.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && name.split('/').all(|segment| {
+            segment
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_lowercase)
+                && segment
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+}
+
+fn qualified(target: &str) -> bool {
+    target
+        .split_once('/')
+        .is_some_and(|(author, _)| author.contains('.') || author.ends_with('~'))
+}
+
+fn package_name(target: &str) -> &str {
+    if qualified(target) {
+        target.split_once('/').unwrap().1
+    } else {
+        target
+    }
+}
+
+fn store_id(id: &str) -> String {
+    let (author, name) = id.split_once('/').unwrap();
+    format!("{author}/{name}")
 }
 
 fn valid_target(target: &str) -> bool {
-    match target.split_once('/') {
-        Some((author, name)) => {
-            dhttp_home::normalize_name(author).as_deref() == Some(author) && valid_name(name)
-        }
-        None => valid_name(target),
+    if qualified(target) {
+        let (author, name) = target.split_once('/').unwrap();
+        dhttp_home::normalize_name(author).as_deref() == Some(author) && valid_name(name)
+    } else {
+        valid_name(target)
     }
 }
 
 fn normalize_target(target: &str) -> String {
-    if let Some((author, name)) = target.split_once('/')
+    if (qualified(target) || !valid_name(target))
+        && let Some((author, name)) = target.split_once('/')
         && let Some(author) = dhttp_home::normalize_name(author)
     {
         return format!("{author}/{name}");
@@ -117,7 +142,10 @@ fn validate_release(
             && valid_hash(&value["package_sha256"])
             && valid_hash(&value["author_owner_hash"])
             && value["download_path"]
-                == format!("/store/v1/{collection}/{id}/versions/{release}/package.waz"),
+                == format!(
+                    "/store/v1/{collection}/{}/versions/{release}/package.waz",
+                    store_id(id)
+                ),
         "Invalid store package size, digest, author owner hash, or download path"
     );
     Ok(())
@@ -153,7 +181,7 @@ where
     validate_input(target, version)?;
     let collection = "packages";
     let mut remaining = RESOLUTION_BYTES;
-    let id = if target.contains('/') {
+    let id = if qualified(target) {
         target.to_owned()
     } else {
         let mut matches = BTreeSet::new();
@@ -162,7 +190,8 @@ where
         let mut page = 1;
         loop {
             let bytes = get(format!(
-                "/store/v1/{collection}?q={target}&page={page}&page_size={PAGE_SIZE}"
+                "/store/v1/{collection}?q={}&page={page}&page_size={PAGE_SIZE}",
+                target.replace('/', "%2F")
             ))
             .await
             .whatever_context("Store resolution incomplete: catalog page request failed")?;
@@ -211,6 +240,13 @@ where
             }
             page += 1;
         }
+        if matches.is_empty()
+            && !target.starts_with("std/")
+            && let Some((author, name)) = target.split_once('/')
+            && let Some(author) = dhttp_home::normalize_name(author)
+        {
+            matches.insert(format!("{author}/{name}"));
+        }
         ensure_whatever!(
             !matches.is_empty(),
             "No published package named {target} was found in the store"
@@ -227,7 +263,8 @@ where
         matches.into_iter().next().unwrap()
     };
     let path = format!(
-        "/store/v1/{collection}/{id}{}",
+        "/store/v1/{collection}/{}{}",
+        store_id(&id),
         version
             .map(|v| format!("/versions/{v}"))
             .unwrap_or_default()
@@ -509,7 +546,10 @@ async fn catalog(
     require_signing_support: bool,
 ) -> Result<Option<Value>, Whatever> {
     let path = match target {
-        Some(target) => format!("/std/sys/pkg?name={}", target.rsplit('/').next().unwrap()),
+        Some(target) => format!(
+            "/std/sys/pkg?name={}",
+            package_name(target).replace('/', "%2F")
+        ),
         None => "/std/sys/pkg/list".to_owned(),
     };
     tokio::time::timeout(RESOLUTION_TIMEOUT, async {
@@ -521,7 +561,14 @@ async fn catalog(
         if require_signing_support { require_install_host(response.headers())?; }
         let status = response.status();
         let package_id = response.headers().get("package-id").cloned();
-        if status == StatusCode::NOT_FOUND && target.is_some() {
+        if status == StatusCode::NOT_FOUND && let Some(target) = target {
+            // An exact hierarchical name takes priority. If absent, retain the
+            // historical short-author spelling for installed package commands.
+            if !qualified(target) && !target.starts_with("std/") && let Some((author, name)) = target.split_once('/')
+                && let Some(author) = dhttp_home::normalize_name(author) {
+                let qualified_target = format!("{author}/{name}");
+                return Box::pin(catalog(endpoint, owner, Some(&qualified_target), require_removal_support, require_signing_support)).await;
+            }
             return Ok(None);
         }
         ensure_whatever!(status == StatusCode::OK,
@@ -556,12 +603,12 @@ fn validate_installed(value: &Value, target: Option<&str>, host: &str) -> Result
     );
     if let Some(target) = target {
         ensure_whatever!(
-            id.rsplit('/').next() == target.rsplit('/').next(),
+            package_name(id) == package_name(target),
             "Package query returned {}, but {} was requested; no package was changed",
             display::package_id(id),
             display::package_id(target)
         );
-        if target.contains('/') {
+        if qualified(target) {
             require_same_package(id, target, host)?;
         }
     }
@@ -574,7 +621,7 @@ async fn remove(
     package: &Value,
 ) -> Result<Value, Whatever> {
     let id = package["id"].as_str().unwrap();
-    let path = format!("/std/sys/pkg?name={}", id.rsplit('/').next().unwrap());
+    let path = format!("/std/sys/pkg?name={}", package_name(id).replace('/', "%2F"));
     // The host checks the full identity again; a replacement author must
     // never be deleted just because it occupies the same short name.
     let condition =
@@ -603,8 +650,7 @@ fn choose_release_target<'a>(
     target: &'a str,
     current: Option<&'a Value>,
 ) -> Result<&'a str, Whatever> {
-    if operation == "update"
-        || (operation == "install" && !target.contains('/') && current.is_some())
+    if operation == "update" || (operation == "install" && !qualified(target) && current.is_some())
     {
         let Some(current) = current else {
             whatever!(

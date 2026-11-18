@@ -1,10 +1,17 @@
 use clap::Parser;
-use genmeta_nslookup::{Error, Options, run};
+use genmeta_nslookup::{Options, run};
 
 #[tokio::main]
-#[snafu::report]
-async fn main() -> Result<(), Error> {
-    run(Options::parse()).await.inspect_err(|error| {
-        tracing::debug!(?error, "Exit with error");
-    })
+async fn main() -> std::process::ExitCode {
+    match run(Options::parse()).await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            tracing::debug!(?error, "Exit with error");
+            eprintln!(
+                "{}",
+                genmeta_nslookup::display_identity(&snafu::Report::from_error(error).to_string())
+            );
+            std::process::ExitCode::FAILURE
+        }
+    }
 }

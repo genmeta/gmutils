@@ -61,6 +61,10 @@ impl CurlVerbose<StderrLineWriter> {
 }
 
 impl<W: LineWriter> CurlVerbose<W> {
+    fn write_line(&self, line: &str) -> io::Result<()> {
+        self.writer.write_line(&crate::display_identity(line))
+    }
+
     #[allow(dead_code)]
     pub(crate) fn enabled(writer: W) -> Self {
         Self {
@@ -76,44 +80,40 @@ impl<W: LineWriter> CurlVerbose<W> {
         let scheme = plan.uri.scheme_str().unwrap_or("https");
         let authority = plan.uri.authority().map(|a| a.as_str()).unwrap_or("");
         let path = RequestPlan::request_target(&plan.uri);
-        self.writer.write_line("* using HTTP/3")?;
-        self.writer.write_line(&format!(
+        self.write_line("* using HTTP/3")?;
+        self.write_line(&format!(
             "* [HTTP/3] [{stream_id}] OPENED stream for {}",
             plan.uri
         ))?;
-        self.writer.write_line(&format!(
+        self.write_line(&format!(
             "* [HTTP/3] [{stream_id}] [:method: {}]",
             plan.method
         ))?;
-        self.writer
-            .write_line(&format!("* [HTTP/3] [{stream_id}] [:scheme: {scheme}]"))?;
-        self.writer.write_line(&format!(
+        self.write_line(&format!("* [HTTP/3] [{stream_id}] [:scheme: {scheme}]"))?;
+        self.write_line(&format!(
             "* [HTTP/3] [{stream_id}] [:authority: {authority}]"
         ))?;
-        self.writer
-            .write_line(&format!("* [HTTP/3] [{stream_id}] [:path: {path}]"))?;
+        self.write_line(&format!("* [HTTP/3] [{stream_id}] [:path: {path}]"))?;
         for (name, value) in plan.headers.iter() {
             let value = value.to_str().unwrap_or("<non-utf8>");
-            self.writer.write_line(&format!(
+            self.write_line(&format!(
                 "* [HTTP/3] [{stream_id}] [{}: {value}]",
                 name.as_str().to_ascii_lowercase()
             ))?;
         }
-        self.writer
-            .write_line(&format!("> {} {path} HTTP/3", plan.method))?;
-        self.writer.write_line(&format!("> Host: {authority}"))?;
+        self.write_line(&format!("> {} {path} HTTP/3", plan.method))?;
+        self.write_line(&format!("> Host: {authority}"))?;
         for (name, value) in plan.headers.iter() {
             let value = value.to_str().unwrap_or("<non-utf8>");
-            self.writer
-                .write_line(&format!("> {}: {value}", title_header_name(name.as_str())))?;
+            self.write_line(&format!("> {}: {value}", title_header_name(name.as_str())))?;
         }
-        self.writer.write_line(">")?;
+        self.write_line(">")?;
         Ok(())
     }
 
     pub(crate) fn request_sent(&self) -> io::Result<()> {
         if self.enabled {
-            self.writer.write_line("* Request completely sent off")
+            self.write_line("* Request completely sent off")
         } else {
             Ok(())
         }
@@ -123,23 +123,22 @@ impl<W: LineWriter> CurlVerbose<W> {
         if !self.enabled {
             return Ok(());
         }
-        self.writer
-            .write_line(&format!("< HTTP/3 {}", status.as_u16()))?;
+        self.write_line(&format!("< HTTP/3 {}", status.as_u16()))?;
         for (name, value) in headers {
             let value = value.to_str().unwrap_or("<non-utf8>");
-            self.writer.write_line(&format!(
+            self.write_line(&format!(
                 "< {}: {value}",
                 name.as_str().to_ascii_lowercase()
             ))?;
         }
-        self.writer.write_line("<")?;
+        self.write_line("<")?;
         Ok(())
     }
 
     #[allow(dead_code)]
     pub(crate) fn download_chunk(&self, size: usize) -> io::Result<()> {
         if self.enabled && size > 0 {
-            self.writer.write_line(&format!("{{ [{size} bytes data]"))
+            self.write_line(&format!("{{ [{size} bytes data]"))
         } else {
             Ok(())
         }
@@ -148,8 +147,7 @@ impl<W: LineWriter> CurlVerbose<W> {
     #[allow(dead_code)]
     pub(crate) fn upload_complete(&self, bytes: u64) -> io::Result<()> {
         if self.enabled {
-            self.writer
-                .write_line(&format!("* upload completely sent off: {bytes} bytes"))
+            self.write_line(&format!("* upload completely sent off: {bytes} bytes"))
         } else {
             Ok(())
         }
@@ -158,16 +156,14 @@ impl<W: LineWriter> CurlVerbose<W> {
     #[allow(dead_code)]
     pub(crate) fn connection_left_intact(&self, authority: &str) -> io::Result<()> {
         if self.enabled {
-            self.writer
-                .write_line(&format!("* Connection #0 to host {authority} left intact"))
+            self.write_line(&format!("* Connection #0 to host {authority} left intact"))
         } else {
             Ok(())
         }
     }
     pub(crate) fn redirect_to(&self, uri: &http::Uri) -> io::Result<()> {
         if self.enabled {
-            self.writer
-                .write_line(&format!("* Issue another request to this URL: '{uri}'"))
+            self.write_line(&format!("* Issue another request to this URL: '{uri}'"))
         } else {
             Ok(())
         }
@@ -175,7 +171,7 @@ impl<W: LineWriter> CurlVerbose<W> {
 
     pub(crate) fn switch_to_get(&self) -> io::Result<()> {
         if self.enabled {
-            self.writer.write_line("* Switch to GET")
+            self.write_line("* Switch to GET")
         } else {
             Ok(())
         }
@@ -183,7 +179,7 @@ impl<W: LineWriter> CurlVerbose<W> {
 
     pub(crate) fn upload_data_marker(&self, bytes: u64) -> io::Result<()> {
         if self.enabled {
-            self.writer.write_line(&format!("}} [{bytes} bytes data]"))
+            self.write_line(&format!("}} [{bytes} bytes data]"))
         } else {
             Ok(())
         }

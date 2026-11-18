@@ -1,14 +1,21 @@
 #![recursion_limit = "256"]
 
 use clap::Parser;
-use genmeta_identity::{Cli, Error, run};
+use genmeta_identity::{Cli, run};
 
 #[tokio::main]
-#[snafu::report]
-async fn main() -> Result<(), Error> {
+async fn main() -> std::process::ExitCode {
     let options = Cli::parse();
 
-    run(options).await.inspect_err(|error| {
-        tracing::debug!(?error, "Exit with error");
-    })
+    match run(options).await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            tracing::debug!(?error, "Exit with error");
+            eprintln!(
+                "{}",
+                genmeta_identity::display_identity(&snafu::Report::from_error(error).to_string())
+            );
+            std::process::ExitCode::FAILURE
+        }
+    }
 }

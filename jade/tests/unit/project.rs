@@ -185,3 +185,67 @@ fn dependencies_are_exact_names_without_authors_or_published_paths() {
             .contains("unknown field")
     );
 }
+
+#[test]
+fn standard_http_paths_follow_declarations_and_reserve_native_services() {
+    let backend = include_bytes!("../fixtures/wasi-http-read-request-then-respond.wasm");
+    for (path, accepted) in [
+        ("/run/python", true),
+        ("/comm/message", true),
+        ("/comm/group/{topic}/member/{name}/avatar", true),
+        ("/{namespace}/group", false),
+        ("/comm/{topic}/{topic}", false),
+        ("/comm/group/prefix-{topic}", false),
+        ("/comm/group/{topic?}", false),
+        ("/runner", true),
+        ("/sys/listen", false),
+        ("/file", false),
+        ("/forward/name", false),
+    ] {
+        let document=serde_json::to_vec(&json!({"openapi":"3.1.0","info":{"title":"Python","version":"0.1.0"},"paths":{path:{"post":{"operationId":"execute","summary":"Execute","responses":{"200":{"description":"ok"}}}}}})).unwrap();
+        let bytes = crate::pack::embedded_openapi(backend.to_vec(), Some(&document)).unwrap();
+        let result = validate_component(&bytes, "0.1.0", "dev.genmeta.tech.dhttp.net", "python");
+        assert_eq!(result.is_ok(), accepted, "{path}: {result:?}");
+    }
+}
+
+#[test]
+#[ignore = "run with PISHOO_MESSAGE_COMPONENT built against call-context@0.3.0"]
+fn accepts_verified_service_context_from_a_real_component() {
+    let component = std::fs::read(std::env::var_os("PISHOO_MESSAGE_COMPONENT").unwrap()).unwrap();
+    let document = serde_json::to_vec(&json!({
+        "openapi":"3.1.0", "info":{"title":"Message","version":"0.3.4"},
+        "paths":{"/comm/message":{"post":{"operationId":"message","summary":"Store messages",
+            "responses":{"200":{"description":"ok"}}}}}
+    }))
+    .unwrap();
+    let bytes = crate::pack::embedded_openapi(component, Some(&document)).unwrap();
+    validate_component(
+        &bytes,
+        "0.3.4",
+        "dev.genmeta.tech.dhttp.net",
+        "std/comm/message",
+    )
+    .unwrap();
+}
+
+#[test]
+fn parameterized_declarations_cannot_overlap_literal_or_parameter_routes() {
+    let backend = include_bytes!("../fixtures/wasi-http-read-request-then-respond.wasm");
+    for second in ["/comm/group/list", "/comm/group/{name}"] {
+        let document=serde_json::to_vec(&json!({"openapi":"3.1.0","info":{"title":"Group","version":"0.1.0"},"paths":{
+            "/comm/group/{topic}":{"get":{"operationId":"group","summary":"Group","responses":{"200":{"description":"ok"}}}},
+            second:{"get":{"operationId":"other","summary":"Other","responses":{"200":{"description":"ok"}}}}
+        }})).unwrap();
+        let bytes = crate::pack::embedded_openapi(backend.to_vec(), Some(&document)).unwrap();
+        assert!(
+            validate_component(
+                &bytes,
+                "0.1.0",
+                "dev.genmeta.tech.dhttp.net",
+                "std/comm/group"
+            )
+            .is_err()
+        );
+    }
+}

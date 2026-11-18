@@ -586,3 +586,18 @@ async fn pending_invoice_displays_public_checkout_qr_instead_of_api_url() {
     assert!(!instructions.contains("/v2/invoice"));
     assert_eq!(requests.await.unwrap().len(), 6);
 }
+
+#[test]
+fn developer_result_abbreviates_domain_fields_after_identity_operations() {
+    let canonical = json!({"domain":"dev.alice.smith.dhttp.net", "root_domain":"alice.smith.dhttp.net",
+        "sequence":42, "fingerprint_sha256":"fixed-digest", "transport_installed":true});
+    let displayed = developer_output(canonical.clone());
+    assert_eq!(displayed["domain"], "dev.alice.smith~");
+    assert_eq!(displayed["root_domain"], "alice.smith~");
+    assert_eq!(displayed["sequence"], canonical["sequence"]);
+    assert_eq!(
+        displayed["fingerprint_sha256"],
+        canonical["fingerprint_sha256"]
+    );
+    assert_eq!(canonical["domain"], "dev.alice.smith.dhttp.net");
+}

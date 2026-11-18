@@ -203,7 +203,17 @@ fn parse_api(input: &str) -> Result<String, String> {
         );
     }
     let path = input.trim_end_matches('/');
-    Ok(if path.is_empty() { "/" } else { path }.to_owned())
+    let path = if path.is_empty() { "/" } else { path };
+    if let Some(rest) = path.strip_prefix("/std/forward/") {
+        let (host, tail) = rest
+            .split_once('/')
+            .map_or((rest, ""), |(host, _)| (host, &rest[host.len()..]));
+        if host.ends_with('~') {
+            let host = dhttp_home::normalize_dns_name(host).ok_or("invalid forwarding identity")?;
+            return Ok(format!("/std/forward/{host}{tail}"));
+        }
+    }
+    Ok(path.to_owned())
 }
 
 fn parse_grantee(input: &str) -> Result<String, String> {

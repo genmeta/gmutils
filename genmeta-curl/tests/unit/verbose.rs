@@ -47,16 +47,16 @@ fn h3_request_verbose_matches_curl_shape() {
     assert_eq!(lines[0], "* using HTTP/3");
     assert_eq!(
         lines[1],
-        "* [HTTP/3] [0] OPENED stream for https://example.dhttp.net/a?b=1"
+        "* [HTTP/3] [0] OPENED stream for https://example~/a?b=1"
     );
     assert_eq!(lines[2], "* [HTTP/3] [0] [:method: GET]");
     assert_eq!(lines[3], "* [HTTP/3] [0] [:scheme: https]");
-    assert_eq!(lines[4], "* [HTTP/3] [0] [:authority: example.dhttp.net]");
+    assert_eq!(lines[4], "* [HTTP/3] [0] [:authority: example~]");
     assert_eq!(lines[5], "* [HTTP/3] [0] [:path: /a?b=1]");
     assert_eq!(lines[6], "* [HTTP/3] [0] [user-agent: genmeta-curl/test]");
     assert_eq!(lines[7], "* [HTTP/3] [0] [accept: */*]");
     assert_eq!(lines[8], "> GET /a?b=1 HTTP/3");
-    assert_eq!(lines[9], "> Host: example.dhttp.net");
+    assert_eq!(lines[9], "> Host: example~");
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn redirect_verbose_lines_match_curl_shape() {
     let lines = writer.lines();
     assert_eq!(
         lines[0],
-        "* Issue another request to this URL: 'https://example.dhttp.net/next'"
+        "* Issue another request to this URL: 'https://example~/next'"
     );
     assert_eq!(lines[1], "* Switch to GET");
 }
@@ -92,4 +92,32 @@ fn response_verbose_uses_h3_status_and_lowercase_headers() {
     assert_eq!(lines[0], "< HTTP/3 200");
     assert_eq!(lines[1], "< content-type: text/plain");
     assert_eq!(lines[2], "<");
+}
+
+#[test]
+fn diagnostic_identity_headers_are_compact_and_request_values_remain_canonical() {
+    let writer = Capture::default();
+    let verbose = CurlVerbose::enabled(writer.clone());
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "pishoo-viewer-name",
+        HeaderValue::from_static("alice.dhttp.net"),
+    );
+    headers.insert(
+        "location",
+        HeaderValue::from_static("https://alice.dhttp.net.evil/"),
+    );
+    verbose.response(StatusCode::OK, &headers).unwrap();
+    let lines = writer.lines();
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "< pishoo-viewer-name: alice~")
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "< location: https://alice.dhttp.net.evil/")
+    );
+    assert_eq!(headers["pishoo-viewer-name"], "alice.dhttp.net");
 }

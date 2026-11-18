@@ -1,6 +1,43 @@
 use super::*;
 
 #[test]
+fn promotes_rust_command_sections_before_signing() {
+    let program = b"\0asm\x0d\0\x01\0";
+    let name = b"pishoo:command/sh";
+    let mut payload = Vec::new();
+    wasm_write_length(name.len(), &mut payload);
+    payload.extend_from_slice(name);
+    payload.extend_from_slice(program);
+    let mut module = b"\0asm\x01\0\0\0".to_vec();
+    module.push(0);
+    wasm_write_length(payload.len(), &mut module);
+    module.extend_from_slice(&payload);
+    let mut backend = b"\0asm\x0d\0\x01\0".to_vec();
+    backend.push(1);
+    wasm_write_length(module.len(), &mut backend);
+    backend.extend_from_slice(&module);
+    let document = br#"{"openapi":"3.1.0","paths":{}}"#;
+    let output = embedded_openapi(backend.clone(), Some(document)).unwrap();
+    let sections = wasmparser::Parser::new(0)
+        .parse_all(&output)
+        .filter_map(|payload| match payload.unwrap() {
+            wasmparser::Payload::CustomSection(section)
+                if section.name() == "pishoo:command/sh" =>
+            {
+                Some(section.data())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(sections, vec![program.as_slice()]);
+    assert_eq!(embedded_openapi(output.clone(), None).unwrap(), output);
+    backend.push(0);
+    wasm_write_length(payload.len(), &mut backend);
+    backend.extend_from_slice(&payload);
+    assert!(embedded_openapi(backend, Some(document)).is_err());
+}
+
+#[test]
 fn embeds_one_openapi_before_package_signing() {
     let document = br#"{"openapi":"3.1.0","info":{"version":"1.0.0"},"paths":{}}"#;
     let original = b"\0asm\x0d\0\x01\0".to_vec();
@@ -64,17 +101,56 @@ async fn static_resources_exclude_local_dependency_projects_and_nested_manifests
     .unwrap();
     let archive = crate::archive::waz_write(&files).unwrap();
     let packaged = crate::archive::waz_read(&archive).unwrap();
-    assert_eq!(packaged["public/index.html"], b"application");
-    assert_eq!(packaged["public/assets/style.css"], b"body {}");
+    assert_eq!(packaged["web/index.html"], b"application");
+    assert_eq!(packaged["web/assets/style.css"], b"body {}");
     assert!(
         !packaged
             .keys()
-            .any(|path| path.starts_with("public/packages/child/")
-                || path.starts_with("public/assets/indirect/"))
+            .any(|path| path.starts_with("web/packages/child/")
+                || path.starts_with("web/assets/indirect/"))
     );
     assert!(!packaged.values().any(|bytes| {
         bytes
             .windows(b"/private/".len())
             .any(|part| part == b"/private/")
     }));
+}
+
+#[test]
+fn hierarchical_package_identity_is_not_reduced_to_its_leaf() {
+    for name in ["message", "comm/message", "live/video/room"] {
+        assert!(valid_id(&format!("dev.genmeta.tech.dhttp.net/{name}")));
+    }
+    for name in [
+        "comm//group",
+        "/comm/group",
+        "comm/../group",
+        "comm/group/",
+        "comm%2Fgroup",
+        "comm/Group",
+    ] {
+        assert!(!valid_id(&format!("dev.genmeta.tech.dhttp.net/{name}")));
+    }
+}
+
+#[tokio::test]
+async fn new_standard_lib_builds_require_the_std_namespace() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("jade.toml"),
+        "[package]\nname='profile'\nversion='1.0.0'\ndescription='Test'\nlicense='MIT'\n",
+    )
+    .unwrap();
+    std::fs::write(root.path().join("lib.wasm"), b"\0asm\x0d\0\x01\0").unwrap();
+    let (project, config) = crate::project::read(root.path()).unwrap();
+    let error = build_files(
+        &project,
+        &config,
+        "dev.genmeta.tech.dhttp.net",
+        &root.path().join("build/output.waz"),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "E_CONFIG_INVALID");
+    assert!(error.message.contains("std/"));
 }

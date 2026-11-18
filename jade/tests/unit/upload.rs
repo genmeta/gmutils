@@ -94,17 +94,21 @@ fn build(metadata: &Value, authority: Option<&dhttp::LocalAuthority>, content: &
         webc::Container::from_bytes_and_version(internal.into(), webc::Version::V3).unwrap();
     let mut files = crate::archive::waz_export(&container).unwrap();
     if let Some(authority) = authority {
-        let payload = crate::archive::waz_payload(&files);
-        let mut input = b"pishoo-waz-signature-v1\0".to_vec();
+        let payload = crate::archive::waz_payload(&files).unwrap();
+        let mut input = b"pishoo-waz-signature-v2\0".to_vec();
         for i in (0..payload.len()).step_by(2) {
             input.push(u8::from_str_radix(&payload[i..i + 2], 16).unwrap());
         }
         let signature = authority
             .sign(qtls::SignatureScheme::ECDSA_NISTP384_SHA384, &input)
             .unwrap();
-        files.insert("signature.json".into(), serde_json::to_vec(&json!({"version":1,
+        let envelope = json!({"signature":{"version":1,
             "certificates":authority.certificates().iter().map(|c|STANDARD.encode(c.as_ref())).collect::<Vec<_>>(),
-            "signature":STANDARD.encode(signature)})).unwrap());
+            "value":STANDARD.encode(signature)}});
+        files
+            .get_mut("manifest.toml")
+            .unwrap()
+            .extend_from_slice(toml::to_string_pretty(&envelope).unwrap().as_bytes());
     }
     crate::archive::waz_write(&files).unwrap()
 }
@@ -259,7 +263,7 @@ fn paths_and_protocol_proofs_are_exact() {
             );
         }
     }
-    for name in ["../bad", "a/b", "Bad", "a%2fb", "", "name?x", "name#x"] {
+    for name in ["../bad", "a//b", "Bad", "a%2fb", "", "name?x", "name#x"] {
         assert!(version_path(&metadata("app", name, json!([]))).is_err());
     }
     for version in [
@@ -738,7 +742,7 @@ async fn publication_inspection_is_local_and_requires_an_intact_signed_container
             .is_err()
     );
     let mut files = crate::archive::waz_read(&bytes).unwrap();
-    files.get_mut("public/index.html").unwrap()[0] ^= 1;
+    files.get_mut("web/index.html").unwrap()[0] ^= 1;
     let tampered = crate::archive::waz_write(&files).unwrap();
     assert!(inspect_package(&tampered).await.is_err());
     assert!(inspect_package(b"\0webc003").await.is_err());
@@ -750,17 +754,19 @@ async fn a_valid_container_with_a_forged_signature_is_rejected_locally() {
     let metadata = metadata("app", "forged", json!([]));
     let bytes = build(&metadata, Some(&authority), "signed content");
     let mut files = crate::archive::waz_read(&bytes).unwrap();
-    let mut envelope: Value = serde_json::from_slice(&files["signature.json"]).unwrap();
+    let mut envelope = crate::archive::waz_signature(&files).unwrap();
     let mut signature = STANDARD
         .decode(envelope["signature"].as_str().unwrap())
         .unwrap();
     let last = signature.len() - 1;
     signature[last] ^= 1;
     envelope["signature"] = STANDARD.encode(signature).into();
-    files.insert(
-        "signature.json".into(),
-        serde_json::to_vec(&envelope).unwrap(),
-    );
+    let manifest = files.get_mut("manifest.toml").unwrap();
+    let source = std::str::from_utf8(manifest).unwrap();
+    let boundary = source.find("[signature]").unwrap();
+    manifest.truncate(boundary);
+    let signature = json!({"signature":{"version":envelope["version"],"certificates":envelope["certificates"],"value":envelope["signature"]}});
+    manifest.extend_from_slice(toml::to_string_pretty(&signature).unwrap().as_bytes());
     let forged = crate::archive::waz_write(&files).unwrap();
     assert!(crate::archive::waz_read(&forged).is_ok());
     let error = inspect_package(&forged).await.unwrap_err();
@@ -868,13 +874,18 @@ async fn publication_signs_only_the_built_payload_and_preserves_the_source_archi
         payload_digest(&snapshot).unwrap()
     );
     let mut released = crate::archive::waz_read(&signed).unwrap();
-    assert!(released.remove("signature.json").is_some());
+    let manifest = released.get_mut("manifest.toml").unwrap();
+    let boundary = std::str::from_utf8(manifest)
+        .unwrap()
+        .find("[signature]")
+        .unwrap();
+    manifest.truncate(boundary);
     assert_eq!(released, files);
     assert_eq!(std::fs::read(&file).unwrap(), unsigned);
     std::fs::write(&file, &signed).unwrap();
     assert_eq!(read_input(root.path()).await.unwrap().0, signed);
     let mut tampered = crate::archive::waz_read(&signed).unwrap();
-    tampered.insert("public/index.html".into(), b"tampered".to_vec());
+    tampered.insert("web/index.html".into(), b"tampered".to_vec());
     std::fs::write(&file, crate::archive::waz_write(&tampered).unwrap()).unwrap();
     assert_eq!(
         read_input(root.path()).await.unwrap_err().code,
@@ -914,4 +925,12 @@ fn publication_confirmation_requires_the_complete_uploaded_archive() {
     let mut wrong_size = release;
     wrong_size["size"] = 1.into();
     assert!(confirm_release(&wrong_size, bytes).is_err());
+}
+
+#[test]
+fn hierarchical_package_store_paths_map_every_name_segment() {
+    assert_eq!(
+        version_path(&metadata("app", "comm/group", json!([]))).unwrap(),
+        "/store/v1/packages/alice.dhttp.net/comm/group/versions/1.0.0"
+    );
 }

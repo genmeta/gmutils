@@ -1,4 +1,4 @@
-//! WAZ v1: a standard ZIP containing a JSON manifest, runtime files and optional docs.
+//! WAZ v2 TOML releases and historical WAZ v1 JSON releases in bounded ZIP archives.
 //! This stateless codec is mirrored in the independent host and registry validators.
 
 type WazResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -18,7 +18,11 @@ fn waz_path(path: &str) -> bool {
         && (matches!(
             path,
             "manifest.json" | "signature.json" | "backend.wasm" | "README.md" | "CHANGELOG.md"
-        ) || path.starts_with("public/"))
+        ) || path == "manifest.toml"
+            || path.starts_with("public/")
+            || path.starts_with("wasm/")
+            || path.starts_with("web/")
+            || path.starts_with("docs/"))
 }
 
 pub(crate) fn waz_read(bytes: &[u8]) -> WazResult<std::collections::BTreeMap<String, Vec<u8>>> {
@@ -74,9 +78,10 @@ pub(crate) fn waz_read(bytes: &[u8]) -> WazResult<std::collections::BTreeMap<Str
             return Err(format!("invalid, duplicate or unsupported ZIP entry: {name}").into());
         }
         let limit = match name.as_str() {
-            "manifest.json" => 1024 * 1024,
+            "manifest.json" | "manifest.toml" => 1024 * 1024,
             "signature.json" => 64 * 1024,
             "backend.wasm" => WAZ_LIMIT,
+            _ if name.starts_with("wasm/") => WAZ_LIMIT,
             _ => 16 * 1024 * 1024,
         }
         .min(remaining);
@@ -170,26 +175,238 @@ pub(crate) fn waz_read(bytes: &[u8]) -> WazResult<std::collections::BTreeMap<Str
             ancestor = parent;
         }
     }
-    if !files.contains_key("manifest.json") {
-        return Err("ZIP package requires manifest.json".into());
+    if files.contains_key("manifest.json") == files.contains_key("manifest.toml") {
+        return Err("ZIP package requires exactly one manifest.json or manifest.toml".into());
+    }
+    if let Some(manifest) = files.get("manifest.toml") {
+        waz_toml(manifest)?;
     }
     Ok(files)
 }
 
-pub(crate) fn waz_payload(files: &std::collections::BTreeMap<String, Vec<u8>>) -> String {
+pub(crate) fn waz_payload(
+    files: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> WazResult<String> {
     use sha2::{Digest, Sha256};
+    let modern = files.contains_key("manifest.toml");
     let mut digest = Sha256::new();
-    digest.update(b"pishoo-waz-payload-v1\0");
+    digest.update(if modern {
+        b"pishoo-waz-payload-v2\0"
+    } else {
+        b"pishoo-waz-payload-v1\0"
+    });
     for (name, bytes) in files
         .iter()
-        .filter(|(name, _)| name.as_str() != "signature.json")
+        .filter(|(name, _)| modern || name.as_str() != "signature.json")
     {
+        let content = if name == "manifest.toml" {
+            &bytes[..waz_toml(bytes)?.1]
+        } else {
+            bytes.as_slice()
+        };
         digest.update((name.len() as u32).to_le_bytes());
         digest.update(name.as_bytes());
-        digest.update((bytes.len() as u64).to_le_bytes());
-        digest.update(Sha256::digest(bytes));
+        digest.update((content.len() as u64).to_le_bytes());
+        digest.update(Sha256::digest(content));
     }
-    format!("{:x}", digest.finalize())
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+// These stateless boundary helpers are mirrored in Jade, Pishoo and the store.
+fn waz_toml(bytes: &[u8]) -> WazResult<(serde_json::Value, usize)> {
+    use serde_json::Value;
+    let source = std::str::from_utf8(bytes)?;
+    let document: Value = toml::from_str(source)?;
+    if document.get("signature").is_none() {
+        return Ok((document, bytes.len()));
+    }
+    let positions: std::collections::BTreeMap<String, toml::Spanned<Value>> =
+        toml::from_str(source)?;
+    let span = positions
+        .get("signature")
+        .ok_or("missing signature table")?
+        .span();
+    let boundary = span.start;
+    let after_header = &source[span.end..];
+    if source.get(span) != Some("[signature]")
+        || (boundary != 0 && bytes[boundary - 1] != b'\n')
+        || !(after_header.is_empty()
+            || after_header.starts_with('\n')
+            || after_header.starts_with("\r\n"))
+    {
+        return Err("signature must use a final [signature] table on its own line".into());
+    }
+    if bytes.len() - boundary > 64 * 1024 {
+        return Err("publisher signature exceeds 64 KiB".into());
+    }
+    let unsigned: Value = toml::from_str(&source[..boundary])?;
+    let suffix: Value = toml::from_str(&source[boundary..])?;
+    let mut expected = document.clone();
+    expected
+        .as_object_mut()
+        .ok_or("manifest must be a table")?
+        .remove("signature");
+    if unsigned != expected
+        || suffix.as_object().is_none_or(|fields| fields.len() != 1)
+        || suffix["signature"] != document["signature"]
+    {
+        return Err("signature must be last and contain only its own fields".into());
+    }
+    Ok((document, boundary))
+}
+
+pub(crate) fn waz_manifest(
+    files: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> WazResult<serde_json::Value> {
+    if let Some(bytes) = files.get("manifest.toml") {
+        Ok(waz_toml(bytes)?.0)
+    } else {
+        Ok(serde_json::from_slice(
+            files
+                .get("manifest.json")
+                .ok_or("missing package manifest")?,
+        )?)
+    }
+}
+
+pub(crate) fn waz_signature(
+    files: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> WazResult<serde_json::Value> {
+    if files.contains_key("manifest.toml") {
+        let mut signature = waz_manifest(files)?["signature"].clone();
+        let fields = signature
+            .as_object_mut()
+            .ok_or("missing publisher signature")?;
+        if fields.len() != 3
+            || !fields.contains_key("version")
+            || !fields.contains_key("certificates")
+        {
+            return Err("unsupported signature envelope".into());
+        }
+        let value = fields.remove("value").ok_or("missing signature value")?;
+        fields.insert("signature".into(), value);
+        Ok(signature)
+    } else {
+        Ok(serde_json::from_slice(
+            files
+                .get("signature.json")
+                .ok_or("missing publisher signature")?,
+        )?)
+    }
+}
+
+pub(crate) fn waz_backend(files: &std::collections::BTreeMap<String, Vec<u8>>) -> Option<&Vec<u8>> {
+    files.get("backend.wasm").or_else(|| {
+        files
+            .iter()
+            .find(|(name, _)| name.starts_with("wasm/"))
+            .map(|(_, bytes)| bytes)
+    })
+}
+
+fn waz_layout(
+    files: &std::collections::BTreeMap<String, Vec<u8>>,
+    document: &serde_json::Value,
+) -> WazResult<()> {
+    let modern = files.contains_key("manifest.toml");
+    let format = if modern { "waz/2" } else { "waz/1" };
+    if document["format"] != format
+        || document.as_object().is_none_or(|fields| {
+            fields.keys().any(|key| {
+                !(matches!(
+                    key.as_str(),
+                    "format" | "package" | "dependencies" | "backend" | "frontend"
+                ) || modern && matches!(key.as_str(), "docs" | "signature"))
+            })
+        })
+    {
+        return Err("unsupported WAZ manifest format or field".into());
+    }
+    if modern
+        && document["package"]["name"]
+            .as_str()
+            .is_some_and(|name| name.starts_with("std/"))
+        && !matches!(
+            document["package"]["author"].as_str(),
+            Some("std.dhttp.net" | "dev.genmeta.tech.dhttp.net")
+        )
+    {
+        return Err("std/ package names require a standard publisher".into());
+    }
+    let backend = if modern {
+        format!(
+            "wasm/{}.wasm",
+            document["package"]["name"]
+                .as_str()
+                .ok_or("missing package name")?
+        )
+    } else {
+        "backend.wasm".to_owned()
+    };
+    let frontend = if modern { "web" } else { "public" };
+    let prefix = format!("{frontend}/");
+    let has_frontend = document.get("frontend").is_some();
+    let has_backend = document.get("backend").is_some();
+    if (has_backend && document["backend"] != backend)
+        || (has_frontend && document["frontend"] != frontend)
+        || has_backend != files.contains_key(&backend)
+        || has_frontend != files.keys().any(|name| name.starts_with(&prefix))
+        || (has_frontend && !files.contains_key(&format!("{prefix}index.html")))
+        || (!has_backend && !has_frontend)
+        || files
+            .keys()
+            .any(|name| name.starts_with("wasm/") && name != &backend)
+    {
+        return Err("WAZ manifest runtime paths disagree with package files".into());
+    }
+    if modern {
+        if files.keys().any(|name| {
+            matches!(
+                name.as_str(),
+                "manifest.json" | "signature.json" | "backend.wasm" | "README.md" | "CHANGELOG.md"
+            ) || name.starts_with("public/")
+        }) {
+            return Err("WAZ v2 contains legacy package entries".into());
+        }
+        if let Some(docs) = document.get("docs") {
+            let fields = docs.as_object().ok_or("docs must be a table")?;
+            for (key, value) in fields {
+                let path = value.as_str().ok_or("document locations must be strings")?;
+                match key.as_str() {
+                    "manual" if path == "docs/manual.md" && files.contains_key(path) => {}
+                    "readme" | "changelog" => {
+                        let url = url::Url::parse(path)?;
+                        if url.scheme() != "https"
+                            || url.host_str().is_none()
+                            || !url.username().is_empty()
+                            || url.password().is_some()
+                            || path.chars().any(char::is_whitespace)
+                        {
+                            return Err(
+                                "external document links require HTTPS URLs without credentials"
+                                    .into(),
+                            );
+                        }
+                    }
+                    _ => return Err("unknown document field or missing docs/manual.md".into()),
+                }
+            }
+        }
+        for (name, bytes) in files.iter().filter(|(name, _)| name.starts_with("docs/")) {
+            if !name.ends_with(".md") {
+                return Err("package manuals must be Markdown files".into());
+            }
+            std::str::from_utf8(bytes)?;
+        }
+    } else if files.keys().any(|name| {
+        name == "manifest.toml"
+            || name.starts_with("wasm/")
+            || name.starts_with("web/")
+            || name.starts_with("docs/")
+    }) {
+        return Err("WAZ v1 contains unsupported package entries".into());
+    }
+    Ok(())
 }
 
 pub(crate) fn waz_write(files: &std::collections::BTreeMap<String, Vec<u8>>) -> WazResult<Vec<u8>> {
@@ -250,19 +467,10 @@ pub(crate) fn waz_convert(bytes: &[u8]) -> WazResult<Vec<u8>> {
     };
 
     let files = waz_read(bytes)?;
-    let document: Value = serde_json::from_slice(&files["manifest.json"])?;
-    if document["format"] != "waz/1"
-        || document.as_object().is_none_or(|v| {
-            v.keys().any(|k| {
-                !matches!(
-                    k.as_str(),
-                    "format" | "package" | "dependencies" | "frontend" | "backend"
-                )
-            })
-        })
-    {
-        return Err("unsupported WAZ manifest format or field".into());
-    }
+    let document = waz_manifest(&files)?;
+    waz_layout(&files, &document)?;
+    let modern = files.contains_key("manifest.toml");
+    let frontend_prefix = if modern { "web/" } else { "public/" };
     let package = document["package"]
         .as_object()
         .ok_or("manifest package requires an object")?;
@@ -318,24 +526,17 @@ pub(crate) fn waz_convert(bytes: &[u8]) -> WazResult<Vec<u8>> {
         dependencies_out.push(item);
     }
     let has_frontend = document.get("frontend").is_some();
-    let has_backend = document.get("backend").is_some();
-    if (has_frontend && document["frontend"] != "public")
-        || (has_backend && document["backend"] != "backend.wasm")
-        || has_backend != files.contains_key("backend.wasm")
-        || has_frontend != files.keys().any(|name| name.starts_with("public/"))
-        || (has_frontend && !files.contains_key("public/index.html"))
-        || (!has_frontend && !has_backend)
-    {
-        return Err("WAZ manifest runtime paths disagree with package files".into());
-    }
     let mut annotation = json!({"title":field("title")?,"changelog":field("release-notes")?,"dependencies":dependencies_out});
+    if let Some(docs) = document.get("docs") {
+        annotation["docs"] = docs.clone();
+    }
     if has_frontend {
         annotation["entry"] = "/".into();
     }
     let mut manifest = json!({"package":{"wapm":wapm,"pishoo":annotation,
         "fs":if has_frontend {json!([{"volume_name":"public","mount_path":"/public"}])} else {json!([])}}});
     let mut atoms = std::collections::BTreeMap::new();
-    if let Some(backend) = files.get("backend.wasm") {
+    if let Some(backend) = waz_backend(&files) {
         manifest["atoms"] = json!({"backend":{"kind":"https://webc.org/kind/wasm","signature":format!("sha256:{}", STANDARD.encode(Sha256::digest(backend)))}});
         atoms.insert(
             "backend".parse()?,
@@ -347,24 +548,24 @@ pub(crate) fn waz_convert(bytes: &[u8]) -> WazResult<Vec<u8>> {
         .write_manifest(&manifest)?
         .write_atoms(atoms)?;
     if has_frontend {
-        writer.write_volume("public", waz_directory(&files, "public/")?)?;
+        writer.write_volume("public", waz_directory(&files, frontend_prefix)?)?;
     }
     let documents = files
         .iter()
-        .filter(|(name, _)| matches!(name.as_str(), "README.md" | "CHANGELOG.md"))
-        .map(|(name, data)| Ok((name.parse()?, data.clone().into())))
-        .collect::<WazResult<std::collections::BTreeMap<_, _>>>()?;
+        .filter(|(name, _)| {
+            matches!(name.as_str(), "README.md" | "CHANGELOG.md") || name.starts_with("docs/")
+        })
+        .map(|(name, bytes)| (format!("metadata/{name}"), bytes.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>();
     if !documents.is_empty() {
-        writer.write_volume("metadata", Directory::new(documents, Timestamps::default()))?;
+        writer.write_volume("metadata", waz_directory(&documents, "metadata/")?)?;
     }
-    if let Some(signature) = files.get("signature.json") {
+    if document.get("signature").is_some() || files.contains_key("signature.json") {
+        let signature = serde_json::to_vec(&waz_signature(&files)?)?;
         writer.write_volume(
             "pishoo-signature",
             Directory::new(
-                std::collections::BTreeMap::from([(
-                    "signature.json".parse()?,
-                    signature.clone().into(),
-                )]),
+                std::collections::BTreeMap::from([("signature.json".parse()?, signature.into())]),
                 Timestamps::default(),
             ),
         )?;
@@ -402,14 +603,15 @@ pub(crate) fn waz_export(
             item
         })
         .collect::<Vec<_>>();
-    let mut manifest = json!({"format":"waz/1","package":package,"dependencies":dependencies});
+    let mut manifest = json!({"format":"waz/2","package":package,"dependencies":dependencies});
     let mut files = std::collections::BTreeMap::new();
     if let Some(backend) = container.get_atom("backend") {
-        manifest["backend"] = "backend.wasm".into();
-        files.insert("backend.wasm".into(), backend.to_vec());
+        let path = format!("wasm/{name}.wasm");
+        manifest["backend"] = path.clone().into();
+        files.insert(path, backend.to_vec());
     }
     if let Some(volume) = container.get_volume("public") {
-        manifest["frontend"] = "public".into();
+        manifest["frontend"] = "web".into();
         let mut pending = vec!["/".to_owned()];
         while let Some(directory) = pending.pop() {
             for (name, _, metadata) in volume
@@ -421,7 +623,7 @@ pub(crate) fn waz_export(
                     webc::Metadata::Dir { .. } => pending.push(format!("{path}/")),
                     webc::Metadata::File { .. } => {
                         files.insert(
-                            format!("public{path}"),
+                            format!("web{path}"),
                             volume
                                 .read_file(path.as_str())
                                 .ok_or("unreadable resource")?
@@ -434,16 +636,38 @@ pub(crate) fn waz_export(
             }
         }
     }
+    if let Some(docs) = annotation.get("docs") {
+        manifest["docs"] = docs.clone();
+    }
     if let Some(volume) = container.get_volume("metadata") {
-        for name in ["README.md", "CHANGELOG.md"] {
-            if let Some((data, _)) = volume.read_file(format!("/{name}")) {
-                files.insert(name.into(), data.to_vec());
+        let mut pending = vec!["/".to_owned()];
+        while let Some(directory) = pending.pop() {
+            for (entry, _, metadata) in volume
+                .read_dir(directory.as_str())
+                .ok_or("unreadable document directory")?
+            {
+                let path = format!("{directory}{entry}");
+                match metadata {
+                    webc::Metadata::Dir { .. } => pending.push(format!("{path}/")),
+                    webc::Metadata::File { .. } if path.starts_with("/docs/") => {
+                        files.insert(
+                            path[1..].to_owned(),
+                            volume
+                                .read_file(path.as_str())
+                                .ok_or("unreadable document")?
+                                .0
+                                .to_vec(),
+                        );
+                    }
+                    webc::Metadata::File { .. } => {}
+                    _ => return Err("unsupported document type".into()),
+                }
             }
         }
     }
     files.insert(
-        "manifest.json".into(),
-        serde_json::to_vec_pretty(&manifest)?,
+        "manifest.toml".into(),
+        toml::to_string_pretty(&manifest)?.into_bytes(),
     );
     Ok(files)
 }

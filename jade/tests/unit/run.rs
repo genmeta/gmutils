@@ -1,5 +1,15 @@
 use super::*;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn publish(
+    profile: &Path,
+    name: &str,
+    files: &BTreeMap<String, Vec<u8>>,
+    fresh: bool,
+) -> Result<(Value, std::fs::File)> {
+    super::publish(profile, name, files, fresh, None)
+}
+
 #[tokio::test]
 async fn hosting_credentials_require_a_matching_key_but_not_cached_ocsp() {
     let root = tempfile::tempdir().unwrap();
@@ -69,10 +79,10 @@ async fn build_then_run_publishes_plain_files_without_developer_credentials() {
     assert_eq!(crate::archive::waz_read(&original).unwrap(), files);
     publish(&profile, &name, &files, false).unwrap();
     assert_eq!(
-        std::fs::read(profile.join("dev/hello/app/index.html")).unwrap(),
+        std::fs::read(profile.join("app/hello/index.html")).unwrap(),
         b"first"
     );
-    assert!(profile.join("dev/hello/manifest.json").exists());
+    assert!(profile.join("lib/hello.preview/manifest.json").exists());
     assert!(!profile.join("ssl").exists());
     assert_eq!(std::fs::read(&release).unwrap(), original);
     std::fs::write(profile.join(".volume/hello/database"), "test data").unwrap();
@@ -80,7 +90,7 @@ async fn build_then_run_publishes_plain_files_without_developer_credentials() {
     let (_, files) = build(&source, "dev.test.sky.lee.dhttp.net").await.unwrap();
     publish(&profile, &name, &files, false).unwrap();
     assert_eq!(
-        std::fs::read(profile.join("dev/hello/app/index.html")).unwrap(),
+        std::fs::read(profile.join("app/hello/index.html")).unwrap(),
         b"second"
     );
     assert_eq!(
@@ -121,10 +131,10 @@ async fn failed_build_and_destination_symlinks_do_not_replace_published_files() 
     std::fs::write(source.join("jade.toml"), "invalid manifest").unwrap();
     assert!(build(&source, "test.sky.lee.dhttp.net").await.is_err());
     assert_eq!(
-        std::fs::read(profile.join("dev/hello/app/index.html")).unwrap(),
+        std::fs::read(profile.join("app/hello/index.html")).unwrap(),
         b"first"
     );
-    std::os::unix::fs::symlink(&source, profile.join("dev/escape")).unwrap();
+    std::os::unix::fs::symlink(&source, profile.join("lib/escape.preview")).unwrap();
     assert!(publish(&profile, "escape", &files, false).is_err());
     assert!(source.join("public/index.html").exists());
 }
@@ -178,14 +188,14 @@ async fn stop_removes_app_and_api_but_preserves_data_and_later_publishers() {
     let profile = root.path().join("identity");
     std::fs::create_dir(&profile).unwrap();
     let (_, mut files) = build(root.path(), "test.sky.lee.dhttp.net").await.unwrap();
-    files.insert("backend.wasm".into(), b"local artifact".to_vec());
+    files.insert("wasm/hello.wasm".into(), b"local artifact".to_vec());
     let (_, first) = publish(&profile, "hello", &files, false).unwrap();
     std::fs::write(profile.join(".volume/hello/database"), "keep").unwrap();
     let (_, second) = publish(&profile, "hello", &files, false).unwrap();
     assert!(!remove_published(&profile, "hello", &first).unwrap());
-    assert!(profile.join("dev/hello/lib.wasm").exists());
+    assert!(profile.join("lib/hello.wasm.1.0.0").exists());
     assert!(remove_published(&profile, "hello", &second).unwrap());
-    assert!(!profile.join("dev/hello").exists());
+    assert!(!profile.join("lib/hello.preview").exists());
     assert_eq!(
         std::fs::read(profile.join(".volume/hello/database")).unwrap(),
         b"keep"
@@ -254,7 +264,7 @@ async fn local_dependencies_resolve_from_each_manifest_and_paths_stay_out_of_pac
     std::fs::write(local.join("public/index.html"), "local dependency changed").unwrap();
     assert_ne!(before, graph_fingerprint(&locals).unwrap());
     let (_, files) = build(&app, "dev.zero.ai.dhttp.net").await.unwrap();
-    let manifest: Value = serde_json::from_slice(&files["manifest.json"]).unwrap();
+    let manifest = crate::archive::waz_manifest(&files).unwrap();
     assert_eq!(manifest["dependencies"].as_array().unwrap().len(), 2);
     assert!(
         manifest["dependencies"]
@@ -263,7 +273,7 @@ async fn local_dependencies_resolve_from_each_manifest_and_paths_stay_out_of_pac
             .iter()
             .all(|dep| dep.get("path").is_none() && dep.get("author").is_none())
     );
-    assert!(!String::from_utf8_lossy(&files["manifest.json"]).contains("../profile"));
+    assert!(!String::from_utf8_lossy(&files["manifest.toml"]).contains("../profile"));
     std::fs::write(
         local.join("jade.toml"),
         std::fs::read_to_string(local.join("jade.toml"))
@@ -434,4 +444,321 @@ fn changing_the_root_author_requires_restarting_the_running_identity() {
     assert_eq!(error.code, "E_IDENTITY_MISMATCH");
     assert!(error.hint.unwrap().contains("Restart jade run"));
     projects(root.path(), "dev.bob.smith.dhttp.net").unwrap();
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[tokio::test]
+async fn hierarchical_preview_maps_complete_paths_and_migrates_previous_data() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("project");
+    std::fs::create_dir(&source).unwrap();
+    project(&source);
+    let config = source.join("jade.toml");
+    std::fs::write(
+        &config,
+        std::fs::read_to_string(&config)
+            .unwrap()
+            .replace("name='hello'", "name='comm/group'\nauthor='test.sky.lee'"),
+    )
+    .unwrap();
+    let profile = root.path().join("profile");
+    std::fs::create_dir_all(profile.join(".volume/comm%2Fgroup")).unwrap();
+    std::fs::write(
+        profile.join(".volume/comm%2Fgroup/database"),
+        b"existing data",
+    )
+    .unwrap();
+    let (name, files) = build(&source, "test.sky.lee.dhttp.net").await.unwrap();
+    assert_eq!(name, "comm/group");
+    crate::pack::run(source.clone(), None, false).await.unwrap();
+    assert!(source.join("build/comm/group-1.0.0.waz").is_file());
+    let (_, first) = publish(&profile, &name, &files, false).unwrap();
+    assert_eq!(
+        std::fs::read(profile.join("app/comm/group/index.html")).unwrap(),
+        b"first"
+    );
+    assert_eq!(
+        std::fs::read(profile.join(".volume/comm/group/database")).unwrap(),
+        b"existing data"
+    );
+    let (_, second) = publish(&profile, &name, &files, false).unwrap();
+    assert!(!remove_published(&profile, &name, &first).unwrap());
+    assert!(remove_published(&profile, &name, &second).unwrap());
+    assert!(!profile.join("lib/comm/group.preview").exists());
+    assert!(profile.join(".volume/comm/group/database").is_file());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn preview_fixture(version: &str, backend: bool, frontend: bool) -> BTreeMap<String, Vec<u8>> {
+    let mut files = BTreeMap::from([(
+        "manifest.json".into(),
+        serde_json::to_vec(&json!({
+            "package":{"author":"test.sky.lee.dhttp.net","name":"comm/group","version":version}
+        }))
+        .unwrap(),
+    )]);
+    if backend {
+        files.insert(
+            "backend.wasm".into(),
+            format!("backend {version}").into_bytes(),
+        );
+    }
+    if frontend {
+        files.insert(
+            "public/index.html".into(),
+            format!("frontend {version}").into_bytes(),
+        );
+    }
+    files
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn preview_version_and_composition_changes_restore_installed_resources() {
+    let profile = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(profile.path().join("lib/comm")).unwrap();
+    std::fs::create_dir_all(profile.path().join("app/comm/group")).unwrap();
+    std::fs::write(
+        profile.path().join("lib/comm/group.wasm.1.0.0"),
+        b"installed backend",
+    )
+    .unwrap();
+    std::fs::write(
+        profile.path().join("app/comm/group/index.html"),
+        b"installed frontend",
+    )
+    .unwrap();
+    let (_, first) = publish(
+        profile.path(),
+        "comm/group",
+        &preview_fixture("1.0.0", true, true),
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read(profile.path().join("lib/comm/group.wasm.1.0.0")).unwrap(),
+        b"backend 1.0.0"
+    );
+    let (_, second) = publish(
+        profile.path(),
+        "comm/group",
+        &preview_fixture("2.0.0", true, true),
+        false,
+    )
+    .unwrap();
+    assert!(!remove_published(profile.path(), "comm/group", &first).unwrap());
+    assert_eq!(
+        std::fs::read(profile.path().join("lib/comm/group.wasm.1.0.0")).unwrap(),
+        b"installed backend"
+    );
+    assert_eq!(
+        std::fs::read(profile.path().join("lib/comm/group.wasm.2.0.0")).unwrap(),
+        b"backend 2.0.0"
+    );
+    let (_, third) = publish(
+        profile.path(),
+        "comm/group",
+        &preview_fixture("2.0.0", false, true),
+        false,
+    )
+    .unwrap();
+    assert!(!remove_published(profile.path(), "comm/group", &second).unwrap());
+    assert!(!profile.path().join("lib/comm/group.wasm.2.0.0").exists());
+    assert!(remove_published(profile.path(), "comm/group", &third).unwrap());
+    assert_eq!(
+        std::fs::read(profile.path().join("app/comm/group/index.html")).unwrap(),
+        b"installed frontend"
+    );
+    assert!(!profile.path().join("dev").exists());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn failed_preview_publication_rolls_back_live_resources_and_marker() {
+    let profile = tempfile::tempdir().unwrap();
+    let (_, published) = publish(
+        profile.path(),
+        "comm/group",
+        &preview_fixture("1.0.0", true, true),
+        false,
+    )
+    .unwrap();
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    std::os::unix::fs::symlink(
+        outside.path(),
+        profile.path().join("lib/comm/group.wasm.2.0.0"),
+    )
+    .unwrap();
+    assert!(
+        publish(
+            profile.path(),
+            "comm/group",
+            &preview_fixture("2.0.0", true, true),
+            false
+        )
+        .is_err()
+    );
+    assert_eq!(
+        std::fs::read(profile.path().join("lib/comm/group.wasm.1.0.0")).unwrap(),
+        b"backend 1.0.0"
+    );
+    assert_eq!(
+        std::fs::read(profile.path().join("app/comm/group/index.html")).unwrap(),
+        b"frontend 1.0.0"
+    );
+    assert!(remove_published(profile.path(), "comm/group", &published).unwrap());
+    assert!(outside.path().exists());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn cleanup_preserves_files_replaced_by_a_formal_installer() {
+    let profile = tempfile::tempdir().unwrap();
+    let (_, published) = publish(
+        profile.path(),
+        "comm/group",
+        &preview_fixture("1.0.0", true, true),
+        false,
+    )
+    .unwrap();
+    let replacement = profile.path().join("lib/comm/replacement.wasm");
+    std::fs::write(&replacement, b"new release").unwrap();
+    std::fs::rename(
+        &replacement,
+        profile.path().join("lib/comm/group.wasm.1.0.0"),
+    )
+    .unwrap();
+    std::fs::rename(
+        profile.path().join("app/comm/group"),
+        profile.path().join("app/comm/old"),
+    )
+    .unwrap();
+    std::fs::create_dir(profile.path().join("app/comm/group")).unwrap();
+    std::fs::write(
+        profile.path().join("app/comm/group/index.html"),
+        b"new release app",
+    )
+    .unwrap();
+    assert!(remove_published(profile.path(), "comm/group", &published).unwrap());
+    assert_eq!(
+        std::fs::read(profile.path().join("lib/comm/group.wasm.1.0.0")).unwrap(),
+        b"new release"
+    );
+    assert_eq!(
+        std::fs::read(profile.path().join("app/comm/group/index.html")).unwrap(),
+        b"new release app"
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[tokio::test]
+async fn std_prefixed_package_previews_use_the_namespace_once_and_reuse_legacy_data() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("project");
+    std::fs::create_dir(&source).unwrap();
+    project(&source);
+    let config = source.join("jade.toml");
+    std::fs::write(
+        &config,
+        std::fs::read_to_string(&config)
+            .unwrap()
+            .replace("name='hello'", "name='std/comm/demo'"),
+    )
+    .unwrap();
+    let api = serde_json::json!({"openapi":"3.1.0","info":{"title":"Demo","version":"1.0.0"},"paths":{"/echo":{"get":{"operationId":"echo","summary":"Echo","responses":{"200":{"description":"OK"}}}}}});
+    let backend = crate::pack::embedded_openapi(
+        include_bytes!("../fixtures/wasi-http-read-request-then-respond.wasm").to_vec(),
+        Some(&serde_json::to_vec(&api).unwrap()),
+    )
+    .unwrap();
+    std::fs::write(source.join("lib.wasm"), &backend).unwrap();
+    let profile = root.path().join("profile");
+    std::fs::create_dir_all(profile.join(".volume/std/comm%2Fdemo")).unwrap();
+    std::fs::write(
+        profile.join(".volume/std/comm%2Fdemo/database"),
+        "existing data",
+    )
+    .unwrap();
+    let (name, files) = build(&source, "dev.genmeta.tech.dhttp.net").await.unwrap();
+    let (_, published) = publish(&profile, &name, &files, false).unwrap();
+    assert_eq!(name, "std/comm/demo");
+    assert_eq!(
+        std::fs::read(profile.join("lib/std/comm/demo.wasm.1.0.0")).unwrap(),
+        backend
+    );
+    assert!(
+        profile
+            .join("lib/std/comm/demo.preview/manifest.json")
+            .is_file()
+    );
+    assert!(profile.join("app/std/comm/demo/index.html").is_file());
+    assert_eq!(
+        std::fs::read(profile.join(".volume/std/comm/demo/database")).unwrap(),
+        b"existing data"
+    );
+    assert!(!profile.join("lib/std/std").exists());
+    assert!(!profile.join(".volume/std/std").exists());
+    assert!(remove_published(&profile, &name, &published).unwrap());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn a_watcher_cannot_republish_resources_taken_over_by_an_installer() {
+    let profile = tempfile::tempdir().unwrap();
+    let (_, published) = publish(
+        profile.path(),
+        "comm/group",
+        &preview_fixture("1.0.0", true, true),
+        false,
+    )
+    .unwrap();
+    let replacement = profile.path().join("lib/comm/replacement.wasm");
+    std::fs::write(&replacement, b"formal replacement").unwrap();
+    std::fs::rename(
+        replacement,
+        profile.path().join("lib/comm/group.wasm.1.0.0"),
+    )
+    .unwrap();
+    let error = super::publish(
+        profile.path(),
+        "comm/group",
+        &preview_fixture("1.0.0", true, true),
+        false,
+        Some(&published),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "E_DEV_REPLACED");
+    assert_eq!(
+        std::fs::read(profile.path().join("lib/comm/group.wasm.1.0.0")).unwrap(),
+        b"formal replacement"
+    );
+    remove_published(profile.path(), "comm/group", &published).unwrap();
+    assert_eq!(
+        std::fs::read(profile.path().join("lib/comm/group.wasm.1.0.0")).unwrap(),
+        b"formal replacement"
+    );
+}
+
+#[test]
+fn different_local_apps_can_require_different_remote_versions() {
+    let root = tempfile::tempdir().unwrap();
+    project(root.path());
+    for (name, version) in [("a", "1.0.0"), ("b", "2.0.0")] {
+        let path = root.path().join(name);
+        std::fs::create_dir(&path).unwrap();
+        project(&path);
+        std::fs::write(path.join("jade.toml"), format!("[package]\nname='{name}'\nversion='1.0.0'\ndescription='Local app'\nlicense='MIT'\n[[dependencies]]\nname='shared'\nversion='{version}'\n")).unwrap();
+    }
+    let manifest = root.path().join("jade.toml");
+    let mut text = std::fs::read_to_string(&manifest).unwrap();
+    text.push_str("\n[[dependencies]]\nname='a'\nversion='1.0.0'\npath='a'\n[[dependencies]]\nname='b'\nversion='1.0.0'\npath='b'\n");
+    std::fs::write(&manifest, text).unwrap();
+    let (_, remote) = projects(&manifest, "dev.zero.ai.dhttp.net").unwrap();
+    assert_eq!(
+        remote,
+        vec![
+            json!({"name":"shared","version":"1.0.0"}),
+            json!({"name":"shared","version":"2.0.0"})
+        ]
+    );
 }

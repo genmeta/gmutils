@@ -104,7 +104,7 @@ pub(crate) async fn inspect_contents(bytes: &[u8]) -> crate::error::Result<Value
     (|| -> Result<Value, Whatever> {
         let document = serde_json::to_value(package.manifest())
             .whatever_context("invalid package manifest")?;
-        for key in ["title", "dependencies", "changelog", "entry"] {
+        for key in ["title", "dependencies", "changelog", "entry", "docs"] {
             if let Some(value) = document["package"]["pishoo"].get(key) {
                 metadata[key] = value.clone();
             }
@@ -158,18 +158,14 @@ pub(crate) fn digest(bytes: &[u8]) -> String {
 pub(crate) fn payload_digest(bytes: &[u8]) -> Result<String, Whatever> {
     let files = crate::archive::waz_read(bytes)
         .map_err(|error| Whatever::without_source(error.to_string()))?;
-    Ok(crate::archive::waz_payload(&files))
+    crate::archive::waz_payload(&files).map_err(|error| Whatever::without_source(error.to_string()))
 }
 
 pub(crate) fn signature_envelope(bytes: &[u8]) -> Result<Value, Whatever> {
     let files = crate::archive::waz_read(bytes)
         .map_err(|error| Whatever::without_source(error.to_string()))?;
-    serde_json::from_slice(
-        files
-            .get("signature.json")
-            .whatever_context("missing package signature")?,
-    )
-    .whatever_context("invalid signature envelope JSON")
+    crate::archive::waz_signature(&files)
+        .map_err(|error| Whatever::without_source(error.to_string()))
 }
 
 pub(crate) fn package_certificates(
@@ -286,16 +282,22 @@ pub(crate) fn version_path(metadata: &Value) -> Result<String, Whatever> {
         });
     if normalized.as_full() != author
         || name.len() > 63
-        || !name.as_bytes()[0].is_ascii_lowercase()
-        || !name
-            .bytes()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        || !name.split('/').all(|segment| {
+            segment
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_lowercase)
+                && segment
+                    .bytes()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        })
         || !valid_version
     {
         whatever!("invalid normalized package identity or exact version");
     }
     Ok(format!(
-        "/store/v1/packages/{author}/{name}/versions/{version}"
+        "/store/v1/packages/{author}/{}/versions/{version}",
+        name.to_owned()
     ))
 }
 
@@ -423,14 +425,27 @@ fn container(bytes: &[u8]) -> Result<webc::Container, Whatever> {
     for (name, volume) in container.volumes() {
         let before = count;
         let files = volume_files(&volume, &mut count)?;
+        // A metadata volume contains files plus their inferred parent directories.
+        // Require the bounded walk to match both counts, rejecting extra empty directories.
+        let document_directories = files
+            .keys()
+            .flat_map(|path| {
+                path.match_indices('/')
+                    .skip(1)
+                    .map(|(index, _)| &path[..index])
+            })
+            .collect::<std::collections::BTreeSet<_>>();
         if name == "metadata"
             && (files.is_empty()
-                || count - before != files.len()
-                || files
-                    .keys()
-                    .any(|path| !matches!(path.as_str(), "/README.md" | "/CHANGELOG.md")))
+                || count - before != files.len() + document_directories.len()
+                || files.keys().any(|path| {
+                    !(matches!(path.as_str(), "/README.md" | "/CHANGELOG.md")
+                        || path.starts_with("/docs/") && path.ends_with(".md"))
+                }))
         {
-            whatever!("metadata volume may only contain README.md and CHANGELOG.md");
+            whatever!(
+                "metadata volume requires exact file/directory counts and supported Markdown documents"
+            );
         }
         if name == "pishoo-signature"
             && (count - before != 1
@@ -514,7 +529,14 @@ fn volume_files(
 
 pub(crate) fn signature_input(bytes: &[u8]) -> Result<Vec<u8>, Whatever> {
     let digest = payload_digest(bytes)?;
-    let mut input = b"pishoo-waz-signature-v1\0".to_vec();
+    let files = crate::archive::waz_read(bytes)
+        .map_err(|error| Whatever::without_source(error.to_string()))?;
+    let mut input = if files.contains_key("manifest.toml") {
+        b"pishoo-waz-signature-v2\0"
+    } else {
+        b"pishoo-waz-signature-v1\0"
+    }
+    .to_vec();
     for offset in (0..digest.len()).step_by(2) {
         input.push(u8::from_str_radix(&digest[offset..offset + 2], 16).unwrap());
     }

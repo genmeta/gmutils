@@ -419,7 +419,7 @@ fn app_and_lib_build_unsigned_packages_offline_without_credentials_or_a_host() {
         );
         let envelope: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
         let summary = &envelope["result"];
-        assert_eq!(summary["id"], "alice.dhttp.net/hello");
+        assert_eq!(summary["id"], "alice~/hello");
         assert_eq!(
             summary["file"],
             std::fs::canonicalize(&output)
@@ -458,14 +458,15 @@ fn optional_project_documents_are_collected_for_frontend_backend_and_combined_pa
         identity(&home);
         let app = dir.path().join(kind);
         project(&app, kind, "");
+        std::fs::create_dir(app.join("docs")).unwrap();
         let mut previous = None;
         for names in [
             vec![],
-            vec!["README.md"],
-            vec!["CHANGELOG.md"],
-            vec!["README.md", "CHANGELOG.md"],
+            vec!["docs/manual.md"],
+            vec!["docs/topic.md"],
+            vec!["docs/manual.md", "docs/topic.md"],
         ] {
-            for name in ["README.md", "CHANGELOG.md"] {
+            for name in ["docs/manual.md", "docs/topic.md"] {
                 if names.contains(&name) {
                     std::fs::write(app.join(name), format!("# {name}\nPackage documentation\n"))
                         .unwrap();
@@ -492,7 +493,7 @@ fn optional_project_documents_are_collected_for_frontend_backend_and_combined_pa
             let documents = package.get_volume("metadata");
             assert_eq!(documents.is_some(), !names.is_empty());
             if let Some(documents) = documents {
-                assert_eq!(documents.read_dir("/").unwrap().len(), names.len());
+                assert_eq!(documents.read_dir("/docs").unwrap().len(), names.len());
                 for name in &names {
                     assert_eq!(
                         documents.read_file(format!("/{name}")).unwrap().0.as_ref(),
@@ -502,8 +503,10 @@ fn optional_project_documents_are_collected_for_frontend_backend_and_combined_pa
             }
             let manifest = serde_json::to_value(package.manifest()).unwrap();
             assert_eq!(
-                manifest["package"]["wapm"].get("readme").is_some(),
-                names.contains(&"README.md")
+                manifest["package"]["pishoo"]["docs"]
+                    .get("manual")
+                    .is_some(),
+                names.contains(&"docs/manual.md")
             );
             assert!(
                 package
@@ -525,7 +528,8 @@ fn invalid_project_documents_preserve_the_existing_package() {
     identity(&home);
     let app = dir.path().join("app");
     project(&app, "app", "");
-    let document = app.join("README.md");
+    std::fs::create_dir(app.join("docs")).unwrap();
+    let document = app.join("docs/manual.md");
     std::fs::write(&document, "# Readme").unwrap();
     let built = pack(&home, &app, &[]);
     assert!(
@@ -535,9 +539,13 @@ fn invalid_project_documents_preserve_the_existing_package() {
     );
     let output = app.join("build/hello-1.0.0.waz");
     let before = std::fs::read(&output).unwrap();
+    let config = app.join("jade.toml");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str("\n[docs]\nmanual='docs/manual.md'\n");
+    std::fs::write(&config, text).unwrap();
     std::fs::remove_file(&document).unwrap();
     std::fs::create_dir(&document).unwrap();
-    fails(&pack(&home, &app, &[]), "regular files");
+    fails(&pack(&home, &app, &[]), "manual");
     assert_eq!(std::fs::read(&output).unwrap(), before);
     std::fs::remove_dir(&document).unwrap();
     #[cfg(unix)]
@@ -564,7 +572,12 @@ fn repeated_builds_are_atomic_and_root_static_projects_exclude_build_outputs() {
     project(&app, "app", "");
     std::fs::remove_dir_all(app.join("public")).unwrap();
     std::fs::write(app.join("index.html"), "<h1>First</h1>").unwrap();
-    std::fs::write(app.join("README.md"), "# Root project").unwrap();
+    std::fs::write(app.join("README.md"), "# External introduction").unwrap();
+    std::fs::create_dir(app.join("docs")).unwrap();
+    std::fs::write(app.join("docs/manual.md"), "# Root project").unwrap();
+    std::fs::write(app.join(".gitignore"), "/docs/source/\n").unwrap();
+    std::fs::create_dir(app.join("docs/source")).unwrap();
+    std::fs::write(app.join("docs/source/local notes.md"), "private notes").unwrap();
     std::fs::create_dir_all(app.join("build/target")).unwrap();
     std::fs::write(app.join("build/target/not-a-resource"), "excluded").unwrap();
     std::fs::create_dir_all(app.join(".jade/target")).unwrap();
@@ -600,7 +613,7 @@ fn repeated_builds_are_atomic_and_root_static_projects_exclude_build_outputs() {
         container
             .get_volume("metadata")
             .unwrap()
-            .read_file("/README.md")
+            .read_file("/docs/manual.md")
             .unwrap()
             .0
             .as_ref(),
@@ -919,7 +932,7 @@ fn build_author_requires_a_default_without_scanning_credentials() {
         String::from_utf8_lossy(&selected.stderr)
     );
     let result: serde_json::Value = serde_json::from_slice(&selected.stdout).unwrap();
-    assert_eq!(result["result"]["id"], "dev.dev.wang.dhttp.net/hello");
+    assert_eq!(result["result"]["id"], "dev.dev.wang~/hello");
     std::fs::remove_dir_all(app.join("build")).unwrap();
     std::fs::write(
         home.join("settings.toml"),
@@ -933,7 +946,7 @@ fn build_author_requires_a_default_without_scanning_credentials() {
         String::from_utf8_lossy(&selected.stderr)
     );
     let result: serde_json::Value = serde_json::from_slice(&selected.stdout).unwrap();
-    assert_eq!(result["result"]["id"], "dev.dev.wang.dhttp.net/hello");
+    assert_eq!(result["result"]["id"], "dev.dev.wang~/hello");
     std::fs::remove_dir_all(app.join("build")).unwrap();
     std::fs::write(
         home.join("settings.toml"),
@@ -947,7 +960,7 @@ fn build_author_requires_a_default_without_scanning_credentials() {
         String::from_utf8_lossy(&selected.stderr)
     );
     let result: serde_json::Value = serde_json::from_slice(&selected.stdout).unwrap();
-    assert_eq!(result["result"]["id"], "dev.bob.wang.dhttp.net/hello");
+    assert_eq!(result["result"]["id"], "dev.bob.wang~/hello");
     assert!(!app.join("build/local.toml").exists());
 }
 
@@ -1150,7 +1163,7 @@ fn configured_author_is_preserved_and_project_publication_checks_the_built_autho
             String::from_utf8_lossy(&output.stderr)
         );
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(value["result"]["id"], "dev.alex.chen.dhttp.net/hello");
+        assert_eq!(value["result"]["id"], "dev.alex.chen~/hello");
         assert_eq!(std::fs::read_to_string(&manifest).unwrap(), configured);
     }
     let file = app.join("build/hello-1.0.0.waz");
@@ -1173,10 +1186,7 @@ fn configured_author_is_preserved_and_project_publication_checks_the_built_autho
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(value["error"]["code"], expected);
         if expected == "E_DEVELOPER_CERTIFICATE_REQUIRED" {
-            assert_eq!(
-                value["error"]["context"]["author"],
-                "dev.alex.chen.dhttp.net"
-            );
+            assert_eq!(value["error"]["context"]["author"], "dev.alex.chen~");
         }
         assert_eq!(std::fs::read(&file).unwrap(), original);
     }
@@ -1240,7 +1250,7 @@ fn a_main_name_starting_with_dev_never_replaces_its_configured_child() {
         String::from_utf8_lossy(&built.stderr)
     );
     let metadata: serde_json::Value = serde_json::from_slice(&built.stdout).unwrap();
-    assert_eq!(metadata["result"]["id"], "dev.dev.wang.dhttp.net/hello");
+    assert_eq!(metadata["result"]["id"], "dev.dev.wang~/hello");
     assert_eq!(std::fs::read_to_string(&manifest).unwrap(), configured);
     let file = app.join("build/hello-1.0.0.waz");
     let original = std::fs::read(&file).unwrap();
@@ -1252,10 +1262,7 @@ fn a_main_name_starting_with_dev_never_replaces_its_configured_child() {
         .unwrap();
     let result: serde_json::Value = serde_json::from_slice(&published.stdout).unwrap();
     assert_eq!(result["error"]["code"], "E_DEVELOPER_CERTIFICATE_REQUIRED");
-    assert_eq!(
-        result["error"]["context"]["author"],
-        "dev.dev.wang.dhttp.net"
-    );
+    assert_eq!(result["error"]["context"]["author"], "dev.dev.wang~");
     assert_eq!(std::fs::read(file).unwrap(), original);
     assert!(!home.join("dev.dev.wang").exists());
 }
@@ -1302,10 +1309,7 @@ fn run_and_build_share_identity_selection_and_publish_keeps_the_built_author() {
         let result: serde_json::Value = serde_json::from_slice(&built.stdout).unwrap();
         if let Some(expected) = expected {
             assert!(built.status.success(), "{result}");
-            assert_eq!(
-                result["result"]["id"],
-                format!("{expected}.dhttp.net/hello")
-            );
+            assert_eq!(result["result"]["id"], format!("{expected}~/hello"));
         } else {
             assert!(!built.status.success());
             assert_eq!(result["error"]["code"], "E_IDENTITY_REQUIRED");
@@ -1361,10 +1365,7 @@ fn run_and_build_share_identity_selection_and_publish_keeps_the_built_author() {
                 let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
                 assert!(!output.status.success());
                 assert_eq!(result["error"]["code"], "E_DEVELOPER_CERTIFICATE_REQUIRED");
-                assert_eq!(
-                    result["error"]["context"]["author"],
-                    format!("{expected}.dhttp.net")
-                );
+                assert_eq!(result["error"]["context"]["author"], format!("{expected}~"));
                 assert_eq!(std::fs::read(&file).unwrap(), bytes);
             }
             assert_eq!(std::fs::read_to_string(&manifest).unwrap(), configured);
