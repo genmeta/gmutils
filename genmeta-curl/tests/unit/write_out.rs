@@ -25,6 +25,11 @@ fn adjacent_header_tokens_consume_both_closing_braces() {
         "200|alice.dhttp.net|no-store||HEAD"
     );
     assert_eq!(
+        expand_write_out("%{url}", &ctx),
+        "https://alice~/app/workspace/"
+    );
+    assert_eq!(uri.host(), Some("alice.dhttp.net"));
+    assert_eq!(
         expand_write_out("%% %{http_code} %{header{missing}}end", &ctx),
         "% 200 end"
     );

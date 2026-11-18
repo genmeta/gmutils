@@ -1,16 +1,11 @@
 //! Human rendering is separate from the canonical machine result.
 use std::{borrow::Cow, io::Write, path::Path, process::ExitCode};
 
+pub(super) use genmeta_identity::display_identity as identity;
 use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
 
-pub(super) fn identity(name: &str) -> Cow<'_, str> {
-    match name.strip_suffix(dhttp_home::DHTTP_SUFFIX) {
-        Some(short) if !short.is_empty() => Cow::Owned(format!("{short}~")),
-        _ => Cow::Borrowed(name),
-    }
-}
 pub(super) fn publisher(name: &str) -> Cow<'_, str> {
     identity(name)
 }
@@ -53,10 +48,48 @@ fn argument(text: &str) -> String {
     }
 }
 
+pub(super) fn output(mut value: Value) -> Value {
+    match &mut value {
+        Value::Array(items) => {
+            for item in items {
+                *item = output(item.take());
+            }
+        }
+        Value::Object(fields) => {
+            for (key, field) in fields {
+                match field {
+                    Value::String(text)
+                        if matches!(
+                            key.as_str(),
+                            "id" | "author"
+                                | "identity"
+                                | "host"
+                                | "api"
+                                | "app"
+                                | "url"
+                                | "message"
+                                | "hint"
+                                | "expected_author"
+                                | "actual_author"
+                        ) =>
+                    {
+                        *text = identity(text).into_owned();
+                    }
+                    Value::Array(_) | Value::Object(_) => *field = output(field.take()),
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+    value
+}
+
 pub(super) fn success(command: &str, machine: bool, verbose: bool, result: Value) -> Result<()> {
     let mut stdout = std::io::stdout().lock();
     if machine {
-        let envelope = json!({"schema_version":1,"command":command,"status":"ok","result":result});
+        let envelope =
+            json!({"schema_version":1,"command":command,"status":"ok","result":output(result)});
         writeln!(stdout, "{envelope}")?;
     } else if command == "run" {
         writeln!(
@@ -143,16 +176,15 @@ pub(super) fn success(command: &str, machine: bool, verbose: bool, result: Value
 
 pub(super) fn failure(command: Option<&str>, machine: bool, error: &Error) -> ExitCode {
     if machine {
-        let mut envelope =
-            json!({"schema_version":1,"command":command,"status":"error","error":error.json()});
+        let mut envelope = json!({"schema_version":1,"command":command,"status":"error","error":output(error.json())});
         if error.code == "E_PUBLISH_OUTCOME_UNKNOWN" {
             envelope["result"] = json!({"outcome":"unknown"});
         }
         let _ = writeln!(std::io::stdout().lock(), "{envelope}");
     }
-    eprintln!("error[{}]: {}", error.code, error.message);
+    eprintln!("error[{}]: {}", error.code, identity(&error.message));
     if let Some(hint) = &error.hint {
-        eprintln!("hint: {hint}");
+        eprintln!("hint: {}", identity(hint));
     }
     ExitCode::from(error.exit_code())
 }

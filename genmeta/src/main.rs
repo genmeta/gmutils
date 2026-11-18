@@ -117,8 +117,7 @@ fn install_process_crypto_provider() {
 }
 
 #[tokio::main]
-#[snafu::report]
-async fn main() -> Result<(), Error> {
+async fn main() -> std::process::ExitCode {
     install_process_crypto_provider();
 
     let Cli { verb, options } = Cli::parse();
@@ -137,9 +136,17 @@ async fn main() -> Result<(), Error> {
             .init();
     }
 
-    run(options).await.inspect_err(|error| {
-        tracing::debug!(?error, "Exit with error");
-    })
+    match run(options).await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            tracing::debug!(?error, "Exit with error");
+            eprintln!(
+                "{}",
+                display::identity(&snafu::Report::from_error(error).to_string())
+            );
+            std::process::ExitCode::FAILURE
+        }
+    }
 }
 
 async fn run(options: Options) -> Result<(), Error> {

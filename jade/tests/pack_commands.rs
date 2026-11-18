@@ -419,7 +419,7 @@ fn app_and_lib_build_unsigned_packages_offline_without_credentials_or_a_host() {
         );
         let envelope: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
         let summary = &envelope["result"];
-        assert_eq!(summary["id"], "alice.dhttp.net/hello");
+        assert_eq!(summary["id"], "alice~/hello");
         assert_eq!(
             summary["file"],
             std::fs::canonicalize(&output)
@@ -932,7 +932,7 @@ fn build_author_requires_a_default_without_scanning_credentials() {
         String::from_utf8_lossy(&selected.stderr)
     );
     let result: serde_json::Value = serde_json::from_slice(&selected.stdout).unwrap();
-    assert_eq!(result["result"]["id"], "dev.dev.wang.dhttp.net/hello");
+    assert_eq!(result["result"]["id"], "dev.dev.wang~/hello");
     std::fs::remove_dir_all(app.join("build")).unwrap();
     std::fs::write(
         home.join("settings.toml"),
@@ -946,7 +946,7 @@ fn build_author_requires_a_default_without_scanning_credentials() {
         String::from_utf8_lossy(&selected.stderr)
     );
     let result: serde_json::Value = serde_json::from_slice(&selected.stdout).unwrap();
-    assert_eq!(result["result"]["id"], "dev.dev.wang.dhttp.net/hello");
+    assert_eq!(result["result"]["id"], "dev.dev.wang~/hello");
     std::fs::remove_dir_all(app.join("build")).unwrap();
     std::fs::write(
         home.join("settings.toml"),
@@ -960,7 +960,7 @@ fn build_author_requires_a_default_without_scanning_credentials() {
         String::from_utf8_lossy(&selected.stderr)
     );
     let result: serde_json::Value = serde_json::from_slice(&selected.stdout).unwrap();
-    assert_eq!(result["result"]["id"], "dev.bob.wang.dhttp.net/hello");
+    assert_eq!(result["result"]["id"], "dev.bob.wang~/hello");
     assert!(!app.join("build/local.toml").exists());
 }
 
@@ -1163,7 +1163,7 @@ fn configured_author_is_preserved_and_project_publication_checks_the_built_autho
             String::from_utf8_lossy(&output.stderr)
         );
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(value["result"]["id"], "dev.alex.chen.dhttp.net/hello");
+        assert_eq!(value["result"]["id"], "dev.alex.chen~/hello");
         assert_eq!(std::fs::read_to_string(&manifest).unwrap(), configured);
     }
     let file = app.join("build/hello-1.0.0.waz");
@@ -1186,10 +1186,7 @@ fn configured_author_is_preserved_and_project_publication_checks_the_built_autho
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(value["error"]["code"], expected);
         if expected == "E_DEVELOPER_CERTIFICATE_REQUIRED" {
-            assert_eq!(
-                value["error"]["context"]["author"],
-                "dev.alex.chen.dhttp.net"
-            );
+            assert_eq!(value["error"]["context"]["author"], "dev.alex.chen~");
         }
         assert_eq!(std::fs::read(&file).unwrap(), original);
     }
@@ -1253,7 +1250,7 @@ fn a_main_name_starting_with_dev_never_replaces_its_configured_child() {
         String::from_utf8_lossy(&built.stderr)
     );
     let metadata: serde_json::Value = serde_json::from_slice(&built.stdout).unwrap();
-    assert_eq!(metadata["result"]["id"], "dev.dev.wang.dhttp.net/hello");
+    assert_eq!(metadata["result"]["id"], "dev.dev.wang~/hello");
     assert_eq!(std::fs::read_to_string(&manifest).unwrap(), configured);
     let file = app.join("build/hello-1.0.0.waz");
     let original = std::fs::read(&file).unwrap();
@@ -1265,10 +1262,7 @@ fn a_main_name_starting_with_dev_never_replaces_its_configured_child() {
         .unwrap();
     let result: serde_json::Value = serde_json::from_slice(&published.stdout).unwrap();
     assert_eq!(result["error"]["code"], "E_DEVELOPER_CERTIFICATE_REQUIRED");
-    assert_eq!(
-        result["error"]["context"]["author"],
-        "dev.dev.wang.dhttp.net"
-    );
+    assert_eq!(result["error"]["context"]["author"], "dev.dev.wang~");
     assert_eq!(std::fs::read(file).unwrap(), original);
     assert!(!home.join("dev.dev.wang").exists());
 }
@@ -1315,10 +1309,7 @@ fn run_and_build_share_identity_selection_and_publish_keeps_the_built_author() {
         let result: serde_json::Value = serde_json::from_slice(&built.stdout).unwrap();
         if let Some(expected) = expected {
             assert!(built.status.success(), "{result}");
-            assert_eq!(
-                result["result"]["id"],
-                format!("{expected}.dhttp.net/hello")
-            );
+            assert_eq!(result["result"]["id"], format!("{expected}~/hello"));
         } else {
             assert!(!built.status.success());
             assert_eq!(result["error"]["code"], "E_IDENTITY_REQUIRED");
@@ -1374,10 +1365,7 @@ fn run_and_build_share_identity_selection_and_publish_keeps_the_built_author() {
                 let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
                 assert!(!output.status.success());
                 assert_eq!(result["error"]["code"], "E_DEVELOPER_CERTIFICATE_REQUIRED");
-                assert_eq!(
-                    result["error"]["context"]["author"],
-                    format!("{expected}.dhttp.net")
-                );
+                assert_eq!(result["error"]["context"]["author"], format!("{expected}~"));
                 assert_eq!(std::fs::read(&file).unwrap(), bytes);
             }
             assert_eq!(std::fs::read_to_string(&manifest).unwrap(), configured);

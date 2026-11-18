@@ -7,12 +7,7 @@ use serde_json::Value;
 #[path = "../tests/unit/display.rs"]
 mod tests;
 
-pub(super) fn identity(name: &str) -> Cow<'_, str> {
-    match name.strip_suffix(dhttp_home::DHTTP_SUFFIX) {
-        Some(short) if !short.is_empty() => Cow::Owned(format!("{short}~")),
-        _ => Cow::Borrowed(name),
-    }
-}
+pub(super) use genmeta_identity::display_identity as identity;
 
 pub(super) fn publisher(name: &str) -> Cow<'_, str> {
     identity(name)
@@ -124,7 +119,7 @@ pub(super) fn package_details(package: &Value) -> String {
             if let (Some(method), Some(path)) =
                 (endpoint["method"].as_str(), endpoint["path"].as_str())
             {
-                lines.push(format!("    {} {}", line(method), line(path)));
+                lines.push(format!("    {} {}", line(method), line(&identity(path))));
             }
         }
     }
@@ -157,7 +152,7 @@ pub(super) fn package_output(mut value: Value) -> Value {
         }
         Value::Object(fields) => {
             for (key, field) in fields {
-                if key == "dependencies" {
+                if key == "dependencies" || key == "endpoints" {
                     *field = package_output(field.take());
                     continue;
                 }
@@ -165,7 +160,7 @@ pub(super) fn package_output(mut value: Value) -> Value {
                     let abbreviated = match key.as_str() {
                         "id" => package_id(text),
                         "publisher" | "author" => publisher(text),
-                        "identity" => identity(text),
+                        "identity" | "path" => identity(text),
                         "entry_url" | "detail_url" => url(text),
                         _ => continue,
                     };

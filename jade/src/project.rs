@@ -811,9 +811,11 @@ pub(crate) fn validate_component(
         .as_object()
         .ok_or_else(|| invalid("OpenAPI paths must be an object"))?;
     let mut operation_ids = HashSet::new();
+    let mut declared = Vec::<&str>::new();
     for (path, item) in paths {
         if !path.starts_with('/')
-            || path.contains(['{', '}', '?', '#', '%', '\\'])
+            || path.contains(['?', '#', '%', '\\'])
+            || !valid_path_parameters(path)
             || path.contains("//")
             || path.chars().any(|c| c.is_whitespace() || c.is_control())
             || path.split('/').any(|s| s == "." || s == "..")
@@ -826,6 +828,10 @@ pub(crate) fn validate_component(
         {
             return Err(invalid(&format!("Unsupported OpenAPI path: {path}")));
         }
+        if declared.iter().any(|other| api_paths_overlap(other, path)) {
+            return Err(invalid("Overlapping OpenAPI paths"));
+        }
+        declared.push(path);
         if crate::identity::is_standard_author(author)
             && [
                 "/std",
@@ -941,7 +947,8 @@ pub(crate) fn validate_component(
                     v.major == 0
                         && ((v.minor == 1
                             && matches!(interface_name, "request-identity" | "signatures"))
-                            || (v.minor == 2 && interface_name == "request-identity"))
+                            || (v.minor == 2 && interface_name == "request-identity")
+                            || (v.minor == 3 && v.patch == 0 && interface_name == "call-context"))
                 });
             let execution = package.name == "execution"
                 && interface_name == "runtime"
@@ -999,6 +1006,48 @@ fn http_resource(resolve: &wit_parser::Resolve, mut ty: wit_parser::Type, name: 
         }
     }
     false
+}
+
+fn valid_path_parameters(path: &str) -> bool {
+    if path
+        .trim_start_matches('/')
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .contains(['{', '}'])
+    {
+        return false;
+    }
+    let mut names = HashSet::new();
+    path.split('/').all(|segment| {
+        if !segment.contains(['{', '}']) {
+            return true;
+        }
+        let Some(name) = segment.strip_prefix('{').and_then(|v| v.strip_suffix('}')) else {
+            return false;
+        };
+        !name.is_empty()
+            && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            && names.insert(name)
+    })
+}
+fn api_paths_overlap(left: &str, right: &str) -> bool {
+    let mut right = right.split('/');
+    for left in left.split('/') {
+        let Some(right) = right.next() else {
+            return false;
+        };
+        if left == right {
+            continue;
+        }
+        if left.is_empty() || right.is_empty() {
+            return false;
+        }
+        if !left.starts_with('{') && !right.starts_with('{') {
+            return false;
+        }
+    }
+    right.next().is_none()
 }
 
 #[cfg(test)]

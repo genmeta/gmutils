@@ -26,6 +26,40 @@ use request::RequestPlan;
 use timing::Timing;
 use verbose::{CurlVerbose, StreamId};
 
+pub fn display_identity(name: &str) -> std::borrow::Cow<'_, str> {
+    let mut rendered = String::new();
+    let mut copied = 0;
+    let lowercase = name.to_ascii_lowercase();
+    for (start, _) in lowercase.match_indices("dhttp.net") {
+        let end = start + "dhttp.net".len();
+        if name
+            .as_bytes()
+            .get(end)
+            .is_some_and(|next| next.is_ascii_alphanumeric() || matches!(next, b'.' | b'_' | b'-'))
+        {
+            continue;
+        }
+        let begin = match start.checked_sub(1).map(|index| name.as_bytes()[index]) {
+            Some(b'.') => start - 1,
+            Some(previous)
+                if previous.is_ascii_alphanumeric() || matches!(previous, b'_' | b'-') =>
+            {
+                continue;
+            }
+            _ => start,
+        };
+        rendered.push_str(&name[copied..begin]);
+        rendered.push('~');
+        copied = end;
+    }
+    if copied == 0 {
+        std::borrow::Cow::Borrowed(name)
+    } else {
+        rendered.push_str(&name[copied..]);
+        std::borrow::Cow::Owned(rendered)
+    }
+}
+
 pub async fn run(mut options: Options) -> Result<(), Error> {
     let _guard = init_console(&options);
     let progress_mode = ProgressMode::from_flags(

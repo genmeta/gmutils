@@ -233,7 +233,7 @@ async fn named_contacts_and_management_protection_are_enforced_by_server() {
         run(&server, &["/api", "list"])
             .await
             .unwrap()
-            .contains(OWNER)
+            .contains("alice.pilot~")
     );
     let error = run(&server, &["/api", "allow", "alice.pilot"])
         .await
@@ -382,4 +382,35 @@ async fn malformed_json_and_unexpected_statuses_are_errors() {
             ..
         }
     ));
+}
+
+#[tokio::test]
+async fn compact_cli_output_retains_canonical_acl_requests() {
+    let server = Server::new().await;
+    let canonical = "/std/forward/alice.pilot.dhttp.net/std/profile";
+    let short = "/std/forward/alice.pilot~/std/profile";
+    let written = run(&server, &[short, "allow", "Alice.Pilot~"])
+        .await
+        .unwrap();
+    assert!(written.contains(short));
+    assert!(written.contains("alice.pilot~"));
+    let output = run(&server, &[short, "list"]).await.unwrap();
+    assert!(output.contains(short));
+    assert!(!output.contains("dhttp.net"));
+    let calls = server.calls.lock().unwrap();
+    assert_eq!(
+        calls[0].uri.query().unwrap(),
+        format!("api={}", urlencoding::encode(canonical))
+    );
+    assert_eq!(
+        calls[0].body.as_ref().unwrap()["grantee"],
+        "alice.pilot.dhttp.net"
+    );
+    for (value, expected) in [
+        ("alice.dhttp.net.evil", "alice.dhttp.net.evil"),
+        ("staff@alice.dhttp.net", "staff@alice~"),
+        ("not-dhttp.net", "not-dhttp.net"),
+    ] {
+        assert_eq!(display_identity(value), expected);
+    }
 }

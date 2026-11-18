@@ -58,7 +58,7 @@ fn expand_variable(var: &str, ctx: &WriteOutContext<'_>) -> String {
 
     match var {
         "response_code" | "http_code" => ctx.status.to_string(),
-        "url" => ctx.uri.to_string(),
+        "url" => crate::display_identity(&ctx.uri.to_string()).into_owned(),
         "method" => ctx.method.to_string(),
         "scheme" => ctx.uri.scheme_str().unwrap_or("").to_string(),
         "http_version" => format!("{:?}", ctx.http_version).replace("HTTP/", ""),

@@ -164,6 +164,40 @@ impl<T: Transport> Api<'_, T> {
     }
 }
 
+fn display_identity(name: &str) -> std::borrow::Cow<'_, str> {
+    let mut rendered = String::new();
+    let mut copied = 0;
+    let lowercase = name.to_ascii_lowercase();
+    for (start, _) in lowercase.match_indices("dhttp.net") {
+        let end = start + "dhttp.net".len();
+        if name
+            .as_bytes()
+            .get(end)
+            .is_some_and(|next| next.is_ascii_alphanumeric() || matches!(next, b'.' | b'_' | b'-'))
+        {
+            continue;
+        }
+        let begin = match start.checked_sub(1).map(|index| name.as_bytes()[index]) {
+            Some(b'.') => start - 1,
+            Some(previous)
+                if previous.is_ascii_alphanumeric() || matches!(previous, b'_' | b'-') =>
+            {
+                continue;
+            }
+            _ => start,
+        };
+        rendered.push_str(&name[copied..begin]);
+        rendered.push('~');
+        copied = end;
+    }
+    if copied == 0 {
+        std::borrow::Cow::Borrowed(name)
+    } else {
+        rendered.push_str(&name[copied..]);
+        std::borrow::Cow::Owned(rendered)
+    }
+}
+
 fn access_path(path: &str) -> String {
     format!("/std/acl/access?api={}", urlencoding::encode(path))
 }
@@ -263,6 +297,7 @@ pub(crate) async fn execute<T: Transport>(
             }
         },
     }
+    .map(|output| display_identity(&output).into_owned())
 }
 
 #[cfg(test)]

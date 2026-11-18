@@ -108,11 +108,11 @@ pub(super) async fn run(path: PathBuf, fresh: bool, machine: bool) -> Result<Val
                             result["app"] = format!("https://{host}/app/{}/", name.to_owned()).into();
                         }
                         if machine {
-                            eprintln!("{}", json!({"command":"run","event":"published","result":result}));
+                            eprintln!("{}", json!({"command":"run","event":"published","result":crate::display::output(result)}));
                         } else {
                             eprintln!("Published {}", result["directory"].as_str().unwrap());
                             for key in ["api", "app"] {
-                                if let Some(url) = result[key].as_str() { eprintln!("{key}  {url}"); }
+                                if let Some(url) = result[key].as_str() { eprintln!("{key}  {}", crate::display::identity(url)); }
                             }
                         }
                     }
@@ -136,9 +136,21 @@ pub(super) async fn run(path: PathBuf, fresh: bool, machine: bool) -> Result<Val
                     {
                         return Err(error);
                     }
-                    let message =
-                        json!({"command":"run","event":"not_applied","error":error.json()})
-                            .to_string();
+                    let message = if machine {
+                        json!({"command":"run","event":"not_applied","error":crate::display::output(error.json())})
+                            .to_string()
+                    } else {
+                        let mut message = format!(
+                            "error[{}]: {}",
+                            error.code,
+                            crate::display::identity(&error.message)
+                        );
+                        if let Some(hint) = &error.hint {
+                            message
+                                .push_str(&format!("\nhint: {}", crate::display::identity(hint)));
+                        }
+                        message
+                    };
                     if last_error.as_ref() != Some(&message) {
                         eprintln!("{message}");
                     }
