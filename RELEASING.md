@@ -1,10 +1,10 @@
-# gmutils 0.9.1 发布准备
+# gmutils 0.9.2-preview.1 发布准备
 
-正式标签为 v0.9.1，分发包版本来自 genmeta/Cargo.toml。Jade 独立版本为 0.1.1，继续随 DEB/Homebrew 分发；不新增 Jade 的 crates.io 发布任务。变更说明见 CHANGELOG.md；历史 preview.1 已发布。
+目标标签为 v0.9.2-preview.1，分发包版本来自 genmeta/Cargo.toml。Jade 0.1.2-preview.1 随发行包分发。
 
 ## 组件与发布顺序
 
-各工具保留独立版本：genmeta-access 0.5.0、genmeta-curl 0.8.0、genmeta-discover 0.5.0、genmeta-identity 0.5.1、genmeta-nat 0.6.0、genmeta-doctor 0.5.0、genmeta-nslookup 0.6.0、genmeta-proxy 0.5.0、genmeta 0.9.1。workspace dependencies 与 Cargo.lock 一起同步，依赖先于使用方发布。2026-11-06 查询时这些正式版本尚未占用，实际上传前仍须复核。
+先发布 genmeta-access 0.5.1-preview.1、genmeta-curl 0.8.1-preview.1、genmeta-identity 0.5.2-preview.1 和 genmeta-nslookup 0.6.1-preview.1，再发布 genmeta 0.9.2-preview.1。其他工具沿用现有版本。上传前核对版本占用情况。
 
 新建 API/fullstack 项目的 Rust 源码目录为 `wasm/`；继续识别已有 `api/`、`lib/` 工程，前端 api 模块不变。
 
@@ -29,10 +29,10 @@ cargo fmt --manifest-path xtask/Cargo.toml -- --check
 cargo test --manifest-path xtask/Cargo.toml --locked
 cargo clippy --manifest-path xtask/Cargo.toml --locked --all-targets -- -D warnings
 cargo publish --dry-run --locked --allow-dirty \
-  -p genmeta-access -p genmeta-curl -p genmeta-discover -p genmeta-identity \
-  -p genmeta-nat -p genmeta-doctor -p genmeta-nslookup -p genmeta-proxy -p genmeta
+  -p genmeta-access -p genmeta-curl -p genmeta-identity \
+  -p genmeta-nslookup -p genmeta
 ```
 
 检查须使用独立仓库和原锁文件，不更新邻近依赖。不带发布凭据的 dry-run 不上传。Jade 脚本将测试根限定在 target/code-signing-tests。
 
-完成候选检查与源码审阅后再合并、建立不可变 annotated v0.9.1 标签，并核对 Linux/macOS/Windows CI、MSRV 与 DEB/RPM/Homebrew/Scoop 的既有分发范围。上传 crate 和推送发行标签是实际发布步骤，本地检查不代表这些步骤已完成。
+完成候选检查与源码审阅后再合并、建立不可变 annotated v0.9.2-preview.1 标签，并核对 Linux/macOS/Windows CI、MSRV 与 DEB/RPM/Homebrew/Scoop 的既有分发范围。上传 crate 和推送发行标签是实际发布步骤，本地检查不代表这些步骤已完成。

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.2-preview.1] - Unreleased
+
+- Build WAZ v2 packages with hierarchical names and embedded command components. Run versioned Jade previews from the identity’s installed package layout.
+- Validate single-segment OpenAPI parameters and reject overlapping routes.
+- Show compact identity names in CLI output and Jade diagnostics while preserving canonical identities in network requests.
+
 ## [0.9.1] - 2026-11-09
 
 - Generate new Rust API/fullstack projects under `wasm/`; detect existing `wasm/`, `api/` and `lib/` layouts without changing frontend API modules.
