@@ -131,7 +131,10 @@ fn confirm_delete(id: &str, resource: &str, yes: bool) -> Result<bool, Whatever>
         std::io::stdin().is_terminal(),
         "Non-interactive deletion requires --yes"
     );
-    print!("Delete {resource} for {id}? [y/n] ");
+    print!(
+        "Delete {resource} for {}? [y/n] ",
+        crate::display::identity(id)
+    );
     std::io::stdout()
         .flush()
         .whatever_context("Cannot show confirmation")?;

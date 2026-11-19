@@ -246,6 +246,12 @@ pub(crate) async fn build_files(
     }
     let mut manifest =
         crate::archive::waz_manifest(&files).map_err(|e| Error::new("E_ARTIFACT_INVALID", e))?;
+    // Preserve an unambiguous spelling if the short name itself ends in the identity suffix.
+    let short_author = author
+        .strip_suffix(dhttp_home::DHTTP_SUFFIX)
+        .filter(|name| !name.ends_with(dhttp_home::DHTTP_SUFFIX))
+        .unwrap_or(author);
+    manifest["package"]["author"] = short_author.into();
     if files.contains_key("docs/manual.md") {
         if manifest.get("docs").is_none() {
             manifest["docs"] = json!({});

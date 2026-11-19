@@ -94,7 +94,12 @@ pub(super) fn package_details(package: &Value) -> String {
         ("signer_leaf_fingerprint_sha256", "Signer SHA256"),
     ] {
         if let Some(text) = package[key].as_str().filter(|text| !text.is_empty()) {
-            lines.push(format!("  {label}: {}", line(text)));
+            let text = if key == "repository" {
+                identity(text)
+            } else {
+                Cow::Borrowed(text)
+            };
+            lines.push(format!("  {label}: {}", line(&text)));
         }
     }
     if package["has_app"] == true {
