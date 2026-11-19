@@ -1,6 +1,11 @@
 # Changelog
 
-## [0.9.2-preview.1] - Unreleased
+## [0.9.2-preview.2] - Unreleased
+
+- Display compact identities in discovery results, repository output, and server deletion prompts.
+- Write short author names and the wasm and web fields in new WAZ v2 manifests. Accept existing v2 manifests with the backend and frontend fields.
+
+## [0.9.2-preview.1] - 2026-11-18
 
 - Build WAZ v2 packages with hierarchical names and embedded command components. Run versioned Jade previews from the identity’s installed package layout.
 - Validate single-segment OpenAPI parameters and reject overlapping routes.
