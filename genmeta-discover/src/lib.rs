@@ -138,7 +138,12 @@ pub async fn run(options: Options) {
             if !domain_set.insert(name.clone()) {
                 continue;
             }
-            println!("Name: {name}");
+            let host = name.trim_end_matches('.');
+            if let Some(short) = host.to_ascii_lowercase().strip_suffix(".dhttp.net") {
+                println!("Name: {short}~");
+            } else {
+                println!("Name: {name}");
+            }
             for rdata in rdata_set {
                 match rdata {
                     RData::A(ip) => println!("{ip}"),

@@ -133,7 +133,7 @@ To install the published application on your base identity's Pishoo service:
 
 ```sh
 genmeta install dev.alex.chen/hello --id alex.chen
-genmeta curl --id alex.chen https://alex.chen.dhttp.net/hello/whoami
+genmeta curl --id alex.chen https://alex.chen~/hello/whoami
 # {"name":"alex.chen.dhttp.net"}
 ```
 

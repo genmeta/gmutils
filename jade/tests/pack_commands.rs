@@ -432,6 +432,12 @@ fn app_and_lib_build_unsigned_packages_offline_without_credentials_or_a_host() {
             summary["package_sha256"],
             format!("{:x}", Sha256::digest(&bytes))
         );
+        let files = archive::waz_read(&bytes).unwrap();
+        let release: toml::Value =
+            toml::from_str(std::str::from_utf8(&files["manifest.toml"]).unwrap()).unwrap();
+        assert_eq!(release["package"]["author"].as_str(), Some("alice"));
+        assert_eq!(release.get("wasm").is_some(), kind != "app");
+        assert_eq!(release.get("web").is_some(), kind != "lib");
         let package = package(bytes.clone());
         package.validate().unwrap();
         let manifest = serde_json::to_value(package.manifest()).unwrap();

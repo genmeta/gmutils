@@ -259,7 +259,14 @@ pub(crate) fn waz_manifest(
     files: &std::collections::BTreeMap<String, Vec<u8>>,
 ) -> WazResult<serde_json::Value> {
     if let Some(bytes) = files.get("manifest.toml") {
-        Ok(waz_toml(bytes)?.0)
+        let (mut manifest, _) = waz_toml(bytes)?;
+        let author = manifest["package"]["author"]
+            .as_str()
+            .ok_or("missing package author")?;
+        if !author.ends_with(".dhttp.net") {
+            manifest["package"]["author"] = format!("{author}.dhttp.net").into();
+        }
+        Ok(manifest)
     } else {
         Ok(serde_json::from_slice(
             files
@@ -310,13 +317,19 @@ fn waz_layout(
 ) -> WazResult<()> {
     let modern = files.contains_key("manifest.toml");
     let format = if modern { "waz/2" } else { "waz/1" };
+    let (wasm_key, web_key) =
+        if modern && (document.get("wasm").is_some() || document.get("web").is_some()) {
+            ("wasm", "web")
+        } else {
+            ("backend", "frontend")
+        };
     if document["format"] != format
         || document.as_object().is_none_or(|fields| {
             fields.keys().any(|key| {
-                !(matches!(
-                    key.as_str(),
-                    "format" | "package" | "dependencies" | "backend" | "frontend"
-                ) || modern && matches!(key.as_str(), "docs" | "signature"))
+                !(matches!(key.as_str(), "format" | "package" | "dependencies")
+                    || key == wasm_key
+                    || key == web_key
+                    || modern && matches!(key.as_str(), "docs" | "signature"))
             })
         })
     {
@@ -345,10 +358,10 @@ fn waz_layout(
     };
     let frontend = if modern { "web" } else { "public" };
     let prefix = format!("{frontend}/");
-    let has_frontend = document.get("frontend").is_some();
-    let has_backend = document.get("backend").is_some();
-    if (has_backend && document["backend"] != backend)
-        || (has_frontend && document["frontend"] != frontend)
+    let has_frontend = document.get(web_key).is_some();
+    let has_backend = document.get(wasm_key).is_some();
+    if (has_backend && document[wasm_key] != backend)
+        || (has_frontend && document[web_key] != frontend)
         || has_backend != files.contains_key(&backend)
         || has_frontend != files.keys().any(|name| name.starts_with(&prefix))
         || (has_frontend && !files.contains_key(&format!("{prefix}index.html")))
@@ -525,7 +538,7 @@ pub(crate) fn waz_convert(bytes: &[u8]) -> WazResult<Vec<u8>> {
         }
         dependencies_out.push(item);
     }
-    let has_frontend = document.get("frontend").is_some();
+    let has_frontend = document.get("web").is_some() || document.get("frontend").is_some();
     let mut annotation = json!({"title":field("title")?,"changelog":field("release-notes")?,"dependencies":dependencies_out});
     if let Some(docs) = document.get("docs") {
         annotation["docs"] = docs.clone();
@@ -607,11 +620,11 @@ pub(crate) fn waz_export(
     let mut files = std::collections::BTreeMap::new();
     if let Some(backend) = container.get_atom("backend") {
         let path = format!("wasm/{name}.wasm");
-        manifest["backend"] = path.clone().into();
+        manifest["wasm"] = path.clone().into();
         files.insert(path, backend.to_vec());
     }
     if let Some(volume) = container.get_volume("public") {
-        manifest["frontend"] = "web".into();
+        manifest["web"] = "web".into();
         let mut pending = vec!["/".to_owned()];
         while let Some(directory) = pending.pop() {
             for (name, _, metadata) in volume
