@@ -103,7 +103,8 @@ pub(super) fn package_details(package: &Value) -> String {
         }
     }
     if package["has_app"] == true {
-        lines.push(format!("  App: /app/{name}/"));
+        let mount = name.strip_prefix("std/").unwrap_or(&name);
+        lines.push(format!("  App: /app/{mount}/"));
     }
     if let Some(dependencies) = package["dependencies"]
         .as_array()

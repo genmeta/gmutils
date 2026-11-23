@@ -691,7 +691,7 @@ async fn std_prefixed_package_previews_use_the_namespace_once_and_reuse_legacy_d
             .join("lib/std/comm/demo.preview/manifest.json")
             .is_file()
     );
-    assert!(profile.join("app/std/comm/demo/index.html").is_file());
+    assert!(profile.join("app/comm/demo/index.html").is_file());
     assert_eq!(
         std::fs::read(profile.join(".volume/std/comm/demo/database")).unwrap(),
         b"existing data"

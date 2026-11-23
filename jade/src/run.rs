@@ -105,7 +105,7 @@ pub(super) async fn run(path: PathBuf, fresh: bool, machine: bool) -> Result<Val
                             result["api"] = format!("https://{host}{base}{path}").into();
                         }
                         if result["has_app"] == true {
-                            result["app"] = format!("https://{host}/app/{}/", name.to_owned()).into();
+                            result["app"] = format!("https://{host}/app/{}/", name.strip_prefix("std/").unwrap_or(&name)).into();
                         }
                         if machine {
                             eprintln!("{}", json!({"command":"run","event":"published","result":crate::display::output(result)}));
@@ -256,10 +256,11 @@ fn preview_paths(name: &str, manifest: &Value) -> Result<Vec<(&'static str, Path
     } else {
         "lib"
     };
+    let app_name = name.strip_prefix("std/").unwrap_or(name);
     Ok(vec![
         ("lib", PathBuf::from(format!("{lib}/{name}.wasm.{version}"))),
-        ("app", PathBuf::from(format!("app/{name}.{version}"))),
-        ("app_link", PathBuf::from(format!("app/{name}"))),
+        ("app", PathBuf::from(format!("app/{app_name}.{version}"))),
+        ("app_link", PathBuf::from(format!("app/{app_name}"))),
     ])
 }
 
@@ -289,7 +290,13 @@ fn published_paths(
     state: &Value,
 ) -> Result<Vec<(&'static str, PathBuf)>> {
     let mut paths = preview_paths(name, manifest)?;
-    if state["layout"] != "versions" {
+    if state["layout"] == "versions" {
+        if state["app_mount"] != "unprefixed" {
+            let version = manifest["package"]["version"].as_str().unwrap();
+            paths[1].1 = PathBuf::from(format!("app/{name}.{version}"));
+            paths[2].1 = PathBuf::from(format!("app/{name}"));
+        }
+    } else {
         let version = manifest["package"]["version"].as_str().unwrap();
         let lib = if crate::identity::is_standard_author(
             manifest["package"]["author"].as_str().unwrap_or(""),
@@ -645,7 +652,7 @@ fn publish(
                 "Preview marker must be an owned directory",
             ));
         }
-        let mut state = json!({"layout":"versions"});
+        let mut state = json!({"layout":"versions","app_mount":"unprefixed"});
         if has_app {
             let version = manifest["package"]["version"].as_str().unwrap();
             let leaf = name.rsplit('/').next().unwrap();
