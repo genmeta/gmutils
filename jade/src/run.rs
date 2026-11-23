@@ -260,7 +260,6 @@ fn preview_paths(name: &str, manifest: &Value) -> Result<Vec<(&'static str, Path
     Ok(vec![
         ("lib", PathBuf::from(format!("{lib}/{name}.wasm.{version}"))),
         ("app", PathBuf::from(format!("app/{app_name}.{version}"))),
-        ("app_link", PathBuf::from(format!("app/{app_name}"))),
     ])
 }
 
@@ -291,10 +290,16 @@ fn published_paths(
 ) -> Result<Vec<(&'static str, PathBuf)>> {
     let mut paths = preview_paths(name, manifest)?;
     if state["layout"] == "versions" {
-        if state["app_mount"] != "unprefixed" {
+        let mount = if state["app_mount"] == "unprefixed" {
+            name.strip_prefix("std/").unwrap_or(name)
+        } else {
             let version = manifest["package"]["version"].as_str().unwrap();
             paths[1].1 = PathBuf::from(format!("app/{name}.{version}"));
-            paths[2].1 = PathBuf::from(format!("app/{name}"));
+            name
+        };
+        // Older preview markers still own the link and its rollback backup.
+        if !state["app_link"].is_null() {
+            paths.push(("app_link", PathBuf::from(format!("app/{mount}"))));
         }
     } else {
         let version = manifest["package"]["version"].as_str().unwrap();
@@ -653,22 +658,6 @@ fn publish(
             ));
         }
         let mut state = json!({"layout":"versions","app_mount":"unprefixed"});
-        if has_app {
-            let version = manifest["package"]["version"].as_str().unwrap();
-            let leaf = name.rsplit('/').next().unwrap();
-            let link = staged.path().join("app-link");
-            std::os::unix::fs::symlink(format!("{leaf}.{version}"), &link)?;
-            if unsafe { libc::geteuid() } == 0 {
-                rustix::fs::chownat(
-                    rustix::fs::CWD,
-                    &link,
-                    Some(rustix::fs::Uid::from_raw(owner.uid())),
-                    Some(rustix::fs::Gid::from_raw(owner.gid())),
-                    rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
-                )
-                .map_err(std::io::Error::from)?;
-            }
-        }
         for (kind, relative) in paths {
             if (kind == "lib" && !has_api) || (kind != "lib" && !has_app) {
                 continue;
@@ -691,11 +680,9 @@ fn publish(
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error.into()),
             }
-            let source = staged.path().join(match kind {
-                "lib" => "lib.wasm",
-                "app" => "app",
-                _ => "app-link",
-            });
+            let source = staged
+                .path()
+                .join(if kind == "lib" { "lib.wasm" } else { "app" });
             move_resource(&source, &path, &mut moves)?;
             let metadata = path.symlink_metadata()?;
             state[kind] = json!({"dev":metadata.dev(),"ino":metadata.ino()});
