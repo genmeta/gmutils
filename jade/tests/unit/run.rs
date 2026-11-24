@@ -79,7 +79,7 @@ async fn build_then_run_publishes_plain_files_without_developer_credentials() {
     assert_eq!(crate::archive::waz_read(&original).unwrap(), files);
     publish(&profile, &name, &files, false).unwrap();
     assert_eq!(
-        std::fs::read(profile.join("app/hello/index.html")).unwrap(),
+        std::fs::read(profile.join("app/hello.1.0.0/index.html")).unwrap(),
         b"first"
     );
     assert!(profile.join("lib/hello.preview/manifest.json").exists());
@@ -90,7 +90,7 @@ async fn build_then_run_publishes_plain_files_without_developer_credentials() {
     let (_, files) = build(&source, "dev.test.sky.lee.dhttp.net").await.unwrap();
     publish(&profile, &name, &files, false).unwrap();
     assert_eq!(
-        std::fs::read(profile.join("app/hello/index.html")).unwrap(),
+        std::fs::read(profile.join("app/hello.1.0.0/index.html")).unwrap(),
         b"second"
     );
     assert_eq!(
@@ -131,7 +131,7 @@ async fn failed_build_and_destination_symlinks_do_not_replace_published_files() 
     std::fs::write(source.join("jade.toml"), "invalid manifest").unwrap();
     assert!(build(&source, "test.sky.lee.dhttp.net").await.is_err());
     assert_eq!(
-        std::fs::read(profile.join("app/hello/index.html")).unwrap(),
+        std::fs::read(profile.join("app/hello.1.0.0/index.html")).unwrap(),
         b"first"
     );
     std::os::unix::fs::symlink(&source, profile.join("lib/escape.preview")).unwrap();
@@ -474,7 +474,7 @@ async fn hierarchical_preview_maps_complete_paths_and_migrates_previous_data() {
     assert!(source.join("build/comm/group-1.0.0.waz").is_file());
     let (_, first) = publish(&profile, &name, &files, false).unwrap();
     assert_eq!(
-        std::fs::read(profile.join("app/comm/group/index.html")).unwrap(),
+        std::fs::read(profile.join("app/comm/group.1.0.0/index.html")).unwrap(),
         b"first"
     );
     assert_eq!(
@@ -583,6 +583,16 @@ fn failed_preview_publication_rolls_back_live_resources_and_marker() {
         false,
     )
     .unwrap();
+    // Simulate the link and ownership record left by an older Jade.
+    use std::os::unix::fs::MetadataExt;
+    let link = profile.path().join("app/comm/group");
+    std::os::unix::fs::symlink("group.1.0.0", &link).unwrap();
+    let metadata = link.symlink_metadata().unwrap();
+    let state_path = profile.path().join("lib/comm/group.preview/state.json");
+    let mut state: Value = serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap();
+    state["app_link"] = json!({"dev":metadata.dev(),"ino":metadata.ino()});
+    std::fs::write(&state_path, serde_json::to_vec(&state).unwrap()).unwrap();
+
     let outside = tempfile::NamedTempFile::new().unwrap();
     std::os::unix::fs::symlink(
         outside.path(),
@@ -603,10 +613,12 @@ fn failed_preview_publication_rolls_back_live_resources_and_marker() {
         b"backend 1.0.0"
     );
     assert_eq!(
-        std::fs::read(profile.path().join("app/comm/group/index.html")).unwrap(),
+        std::fs::read(profile.path().join("app/comm/group.1.0.0/index.html")).unwrap(),
         b"frontend 1.0.0"
     );
+    assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("group.1.0.0"));
     assert!(remove_published(profile.path(), "comm/group", &published).unwrap());
+    assert!(link.symlink_metadata().is_err());
     assert!(outside.path().exists());
 }
 
@@ -629,13 +641,13 @@ fn cleanup_preserves_files_replaced_by_a_formal_installer() {
     )
     .unwrap();
     std::fs::rename(
-        profile.path().join("app/comm/group"),
+        profile.path().join("app/comm/group.1.0.0"),
         profile.path().join("app/comm/old"),
     )
     .unwrap();
-    std::fs::create_dir(profile.path().join("app/comm/group")).unwrap();
+    std::fs::create_dir(profile.path().join("app/comm/group.1.0.0")).unwrap();
     std::fs::write(
-        profile.path().join("app/comm/group/index.html"),
+        profile.path().join("app/comm/group.1.0.0/index.html"),
         b"new release app",
     )
     .unwrap();
@@ -645,7 +657,7 @@ fn cleanup_preserves_files_replaced_by_a_formal_installer() {
         b"new release"
     );
     assert_eq!(
-        std::fs::read(profile.path().join("app/comm/group/index.html")).unwrap(),
+        std::fs::read(profile.path().join("app/comm/group.1.0.0/index.html")).unwrap(),
         b"new release app"
     );
 }
@@ -691,7 +703,8 @@ async fn std_prefixed_package_previews_use_the_namespace_once_and_reuse_legacy_d
             .join("lib/std/comm/demo.preview/manifest.json")
             .is_file()
     );
-    assert!(profile.join("app/std/comm/demo/index.html").is_file());
+    assert!(profile.join("app/comm/demo.1.0.0/index.html").is_file());
+    assert!(profile.join("app/comm/demo").symlink_metadata().is_err());
     assert_eq!(
         std::fs::read(profile.join(".volume/std/comm/demo/database")).unwrap(),
         b"existing data"

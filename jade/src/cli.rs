@@ -214,6 +214,7 @@ serde_json = "1"
     )?;
     fs::write(root.join(".gitignore"), ignore)?;
     fs::create_dir(root.join("docs"))?;
+    let app_name = name.strip_prefix("std/").unwrap_or(name.as_str());
     let mut manual = format!(
         "# {name}\n\n## NAME\n\n{name} - identity-aware Pishoo application\n\n## SYNOPSIS\n\n"
     );
@@ -221,7 +222,7 @@ serde_json = "1"
         template,
         Template::Static | Template::Web | Template::Fullstack
     ) {
-        manual.push_str(&format!("`/app/{name}/`\n\n"));
+        manual.push_str(&format!("`/app/{app_name}/`\n\n"));
     }
     if matches!(template, Template::Api | Template::Fullstack) {
         manual.push_str(&format!("`GET /{name}/whoami`\n\n"));
@@ -245,7 +246,7 @@ serde_json = "1"
         Template::Static | Template::Web | Template::Fullstack
     ) {
         readme.push_str(&format!(
-            "Open `/app/{name}/` on the development identity, using the URL printed by Jade.\n\n"
+            "Open `/app/{app_name}/` on the development identity, using the URL printed by Jade.\n\n"
         ));
     }
     if matches!(template, Template::Api | Template::Fullstack) {

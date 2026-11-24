@@ -453,10 +453,9 @@ fn success(result: &Value, release: &Value, identity: &str) -> Result<Value, Wha
             result["entry"] == "/",
             "App installation response has no valid saved entry. {UNKNOWN}"
         );
-        output["entry_url"] = json!(format!(
-            "https://{identity}/app/{}/",
-            release["name"].as_str().unwrap()
-        ));
+        let name = release["name"].as_str().unwrap();
+        let mount = name.strip_prefix("std/").unwrap_or(name);
+        output["entry_url"] = json!(format!("https://{identity}/app/{mount}/"));
     }
     Ok(output)
 }

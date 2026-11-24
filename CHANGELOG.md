@@ -1,6 +1,11 @@
 # Changelog
 
-## [0.9.2-preview.2] - Unreleased
+## [0.9.2-preview.3] - Unreleased
+
+- Use standard App URLs without the leading `std/` segment.
+- Publish Jade previews directly to versioned App directories and roll back links owned by older previews.
+
+## [0.9.2-preview.2] - 2026-11-19
 
 - Display compact identities in discovery results, repository output, and server deletion prompts.
 - Write short author names and the wasm and web fields in new WAZ v2 manifests. Accept existing v2 manifests with the backend and frontend fields.

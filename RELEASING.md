@@ -1,10 +1,10 @@
-# gmutils 0.9.2-preview.2 发布准备
+# gmutils 0.9.2-preview.3 发布准备
 
-目标标签为 v0.9.2-preview.2，分发包版本来自 genmeta/Cargo.toml。Jade 0.1.2-preview.2 随发行包分发。
+目标标签为 v0.9.2-preview.3，分发包版本来自 genmeta/Cargo.toml。Jade 0.1.2-preview.3 随发行包分发。
 
 ## 组件与发布顺序
 
-先发布含短身份名输出的 genmeta-discover 0.5.1-preview.1，再发布 genmeta 0.9.2-preview.2。其他工具沿用现有版本。上传前核对版本占用情况。
+本轮更新 genmeta 0.9.2-preview.3 与 Jade 0.1.2-preview.3。genmeta-discover 0.5.1-preview.1 和其他工具沿用已发布版本。与 Pishoo 0.9.2-preview.3 一起验证标准 App 路径和 Jade 预览。
 
 新建 API/fullstack 项目的 Rust 源码目录为 `wasm/`；继续识别已有 `api/`、`lib/` 工程，前端 api 模块不变。
 
@@ -29,9 +29,9 @@ cargo fmt --manifest-path xtask/Cargo.toml -- --check
 cargo test --manifest-path xtask/Cargo.toml --locked
 cargo clippy --manifest-path xtask/Cargo.toml --locked --all-targets -- -D warnings
 cargo publish --dry-run --locked --allow-dirty \
-  -p genmeta-discover -p genmeta
+  -p genmeta
 ```
 
 检查须使用独立仓库和原锁文件，不更新邻近依赖。不带发布凭据的 dry-run 不上传。Jade 脚本将测试根限定在 target/code-signing-tests。
 
-完成候选检查与源码审阅后再合并、建立不可变 annotated v0.9.2-preview.2 标签，并核对 Linux/macOS/Windows CI、MSRV 与 DEB/RPM/Homebrew/Scoop 的既有分发范围。上传 crate 和推送发行标签是实际发布步骤，本地检查不代表这些步骤已完成。
+完成候选检查与源码审阅后再合并、建立不可变 annotated v0.9.2-preview.3 标签，并核对 Linux/macOS/Windows CI、MSRV 与 DEB/RPM/Homebrew/Scoop 的既有分发范围。上传 crate 和推送发行标签是实际发布步骤，本地检查不代表这些步骤已完成。
