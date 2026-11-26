@@ -759,8 +759,8 @@ pub(crate) fn validate_component(
     bytes: &[u8],
     version: &str,
     author: &str,
-    _name: &str,
-) -> Result<()> {
+    name: &str,
+) -> Result<Option<&'static str>> {
     let invalid = |message: &str| Error::new("E_ARTIFACT_INVALID", message);
     if bytes.get(..8) != Some(b"\0asm\x0d\0\x01\0") {
         return Err(invalid("Backend must be a WASM Component"));
@@ -807,6 +807,30 @@ pub(crate) fn validate_component(
             "OpenAPI requires version 3.1.x, an info.title and the package's info.version",
         ));
     }
+    let migration_dependency = if let Some(mappings) = document.get("x-pishoo-access-migrations") {
+        let expected = serde_json::json!([{
+            "source": {"package":"std/comm/group","version":"0.1.4","method":"POST","path":"/comm/group/{topic}/broadcast"},
+            "target": {"package":"std/comm/message","version":"0.3.8","operationId":"submitConversationMessage"},
+            "role": "active_group_member",
+            "bindings": {
+                "name": {"owner":"resource_owner","owner_subject":"local_identity.subject","topic":"path.topic"},
+                "speaker":"authenticated_peer",
+                "member_period":"active_membership.period"
+            }
+        }]);
+        if name != "std/comm/group"
+            || version != "0.1.5"
+            || crate::identity::normalize(author)? != "dev.genmeta.tech.dhttp.net"
+            || mappings != &expected
+        {
+            return Err(invalid(
+                "Unsupported access migration or incomplete parameter binding",
+            ));
+        }
+        Some("0.3.8")
+    } else {
+        None
+    };
     let paths = document["paths"]
         .as_object()
         .ok_or_else(|| invalid("OpenAPI paths must be an object"))?;
@@ -828,7 +852,11 @@ pub(crate) fn validate_component(
         {
             return Err(invalid(&format!("Unsupported OpenAPI path: {path}")));
         }
-        if declared.iter().any(|other| api_paths_overlap(other, path)) {
+        if declared.iter().any(|other| {
+            api_paths_overlap(other, path)
+                && !more_specific(other, path)
+                && !more_specific(path, other)
+        }) {
             return Err(invalid("Overlapping OpenAPI paths"));
         }
         declared.push(path);
@@ -965,7 +993,7 @@ pub(crate) fn validate_component(
             )));
         }
     }
-    Ok(())
+    Ok(migration_dependency)
 }
 
 fn wasi_http(resolve: &wit_parser::Resolve, interface: wit_parser::InterfaceId) -> bool {
@@ -1031,6 +1059,20 @@ fn valid_path_parameters(path: &str) -> bool {
             && names.insert(name)
     })
 }
+// Within one provider a narrower template may coexist with its strict
+// superset. Intersections where each side fixes a different segment remain
+// ambiguous, even if one side happens to have more literal segments overall.
+fn more_specific(narrow: &str, broad: &str) -> bool {
+    let mut strict = false;
+    for (left, right) in narrow.split('/').zip(broad.split('/')) {
+        if left.starts_with('{') && !right.starts_with('{') {
+            return false;
+        }
+        strict |= !left.starts_with('{') && right.starts_with('{');
+    }
+    strict
+}
+
 fn api_paths_overlap(left: &str, right: &str) -> bool {
     let mut right = right.split('/');
     for left in left.split('/') {

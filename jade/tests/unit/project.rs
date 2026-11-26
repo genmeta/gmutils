@@ -230,22 +230,78 @@ fn accepts_verified_service_context_from_a_real_component() {
 }
 
 #[test]
-fn parameterized_declarations_cannot_overlap_literal_or_parameter_routes() {
+fn overlapping_paths_require_a_strictly_more_specific_template() {
     let backend = include_bytes!("../fixtures/wasi-http-read-request-then-respond.wasm");
-    for second in ["/comm/group/list", "/comm/group/{name}"] {
-        let document=serde_json::to_vec(&json!({"openapi":"3.1.0","info":{"title":"Group","version":"0.1.0"},"paths":{
-            "/comm/group/{topic}":{"get":{"operationId":"group","summary":"Group","responses":{"200":{"description":"ok"}}}},
-            second:{"get":{"operationId":"other","summary":"Other","responses":{"200":{"description":"ok"}}}}
-        }})).unwrap();
+    let paths = [
+        ("/comm/message/{name}", "/comm/message/list", true),
+        ("/comm/message/history", "/comm/message/{name}", true),
+        (
+            "/comm/group/{topic}/member/list",
+            "/comm/group/{group}/member/{name}",
+            true,
+        ),
+        ("/comm/group/{topic}", "/comm/group/{name}", false),
+        (
+            "/comm/group/{topic}/member/owner",
+            "/comm/group/dev/member/{name}",
+            false,
+        ),
+        ("/a/{b}/c/d", "/a/b/{c}/{d}", false),
+    ];
+    for (first, second, accepted) in paths {
+        let operation = |id: &str| {
+            json!({"get": {"operationId":id,"summary":id,
+            "responses":{"200":{"description":"ok"}}}})
+        };
+        let document = serde_json::to_vec(&json!({
+            "openapi":"3.1.0","info":{"title":"Routes","version":"0.1.0"},
+            "paths":{first:operation("first"),second:operation("second")}
+        }))
+        .unwrap();
         let bytes = crate::pack::embedded_openapi(backend.to_vec(), Some(&document)).unwrap();
-        assert!(
-            validate_component(
-                &bytes,
-                "0.1.0",
-                "dev.genmeta.tech.dhttp.net",
-                "std/comm/group"
-            )
-            .is_err()
+        let result = validate_component(
+            &bytes,
+            "0.1.0",
+            "dev.genmeta.tech.dhttp.net",
+            "std/comm/group",
         );
+        assert_eq!(result.is_ok(), accepted, "{first} and {second}: {result:?}");
+    }
+}
+
+#[test]
+fn validates_group_broadcast_migration_before_signing() {
+    let backend = include_bytes!("../fixtures/wasi-http-read-request-then-respond.wasm");
+    let sample: Value =
+        serde_json::from_slice(include_bytes!("../fixtures/group_broadcast.json")).unwrap();
+    for case in ["valid", "missing_owner", "wrong_target"] {
+        let mut doc = sample.clone();
+        let migration = &mut doc["x-pishoo-access-migrations"][0];
+        match case {
+            "missing_owner" => {
+                migration["bindings"]["name"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("owner_subject");
+            }
+            "wrong_target" => migration["target"]["operationId"] = "sendWorkspaceMessage".into(),
+            _ => {}
+        }
+        let bytes = crate::pack::embedded_openapi(
+            backend.to_vec(),
+            Some(&serde_json::to_vec(&doc).unwrap()),
+        )
+        .unwrap();
+        let result = validate_component(
+            &bytes,
+            "0.1.5",
+            "dev.genmeta.tech.dhttp.net",
+            "std/comm/group",
+        );
+        if case == "valid" {
+            assert_eq!(result.unwrap(), Some("0.3.8"));
+        } else {
+            assert!(result.is_err(), "{case}");
+        }
     }
 }
