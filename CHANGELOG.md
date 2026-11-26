@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.2-preview.4] - Unreleased
+
+- Bundle Jade 0.1.2-preview.4. Validate nested resource templates and the signed Group broadcast migration against its exact Message dependency before packaging.
+
 ## [0.9.2-preview.3] - Unreleased
 
 - Use standard App URLs without the leading `std/` segment.
