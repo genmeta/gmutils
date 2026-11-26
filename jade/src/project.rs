@@ -828,7 +828,11 @@ pub(crate) fn validate_component(
         {
             return Err(invalid(&format!("Unsupported OpenAPI path: {path}")));
         }
-        if declared.iter().any(|other| api_paths_overlap(other, path)) {
+        if declared.iter().any(|other| {
+            api_paths_overlap(other, path)
+                && !more_specific(other, path)
+                && !more_specific(path, other)
+        }) {
             return Err(invalid("Overlapping OpenAPI paths"));
         }
         declared.push(path);
@@ -1031,6 +1035,20 @@ fn valid_path_parameters(path: &str) -> bool {
             && names.insert(name)
     })
 }
+// Within one provider a narrower template may coexist with its strict
+// superset. Intersections where each side fixes a different segment remain
+// ambiguous, even if one side happens to have more literal segments overall.
+fn more_specific(narrow: &str, broad: &str) -> bool {
+    let mut strict = false;
+    for (left, right) in narrow.split('/').zip(broad.split('/')) {
+        if left.starts_with('{') && !right.starts_with('{') {
+            return false;
+        }
+        strict |= !left.starts_with('{') && right.starts_with('{');
+    }
+    strict
+}
+
 fn api_paths_overlap(left: &str, right: &str) -> bool {
     let mut right = right.split('/');
     for left in left.split('/') {
