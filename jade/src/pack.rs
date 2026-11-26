@@ -174,8 +174,17 @@ pub(crate) async fn build_files(
         Some(backend) => crate::project::backend(project, backend, &config.package).await?,
         None => Vec::new(),
     };
-    if !backend.is_empty() {
-        crate::project::validate_component(&backend, version, author, name)?;
+    if !backend.is_empty()
+        && let Some(required) = crate::project::validate_component(&backend, version, author, name)?
+        && !config
+            .dependencies
+            .iter()
+            .any(|dep| dep.name == "std/comm/message" && dep.version == required)
+    {
+        return Err(Error::new(
+            "E_CONFIG_INVALID",
+            format!("Group broadcast migration requires std/comm/message {required}"),
+        ));
     }
     let parent = output
         .parent()

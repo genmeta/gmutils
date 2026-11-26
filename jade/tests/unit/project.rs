@@ -268,3 +268,40 @@ fn overlapping_paths_require_a_strictly_more_specific_template() {
         assert_eq!(result.is_ok(), accepted, "{first} and {second}: {result:?}");
     }
 }
+
+#[test]
+fn validates_group_broadcast_migration_before_signing() {
+    let backend = include_bytes!("../fixtures/wasi-http-read-request-then-respond.wasm");
+    let sample: Value =
+        serde_json::from_slice(include_bytes!("../fixtures/group_broadcast.json")).unwrap();
+    for case in ["valid", "missing_owner", "wrong_target"] {
+        let mut doc = sample.clone();
+        let migration = &mut doc["x-pishoo-access-migrations"][0];
+        match case {
+            "missing_owner" => {
+                migration["bindings"]["name"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("owner_subject");
+            }
+            "wrong_target" => migration["target"]["operationId"] = "sendWorkspaceMessage".into(),
+            _ => {}
+        }
+        let bytes = crate::pack::embedded_openapi(
+            backend.to_vec(),
+            Some(&serde_json::to_vec(&doc).unwrap()),
+        )
+        .unwrap();
+        let result = validate_component(
+            &bytes,
+            "0.1.5",
+            "dev.genmeta.tech.dhttp.net",
+            "std/comm/group",
+        );
+        if case == "valid" {
+            assert_eq!(result.unwrap(), Some("0.3.8"));
+        } else {
+            assert!(result.is_err(), "{case}");
+        }
+    }
+}
